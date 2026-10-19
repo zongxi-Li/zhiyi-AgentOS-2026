@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from components.resource.service import ResourcePlane
+from components.resource.errors import ResourceObservationTimeInvalidError
 from components.resource.store import SQLiteResourceStore, StaleResourceObservation
 from contracts.resource import (
     HealthStatus,
@@ -149,3 +150,35 @@ def test_remote_observation_requires_endpoint_runtime() -> None:
             utilization=0.0,
             observation_sequence=1,
         )
+
+
+def test_remote_observation_rejects_future_timestamp() -> None:
+    plane = _plane()
+    _remote_profile(plane)
+    with pytest.raises(ResourceObservationTimeInvalidError):
+        plane.observe_remote_runtime(
+            "runtime:edge-exec-1", available_slots=1, utilization=0.0,
+            observation_sequence=1, observed_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+        )
+
+
+def test_old_remote_observation_is_persisted_as_degraded() -> None:
+    plane = _plane()
+    _remote_profile(plane)
+    plane.observe_remote_runtime(
+        "runtime:edge-exec-1", available_slots=1, utilization=0.0,
+        observation_sequence=1, observed_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    assert plane.runtime_snapshot("runtime:edge-exec-1").snapshot.health_status is HealthStatus.DEGRADED
+
+
+def test_execution_observation_returns_after_successful_snapshot_write() -> None:
+    plane = _plane()
+    profile = _remote_profile(plane)
+
+    health = plane.observe_execution(profile.runtime_id, success=True, latency_ms=12.0)
+
+    assert health.healthy
+    snapshot = plane.runtime_snapshot(profile.runtime_id).snapshot
+    assert snapshot.observation_sequence == 1
+    assert snapshot.latency_ms == pytest.approx(12.0)

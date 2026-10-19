@@ -5,14 +5,16 @@
 无模型端点）必须与容量排队区分开。
 """
 
+import asyncio
 from datetime import timedelta
 
 import pytest
 
 from components.resource.service import ResourcePlane
-from components.scheduler.binder import ResourceBinder, hard_constraint_reasons, placement_score
+from components.scheduler.binder import LeaseKeepAlive, ResourceBinder, hard_constraint_reasons, placement_score
 from components.scheduler.models import FATAL_SCHEDULING_REASONS
 from contracts.resource import (
+    ComputeCapacity,
     ExecutionRequirement,
     HealthStatus,
     ModelDemand,
@@ -78,7 +80,8 @@ def test_bind_ready_freezes_binding_with_lease_and_metadata() -> None:
     assert binding.runtime_kind is RuntimeKind.EXECUTION_BACKEND
     assert binding.placement is Placement.EDGE
     assert binding.node_id == "node:edge-1"
-    assert binding.lease_id if hasattr(binding, "lease_id") else True
+    assert binding.lease_id == result.lease.lease_id
+    assert binding.lease_version == result.lease.version
     assert binding.metadata["score"] is not None
     assert binding.metadata["scoreFactors"]["reliability"] > 0
     assert "placement=edge" in binding.metadata["placementReasons"]
@@ -133,6 +136,34 @@ def test_hard_constraints_report_their_filter_reasons() -> None:
     assert decisions["runtime:device-local"].accepted is False
     assert "PLACEMENT_MISMATCH" in decisions["runtime:device-local"].reasons
     assert decisions["runtime:edge-exec-1"].accepted is True
+
+
+def test_node_hard_constraints_reject_insufficient_hardware_and_wrong_region() -> None:
+    plane = _plane()
+    plane.ensure_node(
+        "node:edge-1", placement=Placement.EDGE, data_region="cn-south",
+        compute=ComputeCapacity(cpuCores=2, memoryMb=4096),
+        labels={"gpu": "none"},
+    )
+    profile = RuntimeProfile(
+        runtimeId="runtime:edge-exec-1", nodeId="node:edge-1",
+        placement=Placement.EDGE, capabilities=["repo.read"], capacity=1,
+    )
+    plane.register_runtime(profile)
+    plane.heartbeat_runtime(profile.runtime_id)
+    binder = ResourceBinder(plane)
+
+    decision = binder.evaluate(_requirement(
+        minCpuCores=4, minMemoryBytes=8 * 1024 * 1024 * 1024,
+        requiredDataRegion="cn-north", requiredNodeLabels={"gpu": "a10"},
+    ))[0]
+
+    assert decision.accepted is False
+    assert "NODE_CPU_INSUFFICIENT" in decision.reasons
+    assert "NODE_MEMORY_INSUFFICIENT" in decision.reasons
+    assert "NODE_DATA_REGION_MISMATCH" in decision.reasons
+    assert "NODE_LABEL_MISMATCH" in decision.reasons
+    assert {detail["level"] for detail in decision.reason_details} == {"node"}
 
 
 def test_disabled_and_unhealthy_runtimes_are_rejected() -> None:
@@ -295,6 +326,7 @@ def test_placement_score_is_deterministic_and_explainable() -> None:
     assert first == second
     assert set(factors) == {
         "reliability", "capacity", "idle", "latency", "cost", "preference", "routingPrior",
+        "snapshotPenalty",
     }
     assert 0.0 <= first <= 1.0
 
@@ -332,16 +364,17 @@ def test_assessment_checks_model_and_actual_lease_capacity_without_reserving():
     assert binder.assess(demand).ready
 
 
-def test_zero_snapshot_slots_are_temporary_capacity_not_fatal_ineligibility():
+def test_zero_remote_snapshot_slots_do_not_override_free_redis_capacity():
     plane = _plane()
     profile = _register(plane, "runtime:edge-exec-1")
     snapshot = plane.runtime_snapshot(profile.runtime_id)
     plane.store.update_snapshot(snapshot.snapshot.model_copy(update={"available_slots": 0}),
         expected_version=snapshot.version)
     binder = ResourceBinder(plane)
-    assert binder.assess(_requirement()).reason == "NO_CAPACITY"
+    assert binder.assess(_requirement()).ready
     result = binder.bind_ready(run_id="run", step_id="step", attempt_id="1", requirement=_requirement())
-    assert result.reason == "NO_CAPACITY" and result.reason not in FATAL_SCHEDULING_REASONS
+    assert result.status == "allocated"
+    assert binder.capacity_metrics["capacity_conflict_total"] > 0
 
 
 def test_unavailable_coordination_never_claims_readiness():
@@ -378,3 +411,24 @@ def test_lease_ttl_expires_and_capacity_recovers() -> None:
         requirement=_requirement(), now=later,
     )
     assert second.status == "allocated"
+
+
+def test_lease_keep_alive_renews_the_current_lease_version() -> None:
+    async def scenario() -> None:
+        plane = _plane()
+        _register(plane, "runtime:edge-exec-1", capacity=1)
+        binder = ResourceBinder(plane)
+        result = binder.bind_ready(
+            run_id="run-1", step_id="step-1", attempt_id="attempt-1", requirement=_requirement()
+        )
+        assert result.lease is not None
+        keep_alive = LeaseKeepAlive(
+            binder.coordinator, result.lease, interval=timedelta(milliseconds=5), ttl=timedelta(seconds=5)
+        )
+        keep_alive.start()
+        await asyncio.sleep(0.02)
+        await keep_alive.stop()
+        assert keep_alive.failure is None
+        assert keep_alive.lease.version > result.lease.version
+
+    asyncio.run(scenario())

@@ -85,11 +85,21 @@ class HealthStatus(str, Enum):
 class NodeHealthStatus(str, Enum):
     """节点健康分级：在线、忙碌、过载、陈旧、离线。"""
 
+    UNKNOWN = "unknown"
     ONLINE = "online"
     BUSY = "busy"
     OVERLOADED = "overloaded"
     STALE = "stale"
     OFFLINE = "offline"
+    SUSPICIOUS = "suspicious"
+
+
+class RemoteExecutionPolicy(str, Enum):
+    """Node 对远程任务的准入策略。"""
+
+    ALLOW = "allow"
+    DENY = "deny"
+    ALLOWLIST_ONLY = "allowlist_only"
 
 
 class ResourceEndpoint(BaseModel):
@@ -137,8 +147,12 @@ class NodeProfile(BaseModel):
     compute: ComputeCapacity = Field(default_factory=ComputeCapacity, alias="computeCapacity")
     location: StrictStr | None = None
     data_zone: StrictStr | None = Field(default=None, alias="dataZone")
+    data_region: StrictStr | None = Field(default=None, alias="dataRegion")
     owner_scope: StrictStr | None = Field(default=None, alias="ownerScope")
     labels: dict[str, str] = Field(default_factory=dict)
+    remote_execution_policy: RemoteExecutionPolicy = Field(
+        default=RemoteExecutionPolicy.ALLOW, alias="remoteExecutionPolicy"
+    )
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
     version: int = Field(default=1, ge=1)
@@ -160,6 +174,7 @@ class NodeSnapshot(BaseModel):
     health_status: NodeHealthStatus = Field(default=NodeHealthStatus.ONLINE, alias="healthStatus")
     last_heartbeat: datetime | None = Field(default=None, alias="lastHeartbeat")
     consecutive_failures: int = Field(default=0, ge=0, alias="consecutiveFailures")
+    time_anomaly_count: int = Field(default=0, ge=0, alias="timeAnomalyCount")
     metrics: dict[str, float] = Field(default_factory=dict)
 
 
@@ -272,6 +287,13 @@ class ExecutionRequirement(BaseModel):
     max_cost: float | None = Field(default=None, alias="maxCost", ge=0.0)
     max_latency_ms: float | None = Field(default=None, alias="maxLatencyMs", ge=0.0)
     allow_remote_execution: bool = Field(default=True, alias="allowRemoteExecution")
+    min_cpu_cores: float | None = Field(default=None, alias="minCpuCores", ge=0.0)
+    min_memory_bytes: int | None = Field(default=None, alias="minMemoryBytes", ge=0)
+    required_gpu_type: StrictStr | None = Field(default=None, alias="requiredGpuType")
+    min_gpu_memory_bytes: int | None = Field(default=None, alias="minGpuMemoryBytes", ge=0)
+    required_node_labels: dict[str, str] = Field(default_factory=dict, alias="requiredNodeLabels")
+    required_data_region: StrictStr | None = Field(default=None, alias="requiredDataRegion")
+    allowed_owner_scopes: list[StrictStr] = Field(default_factory=list, alias="allowedOwnerScopes")
     preferences: dict[str, Any] = Field(default_factory=dict, description="非权威评分偏好（preferredRuntimeId 等）。")
     routing_hints: dict[str, Any] = Field(default_factory=dict, alias="routingHints", description="上游语义路由先验（如 Laya）；只影响评分，绝无资格裁决权。")
     policy_metadata: dict[str, Any] = Field(default_factory=dict, alias="policyMetadata")
@@ -307,6 +329,8 @@ class ExecutionBinding(BaseModel):
     trust: TrustLevel = Field(default=TrustLevel.HOST_TRUSTED)
     model_binding: ModelEndpointBinding | None = Field(default=None, alias="modelBinding")
     snapshot_version: int = Field(alias="snapshotVersion", ge=1)
+    lease_id: StrictStr | None = Field(default=None, alias="leaseId")
+    lease_version: int | None = Field(default=None, alias="leaseVersion", ge=1)
     bound_at: datetime = Field(default_factory=_utc_now, alias="boundAt")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -323,7 +347,8 @@ class ResourceLease(BaseModel):
     step_id: StrictStr | None = Field(default=None, alias="stepId")
     attempt_id: StrictStr | None = Field(default=None, alias="attemptId")
     slot_count: int = Field(default=1, alias="slotCount", ge=1)
-    status: Literal["active", "released", "expired"] = "active"
+    version: int = Field(default=1, ge=1)
+    status: Literal["active", "expiring", "released", "expired"] = "active"
     created_at: datetime = Field(default_factory=_utc_now, alias="createdAt")
     expires_at: datetime = Field(alias="expiresAt")
 
@@ -350,6 +375,7 @@ __all__ = [
     "ModelEndpointBinding",
     "ModelEndpointProfile",
     "NodeHealthStatus",
+    "RemoteExecutionPolicy",
     "NodeProfile",
     "NodeSnapshot",
     "Placement",

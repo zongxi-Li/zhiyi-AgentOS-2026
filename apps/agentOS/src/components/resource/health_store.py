@@ -9,6 +9,8 @@ import sqlite3
 from threading import RLock
 from typing import Protocol
 
+from .sqlite_support import configure_sqlite_connection
+
 
 @dataclass(frozen=True)
 class ResourceHealthState:
@@ -86,11 +88,9 @@ class SQLiteResourceHealthStore:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(
-            self.db_path, check_same_thread=False, timeout=30.0
+        self._connection = configure_sqlite_connection(
+            sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
         )
-        self._connection.execute("PRAGMA busy_timeout = 30000")
-        self._connection.execute("PRAGMA journal_mode = WAL")
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS resource_health (
                 resource_id TEXT PRIMARY KEY,

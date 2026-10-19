@@ -88,6 +88,19 @@ def test_issue_credential_returns_secret_once_and_verifies_without_storing_plain
     assert plane.verify_runtime_credential(issued.resource_id, issued.credential_id, issued.secret)
 
 
+def test_remote_runtime_registration_is_idempotent_without_reissuing_secret() -> None:
+    plane = _plane()
+    first = _register_remote_runtime(plane)
+    profile = plane.runtime(first.resource_id)
+    snapshot = plane.runtime_snapshot(first.resource_id).snapshot
+
+    repeated = plane.register_remote_runtime(profile, snapshot)
+
+    assert repeated.created is False
+    assert repeated.credential_id == first.credential_id
+    assert repeated.secret == ""
+
+
 def test_sqlite_credential_survives_restart_without_persisting_plaintext(tmp_path: Path) -> None:
     db_path = tmp_path / "plane.sqlite3"
     master_key = Fernet.generate_key().decode("ascii")
