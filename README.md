@@ -1,222 +1,192 @@
 <p align="center">
-  <img src="apps/frontend/public/logo.png" alt="知弈 AgentOS Logo" width="120" />
-</p>
-
-<h1 align="center">知弈 AgentOS</h1>
-
-<p align="center">
-  <strong>面向超长程复杂任务的动态异构群体智能运行时<br>让多 Agent 在一个可规划、可通信、可恢复、可审计的执行真源中完成复杂工作</strong>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/wreath-dark.svg">
+    <img src="docs/assets/brand/wreath-light.svg" width="160" alt="知弈 AgentOS 花环标识">
+  </picture>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/competition-XH--202631-6366f1?style=for-the-badge" alt="Competition XH-202631">
-  <img src="https://img.shields.io/badge/status-stable%20candidate-22c55e?style=for-the-badge" alt="Stable candidate">
-  <img src="https://img.shields.io/badge/kernel%20tests-187%20passed-22c55e?style=for-the-badge" alt="Kernel tests">
+  <img src="docs/assets/brand/wordmark.svg" width="560" alt="知弈 AgentOS">
+</p>
+
+<p align="center">
+  <strong>面向下一代 AI Agent 基础设施</strong><br>
+  <sub>让多 Agent 在同一个可规划、可通信、可恢复、可审计的执行真源中完成复杂工作</sub>
+</p>
+
+<p align="center">
+  <a href="#快速开始"><img src="https://img.shields.io/badge/version-1.0.0--candidate-6366f1?style=for-the-badge" alt="Version"></a>
+  <a href="#核心特性"><img src="https://img.shields.io/badge/status-stable%20candidate-22c55e?style=for-the-badge" alt="Status"></a>
+  <img src="https://img.shields.io/badge/core%20tests-1730%20cases-22c55e?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License">
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Frontend-Vue%203-42b883?style=flat-square&logo=vue.js" alt="Vue 3">
-  <img src="https://img.shields.io/badge/Gateway-Spring%20Boot%203.2-6db33f?style=flat-square&logo=spring" alt="Spring Boot">
+  <img src="https://img.shields.io/badge/Backend-Spring%20Boot%203.2-6db33f?style=flat-square&logo=spring" alt="Spring Boot">
   <img src="https://img.shields.io/badge/Runtime-FastAPI-009688?style=flat-square&logo=fastapi" alt="FastAPI">
-  <img src="https://img.shields.io/badge/Core-WKN%20AgentOS-3776ab?style=flat-square&logo=python" alt="WKN AgentOS">
+  <img src="https://img.shields.io/badge/Core-Python%203.14-3776ab?style=flat-square&logo=python" alt="Python">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square" alt="Platform">
 </p>
 
 ---
 
-## 项目简介
+## 简介
 
-知弈 AgentOS 面向荣耀终端股份有限公司发布的挑战杯赛题 **XH-202631：面向超长程复杂任务的动态异构群体智能架构与深度协同推理技术**。
+知弈 AgentOS 是一套**群体智能运行时操作系统**——当 AI 从单轮问答走向自主执行，复杂任务需要的不再是更长的上下文窗口，而是一个能描述、调度、通信、记忆和自我修复的工程运行时。
 
-比赛方案要求系统从“高维模糊的自然语言意图”出发，在复杂非确定性环境中完成全链路闭环交付，并重点突破：
+我们将问题定义为：
 
-- 超长程上下文连续性与分布式记忆保持；
-- 动态异构拓扑与低熵通信；
-- 端、边、云异构资源自适应调度；
-- 异常、需求变化和节点失效下的自主恢复；
-- 中间决策过程、推理轨迹和最终产物的可视化展示。
+<p align="center">
+  <em>给定自然语言任务目标、约束、风险与资源预算，如何即时构造一个可执行、可观察、可恢复、可审计的多智能体计算图？</em>
+</p>
 
-知弈的核心答案是 **Agentic Computation Graph（ACG）**。系统把 Step、Agent、Skill、Memory、Evidence 和 Control 建模为有类型节点，把依赖、通信、控制、读写和证据支撑建模为不同类型的边；再由唯一的 WKN `WorkflowRuntime` 完成规划、调度、执行、恢复和审计。
+系统的核心答案是 **Agentic Computation Graph (ACG)**——一种将 Step、Agent、Skill、Memory、Evidence 和 Control 建模为有类型节点，将执行依赖、通信、控制、读写与支撑关系建模为不同类型边的统一中间表示。
 
-> 比赛原始依据：[《面向超长程复杂任务的动态异构群体智能架构与深度协同推理技术比赛方案》](docs/01-赛题与项目概述/比赛方案.pdf)
+当前版本由唯一的 `ExecutionRuntime` 承担执行真源：Planner 产出 Blueprint，Compiler 冻结 Package、合同与 Binding，ExecutionGraph 推进就绪集与并行超步，NodeRunner 装配最小 ContextPack 并提交引用；Checkpoint、Provenance、Decision 与 Identity V2 分别负责恢复、追溯、审计与查询投影。
 
 ---
 
 ## 为什么选择知弈？
 
-| 长程群体智能瓶颈 | 常见结果 | 知弈的工程机制 |
-|:---|:---|:---|
-| 注意力稀释与记忆坍缩 | 目标漂移、中间结论丢失、恢复后上下文断裂 | 独立 Memory / Evidence Store、Checkpoint CAS、Evidence Memory、引用式状态 |
-| 全连接通信与 Token 爆炸 | 无关信息广播、噪声级联、成本失控 | Communication Broker、稀疏拓扑、字段白名单、熵预算、ContextPack |
-| 静态流水线不能应对变化 | 需求变化或节点失败后只能整链重跑 | GraphPatch、review barrier、局部恢复、Recovery Recipe、alternate rebind |
-| 多模型和异构能力不可治理 | 模型漂移、版本不兼容、故障切换失控 | AgentProfile binding、版本协商、健康刷新、failover、key rotation、runtime guards |
-| 只交付最终文本 | 无法解释、复核或追责 | Trace、Provenance、Checkpoint、Review、`outputRef` 解引用 |
+现有技术范式面临三重结构性瓶颈：
 
-知弈不是“更多 Agent + 更长 Prompt”的组合，而是一套让群体智能长期运行仍能保持边界、证据和恢复能力的统一运行时。
+| 瓶颈                           | 表现                                     | 知弈的解法                                                   |
+| :----------------------------- | :--------------------------------------- | :----------------------------------------------------------- |
+| **注意力稀释与记忆坍缩** | 单体智能体在超长上下文膨胀中遗忘关键信息 | 六类独立 Store + Checkpoint CAS + 引用式输出                 |
+| **Token 冗余爆炸**       | 全连接广播式通信导致决策噪声级联放大     | Communication Broker：字段白名单 + 熵预算 + 最小 ContextPack |
+| **缺乏动态路由与容错**   | 静态流水线面对异常只能从头重跑           | ACG 动态拓扑 + GraphPatch + 局部恢复与恢复配方               |
 
----
-
-## 赛题能力对齐
-
-### 答题要求
-
-| 比赛方案要求 | 当前实现 | 状态 |
-|:---|:---|:---:|
-| 超长程上下文连续性与记忆保持 | 六类独立 Store、Checkpoint CAS、Evidence Memory、引用式输出、restart recovery | ✅ 已实现并有测试 |
-| 动态异构拓扑与低熵通信 | ACG、conditional routing、parallel superstep、Communication Broker、字段级投递、Provenance | ✅ 已实现并有测试 |
-| 动态异常与需求变更 | GraphPatch、review barrier、contract repair、Recovery Recipe、orphan reference ownership | ✅ 已实现并有测试 |
-| 多模型兼容与角色扩展 | AgentProfile binding、模型 failover、版本协商、健康刷新、Pack 注册 | ✅ 已实现并有测试 |
-| 端-边-云资源自适应调度 | ResourceProfile 分层画像、资源注册、资源级 HMAC 签名观测、顺序校验、约束过滤、租约、快照竞态保护、执行 Adapter、边缘故障后云端切换 | 🚧 模型位置选择与受保护的资源接口已实现；真实多设备部署、生产密钥轮换、端到端故障演示和模型层切分待验收 |
-| 典型产业场景验证 | Legal 黄金纵切；Programmer、Education、Writer、General/Native Packs | 🚧 法律链路完整，第二个高完成度跨领域长任务仍需比赛级演示 |
-| 决策过程与推理轨迹展示 | Milan Workbench、Graph、Trace、Provenance、Checkpoint、Review、Output | ✅ 已完成 |
-
-### 评分标准映射
-
-比赛初审与终审采用同一标准，分别占最终成绩的 40% 和 60%。项目按四项评分维度组织后续验收：
-
-| 评分维度 | 分值 | 当前证据 | 比赛前重点 |
-|:---|---:|:---|:---|
-| 作品完整性 | 40 | 感知-规划-执行-反馈闭环；单一 Runtime；Legal 黄金纵切；多领域 Pack | 补齐 2 个以上高完成度跨领域长任务，形成数千步稳定演示 |
-| 应用创新性 | 25 | Milan 可视化工作台；法律、编程、教育、写作等领域扩展边界 | 量化真实业务节省、用户学习成本和社会价值 |
-| 技术创新性 | 20 | ACG、低熵 Broker、GraphPatch、Evidence Memory、恢复与治理 | 给出核心算法伪代码、复杂性分析和对照实验 |
-| 系统性能与效率 | 15 | guarded runtime、failover、并行 superstep、结构化通信 | 建立成功率、Token、耗时、兼容性和异常恢复基准 |
+<p align="center">
+  <strong>知弈的定位不是 LLM、RAG、多 Agent 等技术的简单叠加，而是通过统一运行时内核对各类能力进行封装、规划和调度。</strong>
+</p>
 
 ---
 
 ## 核心架构
 
-```mermaid
-flowchart TB
-    User[用户高层意图] --> Milan[Milan Vue 3 工作台]
-    Milan --> Gateway[Spring Security Gateway<br>/api/agentos/v2]
-    Gateway --> API[FastAPI Application<br>/ai/agentos/v2]
-    API --> Composition[Application Composition Root]
-    Composition --> Runtime[唯一 WorkflowRuntime]
+<p align="center">
+  <img src="docs/架构设计/架构图/知弈AgentOS_ACG总体架构.png" alt="知弈 AgentOS 六层总体架构" width="100%" />
+</p>
 
-    Runtime --> Planner[Planner<br>意图 / 模板 / 动态组网]
-    Runtime --> Graph[ACG Execution Graph<br>条件路由 / 并行 superstep]
-    Runtime --> Broker[Communication Broker<br>字段白名单 / 熵预算]
-    Runtime --> Recovery[Recovery<br>Checkpoint / GraphPatch / Recipe]
-    Runtime --> Models[Model Runtime<br>binding / failover / guards]
+<p align="center">
+  <sub>六层能力视图：目标层 → 认知规划 → 群体组织 → 执行引擎 → 自愈恢复 → 基础设施；右侧为交付物与全链路可追溯能力</sub>
+</p>
 
-    Runtime --> Stores[(Workflow / Checkpoint / Value<br>Memory / Provenance / Decision)]
-    Runtime --> Packs[Legal / Programmer / Education<br>Writer / General-Native Packs]
-    Runtime --> Audit[Trace / Provenance / Review / OutputRef]
-```
+## 核心特性
 
-### 一条真实请求链
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <h4>Agentic Computation Graph</h4>
+      <p>将复杂任务编译为有类型计算图。6 种节点类型（Step、Agent、Skill、Memory、Evidence、Control）和 6 种边类型（DEPENDENCY、COMMUNICATION、CONTROL_FLOW、READ/WRITE、SUPPORT、EXECUTION），让调度、通信、记忆和治理各司其职。</p>
+    </td>
+    <td width="50%" align="center">
+      <h4>规划提交与图修订 (S01–S03)</h4>
+      <p>规划不再直接改图：Planner 产出候选，PlanningCommit 负责持久化接受，GraphRevision 负责版本化修订，ActivationAuthority 负责唯一激活，CheckpointIdentity 负责恢复时的身份交接。</p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <h4>字段级低熵通信</h4>
+      <p>告别全连接广播。下游节点只声明自己需要的字段，Communication Broker 按字段白名单与熵预算投递最小 <code>ContextPack</code>，并同步记录生产者、消费者、字段、校验和与证据引用。</p>
+    </td>
+    <td align="center">
+      <h4>引用式状态与六类 Store</h4>
+      <p>Workflow、Checkpoint、Execution Value、Memory、Provenance、Decision 分库存储。Run DTO 只返回摘要与引用，正文通过 <code>outputRef</code> 解引用，长程状态不会被模型原文撑爆。</p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <h4>自愈与断点恢复</h4>
+      <p>故障或需求变化 → guarded runtime 分类与审计 → Checkpoint CAS → 恢复配方 / 契约修复 / 备用绑定 → 必要时 GraphPatch，保持同一 <code>run_id</code> 与引用归属继续执行。</p>
+    </td>
+    <td align="center">
+      <h4>模型运行时治理</h4>
+      <p>模型调用在冻结的 execution binding 下执行：能力与版本约束、异步健康刷新、主备 failover、key rotation、统一超时重试；<code>commitId</code> 在重试中保持不变并作为外部幂等键。</p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <h4>端-边-云资源调度</h4>
+      <p>ResourceProfile 分层画像、远程资源注册、资源级 HMAC 签名观测、观测序号校验、约束过滤、租约与快照版本确认、远程执行 Adapter，以及边缘失败后的云端重绑定。</p>
+    </td>
+    <td align="center">
+      <h4>可视化与可审计</h4>
+      <p>Milan 工作台提供 Run history、Graph、Trace、Provenance、Checkpoint、Review 与 Output 视图；高风险节点可进入 <code>WAITING_REVIEW</code>，审核后从原运行恢复，而不是回到任意历史检查点。</p>
+    </td>
+  </tr>
+</table>
 
-```text
-Milan Frontend
-  -> Spring Security /api/agentos/v2
-  -> Python FastAPI /ai/agentos/v2
-  -> Application Coordinator
-  -> WKN WorkflowRuntime
-  -> ACGNodeRunner / Communication Broker / Stores
-```
+<p align="center">
+  <img src="docs/架构设计/架构图/知弈AgentOS-ACG架构图.png" alt="ACG 动态群体智能引擎架构" width="100%" />
+</p>
 
-生产代码只有一个 `WorkflowRuntime` 和一个执行真源，不包含 C4 `RuntimeGraph`、旧 `ACGExecutor`、第二套 Executor 或旧 `/core` AgentOS API。
-
----
-
-## 核心能力
-
-### 1. ACG 动态异构拓扑
-
-- `DEPENDENCY` 边决定就绪集与并行执行；
-- `COMMUNICATION` 边声明允许的数据通道；
-- `CONTROL_FLOW` 表达条件、分支、汇聚和 Review；
-- `READ` / `WRITE` / `SUPPORT` 连接记忆与证据；
-- `GraphPatch` 在安全 review barrier 上进行版本化、不可变拓扑变更。
-
-### 2. 低熵通信
-
-Agent 不直接相互广播自然语言全文。Communication Broker 依据拓扑、字段白名单、作用域与熵预算向下游投递最小 `ContextPack`，Provenance 同步记录生产者、消费者、字段、校验和及证据引用。
-
-### 3. 长程记忆与引用式状态
-
-Workflow、Checkpoint、Execution Value、Evidence Memory、Provenance、Decision 分库存储。Run DTO 只返回运行摘要和引用，正文通过 `outputRef` 解引用，避免把 ContextPack、模型内部状态或工具原文重新塞回长程状态。
-
-### 4. 自主恢复
-
-```text
-故障或需求变化
-  -> guarded runtime 分类与审计
-  -> Checkpoint CAS
-  -> Recovery Recipe / contract repair / alternate rebind
-  -> 必要时应用 GraphPatch
-  -> 保持同一 run_id 和 reference ownership 继续执行
-```
-
-### 5. 多模型与外部能力治理
-
-模型调用在冻结的 execution binding 下执行，支持能力与版本约束、异步健康刷新、主备 failover、key rotation、超时与重试。`commitId` 在重试和 failover 中保持稳定，并作为外部幂等键透传。
-
-### 6. Milan 可视化闭环
-
-工作台提供 Run history、Graph、Trace、Provenance、Checkpoint、Review 和 Output 视图。高风险节点可进入 `WAITING_REVIEW`，审核后从原运行恢复，而不是任意恢复历史 checkpoint。
+<p align="center">
+  <sub>ACG 引擎全景：端到端闭环、三层解耦、规划与编译、计算图模型、就绪集并行执行、低熵通信与自愈闭环</sub>
+</p>
 
 ---
 
-## 产业验证场景
+## 比赛背景
 
-### Legal：合同审查黄金纵切
+本项目参加**"挑战杯"全国大学生课外学术科技作品竞赛"揭榜挂帅"擂台赛**（题目编号：**XH-202631**），由荣耀终端股份有限公司发榜。
 
-```text
-合同输入
-  -> 条款解析与分类
-  -> 风险识别
-  -> 证据与法规匹配
-  -> 修改建议
-  -> 人工复核
-  -> 引用式审查报告
-```
+题目要求构建一种"具备全局动态任务编排以及自适应网络拓扑流转机制的智能体生态网络"，重点攻克超长周期下的上下文连续性保持、神经符号协同推理与低熵通信难题。
 
-该场景验证动态图执行、结构化通信、证据血缘、Review、Checkpoint 和恢复的组合行为。法律输出仅作为辅助材料，不构成正式法律意见。
+### 赛题交付物矩阵
 
-### 多领域扩展
+| 赛题要求                     | 对应机制                                                                   | 状态 |
+| :--------------------------- | :------------------------------------------------------------------------- | :--: |
+| 超长程上下文连续性与记忆保持 | 六类 Store + Checkpoint CAS + Evidence Memory + 引用式输出                 |  ✅  |
+| 动态异构拓扑与低熵通信       | ACG + conditional routing + 并行超步 + Communication Broker + Provenance   |  ✅  |
+| 端-边-云异构资源自适应调度   | ResourceProfile + 资源注册 + 签名观测 + 租约 + 远程 Adapter + 云端重绑定   |  🚧  |
+| 典型产业场景可运行系统验证   | Legal 合同审查黄金纵切；Programmer / Education / Writer / Industrial Packs |  🚧  |
+| 异常/节点失效无人工干预恢复  | Checkpoint + 恢复配方 + 契约修复 + GraphPatch + review barrier             |  ✅  |
+| 中间决策过程与推理轨迹展示   | Trace + Provenance + Checkpoint + Review + Output                          |  ✅  |
 
-Programmer、Education、Writer、General/Native 已按同一 WKN Pack 边界注册，证明内核与领域逻辑解耦。比赛评分要求 2 个以上高完成度跨领域长任务；因此第二条比赛级黄金纵切仍是明确交付门禁，不能仅以“Pack 已存在”替代真实演示。
+> 端-边-云目前完成的是**位置选择**基础链路；神经网络层级切分尚未实现，真实多设备部署与故障演示仍待验收。Legal 链路已完整，第二个高完成度跨领域长任务仍在推进。
+>
+> 完整方案文档：[比赛方案](docs/赛题与项目概述/比赛方案.pdf)
 
 ---
 
 ## 快速开始
 
-### Windows 11 + Docker Desktop
+### 前置条件
 
-Docker Desktop 使用 Linux containers。敏感配置必须保存在本地 `.secrets/`，不得提交到 Git。
+- **Windows 11** + Docker Desktop (Linux containers)
+- 或 **Linux / macOS** + Docker
+- Python 3.14（本地回归） · JDK 17（后端构建） · Node.js 18+（前端开发）
+- Git
+
+### Windows 一键部署
 
 ```powershell
+# 1. 配置环境
 Copy-Item .config/env/windows.example .env.windows
 py -3 -m ops.scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 
-# 至少在 Secret 目录配置一个真实模型 Key 后再发起模型调用
+# 2. 配置模型 API Key（至少配置一个）
+# 将 DeepSeek API Key 写入 .secrets/kinlin-win-dev-001/deepseek_api_key
+# 或将 DashScope API Key 写入 .secrets/kinlin-win-dev-001/dashscope_api_key
+
+# 3. 启动全栈服务
 .\ops\scripts\infra\windows\up.ps1 -Build
 ```
 
-Windows 启动脚本会自动使用 `.env.windows`。如果手动执行 Compose，必须显式传入环境文件，例如：
+打开 **http://127.0.0.1:8080**，首次使用自行注册账号。
+
+常用运维命令：
 
 ```powershell
-docker compose --env-file .env.windows -f compose.yaml -f .config/compose/windows.yaml up -d --build --wait
+.\ops\scripts\infra\windows\status.ps1            # 服务健康状态
+.\ops\scripts\infra\windows\logs.ps1              # 聚合日志
+.\ops\scripts\infra\windows\preflight.ps1 -Full   # 发布前全量预检
+.\ops\scripts\infra\windows\down.ps1              # 停止（保留数据卷）
 ```
 
-不要直接执行不带 `--env-file` 的 `docker compose up`，否则会缺少 `KINLIN_DEPLOYMENT_ID` 和 `KINLIN_SECRETS_DIR`。
-
-默认入口：<http://127.0.0.1:8080>
-
-```powershell
-.\ops\scripts\infra\windows\status.ps1
-.\ops\scripts\infra\windows\logs.ps1
-.\ops\scripts\infra\windows\up.ps1 -DebugPorts
-.\ops\scripts\infra\windows\restart-service.ps1 -Service backend
-.\ops\scripts\infra\windows\preflight.ps1 -Full
-.\ops\scripts\infra\windows\down.ps1
-```
-
-> `remove-data-volumes.ps1` 会删除持久化数据，不属于日常停止流程。除非已完成备份且明确需要重置环境，否则不要运行。
-
-### 前端热更新
+### 前端热更新开发
 
 ```powershell
 .\ops\scripts\infra\windows\up.ps1 -DebugPorts
@@ -226,7 +196,7 @@ $env:DEV_BACKEND_PROXY_TARGET = "http://127.0.0.1:18080"
 npm run dev
 ```
 
-前端开发服务默认位于 <http://localhost:3000>。
+前端开发服务位于 **http://localhost:3000**，通过代理调用容器中的完整后端能力。
 
 ### Linux / macOS
 
@@ -240,33 +210,43 @@ export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
 
 ---
 
-## 验证基线
-
-2026-08-19 稳定候选回归结果：
-
-| 测试层 | 结果 |
-|:---|---:|
-| AgentOS Kernel | **187 passed** |
-| Python Application / Packs / AgentOS v2 API | **102 passed, 1 skipped** |
-| Spring Gateway | **132 passed** |
-| Milan Frontend | **24 files, 115 tests passed** |
-| Frontend production build | **成功，3134 modules** |
-| infra / release | **49 passed** |
-| Docker compose | Windows dev/prod 配置验证通过 |
-| 五服务健康检查 | frontend/backend/ai-service/postgres/redis 全部 healthy |
-| authenticated E2E | 未认证 401；认证后 `frontend -> Spring -> Python` 返回 200 |
-
-运行 Python 回归：
+## 测试
 
 ```powershell
 Set-Location apps/agentOS
 py -3.14 -m pytest tests -q
 
-Set-Location ..\agent
+Set-Location ../agent
 py -3.14 -m pytest tests -q
+
+Set-Location ../backend
+mvn -B -ntp test
+
+Set-Location ../frontend
+npm ci
+npm run test
 ```
 
-完整三线收束证据见 [正式集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md)。
+### 当前套件规模
+
+| 测试集                      |                         规模 | 覆盖范围                                                              |
+| :-------------------------- | ---------------------------: | :-------------------------------------------------------------------- |
+| AgentOS Kernel              |         **1730 cases** | ACG 节点/边模型、图执行、通信、记忆、恢复、规划提交、图修订、资源调度 |
+| Agent Runtime / API / Packs |      见 `apps/agent/tests` | 规划器、通信器、执行器、领域 Packs、SSE 流式事件                      |
+| Spring Gateway              | 见 `apps/backend/src/test` | 鉴权、安全契约、可观测性契约、架构守卫                                |
+| Milan Frontend              |     见 `apps/frontend/src` | 视图、组件、状态与交互回归                                            |
+
+### 最近一次完整收束基线（2026-08-19）
+
+| 测试集                                      |                                                            结果 |
+| :------------------------------------------ | --------------------------------------------------------------: |
+| AgentOS Kernel                              |                                            **187 passed** |
+| Python Application / Packs / AgentOS v2 API |                                 **102 passed**, 1 skipped |
+| Spring Gateway                              |                                            **132 passed** |
+| Milan Frontend                              |                            **24 files, 115 tests passed** |
+| 五服务健康检查                              | frontend / backend / ai-service / postgres / redis 全部 healthy |
+
+> 内核套件已从 187 项增长到 1730 项。代码变更后必须重新执行，历史数字不代表当前结果。
 
 ---
 
@@ -275,64 +255,64 @@ py -3.14 -m pytest tests -q
 ```text
 知弈 AgentOS
 ├── apps/
-│   ├── agent/                   # FastAPI 应用、领域 Agent Packs
-│   ├── agentOS/                 # WKN Runtime、执行内核与合同
-│   ├── backend/                 # Spring Security 与 AgentOS v2 公共网关
-│   ├── frontend/                # Milan Vue 3 产品外壳与 AgentOS 工作台
-│   └── desktop/                 # Tauri 桌面壳
-├── ops/
-│   ├── docker/                  # 镜像、入口与备份/恢复实现
-│   ├── deploy/                  # 离线部署包与部署说明
-│   └── scripts/                 # 部署、预检、诊断、发布脚本
-├── .config/compose/             # 开发、Windows、离线 Compose 覆盖
-├── .config/env/                 # 非生产环境模板
-├── compose.yaml                 # 唯一根目录生产 Compose
-├── .env.example                 # 唯一根目录生产环境模板
-└── docs/                        # 赛题、架构、演示与交付文档
+│   ├── agentOS/                # WKN 内核 — 唯一执行真源
+│   │   └── src/
+│   │       ├── runtime/        #   ExecutionRuntime / 身份生命周期
+│   │       ├── components/     #   Planner / Executor / Communicator / Recovery
+│   │       ├── storage/        #   六类 Store 与查询投影
+│   │       └── support/        #   Packs / Skills / ACG 支撑结构
+│   ├── agent/                  # FastAPI 运行时
+│   │   ├── app/                #   Composition Root · API · 适配器
+│   │   └── packs/              #   领域 Agent Pack (法律/教育/编程/写作/工业)
+│   ├── backend/                # Spring Boot 业务与安全网关
+│   ├── frontend/               # Vue 3 · Milan 工作台 + ACG 可视化
+│   └── desktop/                # Tauri 2 桌面壳
+├── contracts/                  # AgentOS v2 接口契约
+├── benchmark/                  # 基准与冒烟脚本
+├── tools/                      # 端-边-云演示 / 终端调试界面
+├── ops/                        # Docker · 离线部署 · 预检与发布脚本
+├── .config/                    # Compose 覆盖与环境模板
+├── compose.yaml                # 唯一根目录 Compose 基线
+└── docs/                       # 架构、开发记录与交付材料
 ```
-
----
-
-## 比赛交付路线
-
-比赛方案要求在 2026 年 9 月 15 日前向发榜单位提交审核通过的报名表和全部作品材料。README 以技术事实为入口，正式提交还需要持续维护以下证据：
-
-- [x] 一个 WKN 内核、一个 Runtime、一个 AgentOS v2 API；
-- [x] 动态拓扑、低熵通信、记忆、恢复、Trace/Provenance 的自动化回归；
-- [x] Milan 可视化工作台和可部署五服务环境；
-- [x] Legal 黄金纵切；
-- [ ] 第二个高完成度跨领域长任务黄金纵切；
-- [ ] 数千步长程稳定性、Token/耗时、异常恢复成功率基准；
-- [ ] 隔离环境的真实端-边-云多设备调度演示；
-- [ ] 模型层切分演示（当前只支持把完整模型/Agent 放在端、边或云的一处执行）；
-- [ ] 浏览器级 `WAITING_REVIEW -> approve -> resume` 与真实模型/工具验收；
-- [ ] 核心算法伪代码、复杂性分析、对照实验和演示视频统一归档；
-- [ ] 最终报名表、学校盖章与比赛提交包校验。
-
----
-
-## 重要声明
-
-- 当前项目是比赛稳定候选和工程原型，不等同于生产级商业系统。
-- 法律场景输出是辅助材料，不构成正式法律意见。
-- 六类运行 Store 当前使用独立 SQLite 文件；这是单实例部署选择，不代表已经完成生产级横向扩展。
-- 当前已完成端、边、云资源的“位置选择”基础链路：资源画像、远程资源注册、资源级 HMAC 签名观测、带观测序号校验的远程观测、约束调度、租约后快照版本确认、远程执行 Adapter，以及边缘失败后的云端重绑定。仍需在隔离环境中接入真实多设备、生产级密钥轮换和故障演示。
-- 远程资源观测仍需同时通过服务级内部 Token 和资源级签名；注册响应中的资源 secret 只显示一次，服务端使用 `AGENTOS_RESOURCE_CREDENTIAL_KEY` 加密保存，并另存摘要用于校验。签名请求必须包含资源凭据 ID、时间戳、nonce 和请求体摘要，过期或重复 nonce 会被拒绝；生产环境缺少主密钥时拒绝启动。
-- 当前没有实现神经网络层级切分：一次模型调用仍由一个完整执行节点在单个资源上完成，不能把模型的不同层拆到端、边、云之间协同执行。
-- README 中的测试数字来自 2026-08-19 集成回归；代码变化后必须重新执行测试，不应把历史数字当作当前证明。
 
 ---
 
 ## 文档
 
-- [比赛方案 PDF](docs/01-赛题与项目概述/比赛方案.pdf)
-- [文档总索引](docs/README.md)
-- [项目设计方案](docs/01-赛题与项目概述/01-项目设计方案.md)
-- [技术选型与技术路线](docs/01-赛题与项目概述/02-技术选型与技术路线报告.md)
-- [AgentOS Core 代码层次架构](docs/02-架构设计/02-知弈AgentOS-Core代码层次架构图.md)
-- [ACG 动态群体智能引擎设计](docs/02-架构设计/05-ACG动态群体智能引擎技术设计.md)
-- [律师 AgentOS 技术设计](docs/02-架构设计/06-知弈律师AgentOS技术设计文档.md)
-- [ACG 可视化面板测试样例](docs/04-演示与交付/ACG可视化面板功能测试样例集.md)
+| 文档                                                                                                    | 说明                               |
+| :------------------------------------------------------------------------------------------------------ | :--------------------------------- |
+| [文档总索引](docs/README.md)                                                                             | 所有文档的导航入口                 |
+| [当前架构图](docs/架构设计/kinlin-agentos-current-architecture.md)                                       | 请求链、执行内核、持久化与查询投影 |
+| [核心代码层次](docs/架构设计/02-知弈AgentOS-Core代码层次架构图.md)                                       | 代码架构与模块边界                 |
+| [ACG 引擎技术设计](docs/架构设计/05-ACG动态群体智能引擎技术设计.md)                                      | ACG 引擎深度设计                   |
+| [律师 AgentOS 设计](docs/架构设计/06-知弈律师AgentOS技术设计文档.md)                                     | 合同审查验证场景                   |
+| [Docker 基础设施 RFC](docs/架构设计/07-Docker基础设施重构RFC-v1.1.md)                                    | 单机部署底座的冻结设计基线         |
+| [Prompt Runtime 改造记录](<docs/开发记录/Prompt%20Runtime%20提示词权威与审计改造实施记录-2026-09-18.md>) | 提示词权威、信任封装与审计身份     |
+| [WKN-C4-Milan 稳定集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md) | 三线收束证据                       |
+| [部署说明](ops/deploy/DEPLOYMENT.md)                                                                     | 离线安装、升级、回滚与恢复         |
+| [Secret 初始化](ops/deploy/secrets/README.md)                                                            | 外置 Secret 格式与轮换边界         |
+
+---
+
+## 路线图
+
+|        状态        | 能力域                                                                                                                                                                                                                                                             |
+| :-----------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **已实现** | 单一 `ExecutionRuntime` 与执行真源、ACG 动态拓扑与并行超步、低熵通信与 Provenance、六类 Store 与 `outputRef` 引用式状态、Checkpoint/恢复/契约修复/GraphPatch、S01–S03 规划提交与图修订协议、Milan 可视化工作台、Legal 黄金纵切、Windows Docker 开发与部署收口 |
+| 🚧 **进行中** | 第二个高完成度跨领域长任务、数千步长程稳定性与 Token/耗时基准、浏览器级 `WAITING_REVIEW → approve → resume` 与真实模型/工具验收                                                                                                                                |
+| 📋 **规划中** | 真实端-边-云多设备调度演示、模型层切分、生产级密钥轮换与资源凭据生命周期、核心算法伪代码与对照实验归档、演示视频与提交包校验                                                                                                                                       |
+
+---
+
+## 重要声明
+
+- 知弈 AgentOS 当前是**比赛稳定候选与工程原型**，不等同于生产级商业系统。合同审查输出是辅助材料，不构成正式法律意见。
+- 六类运行 Store 当前使用独立 SQLite 文件，这是单实例部署选择，不代表已完成生产级横向扩展。
+- 端-边-云目前完成的是**位置选择**基础链路：画像、注册、签名观测、约束调度、租约、远程 Adapter 与云端重绑定。真实多设备、生产级密钥轮换与故障演示仍需在隔离环境验收。
+- **没有实现神经网络层级切分**：一次模型调用仍由一个完整执行节点在单个资源上完成。
+- 远程资源观测必须同时通过服务级内部 Token 与资源级签名；生产环境缺少主密钥时拒绝启动。
+- 测试数字中，1730 为当前内核套件规模，187 / 102 / 132 / 115 为 2026-08-19 历史基线，代码变化后必须重新执行。
 
 ---
 
@@ -340,6 +320,13 @@ py -3.14 -m pytest tests -q
 
 MIT © 知弈 Team
 
+---
+
 <p align="center">
-  <sub>一个内核 · 一个 Runtime · 一个 AgentOS v2 API · 一套 Milan 产品外壳 · 一条可审计执行链</sub>
+  <sub><em>天地之功不可仓卒，艰难之业当累日也。</em><br>
+  下一阶段需要在更多场景、更大规模的测试中，诚实地验证这些设计假设哪些能站住，哪些需要重来。我们期待这个过程。</sub>
+</p>
+
+<p align="center">
+  <sub>Made by 知弈 Team · 2026</sub>
 </p>
