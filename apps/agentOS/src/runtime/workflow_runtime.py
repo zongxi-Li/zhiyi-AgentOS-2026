@@ -457,6 +457,7 @@ class ExecutionRuntime(CollaboratorAccess):
         self.planning_commit_authority = None
         self.graph_materialization_authority = None
         self.graph_activation_authority = None
+        self.graph_handoff_authority = None
         if planning_commit_store is not None:
             self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
@@ -1171,6 +1172,11 @@ class ExecutionRuntime(CollaboratorAccess):
         """Explicit server assembly only; never initialize or migrate a database."""
         from runtime.graph_activation import GraphActivationAuthority
         self.graph_activation_authority = GraphActivationAuthority(self, store)
+
+    def enable_graph_handoff(self, store, staged_checkpoint_store) -> None:
+        """Attach explicitly upgraded handoff stores; never issue a permit."""
+        from runtime.graph_handoff import GraphHandoffAuthority
+        self.graph_handoff_authority = GraphHandoffAuthority(self, store, staged_checkpoint_store)
 
     def prepare_graph_activation(self, materialization_id, *, idempotency_key):
         """Persist one verified activation preparation; never switch the graph."""
