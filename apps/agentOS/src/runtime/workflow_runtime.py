@@ -1000,6 +1000,9 @@ class ExecutionRuntime(CollaboratorAccess):
                 return run
             if run.status == WorkflowStatus.WAITING_REVIEW:
                 return run
+            if (run.execution_state.get("executionPermitId")
+                    and self.execution_permit_authority is not None):
+                run = self.reconcile_execution_checkpoint(run_id)
             if run.execution_state.get("planningDeferred"):
                 self._cancellation_event(run.run_id)
                 run = self._set_run_lifecycle(
@@ -1158,6 +1161,10 @@ class ExecutionRuntime(CollaboratorAccess):
                         if self.execution_permit_authority is None:
                             raise ValueError("activated but paused; no execution permit authority is attached")
                         self.execution_permit_authority.assert_dispatchable(latest)
+                        # Covers every execution entry, including legacy
+                        # checkpoint resume and Review, before claiming a slot.
+                        from runtime.permit_recovery import assert_settled_operations
+                        assert_settled_operations(self, latest)
                         supplied_permit = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
                         current_permit = (latest.execution_state.get("graphActivation") or {}).get("executionPermit")
                         if supplied_permit != current_permit:
@@ -1200,6 +1207,13 @@ class ExecutionRuntime(CollaboratorAccess):
         """Attach explicitly upgraded handoff stores; never issue a permit."""
         from runtime.graph_handoff import GraphHandoffAuthority
         self.graph_handoff_authority = GraphHandoffAuthority(self, store, staged_checkpoint_store)
+
+    def reconcile_execution_checkpoint(self, run_id):
+        """Acknowledge only a proven settled checkpoint; never execute here."""
+        if self.execution_permit_authority is None:
+            raise ValueError("execution Permit authority is required for reconciliation")
+        from runtime.permit_recovery import reconcile_checkpoint
+        return reconcile_checkpoint(self.execution_permit_authority, run_id)
 
     def enable_execution_permit(self, store) -> None:
         """Attach an explicitly upgraded permit ledger; no DDL or auto-issuance."""
@@ -2291,6 +2305,10 @@ class ExecutionRuntime(CollaboratorAccess):
             async with self.run_lock_manager.lock_for(decision.run_id):
                 outcome = self.review_service.apply_acg(decision)
             if outcome.resume_state is None:
+                # Rejection is a durable lifecycle boundary too. Publish it
+                # before a later explicit in-place retry observes Identity.
+                if initial_run.execution_state.get("executionPermitId"):
+                    self._flush_identity_outbox()
                 return outcome.run
             return await self._execute_acg(
                 outcome.run,

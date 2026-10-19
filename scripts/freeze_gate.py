@@ -33,6 +33,8 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/adapters/agent_invocation.py", ("tests/components/planner/test_permit_recovery.py",)),
+    ("src/runtime/permit_recovery.py", ("tests/components/planner/test_permit_recovery.py",)),
     ("src/runtime/graph_handoff.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/binding.py", ("tests/components/planner/test_execution_permit.py",)),
@@ -42,7 +44,7 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/support/stores/graph_activation_store.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/workflow_runtime.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/acg_execution.py", ("tests/components/planner/test_execution_permit.py",)),
-    ("src/runtime/runtime_recovery.py", ("tests/runtime/test_scheduler_handoff.py",)),
+    ("src/runtime/runtime_recovery.py", ("tests/components/planner/test_permit_recovery.py",)),
     ("src/runtime/state_persistence.py", ("tests/runtime/test_checkpoint_promotion.py",)),
     ("src/components/recovery/checkpoint.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/components/executor/graph.py", ("tests/components/planner/test_execution_permit.py",)),

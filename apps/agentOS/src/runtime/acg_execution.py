@@ -542,6 +542,15 @@ class ACGExecutionService(CollaboratorAccess):
         """Decorate NodeRunner after Executor readiness with binding and lease coordination."""
         raw_requirements = run.execution_state.get("bindingRequirements")
         if "graphActivation" in run.execution_state:
+            def invocation_guard(step_id, state):
+                authority = self.execution_permit_authority
+                if authority is None:
+                    raise ExecutionRunCancelled("execution permit authority unavailable before invocation")
+                try:
+                    authority.assert_invocation(run, state, step_id, runner.attempt_ids.get(step_id))
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise ExecutionRunCancelled("execution permit changed before Adapter invocation") from exc
+            runner.invocation_guard = invocation_guard
             # The activated package, not a mutable Run dictionary, is the
             # source of execution eligibility. Require the persisted projection
             # to match it exactly so ordinary Run writes cannot lower policy.

@@ -361,12 +361,16 @@ class ExecutionPermitAuthority:
             if owns:
                 context.__exit__(None, None, None)
 
-    def _assert_dispatch_authority(self, record, *, check_run_fingerprint=False):
+    def _assert_dispatch_authority(self, record, *, check_run_fingerprint=False, check_checkpoint=True):
         rt = self.runtime
         permit = self.store.get_permit(record.permit_id)
         if permit is None or permit.status != "ISSUED" or permit != record:
             raise ExecutionPermitError(Code.AUTHORITY_DENIED, "current execution permit is not issued")
         run = self._workflow_run(record.run_id)
+        with self.store.connection() as conn:
+            head = validate_activation_run(conn, run)
+        if head is None or head.activation_id != record.activation_id:
+            raise ExecutionPermitError(Code.STALE_GRAPH, "formal Activation Head changed before dispatch")
         activation_projection = (run.execution_state.get("graphActivation") or {})
         if (activation_projection.get("executionPermit") != execution_permit_projection(record)
                 or run.execution_state.get("executionGeneration") != record.attempt_generation
@@ -400,6 +404,40 @@ class ExecutionPermitAuthority:
         handoff = self.store.get_handoff(record.handoff_id)
         if handoff is None or not self._identity_matches_candidate(record, handoff):
             raise ExecutionPermitError(Code.STALE_GRAPH, "permitted Identity projection changed")
+        if check_checkpoint:
+            self._assert_recovery_head(record, handoff, run)
+
+    def _assert_recovery_head(self, record, handoff, run):
+        """Require the acknowledged current head, allowing later native checkpoints.
+
+        The immutable promoted body anchors the generation; subsequent native
+        bodies use the existing content-derived checkpoint identity. An external
+        write not yet acknowledged by Workflow is a recovery barrier, not a
+        license to fall back to the permit's initial checkpoint.
+        """
+        store = self.runtime.checkpoint_store
+        initial = store.load(run_id=record.run_id, checkpoint_id=record.promoted_checkpoint_id)
+        if (initial != self._promoted_checkpoint_payload(record, handoff)
+                or store.version(run_id=record.run_id, checkpoint_id=record.promoted_checkpoint_id)
+                != record.promoted_checkpoint_version):
+            raise ExecutionPermitError(Code.STALE_GRAPH, "promoted checkpoint is missing or corrupt")
+        checkpoint_id, payload = store.load_latest(run_id=record.run_id)
+        version = store.version(run_id=record.run_id, checkpoint_id=checkpoint_id)
+        if (checkpoint_id != run.execution_state.get("checkpointId")
+                or version < record.promoted_checkpoint_version
+                or payload.get("checkpointId") != checkpoint_id
+                or payload.get("runId") != record.run_id
+                or payload.get("graphId") != record.graph_id
+                or payload.get("graphVersion") != record.graph_version
+                or payload.get("executionPermitId") != record.permit_id
+                or payload.get("executionGeneration") != record.attempt_generation):
+            raise ExecutionPermitError(Code.STALE_GRAPH, "current checkpoint head is not acknowledged by permitted Run")
+        if checkpoint_id != record.promoted_checkpoint_id:
+            body = dict(payload, checkpointId=None)
+            encoded = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            expected = "acgckpt_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+            if version <= record.promoted_checkpoint_version or expected != checkpoint_id:
+                raise ExecutionPermitError(Code.STALE_GRAPH, "native checkpoint content or version is invalid")
 
     def assert_dispatchable(self, run):
         if "graphActivation" not in run.execution_state:
@@ -411,6 +449,36 @@ class ExecutionPermitAuthority:
         if record is None or record.status != "ISSUED" or projection != execution_permit_projection(record):
             raise ExecutionPermitError(Code.AUTHORITY_DENIED, "execution permit is missing, stale or revoked")
         self._assert_dispatch_authority(record)
+
+    def assert_invocation(self, run, state, step_id, attempt_id):
+        """Bind the live Scheduler selection to durable Identity at invocation."""
+        self.assert_dispatchable(run)
+        current = self._workflow_run(run.run_id)
+        if (state.run_id != current.run_id
+                or state.graph_version != current.execution_state.get("graphVersion")
+                or state.execution_permit_id != current.execution_state.get("executionPermitId")
+                or state.execution_generation != current.execution_state.get("executionGeneration")):
+            raise ExecutionPermitError(Code.STALE_GRAPH, "invocation belongs to a stale execution generation")
+        binding = run.execution_state.get("executionBindings", {}).get(step_id)
+        if (not isinstance(binding, dict)
+                or binding != current.execution_state.get("executionBindings", {}).get(step_id)
+                or binding.get("attemptId") != attempt_id or binding.get("runId") != run.run_id
+                or binding.get("stepId") != step_id):
+            raise ExecutionPermitError(Code.STALE_GRAPH, "Scheduler binding changed before invocation")
+        repos = self.runtime.identity_lifecycle.repositories
+        attempt = repos.attempts.get(attempt_id)
+        identity_binding = repos.execution_bindings.get_for_attempt(attempt_id)
+        from domain.identity_graph.resolver import IdentityResolver
+        identity_run = repos.runs.get(run.run_id)
+        task = IdentityResolver(repos).resolve_semantic_task(
+            blueprint_id=identity_run.blueprint_id, acg_node_id=step_id)
+        executions = repos.step_executions.list_for_attempt(attempt_id)
+        if (attempt is None or attempt.run_id != run.run_id or attempt.task_id != task.task_id
+                or identity_binding is None or identity_binding.acg_node_id != step_id
+                or identity_binding.resource_id != binding.get("resourceId")
+                or not any(item.run_id == run.run_id and item.task_id == task.task_id
+                           and item.status.value == "running" for item in executions)):
+            raise ExecutionPermitError(Code.STALE_GRAPH, "Identity Attempt or resource binding changed before invocation")
 
     def _assert_external_promotions(self, record, handoff, checkpoint_payload):
         if not self._checkpoint_is_promoted(record, checkpoint_payload):

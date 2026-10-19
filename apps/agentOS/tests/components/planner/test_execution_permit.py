@@ -15,15 +15,32 @@ from support.stores.graph_activation_store import validate_activation_run
 from test_graph_handoff import _build_prefix
 
 
+_PERMIT_SEED = pytest.StashKey()
+
+
 @pytest.fixture
-def ready_handoff(tmp_path, monkeypatch):
-    rt, workflow, agent, run_id, activation_id, ledger, staged = _build_prefix(tmp_path, monkeypatch)
-    prepared = rt.prepare_graph_handoff(activation_id, idempotency_key="permit-handoff")
-    assert prepared.status == "STATE_PREPARED", prepared.model_dump()
-    SQLiteExecutionPermitStore.upgrade_schema(workflow.db_path)
-    permits = SQLiteExecutionPermitStore(workflow.db_path)
-    rt.enable_execution_permit(permits)
-    return rt, workflow, agent, run_id, activation_id, ledger, staged, permits, prepared.handoff_id
+def ready_handoff(tmp_path, tmp_path_factory, pytestconfig):
+    from test_permit_recovery import _copy_databases, _open
+    seed = pytestconfig.stash.get(_PERMIT_SEED, None)
+    if seed is None:
+        folder = tmp_path_factory.mktemp("original-permit-seed")
+        with pytest.MonkeyPatch.context() as patch:
+            rt, workflow, agent, run_id, activation_id, _, _ = _build_prefix(folder, patch)
+            prepared = rt.prepare_graph_handoff(activation_id, idempotency_key="permit-handoff")
+            assert prepared.status == "STATE_PREPARED", prepared.model_dump()
+            SQLiteExecutionPermitStore.upgrade_schema(workflow.db_path)
+            definition = rt._workflow_for_run(workflow.get_run(run_id)).model_dump(mode="json", by_alias=True)
+            # Preserve the actual seed Agent invocation history alongside its
+            # real committed databases. No execution facts are synthesized.
+            seed = (folder, definition, run_id, activation_id, prepared.handoff_id, tuple(agent.calls), rt)
+            pytestconfig.stash[_PERMIT_SEED] = seed
+    folder, definition, run_id, activation_id, handoff_id, history, _ = seed
+    _copy_databases(folder, tmp_path)
+    rt, workflow, agent = _open(tmp_path, definition)
+    agent.calls.extend(history)
+    permits = rt.execution_permit_authority.store
+    return (rt, workflow, agent, run_id, activation_id, rt.graph_handoff_authority.store,
+            rt.graph_handoff_authority.staged_store, permits, handoff_id)
 
 
 @pytest.mark.freeze_gate

@@ -38,6 +38,17 @@ class AgentInvocationAdapter:
 
     def __init__(self, *, registry: AgentResolver) -> None:
         self.registry = registry
+        self._not_invoked_errors: dict[int, tuple[BaseException, AgentRunContext]] = {}
+
+    def consume_not_invoked(self, error: BaseException, context: AgentRunContext) -> bool:
+        """Consume evidence minted by this adapter for this exact invocation.
+
+        Exception attributes (including not_invoked) are untrusted. Retaining
+        the exception/context objects prevents stale IDs or a different adapter
+        from presenting a proof for the current invocation.
+        """
+        proof = self._not_invoked_errors.pop(id(error), None)
+        return proof is not None and proof[0] is error and proof[1] is context
 
     async def invoke(self, *, context: AgentRunContext, agent: BaseAgent | None = None) -> AgentOutput:
         """解析当前步骤 Agent 并执行，不可见目标在外部副作用前明确失败。"""
@@ -53,11 +64,16 @@ class AgentInvocationAdapter:
                 agent_id = str(agent.profile.agent_id or agent.profile.agent_name)
                 agent = self.registry.resolve_by_id(agent_id)
         except (AgentNotFound, KeyError) as exc:
-            raise AgentInvocationError(
+            failure = AgentInvocationError(
                 "AGENT_NOT_IN_SCOPE",
                 step.step_id,
                 f"agent {step.agent_name or step.step_id} is not available in run scope",
-            ) from exc
+            )
+            # Only the trusted adapter's resolution branch proves that
+            # Agent.run has not been entered; an arbitrary Agent exception
+            # with the same code is not such evidence.
+            self._not_invoked_errors[id(failure)] = (failure, context)
+            raise failure from exc
         return await agent.run(context)
 
 
