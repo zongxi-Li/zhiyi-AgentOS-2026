@@ -1,12 +1,9 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/wreath-dark.svg">
-    <img src="docs/assets/brand/wreath-light.svg" width="160" alt="知弈 AgentOS 花环标识">
-  </picture>
+  <img src="docs/assets/brand/wreath-light.png" width="160" alt="AgentOS wreath logo">
 </p>
 
 <p align="center">
-  <img src="docs/assets/brand/wordmark.svg" width="560" alt="知弈 AgentOS">
+  <img src="docs/assets/brand/wordmark.png" width="560" alt="Zhiyi AgentOS">
 </p>
 
 <p align="center">
