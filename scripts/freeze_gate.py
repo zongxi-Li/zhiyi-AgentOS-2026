@@ -21,7 +21,9 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTOS = ROOT / "apps" / "agentOS"
-DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "s03-02b1-gate-markers.json"
+# Exact independently accepted C2A-1 raw-byte manifest. Its uncommitted files
+# remain protected; the C2A-2 gate measures changes against that accepted tree.
+DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "s03-02c2a1-accepted.json"
 DEFAULT_BUDGET_SECONDS = 300
 SLOW_EXCLUSION = "not slow_benchmark and not slow_multiprocess and not slow_fault_injection"
 FAST_OR_CRITICAL = (
@@ -33,6 +35,36 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/runtime/initial_graph_compilation.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/contracts/test_compiled_acg.py", "tests/contracts/test_binding_authority.py",
+        "tests/architecture/test_capability_upgrade_gates.py")),
+    ("src/runtime/graph_materialization.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_revision_commit.py::test_completed_prefix_pending_suffix_replacement",
+        "tests/components/planner/test_graph_revision_commit.py::test_checkpoint_identity_and_control_evidence_are_required",
+        "tests/components/planner/test_graph_materialization.py::test_inactive_package_is_complete_read_only_and_restartable",
+        "tests/components/planner/test_graph_materialization.py::test_compile_window_changes_cannot_publish",
+        "tests/components/planner/test_graph_materialization.py::test_atomic_faults_reconcile_original_key")),
+    ("src/contracts/graph_materialization.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_materialization.py::test_corrupted_content_is_rejected")),
+    ("src/runtime/graph_activation.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_activation.py::test_commit_switches_head_and_projection_atomically",
+        "tests/components/planner/test_graph_activation.py::test_stale_sources_are_rejected_before_and_after_preparation",
+        "tests/components/planner/test_graph_activation.py::test_activation_transaction_failure_rolls_back_completely",
+        "tests/components/planner/test_graph_activation.py::test_scheduler_entries_refuse_the_paused_graph")),
+    ("src/support/stores/graph_activation_store.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_activation.py::test_old_thread_snapshot_cannot_regress_the_graph_version")),
+    ("src/contracts/graph_activation.py", ("tests/components/planner/test_initial_graph_materialization.py",)),
+    ("src/runtime/workflow_runtime.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
+    ("src/contracts/initial_planning.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py")),
+    ("src/contracts/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit.py", "tests/components/planner/test_planning_commit_runtime.py")),
+    ("src/components/planner/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit.py", "tests/components/planner/test_planning_commit_runtime.py")),
+    ("src/runtime/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py", "tests/components/planner/test_graph_revision_commit.py")),
+    ("src/runtime/initial_planning_sources.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py")),
+    ("apps/agent/app/api/agentos_v2.py", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py")),
+    ("src/examples/", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py", "tests/runtime/v2/test_workspace_projection.py")),
+    ("src/runtime/planning_loop.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
+    ("src/adapters/agent_invocation.py", ("tests/components/planner/test_permit_recovery.py",)),
+    ("src/runtime/permit_recovery.py", ("tests/components/planner/test_permit_recovery.py",)),
     ("src/runtime/graph_handoff.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/binding.py", ("tests/components/planner/test_execution_permit.py",)),
@@ -42,7 +74,7 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/support/stores/graph_activation_store.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/workflow_runtime.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/runtime/acg_execution.py", ("tests/components/planner/test_execution_permit.py",)),
-    ("src/runtime/runtime_recovery.py", ("tests/runtime/test_scheduler_handoff.py",)),
+    ("src/runtime/runtime_recovery.py", ("tests/components/planner/test_permit_recovery.py",)),
     ("src/runtime/state_persistence.py", ("tests/runtime/test_checkpoint_promotion.py",)),
     ("src/components/recovery/checkpoint.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/components/executor/graph.py", ("tests/components/planner/test_execution_permit.py",)),
@@ -57,6 +89,12 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/contracts/graph_handoff.py", ("tests/components/planner/test_execution_permit.py",)),
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
 )
+
+EXTERNAL_SOURCES = ("apps/agent/app/api/agentos_v2.py",)
+
+
+def external_snapshot() -> dict[str, str]:
+    return {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in EXTERNAL_SOURCES}
 
 
 def utc_now() -> str:
@@ -111,7 +149,7 @@ def resolve_tests(changed_paths: list[str]) -> tuple[list[str], list[str]]:
     changed_sources = [
         path.removeprefix("apps/agentOS/")
         for path in changed_paths
-        if path.startswith("apps/agentOS/src/") and path.endswith(".py")
+        if (path.startswith("apps/agentOS/src/") or path in EXTERNAL_SOURCES) and path.endswith(".py")
     ]
     changed_tests = [
         path.removeprefix("apps/agentOS/")
@@ -214,7 +252,7 @@ def check_diff_whitespace() -> tuple[int, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE,
-                        help="prior src/tests snapshot manifest (default: S03-02B1-GATE marker baseline)")
+                        help="prior src/tests snapshot manifest (default: independently accepted C2A-1)")
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
                         help="hard stage-freeze budget; values above 300 are rejected")
     parser.add_argument("--dry-run", action="store_true", help="show selected tests without executing pytest")
@@ -226,9 +264,14 @@ def main() -> int:
     started = utc_now()
     wall_start = time.perf_counter()
     before = source_snapshot()
+    external_before = external_snapshot()
     changed, baseline_name = changed_python_paths(before, baseline_path)
+    external_changed = subprocess.check_output(
+        ["git", "diff", "--name-only", "HEAD", "--", *EXTERNAL_SOURCES], cwd=ROOT, text=True,
+    ).splitlines()
+    changed = sorted(set(changed + external_changed))
     selected, uncovered = resolve_tests(changed)
-    missing = [path for path in selected if not (AGENTOS / path).is_file()]
+    missing = [path for path in selected if not (AGENTOS / path.split("::", 1)[0]).is_file()]
     check_code, check_output = check_diff_whitespace()
 
     report: dict[str, object] = {
@@ -238,6 +281,7 @@ def main() -> int:
         "baseline": baseline_name,
         "source_aggregate_sha256": before["aggregate"],
         "source_file_count": len(before["files"]),  # type: ignore[arg-type]
+        "external_source_sha256": external_before,
         "changed_agentos_python_files": changed,
         "selected_test_paths": selected,
         "uncovered_source_paths": uncovered,
@@ -338,6 +382,9 @@ def main() -> int:
     report["status"] = "INCOMPLETE_TIMEOUT" if timed_out else ("PASSED" if process and process.returncode == 0 else "FAILED")
     report["pytest_exit_code"] = process.returncode if process else None
     report["timed_out"] = timed_out
+    if source_snapshot()["aggregate"] != before["aggregate"] or external_snapshot() != external_before:
+        report["status"] = "INCOMPLETE_SOURCE_CHANGED"
+        return write_report(report, wall_start, 1, report_path)
     return write_report(report, wall_start, 0 if process and process.returncode == 0 and not timed_out else 1, report_path)
 
 

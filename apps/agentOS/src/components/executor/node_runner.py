@@ -22,7 +22,7 @@ from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService, StructuredMemoryEventBuilder
 from components.content import ContentManifestStore, ContentWorksetSession
-from adapters.agent_invocation import AgentInvocationAdapter
+from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
 from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.communication import validate_contract_payload
 from contracts.artifacts import canonicalize_artifact_identity, final_synthesis_output_schema
@@ -77,6 +77,7 @@ class ACGNodeRunner:
         reliable_communication_store: object | None = None,
         compiled_package: CompiledACGPackage | None = None,
         fault_hook: Callable[[str], None] | None = None,
+        invocation_guard: Callable[[str, ACGExecutionState], None] | None = None,
     ) -> None:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
         self.task = task
@@ -130,6 +131,7 @@ class ACGNodeRunner:
         # 仅由故障恢复测试在运行时对象上临时注入。生产装配不会设置该钩子，业务合同、
         # Blueprint 和持久化状态都不包含故障阶段或异常对象。
         self._fault_hook = fault_hook
+        self.invocation_guard = invocation_guard
 
     @classmethod
     def minimal(
@@ -417,6 +419,11 @@ class ACGNodeRunner:
         invocation_attempt = 0
         while True:
             try:
+                # Context assembly, node.started publication and retry backoff
+                # may yield after Scheduler validation. Recheck immediately at
+                # each Adapter invocation, including transport retries.
+                if self.invocation_guard is not None:
+                    self.invocation_guard(step_id, state)
                 if resource_adapter is not None:
                     output = await resource_adapter.run(agent_context)
                 elif self.agent_invoker is not None:
@@ -425,7 +432,23 @@ class ACGNodeRunner:
                     output = await agent.run(agent_context)
                 break
             except Exception as exc:
-                if not bool(getattr(exc, "retryable", False)) or invocation_attempt >= 2:
+                not_invoked = (isinstance(exc, AgentInvocationError) and exc.code == "AGENT_NOT_IN_SCOPE"
+                        and resource_adapter is None and self.agent_invoker is not None
+                        and self.agent_invoker.consume_not_invoked(exc, agent_context))
+                permit_scope = "graphActivation" in self.run.execution_state
+                retry_allowed = (bool(getattr(exc, "retryable", False))
+                                 and (not permit_scope or not_invoked)
+                                 and invocation_attempt < 2)
+                if not_invoked and not retry_allowed:
+                    # This adapter error is emitted by registry resolution
+                    # before Agent.run. Keep the prepared WAL, but durably
+                    # distinguish a proven non-invocation from unknown effects.
+                    self.value_store.transition_node_execution(execution_record.model_copy(update={
+                        "phase": NodeExecutionPhase.FAILED, "failure_code": "AGENT_NOT_IN_SCOPE",
+                    }))
+                # Once an Agent has been entered, a generic retryable flag
+                # cannot prove that repeating its external effects is safe.
+                if not retry_allowed:
                     raise
                 invocation_attempt += 1
                 await asyncio.sleep(min(2.0, 0.5 * (2 ** (invocation_attempt - 1))))

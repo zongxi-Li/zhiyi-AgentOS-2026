@@ -37,6 +37,9 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         self.guarded_save = guarded_save
         self.decision_gate = decision_gate
         self.pending_commit_wait = pending_commit_wait
+        # Optional trusted host policy. It requests an observation only; all
+        # budgets, persisted decisions and application authorities still apply.
+        self.observe_progress: Callable[[RuntimeRunRecord, ACGExecutionState], bool] | None = None
         self.observation_builder = RuntimePlanningObservationBuilder(
             collaborators=collaborators, load_goal=load_goal, validate_references=validate_references,
         )
@@ -79,6 +82,8 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         if reason == "progress":
             if loop.restart_pending:
                 reason = "restart"
+            elif self.observe_progress is not None and self.observe_progress(run, state):
+                reason = "resume"
         if reason == "progress":
             settled = set(state.completed_step_ids) | set(state.skipped_step_ids)
             if all(s.step_id in settled for s in run.steps):

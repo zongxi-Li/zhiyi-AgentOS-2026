@@ -101,6 +101,27 @@ def validate_activation_run(conn, run):
             from contracts.workflow import RuntimeRunRecord
             if "graphActivation" in RuntimeRunRecord.model_validate_json(previous["payload"]).execution_state:
                 invalid()
+        # A durable initial acceptance cannot be bootstrapped by ordinary Run
+        # snapshots. Only the activation transaction may install its first graph.
+        try:
+            accepted = conn.execute("""SELECT payload FROM planning_commit_records WHERE mission_id=?
+                AND json_extract(payload, '$.proposalType')='initial_plan'
+                AND json_extract(payload, '$.sourceProvenance.sourceRunId')=?""",
+                (run.mission_id, run.run_id)).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table: planning_commit_records" not in str(exc):
+                raise
+            accepted = []
+        for item in accepted:
+            import json
+            body = json.loads(item["payload"])
+            origin = body.get("sourceProvenance") or {}
+            if origin.get("sourceRunId") == run.run_id and origin.get("version") == "initial-static-v1":
+                if (run.acg_blueprint or run.steps or run.completed_step_ids or run.active_step_ids
+                        or not run.execution_state.get("planningDeferred")
+                        or any(run.execution_state.get(k) for k in (
+                            "taskPlan", "compiledACGPackage", "graphVersion", "graphId", "checkpointId"))):
+                    invalid()
         return None
     try:
         head = GraphActivationHead(runId=row["run_id"], missionId=row["mission_id"], graphId=row["graph_id"],
@@ -125,6 +146,7 @@ def validate_activation_run(conn, run):
                 or not (head.graph_id == record.graph_id == materialization.graph_id)
                 or not (head.active_graph_version == record.candidate_graph_version == materialization.candidate_graph_version)
                 or record.source_graph_version != materialization.source_graph_version
+                or record.source_kind != materialization.source_kind
                 or record.source_commit_id != materialization.source_commit_id
                 or record.package_checksum != materialization.package_checksum
                 or record.commitment_fingerprint != materialization.commitment_fingerprint
@@ -209,8 +231,34 @@ def validate_activation_run(conn, run):
                         or run.execution_state.get("executionPermitId") != permit.permit_id
                         or run.execution_state.get("executionGeneration") != permit.attempt_generation):
                     invalid()
+                # Once a permitted prefix is acknowledged, an old worker must
+                # never overwrite it, including after checkpoint reconciliation.
+                if (run.runtime_revision < previous.runtime_revision
+                        or not set(previous.completed_step_ids) <= set(run.completed_step_ids)):
+                    invalid()
+                for channel in ("outputRefs", "contextRefs", "memoryRefs", "traceRefs", "provenanceRefs"):
+                    before_refs = previous.execution_state.get(channel, {})
+                    after_refs = run.execution_state.get(channel, {})
+                    # Graph completion includes audited-but-unapproved nodes.
+                    # Their deferred memory is written by the original Review
+                    # authority; its pending value is not a completed prefix.
+                    protected = [key for key in previous.completed_step_ids
+                                 if not (channel == "memoryRefs"
+                                         and before_refs.get(key) in {None, "memory:none"}
+                                         and (previous.execution_state.get("reviewPayload") or {}).get("stepId") == key
+                                         and isinstance((previous.execution_state.get("reviewPayload") or {}).get("pendingMemory"), dict)
+                                         and any(event.event_type.value == "review_decided" and event.step_id == key
+                                                 and event.payload.get("decision") == "approved" for event in run.trace))]
+                    if channel == "provenanceRefs":
+                        # Review can append a memory-production event. Existing
+                        # sealed provenance may not disappear or be replaced.
+                        if any(not set(before_refs.get(key, ())) <= set(after_refs.get(key, ())) for key in protected):
+                            invalid()
+                    elif any(before_refs.get(key) != after_refs.get(key) for key in protected):
+                        raise ValueError(f"permitted completed prefix changed: {channel}")
         if (type(projection.get("activeGraphVersion")) is not int
-                or type(projection.get("sourceGraphVersion")) is not int):
+                or (record.source_kind == "graph_revision" and type(projection.get("sourceGraphVersion")) is not int)
+                or (record.source_kind == "initial_plan" and projection.get("sourceGraphVersion") is not None)):
             invalid()
         return head
     except (ValueError, TypeError, KeyError, sqlite3.Error) as exc:

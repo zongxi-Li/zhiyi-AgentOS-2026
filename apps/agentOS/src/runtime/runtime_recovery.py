@@ -382,6 +382,12 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             raise ValueError("single-step retry reason must not be empty")
 
         source = self.workflow_store.get_run(source_run_id)
+        permit_mode = bool(source.execution_state.get("executionPermitId"))
+        if permit_mode:
+            if not reuse_source_run:
+                raise ValueError("Permit retry must retain its formally activated Run")
+            from runtime.permit_recovery import assert_settled_operations
+            assert_settled_operations(self, source)
         from contracts.task_acceptance import frozen_task_acceptance
 
         acceptance = frozen_task_acceptance(source)
@@ -442,6 +448,15 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         if not restart_from_step and source_step.status is not StepStatus.FAILED:
             raise ValueError("single-step retry target must be failed")
         source_state = acg_execution_state_from_run(source)
+        if (permit_mode and source.status == WorkflowStatus.FAILED
+                and (source_state.review_payload or {}).get("subjectType") == "planner"
+                and any(event.event_type == TraceEventType.REVIEW_DECIDED
+                        and event.step_id == source.current_step_id
+                        and event.payload.get("subjectType") == "planner"
+                        and event.payload.get("decision") == "rejected" for event in source.trace)):
+            # The operator has resolved this strategic barrier by rejection.
+            # A separate explicit retry may clear its marker, never node audit.
+            source_state.review_payload = None
         if validate_only and (source_state.review_payload or {}).get("subjectType") == "planner":
             source_state.review_payload = None
         if not restart_from_step and source_state.output_refs.get(step_id):
@@ -610,12 +625,14 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         state.current_step_id = step_id
         state.output_refs = copied_refs
         state.output_summaries = copied_summaries
-        state.context_refs = {}
-        state.memory_refs = {}
-        state.trace_refs = {}
-        state.provenance_refs = {}
-        state.graph_patch_refs = []
-        state.communication_usage = {}
+        if not permit_mode:
+            state.context_refs = {}
+            state.memory_refs = {}
+            state.trace_refs = {}
+            state.provenance_refs = {}
+        if not permit_mode:
+            state.graph_patch_refs = []
+            state.communication_usage = {}
         state.checkpoint_id = None
         state.review_payload = None
         state.control_review_decisions = {}
@@ -766,6 +783,12 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             },
         )
         retry.updated_at = utc_now()
+        if permit_mode:
+            # Same graph/Permit/generation; retry has a fresh Attempt and a
+            # normal native checkpoint, never the old failed recovery state.
+            from runtime.state_persistence import ACGStatePersistenceService
+            ACGStatePersistenceService(collaborators=self.ports).save_checkpoint(retry, state)
+            retry.execution_state.update(state.model_dump(by_alias=True, mode="json"))
         if reuse_source_run and self.identity_lifecycle is not None:
             # Persist the retry lifecycle transition itself. Snapshots are read
             # against current runtime truth during reconciliation, so snapshots
