@@ -73,6 +73,23 @@ class GraphActivationAuthority:
                 raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "execution slot occupies the activation cut")
         if run.mission_id != materialization.mission_id:
             raise GraphRevisionError(Code.STALE_GRAPH, "activation Run belongs to another Mission")
+        if materialization.source_kind == "initial_plan":
+            from runtime.initial_graph_compilation import initial_recipe_fingerprint, INITIAL_MATERIALIZATION_POLICY
+            graph, caller = runtime.graph_materialization_authority._validate(
+                materialization.source_commit_id, expected=expected, principal=principal)
+            content = materialization.initial_content
+            if (content is not None and (content.blueprint.metadata.get("initialCompilationRecipe") != initial_recipe_fingerprint()
+                    or content.blueprint.metadata.get("initialMaterializationPolicy") != INITIAL_MATERIALIZATION_POLICY)):
+                raise GraphRevisionError(Code.STALE_STRATEGY, "initial compilation recipe changed")
+            if (content is None or materialization.commitment_fingerprint != content_fingerprint(graph)
+                    or materialization.sources != graph.sources
+                    or materialization.proof_fingerprint != graph.source_provenance.static_fingerprint
+                    or content.plan != graph.proposal_payload
+                    or content.blueprint.metadata.get("initialCommitId") != graph.commit_id
+                    or content.blueprint.metadata.get("initialSourceFingerprint") != materialization.proof_fingerprint):
+                raise GraphRevisionError(Code.INVALID_PROPOSAL, "initial materialization differs from accepted content")
+            SemanticRevisionService._validate_bindings(content.plan, content.blueprint, content.bindings)
+            return graph, run, caller
         blueprint = run.acg_blueprint or {}
         if (blueprint.get("graphId") != materialization.graph_id
                 or blueprint.get("version") != materialization.source_graph_version):
@@ -136,6 +153,12 @@ class GraphActivationAuthority:
                 return rejected(Code.INVALID_PROPOSAL, "durable inactive materialization required")
             with self.runtime.run_lock_manager.lock_for(materialization.source_run_id), acquire_run_fence(
                     self.store.db_path, materialization.source_run_id):
+                if materialization.source_kind == "initial_plan":
+                    previous = self._replayable(key, materialization)
+                    if previous is not None and previous.status == "ACTIVATED_PAUSED":
+                        replay = self._head_state(previous)
+                        if replay is not None:
+                            return replay
                 graph, _, principal = self._verify(materialization)
                 prepared = self._competition(key, materialization)
                 if prepared is not None:
@@ -150,6 +173,7 @@ class GraphActivationAuthority:
                         "policy": "activation-dag-v1"})[:40],
                     idempotencyKey=key, materializationId=materialization.materialization_id,
                     sourceCommitId=materialization.source_commit_id,
+                    sourceKind=materialization.source_kind,
                     missionId=materialization.mission_id, runId=materialization.source_run_id,
                     graphId=materialization.graph_id,
                     sourceGraphVersion=materialization.source_graph_version,
@@ -207,8 +231,12 @@ class GraphActivationAuthority:
                     if replay is not None:
                         return replay
                     self._verify(materialization, expected=graph, principal=principal)
+                    current_run = _run_from_ledger(self.store, run.run_id)
+                    if current_run != run:
+                        raise GraphRevisionError(Code.STALE_STRATEGY, "activation Run CAS changed")
                     self.store._activate_head(prepared)
-                    SQLiteWorkflowStore._upsert_run(conn, activated_run)
+                    if not SQLiteWorkflowStore._upsert_run(conn, activated_run):
+                        raise GraphRevisionError(Code.STALE_STRATEGY, "activation Run write refused")
             return GraphActivationReceipt(status="ACTIVATED_PAUSED", activationId=prepared.activation_id,
                                            activeGraphVersion=prepared.candidate_graph_version)
         except GraphRevisionError as exc:
@@ -260,27 +288,34 @@ class GraphActivationAuthority:
         IDs and every ACG evidence channel) is carried over untouched; the
         superseded checkpoint reference is detached but never deleted.
         """
+        initial = materialization.source_kind == "initial_plan"
         proposal = graph.proposal_payload
-        blueprint = proposal.candidate_graph
+        content = materialization.initial_content
+        blueprint = content.blueprint if initial else proposal.candidate_graph
+        plan = content.plan if initial else proposal.next_plan
+        bindings = content.bindings if initial else proposal.next_bindings
         activated = run.model_copy(deep=True)
         activated.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
         activated.execution_state.update({
             "graphId": blueprint.graph_id,
             "graphVersion": blueprint.version,
             "sourceBlueprintVersion": blueprint.version,
-            "taskPlan": proposal.next_plan.model_dump(by_alias=True, mode="json"),
-            "taskPlanVersion": proposal.next_plan.plan_version,
-            "taskBindings": [item.model_dump(by_alias=True, mode="json") for item in proposal.next_bindings],
+            "taskPlan": plan.model_dump(by_alias=True, mode="json"),
+            "taskPlanVersion": plan.plan_version,
+            "taskBindings": [item.model_dump(by_alias=True, mode="json") for item in bindings],
             "compiledACGPackage": materialization.package.model_dump(by_alias=True, mode="json"),
             "compiledPackageId": materialization.package.package_id,
             "compiledPackageChecksum": materialization.package.checksum,
             "compiledPackageVersion": materialization.package.package_version,
             "compiledPackageBlueprintHash": materialization.package.blueprint_hash,
-            "graphDiff": proposal.graph_patch.model_dump(by_alias=True, mode="json"),
+            "graphDiff": None if initial else proposal.graph_patch.model_dump(by_alias=True, mode="json"),
             "checkpointId": None,
             "graphActivation": activation_projection(
                 prepared, superseded_checkpoint_id=activated.execution_state.get("checkpointId")),
         })
+        if initial:
+            activated.execution_state["planningDeferred"] = False
+            activated.lifecycle_message = "Initial graph activated paused; no execution permit."
         activated.active_step_ids = []
         if activated.status == WorkflowStatus.WAITING_REVIEW:
             # The acknowledged v1 planner barrier has been superseded together
@@ -292,13 +327,22 @@ class GraphActivationAuthority:
             activated.lifecycle_message = "Graph activated; awaiting verified execution handoff."
         activated.runtime_revision += 1
         activated.updated_at = utc_now()
-        self.runtime._sync_run_steps_to_acg(activated, blueprint)
+        if initial:
+            # The legacy projector optionally overlays Run.input reasoning and
+            # mutable evolution policy. Neither is a frozen initial compilation
+            # input. Project only the sealed blueprint; preserve the real Run's
+            # business input verbatim without using it to supplement the graph.
+            projection = activated.model_copy(update={"input": {}, "execution_state": {}})
+            self.runtime._sync_run_steps_to_acg(projection, blueprint)
+            activated.steps, activated.current_step_id = projection.steps, projection.current_step_id
+        else:
+            self.runtime._sync_run_steps_to_acg(activated, blueprint)
         # Candidate package additions (for example a newly accepted Step D)
         # must carry their compiled eligibility requirements before the
         # separate Permit allows the Scheduler to inspect the graph. This is
         # a pure projection: it neither reserves nor binds a Runtime.
         from runtime.binding import execution_requirements_for
-        workflow = self.runtime._workflow_for_run(run)
+        workflow = graph.source_provenance.workflow if initial else self.runtime._workflow_for_run(run)
         activated.execution_state["bindingRequirements"] = execution_requirements_for(
             materialization.package.binding_manifest,
             (step.step_id for step in activated.steps),

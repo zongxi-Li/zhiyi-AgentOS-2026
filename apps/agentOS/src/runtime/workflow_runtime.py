@@ -1260,7 +1260,17 @@ class ExecutionRuntime(CollaboratorAccess):
             from runtime.graph_materialization import rejected
             from contracts.planning_commit import PlanningCommitRejectionCode
             return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "materialization authority unavailable")
-        return self.graph_materialization_authority.materialize(commit_id, idempotency_key=idempotency_key)
+        return self.graph_materialization_authority.materialize(commit_id, idempotency_key=idempotency_key,
+                                                               source_kind="graph_revision")
+
+    def materialize_initial_commit(self, commit_id, *, idempotency_key):
+        """Explicit host entry; the same materialization authority owns both sources."""
+        from contracts.planning_commit import PlanningCommitRejectionCode
+        if self.graph_materialization_authority is None:
+            from runtime.graph_materialization import rejected
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "materialization authority unavailable")
+        return self.graph_materialization_authority.materialize(commit_id, idempotency_key=idempotency_key,
+                                                               source_kind="initial_plan")
 
     def accept_graph_revision(self, run_id, source_commit_id, *, idempotency_key):
         """Explicit server-side acceptance; never materialize or apply a graph."""

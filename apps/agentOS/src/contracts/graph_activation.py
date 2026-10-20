@@ -16,8 +16,9 @@ class GraphActivationRecord(GraphContract):
     mission_id: Ref = Field(alias="missionId")
     run_id: Ref = Field(alias="runId")
     graph_id: Ref = Field(alias="graphId")
-    source_graph_version: int = Field(strict=True, ge=1, alias="sourceGraphVersion")
-    candidate_graph_version: int = Field(strict=True, ge=2, alias="candidateGraphVersion")
+    source_kind: Literal["graph_revision", "initial_plan"] = Field(default="graph_revision", alias="sourceKind")
+    source_graph_version: int | None = Field(strict=True, ge=1, alias="sourceGraphVersion")
+    candidate_graph_version: int = Field(strict=True, ge=1, alias="candidateGraphVersion")
     package_checksum: Digest = Field(alias="packageChecksum")
     commitment_fingerprint: Digest = Field(alias="commitmentFingerprint")
     proof_fingerprint: Digest = Field(alias="proofFingerprint")
@@ -26,7 +27,9 @@ class GraphActivationRecord(GraphContract):
 
     @model_validator(mode="after")
     def coherent(self):
-        if self.candidate_graph_version != self.source_graph_version + 1:
+        if (self.source_kind == "initial_plan" and (self.source_graph_version is not None or self.candidate_graph_version != 1)
+                or self.source_kind == "graph_revision" and (self.source_graph_version is None
+                    or self.candidate_graph_version != self.source_graph_version + 1)):
             raise ValueError("activation must advance the graph version by exactly one")
         return self
 
@@ -41,7 +44,7 @@ class GraphActivationHead(GraphContract):
     run_id: Ref = Field(alias="runId")
     mission_id: Ref = Field(alias="missionId")
     graph_id: Ref = Field(alias="graphId")
-    active_graph_version: int = Field(strict=True, ge=2, alias="activeGraphVersion")
+    active_graph_version: int = Field(strict=True, ge=1, alias="activeGraphVersion")
     activation_id: Ref = Field(alias="activationId")
 
 

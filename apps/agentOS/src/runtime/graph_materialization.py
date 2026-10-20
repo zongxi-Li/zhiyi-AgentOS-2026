@@ -9,6 +9,7 @@ from components.executor.compiler import ACGGraphCompiler
 from runtime.graph_revision import GraphProvider, GraphRevisionError, source_provenance, safe_cut
 from runtime.semantic_revision import SemanticRevisionService
 from support.stores.planning_commit_store import content_fingerprint
+from contracts.initial_planning import InitialPlanningSourceProvenance
 
 
 def rejected(code, reason):
@@ -29,6 +30,8 @@ class GraphMaterializationAuthority:
                 or runtime.planning_commit_authority.store.db_path != store.db_path):
             raise GraphRevisionError(Code.AUTHORITY_DENIED, "materialization authority unavailable")
         graph = store.get(commit_id)
+        if graph is not None and graph.proposal_type == "initial_plan":
+            return self._validate_initial(graph, expected=expected, principal=principal)
         if graph is None or graph.proposal_type != "graph_revision" or not isinstance(graph.proposal_payload, GraphRevisionProposal):
             raise GraphRevisionError(Code.INVALID_PROPOSAL, "accepted graph revision required")
         if expected is not None and graph != expected:
@@ -91,11 +94,127 @@ class GraphMaterializationAuthority:
             raise GraphRevisionError(Code.AUTHORITY_DENIED, "materialization authorization changed")
         return graph, caller
 
-    def materialize(self, commit_id, *, idempotency_key):
+    def _validate_initial(self, record, *, expected=None, principal=None):
+        from components.planner.planning_commit import PlanningCommitService
+        from contracts.workflow import WorkflowStatus
+        runtime, store = self.runtime, self.store
+        if (not isinstance(record.source_provenance, InitialPlanningSourceProvenance)
+                or expected is not None and record != expected):
+            raise GraphRevisionError(Code.INVALID_PROPOSAL, "versioned accepted initial content required")
+        caller = runtime.semantic_principal_provider() if runtime.semantic_principal_provider else None
+        if principal is not None and caller != principal:
+            raise GraphRevisionError(Code.AUTHORITY_DENIED, "initial materialization caller changed")
+        provider = runtime.planning_commit_authority._provider(
+            record.source_provenance.source_run_id, record.proposal_payload, True)
+        provider.store = store  # Final Workflow reads use this exact write transaction.
+        provider.initial_provenance = record.source_provenance
+        if provider.authorize() is not True:
+            raise GraphRevisionError(Code.AUTHORITY_DENIED, "initial materialization not authorized")
+        run = provider.run()
+        if (run.mission_id != record.mission_id or run.acg_blueprint or run.steps
+                or run.active_step_ids or run.completed_step_ids
+                or run.status not in {WorkflowStatus.PENDING, WorkflowStatus.PLANNING}
+                or not run.execution_state.get("planningDeferred")
+                or not run.execution_state.get("planningCommitRequired")
+                or any(run.execution_state.get(k) for k in (
+                    "compiledACGPackage", "taskPlan", "graphActivation", "checkpointId", "controlFrames", "reviewPayload"))
+                or runtime.execution_value_store.list_node_commits(run_id=run.run_id)):
+            raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "initial Run is not pristine and deferred")
+        with runtime._execution_slot_guard:
+            if run.run_id in runtime._active_execution_slots:
+                raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "initial Run execution slot occupied")
+        if store.latest(record.mission_id) != record:
+            raise GraphRevisionError(Code.STALE_COMMITMENT, "initial acceptance head changed")
+        ancestor, seen = record, set()
+        while ancestor is not None:
+            if ancestor.commit_id in seen or len(seen) >= 256:
+                raise GraphRevisionError(Code.INVALID_PROPOSAL, "initial acceptance ancestry exceeds bounded policy")
+            seen.add(ancestor.commit_id)
+            if ancestor.parent_commit_id is None:
+                if ancestor.commitment_revision != 1:
+                    raise GraphRevisionError(Code.INVALID_PROPOSAL, "missing initial acceptance ancestor")
+                break
+            parent = store.get(ancestor.parent_commit_id)
+            if (parent is None or parent.mission_id != record.mission_id
+                    or parent.commitment_revision + 1 != ancestor.commitment_revision):
+                raise GraphRevisionError(Code.INVALID_PROPOSAL, "invalid initial acceptance ancestor")
+            ancestor = parent
+        failure = PlanningCommitService(current_state_provider=provider, store=store).validate_sources(record.sources)
+        if failure is not None:
+            raise GraphRevisionError(failure.code, failure.reason)
+        if (provider.authorize() is not True or runtime._run_cancellation_requested(run.run_id)
+                or runtime.graph_materialization_authority is not self
+                or runtime.planning_commit_authority is not provider.authority):
+            raise GraphRevisionError(Code.AUTHORITY_DENIED, "initial materialization authorization changed")
+        return record, caller
+
+    def _materialize_initial(self, graph, key):
+        from runtime.initial_graph_compilation import (compile_initial_content, INITIAL_MATERIALIZATION_POLICY,
+                                                       initial_recipe_fingerprint)
+        runtime, store = self.runtime, self.store
+        if (runtime.planning_commit_authority is None
+                or runtime.planning_commit_authority.store.db_path != store.db_path
+                or store.db_path != runtime.workflow_store.db_path.resolve()):
+            return rejected(Code.AUTHORITY_DENIED, "initial ledger authority unavailable")
+        if not isinstance(graph.source_provenance, InitialPlanningSourceProvenance):
+            return rejected(Code.INVALID_PROPOSAL, "legacy initial record has no compilation provenance")
+        run_id = graph.source_provenance.source_run_id
+        # A durable replay reports a historical fact, not a current activation
+        # grant. This works even after the Run has acquired its v1 Head.
+        if runtime.planning_commit_authority.get_commit(graph.commit_id) != graph:
+            return rejected(Code.INVALID_PROPOSAL, "accepted initial record unavailable")
+        old = store.materialization_by_key(key)
+        if old is not None:
+            if old.source_commit_id != graph.commit_id or old.commitment_fingerprint != content_fingerprint(graph):
+                return rejected(Code.DUPLICATE_CONFLICT, "key binds another materialization")
+            return GraphMaterializationReceipt(status="IDEMPOTENT_REPLAY", materializationId=old.materialization_id,
+                                               packageChecksum=old.package_checksum)
+        with runtime.run_lock_manager.lock_for(run_id):
+            graph, principal = self._validate(graph.commit_id, expected=graph)
+            if store.materialization_for(graph.commit_id) is not None:
+                return rejected(Code.DUPLICATE_CONFLICT, "initial commit already materialized; replay original key")
+        content = compile_initial_content(graph)
+        SemanticRevisionService._validate_bindings(content.plan, content.blueprint, content.bindings)
+        package = ACGGraphCompiler().compile_package(content.blueprint, run_id=run_id)
+        record = GraphMaterializationRecord(sourceKind="initial_plan", initialContent=content,
+            materializationId="gmat_" + stable_checksum({"commit": graph.commit_id,
+                "source": graph.source_provenance.static_fingerprint, "policy": INITIAL_MATERIALIZATION_POLICY})[:40],
+            idempotencyKey=key, sourceCommitId=graph.commit_id, commitmentFingerprint=content_fingerprint(graph),
+            missionId=graph.mission_id, sourceRunId=run_id, graphId=package.blueprint_id,
+            sourceGraphVersion=None, candidateGraphVersion=1, sources=graph.sources,
+            proofFingerprint=graph.source_provenance.static_fingerprint, package=package, packageChecksum=package.checksum)
+        if len(record.model_dump_json()) > 4_000_000:
+            return rejected(Code.INVALID_PROPOSAL, "initial materialization exceeds bounded policy")
+        with runtime.run_lock_manager.lock_for(run_id), store._transaction():
+            store._check_schema(store._local.connection)
+            self._validate(graph.commit_id, expected=graph, principal=principal)
+            if content.blueprint.metadata.get("initialCompilationRecipe") != initial_recipe_fingerprint():
+                return rejected(Code.STALE_STRATEGY, "initial compilation recipe changed")
+            old = store.materialization_by_key(key)
+            if old is not None:
+                # Concurrent compilers can have different clock metadata; the
+                # first durable candidate owns that metadata forever.
+                if old.source_commit_id != graph.commit_id or old.commitment_fingerprint != record.commitment_fingerprint:
+                    return rejected(Code.DUPLICATE_CONFLICT, "key binds another materialization")
+                return GraphMaterializationReceipt(status="IDEMPOTENT_REPLAY", materializationId=old.materialization_id,
+                                                   packageChecksum=old.package_checksum)
+            if store.materialization_for(graph.commit_id) is not None:
+                return rejected(Code.DUPLICATE_CONFLICT, "initial commit already materialized; replay original key")
+            store._append_materialization(record)
+        return GraphMaterializationReceipt(status="MATERIALIZED_INACTIVE", materializationId=record.materialization_id,
+                                           packageChecksum=record.package_checksum)
+
+    def materialize(self, commit_id, *, idempotency_key, source_kind=None):
         try:
             commit_id = TypeAdapter(Ref).validate_python(commit_id)
             key = TypeAdapter(Ref).validate_python(idempotency_key)
             graph = self.store.get(commit_id)
+            if source_kind is not None and (graph is None or graph.proposal_type != source_kind):
+                return rejected(Code.INVALID_PROPOSAL, "accepted materialization source type mismatch")
+            if graph is not None and graph.proposal_type == "initial_plan":
+                if self.runtime.graph_materialization_authority is not self:
+                    return rejected(Code.AUTHORITY_DENIED, "materialization authority unavailable")
+                return self._materialize_initial(graph, key)
             if graph is None or not isinstance(graph.proposal_payload, GraphRevisionProposal):
                 return rejected(Code.INVALID_PROPOSAL, "accepted graph revision required")
             run_id = graph.proposal_payload.source_provenance.source_run_id
@@ -143,6 +262,8 @@ class GraphMaterializationAuthority:
                                                packageChecksum=record.package_checksum)
         except GraphRevisionError as exc:
             return rejected(exc.code, exc.reason)
+        except PermissionError:
+            return rejected(Code.AUTHORITY_DENIED, "materialization read not authorized")
         except (ValueError, KeyError, TypeError):
             return rejected(Code.INVALID_PROPOSAL, "invalid materialization evidence")
         except (sqlite3.Error, RuntimeError):

@@ -21,7 +21,9 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTOS = ROOT / "apps" / "agentOS"
-DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "s03-02b1-gate-markers.json"
+# Exact independently accepted C2A-1 raw-byte manifest. Its uncommitted files
+# remain protected; the C2A-2 gate measures changes against that accepted tree.
+DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "s03-02c2a1-accepted.json"
 DEFAULT_BUDGET_SECONDS = 300
 SLOW_EXCLUSION = "not slow_benchmark and not slow_multiprocess and not slow_fault_injection"
 FAST_OR_CRITICAL = (
@@ -33,6 +35,26 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/runtime/initial_graph_compilation.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/contracts/test_compiled_acg.py", "tests/contracts/test_binding_authority.py",
+        "tests/architecture/test_capability_upgrade_gates.py")),
+    ("src/runtime/graph_materialization.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_revision_commit.py::test_completed_prefix_pending_suffix_replacement",
+        "tests/components/planner/test_graph_revision_commit.py::test_checkpoint_identity_and_control_evidence_are_required",
+        "tests/components/planner/test_graph_materialization.py::test_inactive_package_is_complete_read_only_and_restartable",
+        "tests/components/planner/test_graph_materialization.py::test_compile_window_changes_cannot_publish",
+        "tests/components/planner/test_graph_materialization.py::test_atomic_faults_reconcile_original_key")),
+    ("src/contracts/graph_materialization.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_materialization.py::test_corrupted_content_is_rejected")),
+    ("src/runtime/graph_activation.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_activation.py::test_commit_switches_head_and_projection_atomically",
+        "tests/components/planner/test_graph_activation.py::test_stale_sources_are_rejected_before_and_after_preparation",
+        "tests/components/planner/test_graph_activation.py::test_activation_transaction_failure_rolls_back_completely",
+        "tests/components/planner/test_graph_activation.py::test_scheduler_entries_refuse_the_paused_graph")),
+    ("src/support/stores/graph_activation_store.py", ("tests/components/planner/test_initial_graph_materialization.py",
+        "tests/components/planner/test_graph_activation.py::test_old_thread_snapshot_cannot_regress_the_graph_version")),
+    ("src/contracts/graph_activation.py", ("tests/components/planner/test_initial_graph_materialization.py",)),
+    ("src/runtime/workflow_runtime.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
     ("src/contracts/initial_planning.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py")),
     ("src/contracts/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit.py", "tests/components/planner/test_planning_commit_runtime.py")),
     ("src/components/planner/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit.py", "tests/components/planner/test_planning_commit_runtime.py")),
@@ -230,7 +252,7 @@ def check_diff_whitespace() -> tuple[int, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE,
-                        help="prior src/tests snapshot manifest (default: S03-02B1-GATE marker baseline)")
+                        help="prior src/tests snapshot manifest (default: independently accepted C2A-1)")
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
                         help="hard stage-freeze budget; values above 300 are rejected")
     parser.add_argument("--dry-run", action="store_true", help="show selected tests without executing pytest")
@@ -249,7 +271,7 @@ def main() -> int:
     ).splitlines()
     changed = sorted(set(changed + external_changed))
     selected, uncovered = resolve_tests(changed)
-    missing = [path for path in selected if not (AGENTOS / path).is_file()]
+    missing = [path for path in selected if not (AGENTOS / path.split("::", 1)[0]).is_file()]
     check_code, check_output = check_diff_whitespace()
 
     report: dict[str, object] = {
