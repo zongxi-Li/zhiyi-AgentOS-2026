@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from contracts.identity import MissionId, SemanticTaskKey
 from contracts.planning import TaskPlan, TaskPlanPatch
 from contracts.graph_revision import GraphRevisionProposal, PlanningSourceProvenance
+from contracts.initial_planning import InitialPlanningSourceProvenance, initial_strategy_fingerprint
 
 
 Fingerprint = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
@@ -130,12 +131,20 @@ class PlanningCommitRecord(PlanningCommitContract):
     expected_commitment_revision: int | None = Field(default=None, strict=True, ge=0,
                                                     alias="expectedCommitmentRevision")
     proposal_payload: TaskPlan | TaskPlanPatch | GraphRevisionProposal | None = Field(default=None, alias="proposalPayload")
-    source_provenance: PlanningSourceProvenance | None = Field(default=None, alias="sourceProvenance")
+    source_provenance: PlanningSourceProvenance | InitialPlanningSourceProvenance | None = Field(default=None, alias="sourceProvenance")
     materialization_status: Literal["COMMITTED_NOT_MATERIALIZED"] = Field(
         default="COMMITTED_NOT_MATERIALIZED", alias="materializationStatus")
 
     @model_validator(mode="after")
     def consistent_sources(self):
+        if isinstance(self.source_provenance, InitialPlanningSourceProvenance):
+            origin = self.source_provenance
+            if (self.proposal_type != "initial_plan" or self.sources.source_kind != "initial"
+                    or origin.mission_id != self.mission_id or origin.mission_revision != self.source_revision
+                    or initial_strategy_fingerprint(origin.runtime_fingerprint, origin) != self.sources.strategy_fingerprint
+                    or not isinstance(self.proposal_payload, TaskPlan)
+                    or self.proposal_payload.metadata.get("missionIntentBasisRef") != origin.basis.reference()):
+                raise ValueError("initial provenance is not bound to accepted sources")
         if (self.mission_id != self.sources.mission_id
                 or self.source_revision != self.sources.mission_revision):
             raise ValueError("commitment source identity must be consistent")

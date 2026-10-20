@@ -20,6 +20,7 @@ from support.acg.schema import RuntimeBlueprintSpec
 from support.acg.capabilities import CapabilityCatalog
 from runtime.planner_input_adapter import planner_input
 from support.stores.planning_commit_store import content_fingerprint
+from contracts.initial_planning import InitialPlanningSourceProvenance, initial_strategy_fingerprint
 
 
 def fingerprint(value):
@@ -66,9 +67,15 @@ class RuntimePlanningCommitProvider:
         self.payload = payload
         self.initial = initial
         self.principal = principal
+        self.legacy_initial_sources = False
+        self.initial_provenance = None
 
     def planning_guard(self, mission_id):
         return nullcontext()  # Runtime Run lock + store write transaction already held.
+
+    @property
+    def requires_versioned_initial_sources(self):
+        return self.initial and not self.legacy_initial_sources
 
     def run(self):
         with self.store.connection() as conn:
@@ -79,6 +86,9 @@ class RuntimePlanningCommitProvider:
 
     def authorize(self, request=None):
         run = self.run()
+        if self.initial and (self.runtime.semantic_principal_provider is None
+                or self.runtime.semantic_principal_provider() != self.principal):
+            return False
         if (request is not None and run.mission_id != request.sources.mission_id) or self.principal is None:
             return False
         if self.runtime._run_cancellation_requested(run.run_id) or run.status in {
@@ -97,6 +107,25 @@ class RuntimePlanningCommitProvider:
             return False
 
     def get_current_sources(self, mission_id, *, catalog_snapshot=None):
+        sources = self._runtime_sources(mission_id, catalog_snapshot=catalog_snapshot)
+        if self.initial and not self.legacy_initial_sources:
+            try:
+                origin = self.capture_initial_provenance(sources)
+            except (ValueError, KeyError, TypeError):
+                # A source that can no longer be captured is stale, never a
+                # fallback to the old source projection or an accepted origin.
+                return sources.model_copy(update={"strategy_fingerprint": fingerprint({
+                    "projection": "initial-source-unavailable-v1", "runtime": sources.strategy_fingerprint})})
+            return sources.model_copy(update={"strategy_fingerprint":
+                initial_strategy_fingerprint(sources.strategy_fingerprint, origin)})
+        return sources
+
+    def capture_initial_provenance(self, sources=None):
+        from runtime.initial_planning_sources import capture_initial_sources
+        sources = sources or self._runtime_sources(self.run().mission_id)
+        return capture_initial_sources(self, sources.strategy_fingerprint)
+
+    def _runtime_sources(self, mission_id, *, catalog_snapshot=None):
         run = self.run()
         basis = run_intent_basis(run)
         if basis is None or basis.source_type != "SEMANTIC":
@@ -143,7 +172,11 @@ class RuntimePlanningCommitProvider:
 
     def get_source_provenance(self, request):
         if self.initial:
-            return None
+            if self.legacy_initial_sources:
+                return None
+            if self.initial_provenance is None:
+                raise ValueError("initial acceptance has no frozen source capture")
+            return InitialPlanningSourceProvenance.model_validate_json(self.initial_provenance.model_dump_json(by_alias=True))
         from runtime.graph_revision import planning_inputs, source_provenance
         run = self.run()
         workflow, catalog, profiles = planning_inputs(self, run)
@@ -174,6 +207,8 @@ class RuntimePlanningCommitProvider:
         if self.payload.mission_id != run.mission_id or content_fingerprint(self.payload) != request.proposal_fingerprint:
             return reject(Code.INVALID_PROPOSAL, "candidate identity mismatch")
         catalog = getattr(self, "validation_catalog", None)
+        if self.initial and self.initial_provenance is not None:
+            catalog = CapabilityCatalog(d.model_copy(deep=True) for d in self.initial_provenance.validation_catalog)
         if catalog is None:
             catalog = freeze_capability_catalog(self.runtime.capability_catalog)
         self._validated_catalog = catalog
@@ -375,12 +410,39 @@ class RuntimePlanningCommitAuthority:
         return service.accept(self._request(provider, patch, proposal_id, idempotency_key))
 
     def accept_initial(self, run_id):
+        try:
+            return self._accept_initial(run_id)
+        except (ValueError, KeyError, TypeError):
+            return PlanningCommitRejection(code=Code.STALE_STRATEGY, reason="initial compilation sources unavailable or inconsistent")
+
+    def validate_initial_sources(self, commit_id):
+        """Read-only preflight for future materialization, never an execution grant."""
+        try:
+            if self.runtime.planning_commit_authority is not self:
+                return PlanningCommitRejection(code=Code.AUTHORITY_DENIED, reason="initial source authority unavailable")
+            record = self.store.get(commit_id)
+            if (record is None or record.proposal_type != "initial_plan"
+                    or not isinstance(record.source_provenance, InitialPlanningSourceProvenance)):
+                return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="versioned initial sources required")
+            provider = self._provider(record.source_provenance.source_run_id, record.proposal_payload, True)
+            provider.initial_provenance = record.source_provenance
+            if provider.authorize() is not True:
+                return PlanningCommitRejection(code=Code.AUTHORITY_DENIED, reason="initial sources not authorized")
+            if self.store.latest(record.mission_id) != record:
+                return PlanningCommitRejection(code=Code.STALE_COMMITMENT, reason="initial acceptance head changed")
+            return PlanningCommitService(current_state_provider=provider, store=self.store).validate_sources(record.sources)
+        except (ValueError, KeyError, TypeError):
+            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="invalid initial source evidence")
+
+    def _accept_initial(self, run_id):
         """Semantic planning happens outside Run lock and database write transaction."""
         key = "initial-planning:" + run_id
         with self.runtime.run_lock_manager.lock_for(run_id):
             existing = self.store.get_by_idempotency_key(key)
             if existing:
                 provider = self._provider(run_id, existing.proposal_payload, True)
+                provider.legacy_initial_sources = existing.source_provenance is None
+                provider.initial_provenance = existing.source_provenance
                 service = PlanningCommitService(current_state_provider=provider, store=self.store)
                 problem = service.validate_sources(existing.sources)
                 return problem or service.accept(self.replay_request(existing, key))
@@ -391,13 +453,23 @@ class RuntimePlanningCommitAuthority:
             if not run.execution_state.get("planningCommitRequired"):
                 return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="initial Run requires an acceptance fence")
             captured = provider.get_current_sources(run.mission_id)
+            origin = provider.capture_initial_provenance()
+            if initial_strategy_fingerprint(origin.runtime_fingerprint, origin) != captured.strategy_fingerprint:
+                return PlanningCommitRejection(code=Code.STALE_STRATEGY, reason="initial sources changed while capturing")
             basis = run_intent_basis(run)
             if basis.source_revision != captured.mission_revision:
                 return PlanningCommitRejection(code=Code.STALE_MISSION, reason="initial proposal bases on an older Mission")
             parent = self.store.latest(run.mission_id)
             expected = parent.commitment_revision if parent else 0
         engine = self.runtime._planning_engine_for_run(run)
-        workflow = self.runtime._workflow_for_run(run)
+        workflow = origin.workflow.model_copy(deep=True)
+        # L1/L2 consumes a private catalog; the post-planning source fence still
+        # compares the current registries and Identity with this captured origin.
+        catalog = CapabilityCatalog(d.model_copy(deep=True) for d in origin.catalog)
+        engine.semantic_planner.capability_catalog = catalog
+        engine.semantic_planner.task_decomposer.capability_catalog = catalog
+        engine.intent_parser.capability_catalog = catalog
+        profile = None
         if workflow.planning_nodes:
             plan = engine.semantic_planner.plan_template(mission_id=run.mission_id, workflow=workflow,
                 strategy="initial_commit_candidate")
@@ -424,8 +496,17 @@ class RuntimePlanningCommitAuthority:
         resolve = getattr(self.runtime.identity_lifecycle, "resolve_task_plan_snapshot", None)
         if callable(resolve):
             plan = resolve(plan)
+        if profile is not None:
+            # Keep the actual L1 lowering input, rather than asking a model to
+            # recreate complexity/entropy/evidence choices at materialization.
+            origin = origin.model_copy(deep=True, update={"semantic_profile": profile.model_copy(deep=True)})
+            origin = InitialPlanningSourceProvenance.model_validate({
+                **origin.model_dump(mode="json", by_alias=True), "staticFingerprint": origin.content_fingerprint()})
+            captured = captured.model_copy(update={"strategy_fingerprint":
+                initial_strategy_fingerprint(origin.runtime_fingerprint, origin)})
         with self.runtime.run_lock_manager.lock_for(run_id):
             provider = self._provider(run_id, plan, True)
+            provider.initial_provenance = origin
             request = self._request(provider, plan, key, key, captured, expected)
             return PlanningCommitService(current_state_provider=provider, store=self.store).accept(request)
 

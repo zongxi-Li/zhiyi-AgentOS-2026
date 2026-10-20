@@ -12,6 +12,7 @@ from typing import ContextManager, Mapping, Protocol
 from uuid import uuid4
 
 from pydantic import ValidationError
+from contracts.initial_planning import InitialPlanningSourceProvenance
 
 from contracts.planning_commit import (
     FrozenPlanningSources, PlanningCommitReceipt, PlanningCommitRecord,
@@ -192,6 +193,9 @@ class PlanningCommitService:
                             return self._reject(Code.INVALID_PROPOSAL, "durable proposal content is required")
                     source_provenance = (self.provider.get_source_provenance(request)
                         if callable(getattr(self.provider, "get_source_provenance", None)) else None)
+                    if (getattr(self.provider, "requires_versioned_initial_sources", False)
+                            and not isinstance(source_provenance, InitialPlanningSourceProvenance)):
+                        return self._reject(Code.INVALID_PROPOSAL, "versioned initial source evidence required")
                     # Also catches callbacks that changed state while capturing.
                     problem = self._validate_sources(request.sources)
                     if problem is not None:
