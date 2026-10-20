@@ -386,6 +386,8 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
     @staticmethod
     def _upsert_run(conn: sqlite3.Connection, run: RuntimeRunRecord) -> bool:
         conn.row_factory = sqlite3.Row
+        from support.stores.graph_activation_store import validate_activation_run
+        validate_activation_run(conn, run)
         task_row = conn.execute(
             "SELECT 1 FROM tasks WHERE mission_id = ?", (run.mission_id,)
         ).fetchone()
@@ -401,6 +403,9 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             existing = RuntimeRunRecord.model_validate(json.loads(row["payload"]))
         from support.stores._policy import validate_intent_basis
         validate_intent_basis(existing, run)
+        if (existing is not None and existing.execution_state.get("planningCommitRequired")
+                and run.execution_state.get("planningCommitRequired") is not True):
+            raise ValueError("persisted Planning Commit mode cannot be removed or disabled")
         if existing is not None:
             if reject_terminal_overwrite(existing, run):
                 return False

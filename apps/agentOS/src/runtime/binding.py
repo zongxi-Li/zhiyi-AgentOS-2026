@@ -24,6 +24,53 @@ from service.agents import AgentRegistry
 from support.acg.schema import RuntimeBlueprintSpec
 
 
+def execution_requirements_for(binding_manifest: BindingManifest, step_ids, *, domain: str | None):
+    """Derive eligibility-only requirements from one immutable compiled manifest."""
+    requirements: dict[str, dict[str, object]] = {}
+    for step_id in step_ids:
+        rule = binding_manifest.for_step(step_id)
+        required_capabilities = list(rule.required_capabilities)
+        if not required_capabilities:
+            raise ValueError(f"BindingManifest has no capability requirement: {step_id}")
+        role_hint = str(rule.agent_node_ids[0]) if rule.agent_node_ids else None
+        requirement = ExecutionRequirement(
+            requiredCapabilities=required_capabilities,
+            runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
+            domain=rule.domain or domain,
+            preferences=({"agentRole": role_hint} if role_hint else {}),
+            policyMetadata={
+                "source": "compiled-binding-manifest",
+                "stepId": step_id,
+                "agentNodeIds": list(rule.agent_node_ids),
+                "maxConcurrency": rule.max_concurrency,
+            },
+        )
+        requirements[step_id] = requirement.model_dump(by_alias=True, mode="json")
+    return requirements
+
+
+def requirements_match_manifest(actual, expected) -> bool:
+    """Compare authority-bearing requirements; role preferences remain hints.
+
+    Existing Recovery may update ``agentRole`` after a reviewed rebind. That
+    preference affects ranking only; capabilities, policy metadata and every
+    other execution constraint must still match the compiled manifest.
+    """
+    if not isinstance(actual, dict) or set(actual) != set(expected):
+        return False
+    for step_id, expected_payload in expected.items():
+        actual_payload = actual.get(step_id)
+        if not isinstance(actual_payload, dict):
+            return False
+        actual_contract = dict(actual_payload)
+        expected_contract = dict(expected_payload)
+        actual_contract.pop("preferences", None)
+        expected_contract.pop("preferences", None)
+        if actual_contract != expected_contract:
+            return False
+    return True
+
+
 class RuntimeBindingService:
     """Translate a BindingManifest into eligibility requirements only."""
 
@@ -59,31 +106,11 @@ class RuntimeBindingService:
         ]
         register_embedded_agents_runtime(self.resource_plane, visible_agents)
 
-        requirements: dict[str, dict[str, object]] = {}
+        requirements = execution_requirements_for(
+            binding_manifest, (step.step_id for step in run.steps), domain=workflow.domain
+        )
         model_bindings: dict[str, dict[str, Any] | None] = {}
         for step in run.steps:
-            rule = binding_manifest.for_step(step.step_id)
-            required_capabilities = list(rule.required_capabilities)
-            if not required_capabilities:
-                raise ValueError(
-                    f"BindingManifest has no capability requirement: {step.step_id}"
-                )
-            role_hint = str(rule.agent_node_ids[0]) if rule.agent_node_ids else None
-            requirement = ExecutionRequirement(
-                requiredCapabilities=required_capabilities,
-                runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
-                domain=rule.domain or workflow.domain,
-                preferences=({"agentRole": role_hint} if role_hint else {}),
-                policyMetadata={
-                    "source": "compiled-binding-manifest",
-                    "stepId": step.step_id,
-                    "agentNodeIds": list(rule.agent_node_ids),
-                    "maxConcurrency": rule.max_concurrency,
-                },
-            )
-            requirements[step.step_id] = requirement.model_dump(
-                by_alias=True, mode="json"
-            )
             model_bindings[step.step_id] = None
 
         run.execution_state["resourceBindings"] = {}

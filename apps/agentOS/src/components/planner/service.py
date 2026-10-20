@@ -132,6 +132,8 @@ class PlanResult:
 class PlanningEngine:
     def decide_runtime(self, *, observation: RuntimePlanningObservation, task_plan: TaskPlan) -> RuntimePlanningDecision:
         """Re-observe current durable state without retaining a conversation."""
+        if self.react_loop is not None:
+            return self.react_loop.decide(observation=observation, task_plan=task_plan)
         from .runtime_decision import decide_runtime
 
         return decide_runtime(
@@ -180,6 +182,7 @@ class PlanningEngine:
         capability_catalog: CapabilityCatalog | None = None,
         intent_llm: Optional[IntentLLM] = None,
         template_threshold: float = 0.85,
+        react_loop: Optional[Any] = None,
     ):
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
         self.intent_parser = IntentParser(intent_llm, self.capability_catalog)
@@ -191,6 +194,9 @@ class PlanningEngine:
             capability_catalog=self.capability_catalog,
             cognitive_router=self.cognitive_router,
         )
+        # PR-S01-02 opt-in：装配方显式挂接 BoundedReActPlanningLoop 后，
+        # decide_runtime 走受限工具循环；默认 None 保持既有单次决策路径。
+        self.react_loop = react_loop
 
     def plan(
         self,

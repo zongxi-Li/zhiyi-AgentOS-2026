@@ -36,6 +36,14 @@ class AcgIdentityLifecyclePort(Protocol):
         blueprint: Any,
         task_plan_patch: Any | None = None,
     ) -> None: ...
+    def on_execution_permit_blueprint_promoted(
+        self,
+        run: Any,
+        blueprint: Any,
+        task_plan: Any,
+        task_bindings: Any,
+        permit_id: str,
+    ) -> None: ...
     def ensure_attempt(self, run: Any, step_id: str, attempt_number: int) -> str: ...
     def on_resource_bound(
         self, *, attempt_id: str, binding: Any, agent_id: str, model_id: str

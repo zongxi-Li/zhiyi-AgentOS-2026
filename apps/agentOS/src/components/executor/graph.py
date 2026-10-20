@@ -34,6 +34,11 @@ class ACGExecutionState(BaseModel):
     run_id: str = Field(alias="runId")
     graph_id: str | None = Field(default=None, alias="graphId")
     graph_version: int = Field(default=1, alias="graphVersion", ge=1)
+    # Present only after the S03 execution-permit handoff. This generation is
+    # carried through checkpoints so stale work/receipts cannot alias a later
+    # activated graph on the same Run.
+    execution_permit_id: str | None = Field(default=None, alias="executionPermitId")
+    execution_generation: str | None = Field(default=None, alias="executionGeneration")
     graph_patch_refs: list[str] = Field(default_factory=list, alias="graphPatchRefs")
     current_step_id: str | None = Field(default=None, alias="currentStepId")
     completed_step_ids: list[str] = Field(default_factory=list, alias="completedStepIds")

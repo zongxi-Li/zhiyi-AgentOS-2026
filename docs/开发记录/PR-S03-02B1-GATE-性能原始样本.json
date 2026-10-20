@@ -1,0 +1,2498 @@
+{
+  "source_sha256": "7fd909bb7defa769f1b400364ae2faeef3e1c8052ae75b208edbf873d523b7ba",
+  "source_python_files": 426,
+  "original_425_sha256": "0b17d8ebd0f8706b027f87c93831a4e4209eadb51595225fcf38857f40d1f84b",
+  "head": "48b7fc950837e1bdcec07abfd181f4d8fa95b6db",
+  "environment": "Windows 11 10.0.26100; Python 3.14.5; SQLite 3.50.4; Intel i9-14900HX 24C/32T; default timer",
+  "samples": [
+    {
+      "transactions": [
+        {
+          "begin_start": 30250.5385735,
+          "acquired": 30250.5396925,
+          "wait_ms": 1.118999996833736,
+          "commit_start": 30250.5754814,
+          "released": 30250.5783375,
+          "hold_body_ms": 35.78890000062529,
+          "hold_ms": 38.645000000542495,
+          "transaction_ms": 39.76399999737623,
+          "commit_ms": 2.8560999999172054
+        },
+        {
+          "begin_start": 30250.5820167,
+          "acquired": 30250.5907517,
+          "wait_ms": 8.735000003071036,
+          "commit_start": 30250.6290471,
+          "released": 30250.6303403,
+          "hold_body_ms": 38.29539999787812,
+          "hold_ms": 39.58859999693232,
+          "transaction_ms": 48.32360000000335,
+          "commit_ms": 1.2931999990541954
+        }
+      ],
+      "validation_ms": [
+        76.5893000025244,
+        35.42369999922812,
+        35.37019999930635
+      ],
+      "compiler_ms": [
+        0.6084999986342154,
+        0.49170000056619756,
+        0.5920000003243331,
+        0.4149999986111652,
+        0.5797000012535136,
+        0.4087000015715603
+      ],
+      "safe_cut_ms": [
+        3.7158999984967522,
+        3.298499999800697,
+        3.3696999998937827
+      ],
+      "prefix_evidence_span_ms": [
+        17.319799997494556,
+        7.146100000682054,
+        6.783400000131223
+      ],
+      "stage_ms": [
+        3.1883999981801026
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 84,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 172.43099999905098,
+      "nodes": 4,
+      "completed": 1,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 35193,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 2829,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 393216,
+        "identity_sql_dump_bytes": 76220,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1713952,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 405504,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 20632
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30252.565425,
+          "acquired": 30252.5666283,
+          "wait_ms": 1.2032999984512571,
+          "commit_start": 30252.6088619,
+          "released": 30252.6118856,
+          "hold_body_ms": 42.23360000105458,
+          "hold_ms": 45.257300000230316,
+          "transaction_ms": 46.46059999868157,
+          "commit_ms": 3.023699999175733
+        },
+        {
+          "begin_start": 30252.6161432,
+          "acquired": 30252.6253342,
+          "wait_ms": 9.191000001010252,
+          "commit_start": 30252.6682868,
+          "released": 30252.6696325,
+          "hold_body_ms": 42.95259999707923,
+          "hold_ms": 44.29829999935464,
+          "transaction_ms": 53.48930000036489,
+          "commit_ms": 1.3457000022754073
+        }
+      ],
+      "validation_ms": [
+        73.04300000032526,
+        41.839000001345994,
+        39.929700000357116
+      ],
+      "compiler_ms": [
+        0.6246000011742581,
+        0.44659999912255444,
+        0.6185999991430435,
+        0.43879999793716706,
+        0.6304999988060445,
+        0.4415000003064051
+      ],
+      "safe_cut_ms": [
+        3.796099997998681,
+        3.77920000028098,
+        3.872000001138076
+      ],
+      "prefix_evidence_span_ms": [
+        9.294900002714712,
+        8.57470000119065,
+        8.10039999851142
+      ],
+      "stage_ms": [
+        3.68249999883119
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 84,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 181.47959999987506,
+      "nodes": 4,
+      "completed": 1,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 35193,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 2829,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 393216,
+        "identity_sql_dump_bytes": 76220,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1713952,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 405504,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 20632
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30254.4669577,
+          "acquired": 30254.4680161,
+          "wait_ms": 1.0584000010567252,
+          "commit_start": 30254.5036861,
+          "released": 30254.5064172,
+          "hold_body_ms": 35.67000000111875,
+          "hold_ms": 38.401099998736754,
+          "transaction_ms": 39.45949999979348,
+          "commit_ms": 2.731099997618003
+        },
+        {
+          "begin_start": 30254.5102404,
+          "acquired": 30254.5178644,
+          "wait_ms": 7.6240000016696285,
+          "commit_start": 30254.5566922,
+          "released": 30254.5587132,
+          "hold_body_ms": 38.827799999126,
+          "hold_ms": 40.84879999936675,
+          "transaction_ms": 48.472800001036376,
+          "commit_ms": 2.021000000240747
+        }
+      ],
+      "validation_ms": [
+        67.60209999993094,
+        35.316100002091844,
+        35.75789999740664
+      ],
+      "compiler_ms": [
+        0.5985000025248155,
+        0.46350000047823414,
+        0.5600000004051253,
+        0.4063000014866702,
+        0.5540000020118896,
+        0.4197999987809453
+      ],
+      "safe_cut_ms": [
+        3.3671999990474433,
+        3.3746999979484826,
+        3.30010000106995
+      ],
+      "prefix_evidence_span_ms": [
+        8.505800000421004,
+        6.8195000021660235,
+        7.129199999326374
+      ],
+      "stage_ms": [
+        3.332399999635527
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 84,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 163.12790000301902,
+      "nodes": 4,
+      "completed": 1,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 35193,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 2829,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 393216,
+        "identity_sql_dump_bytes": 76220,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1713952,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 409600,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 20632
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30256.5175471,
+          "acquired": 30256.519389,
+          "wait_ms": 1.841900000727037,
+          "commit_start": 30256.5721137,
+          "released": 30256.5750302,
+          "hold_body_ms": 52.72469999908935,
+          "hold_ms": 55.64120000053663,
+          "transaction_ms": 57.483100001263665,
+          "commit_ms": 2.9165000014472753
+        },
+        {
+          "begin_start": 30256.579304,
+          "acquired": 30256.5888818,
+          "wait_ms": 9.577799999533454,
+          "commit_start": 30256.6372705,
+          "released": 30256.6377938,
+          "hold_body_ms": 48.38870000094175,
+          "hold_ms": 48.91200000201934,
+          "transaction_ms": 58.489800001552794,
+          "commit_ms": 0.5233000010775868
+        }
+      ],
+      "validation_ms": [
+        89.58600000187289,
+        52.353800001583295,
+        45.25360000116052
+      ],
+      "compiler_ms": [
+        0.9993000021495391,
+        0.9470000004512258,
+        0.9436999971512705,
+        0.760800001444295,
+        0.9434999992663506,
+        0.7803999978932552
+      ],
+      "safe_cut_ms": [
+        4.347900001448579,
+        4.060899998876266,
+        4.0023999972618185
+      ],
+      "prefix_evidence_span_ms": [
+        11.332199999742443,
+        8.0182000019704,
+        7.496199999877717
+      ],
+      "stage_ms": [
+        3.739700001460733
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 120,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 215.26319999975385,
+      "nodes": 8,
+      "completed": 1,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 50825,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 5417,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 430080,
+        "identity_sql_dump_bytes": 110596,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1755152,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 487424,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 20632
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30258.7533912,
+          "acquired": 30258.7545707,
+          "wait_ms": 1.1794999991252553,
+          "commit_start": 30258.7983782,
+          "released": 30258.8005719,
+          "hold_body_ms": 43.80750000200351,
+          "hold_ms": 46.00120000031893,
+          "transaction_ms": 47.18069999944419,
+          "commit_ms": 2.1936999983154237
+        },
+        {
+          "begin_start": 30258.8049296,
+          "acquired": 30258.813762,
+          "wait_ms": 8.832400002575014,
+          "commit_start": 30258.8596399,
+          "released": 30258.8600773,
+          "hold_body_ms": 45.87790000005043,
+          "hold_ms": 46.315299998241244,
+          "transaction_ms": 55.14770000081626,
+          "commit_ms": 0.43739999819081277
+        }
+      ],
+      "validation_ms": [
+        86.01670000280137,
+        43.442500002129236,
+        42.77150000052643
+      ],
+      "compiler_ms": [
+        1.0307999982615001,
+        0.8837999994284473,
+        0.9337999981653411,
+        0.7664999975531828,
+        0.9104000018851366,
+        0.7282000005943701
+      ],
+      "safe_cut_ms": [
+        4.809899997781031,
+        3.8528000004589558,
+        3.776000001380453
+      ],
+      "prefix_evidence_span_ms": [
+        10.243200002150843,
+        7.578600001579616,
+        7.905800001026364
+      ],
+      "stage_ms": [
+        3.8395000010496005
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 120,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 197.56400000187568,
+      "nodes": 8,
+      "completed": 1,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 50825,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 5417,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 430080,
+        "identity_sql_dump_bytes": 110596,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1755152,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 487424,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 20632
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30260.6065016,
+          "acquired": 30260.6075427,
+          "wait_ms": 1.041100000293227,
+          "commit_start": 30260.6481186,
+          "released": 30260.6503385,
+          "hold_body_ms": 40.575899998657405,
+          "hold_ms": 42.7958000000217,
+          "transaction_ms": 43.83690000031493,
+          "commit_ms": 2.2199000013642944
+        },
+        {
+          "begin_start": 30260.654867,
+          "acquired": 30260.6626708,
+          "wait_ms": 7.803799999237526,
+          "commit_start": 30260.7064999,
+          "released": 30260.7069437,
+          "hold_body_ms": 43.82909999912954,
+          "hold_ms": 44.272899998759385,
+          "transaction_ms": 52.07669999799691,
+          "commit_ms": 0.44379999962984584
+        }
+      ],
+      "validation_ms": [
+        60.408699999243254,
+        40.108900000632275,
+        41.036199996597134
+      ],
+      "compiler_ms": [
+        0.8817999987513758,
+        0.7455999984813388,
+        0.8828999998513609,
+        0.7874000002630055,
+        0.8957000027294271,
+        0.7065999998303596
+      ],
+      "safe_cut_ms": [
+        3.6464999975578394,
+        3.568500000255881,
+        3.554999999323627
+      ],
+      "prefix_evidence_span_ms": [
+        8.933000000979519,
+        7.06730000092648,
+        7.569900000817142
+      ],
+      "stage_ms": [
+        4.02119999853312
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 120,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 164.56319999997504,
+      "nodes": 8,
+      "completed": 1,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 50825,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 5417,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 430080,
+        "identity_sql_dump_bytes": 110596,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1755152,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 151552,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 1400832
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30262.645413,
+          "acquired": 30262.6465093,
+          "wait_ms": 1.0963000022456981,
+          "commit_start": 30262.6993596,
+          "released": 30262.7011858,
+          "hold_body_ms": 52.850299998681294,
+          "hold_ms": 54.676499999914085,
+          "transaction_ms": 55.772800002159784,
+          "commit_ms": 1.8262000012327917
+        },
+        {
+          "begin_start": 30262.7055414,
+          "acquired": 30262.7140088,
+          "wait_ms": 8.467400002700742,
+          "commit_start": 30262.769723,
+          "released": 30262.7709622,
+          "hold_body_ms": 55.71419999978389,
+          "hold_ms": 56.953399998747045,
+          "transaction_ms": 65.42080000144779,
+          "commit_ms": 1.2391999989631586
+        }
+      ],
+      "validation_ms": [
+        73.79909999872325,
+        52.43550000159303,
+        52.56989999907091
+      ],
+      "compiler_ms": [
+        1.8583000019134488,
+        1.4040999994904269,
+        1.504600000771461,
+        1.3303000014275312,
+        1.5036999975563958,
+        1.30899999930989
+      ],
+      "safe_cut_ms": [
+        4.323700002714759,
+        4.486199999519158,
+        4.341399999248097
+      ],
+      "prefix_evidence_span_ms": [
+        10.404699998616707,
+        8.081699998001568,
+        8.514500001183478
+      ],
+      "stage_ms": [
+        3.7967999996908475
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 192,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 203.21340000009513,
+      "nodes": 16,
+      "completed": 1,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 82094,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 10593,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 491520,
+        "identity_sql_dump_bytes": 179363,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1816952,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 266240,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 1759272
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30264.6893212,
+          "acquired": 30264.6903942,
+          "wait_ms": 1.0729999994509853,
+          "commit_start": 30264.7426728,
+          "released": 30264.7449224,
+          "hold_body_ms": 52.278600000136066,
+          "hold_ms": 54.52820000209613,
+          "transaction_ms": 55.60120000154711,
+          "commit_ms": 2.2496000019600615
+        },
+        {
+          "begin_start": 30264.7487112,
+          "acquired": 30264.7568993,
+          "wait_ms": 8.188099996914389,
+          "commit_start": 30264.8126902,
+          "released": 30264.813686,
+          "hold_body_ms": 55.79090000173892,
+          "hold_ms": 56.78670000270358,
+          "transaction_ms": 64.97479999961797,
+          "commit_ms": 0.9958000009646639
+        }
+      ],
+      "validation_ms": [
+        69.75720000264118,
+        51.928400000178954,
+        51.55660000309581
+      ],
+      "compiler_ms": [
+        1.4890999991621356,
+        1.3183999981265515,
+        1.5127000006032176,
+        1.3801000022795051,
+        1.481199997215299,
+        1.3898999968660064
+      ],
+      "safe_cut_ms": [
+        4.18329999956768,
+        4.200999999738997,
+        4.148500000155764
+      ],
+      "prefix_evidence_span_ms": [
+        10.100299998157425,
+        7.880799999838928,
+        8.253100000729319
+      ],
+      "stage_ms": [
+        3.2909000001382083
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 192,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 197.8649000011501,
+      "nodes": 16,
+      "completed": 1,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 82094,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 10593,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 491520,
+        "identity_sql_dump_bytes": 179363,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1816952,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 147456,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 1952912
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30266.7762237,
+          "acquired": 30266.7778853,
+          "wait_ms": 1.6616000029898714,
+          "commit_start": 30266.839364,
+          "released": 30266.8425242,
+          "hold_body_ms": 61.47869999767863,
+          "hold_ms": 64.63889999940875,
+          "transaction_ms": 66.30050000239862,
+          "commit_ms": 3.160200001730118
+        },
+        {
+          "begin_start": 30266.8489625,
+          "acquired": 30266.8505734,
+          "wait_ms": 1.6108999989228323,
+          "commit_start": 30266.91153,
+          "released": 30266.9131462,
+          "hold_body_ms": 60.95660000210046,
+          "hold_ms": 62.57280000136234,
+          "transaction_ms": 64.18370000028517,
+          "commit_ms": 1.6161999992618803
+        }
+      ],
+      "validation_ms": [
+        95.37110000019311,
+        61.11299999975017,
+        58.26779999915743
+      ],
+      "compiler_ms": [
+        1.5133000015339348,
+        1.3883999999961816,
+        1.4750000009371433,
+        1.3124999968567863,
+        1.507500001025619,
+        1.3270000017655548
+      ],
+      "safe_cut_ms": [
+        4.192699998384342,
+        4.516600001807092,
+        4.12010000218288
+      ],
+      "prefix_evidence_span_ms": [
+        20.293899997341214,
+        8.496700000250712,
+        7.841700000426499
+      ],
+      "stage_ms": [
+        3.318400002171984
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 192,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 237.55960000198684,
+      "nodes": 16,
+      "completed": 1,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 82094,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 10593,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 491520,
+        "identity_sql_dump_bytes": 179363,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1816952,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 700416,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30269.1671998,
+          "acquired": 30269.1688842,
+          "wait_ms": 1.6844000019773375,
+          "commit_start": 30269.2532757,
+          "released": 30269.2565224,
+          "hold_body_ms": 84.39150000049267,
+          "hold_ms": 87.63819999876432,
+          "transaction_ms": 89.32260000074166,
+          "commit_ms": 3.2466999982716516
+        },
+        {
+          "begin_start": 30269.2634745,
+          "acquired": 30269.265173,
+          "wait_ms": 1.6985000002023298,
+          "commit_start": 30269.3534515,
+          "released": 30269.3566195,
+          "hold_body_ms": 88.27849999943282,
+          "hold_ms": 91.44649999871035,
+          "transaction_ms": 93.14499999891268,
+          "commit_ms": 3.1679999992775265
+        }
+      ],
+      "validation_ms": [
+        111.24769999878481,
+        84.00080000137677,
+        85.53889999893727
+      ],
+      "compiler_ms": [
+        2.8027999978803564,
+        2.7257000001554843,
+        2.8860999991593417,
+        3.2884000029298477,
+        2.9158000033930875,
+        2.7453000002424233
+      ],
+      "safe_cut_ms": [
+        5.560500001593027,
+        5.591999997704988,
+        5.688500001269858
+      ],
+      "prefix_evidence_span_ms": [
+        12.502300000051036,
+        9.414900003321236,
+        9.082399999897461
+      ],
+      "stage_ms": [
+        3.914900000381749
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 336,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 305.948699999135,
+      "nodes": 32,
+      "completed": 1,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 136558,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 638976,
+        "identity_sql_dump_bytes": 316867,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1965272,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 1069056,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30271.9001075,
+          "acquired": 30271.9017597,
+          "wait_ms": 1.6521999968972523,
+          "commit_start": 30271.9876475,
+          "released": 30271.9907081,
+          "hold_body_ms": 85.88779999990948,
+          "hold_ms": 88.94839999993565,
+          "transaction_ms": 90.6005999968329,
+          "commit_ms": 3.06060000002617
+        },
+        {
+          "begin_start": 30271.9983029,
+          "acquired": 30272.0001402,
+          "wait_ms": 1.8373000020801555,
+          "commit_start": 30272.1410255,
+          "released": 30272.1424274,
+          "hold_body_ms": 140.88529999935417,
+          "hold_ms": 142.28719999664463,
+          "transaction_ms": 144.1244999987248,
+          "commit_ms": 1.4018999972904567
+        }
+      ],
+      "validation_ms": [
+        106.62969999975758,
+        85.49390000189305,
+        137.90700000026845
+      ],
+      "compiler_ms": [
+        2.729599997110199,
+        2.9056999992462806,
+        2.857100000255741,
+        2.8523999972094316,
+        3.035900001123082,
+        2.9823000004398637
+      ],
+      "safe_cut_ms": [
+        5.414800001744879,
+        5.749600000854116,
+        6.069299997761846
+      ],
+      "prefix_evidence_span_ms": [
+        12.676400001510046,
+        9.412300001713447,
+        55.91700000150013
+      ],
+      "stage_ms": [
+        3.668700002890546
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 336,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 354.36810000101104,
+      "nodes": 32,
+      "completed": 1,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 136558,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 638976,
+        "identity_sql_dump_bytes": 316867,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1965272,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 1073152,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30274.5295922,
+          "acquired": 30274.5313511,
+          "wait_ms": 1.7588999980944209,
+          "commit_start": 30274.6213911,
+          "released": 30274.6233277,
+          "hold_body_ms": 90.04000000277301,
+          "hold_ms": 91.97660000063479,
+          "transaction_ms": 93.73549999872921,
+          "commit_ms": 1.9365999978617765
+        },
+        {
+          "begin_start": 30274.6304708,
+          "acquired": 30274.6322042,
+          "wait_ms": 1.7334000003756955,
+          "commit_start": 30274.7253128,
+          "released": 30274.7280786,
+          "hold_body_ms": 93.10860000186949,
+          "hold_ms": 95.87440000177594,
+          "transaction_ms": 97.60780000215163,
+          "commit_ms": 2.7657999999064486
+        }
+      ],
+      "validation_ms": [
+        120.24970000129542,
+        89.65629999875091,
+        90.36059999925783
+      ],
+      "compiler_ms": [
+        3.2441000003018416,
+        3.274400001828326,
+        2.964400002383627,
+        2.8875999996671453,
+        2.9993999996804632,
+        2.9288999976415653
+      ],
+      "safe_cut_ms": [
+        6.010100001731189,
+        6.035999998857733,
+        6.134300001576776
+      ],
+      "prefix_evidence_span_ms": [
+        12.985899997147499,
+        9.640899999794783,
+        9.633699999540113
+      ],
+      "stage_ms": [
+        4.102099999727216
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 336,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 324.9654000028386,
+      "nodes": 32,
+      "completed": 1,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 136558,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 638976,
+        "identity_sql_dump_bytes": 316867,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 1965272,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 1069056,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30277.9664909,
+          "acquired": 30277.9681358,
+          "wait_ms": 1.6449000031570904,
+          "commit_start": 30278.1240053,
+          "released": 30278.1271334,
+          "hold_body_ms": 155.8694999985164,
+          "hold_ms": 158.99759999956586,
+          "transaction_ms": 160.64250000272295,
+          "commit_ms": 3.128100001049461
+        },
+        {
+          "begin_start": 30278.1338412,
+          "acquired": 30278.1355728,
+          "wait_ms": 1.7316000012215227,
+          "commit_start": 30278.303451,
+          "released": 30278.3064375,
+          "hold_body_ms": 167.87819999808562,
+          "hold_ms": 170.86469999776455,
+          "transaction_ms": 172.59629999898607,
+          "commit_ms": 2.9864999996789265
+        }
+      ],
+      "validation_ms": [
+        173.10139999972307,
+        155.49140000075568,
+        164.47749999861117
+      ],
+      "compiler_ms": [
+        6.020000000717118,
+        8.578599998145364,
+        5.98599999648286,
+        5.8413999977346975,
+        6.317100000160281,
+        6.990699999732897
+      ],
+      "safe_cut_ms": [
+        9.509899999102345,
+        8.128299999953015,
+        8.801600000879262
+      ],
+      "prefix_evidence_span_ms": [
+        14.88940000126604,
+        11.602300000959076,
+        13.15479999902891
+      ],
+      "stage_ms": [
+        3.8017999977455474
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 624,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 518.6211000000185,
+      "nodes": 64,
+      "completed": 1,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 243182,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 41649,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 913408,
+        "identity_sql_dump_bytes": 591875,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 2245432,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 1818624,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30281.5404245,
+          "acquired": 30281.5414963,
+          "wait_ms": 1.0718000012275297,
+          "commit_start": 30281.6912299,
+          "released": 30281.6949792,
+          "hold_body_ms": 149.73359999930835,
+          "hold_ms": 153.48290000110865,
+          "transaction_ms": 154.55470000233618,
+          "commit_ms": 3.749300001800293
+        },
+        {
+          "begin_start": 30281.699851,
+          "acquired": 30281.7072105,
+          "wait_ms": 7.3594999994384125,
+          "commit_start": 30281.9039083,
+          "released": 30281.9044574,
+          "hold_body_ms": 196.69779999821912,
+          "hold_ms": 197.24689999929979,
+          "transaction_ms": 204.6063999987382,
+          "commit_ms": 0.5491000010806601
+        }
+      ],
+      "validation_ms": [
+        166.14269999990938,
+        149.34329999960028,
+        193.72540000040317
+      ],
+      "compiler_ms": [
+        6.210499999724561,
+        5.893500001548091,
+        6.9655000006605405,
+        5.880799999431474,
+        6.001300000207266,
+        5.843400002049748
+      ],
+      "safe_cut_ms": [
+        8.158900000125868,
+        8.405600001424318,
+        7.994799998414237
+      ],
+      "prefix_evidence_span_ms": [
+        13.093599998683203,
+        11.739800000214018,
+        11.266999998042593
+      ],
+      "stage_ms": [
+        4.334299999754876
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 624,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 535.9530999994604,
+      "nodes": 64,
+      "completed": 1,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 243182,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 41649,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 913408,
+        "identity_sql_dump_bytes": 591875,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 2245432,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 1818624,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30285.1904476,
+          "acquired": 30285.1923552,
+          "wait_ms": 1.907599998958176,
+          "commit_start": 30285.3519021,
+          "released": 30285.3551805,
+          "hold_body_ms": 159.54689999853144,
+          "hold_ms": 162.82529999807593,
+          "transaction_ms": 164.7328999970341,
+          "commit_ms": 3.27839999954449
+        },
+        {
+          "begin_start": 30285.3621726,
+          "acquired": 30285.3643233,
+          "wait_ms": 2.1507000019482803,
+          "commit_start": 30285.5280464,
+          "released": 30285.530668,
+          "hold_body_ms": 163.7230999986059,
+          "hold_ms": 166.344699999172,
+          "transaction_ms": 168.4954000011203,
+          "commit_ms": 2.6216000005661044
+        }
+      ],
+      "validation_ms": [
+        177.616199998738,
+        159.12889999890467,
+        160.91289999894798
+      ],
+      "compiler_ms": [
+        5.898299998079892,
+        5.89879999824916,
+        6.0671999999613035,
+        5.97840000045835,
+        6.3412000017706305,
+        6.043599998520222
+      ],
+      "safe_cut_ms": [
+        9.057200000825105,
+        8.598399999755202,
+        8.411799997702474
+      ],
+      "prefix_evidence_span_ms": [
+        15.173399999184767,
+        12.148900001193397,
+        12.205799997900613
+      ],
+      "stage_ms": [
+        3.793800002313219
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 624,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 523.1145999969158,
+      "nodes": 64,
+      "completed": 1,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 243182,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 41649,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 913408,
+        "identity_sql_dump_bytes": 591875,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 2245432,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 1818624,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30292.2799596,
+          "acquired": 30292.281723,
+          "wait_ms": 1.7633999996178318,
+          "commit_start": 30292.7590513,
+          "released": 30292.7619122,
+          "hold_body_ms": 477.328299999499,
+          "hold_ms": 480.189199999586,
+          "transaction_ms": 481.9525999992038,
+          "commit_ms": 2.8609000000869855
+        },
+        {
+          "begin_start": 30292.7686353,
+          "acquired": 30292.7702806,
+          "wait_ms": 1.645300002564909,
+          "commit_start": 30293.2264153,
+          "released": 30293.2340452,
+          "hold_body_ms": 456.1346999980742,
+          "hold_ms": 463.7645999973756,
+          "transaction_ms": 465.40989999994054,
+          "commit_ms": 7.629899999301415
+        }
+      ],
+      "validation_ms": [
+        520.3951000003144,
+        476.8932999977551,
+        453.00960000167834
+      ],
+      "compiler_ms": [
+        14.533499997924082,
+        14.101200002187397,
+        14.541300002747448,
+        14.823499997874023,
+        14.783599999645958,
+        14.035600001079729
+      ],
+      "safe_cut_ms": [
+        13.066600000456674,
+        13.985099998535588,
+        13.205100000050152
+      ],
+      "prefix_evidence_span_ms": [
+        19.70649999930174,
+        15.987599999789381,
+        16.286799997033086
+      ],
+      "stage_ms": [
+        3.67289999849163
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 1200,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 1479.8859999973502,
+      "nodes": 128,
+      "completed": 1,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 456435,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 83057,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 1519616,
+        "identity_sql_dump_bytes": 1141901,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 2851072,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 3305472,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30299.8951311,
+          "acquired": 30299.8968502,
+          "wait_ms": 1.7191000006278045,
+          "commit_start": 30300.3645855,
+          "released": 30300.3672181,
+          "hold_body_ms": 467.73530000064056,
+          "hold_ms": 470.3679000012926,
+          "transaction_ms": 472.0870000019204,
+          "commit_ms": 2.632600000652019
+        },
+        {
+          "begin_start": 30300.3740648,
+          "acquired": 30300.3760416,
+          "wait_ms": 1.976800002012169,
+          "commit_start": 30300.8913854,
+          "released": 30300.8932703,
+          "hold_body_ms": 515.343799997936,
+          "hold_ms": 517.2286999986682,
+          "transaction_ms": 519.2055000006803,
+          "commit_ms": 1.8849000007321592
+        }
+      ],
+      "validation_ms": [
+        487.74450000200886,
+        467.14849999989383,
+        512.0386000016879
+      ],
+      "compiler_ms": [
+        14.646999999968102,
+        14.168800000334159,
+        14.318000001367182,
+        14.2240999994101,
+        15.212899998005014,
+        13.62179999705404
+      ],
+      "safe_cut_ms": [
+        13.474499999574618,
+        14.442300001974218,
+        13.263299999380251
+      ],
+      "prefix_evidence_span_ms": [
+        19.7455000015907,
+        18.912600000476232,
+        16.518599997652927
+      ],
+      "stage_ms": [
+        3.787699999520555
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 1200,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 1492.569200003345,
+      "nodes": 128,
+      "completed": 1,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 456434,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 83057,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 1519616,
+        "identity_sql_dump_bytes": 1141901,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 2851072,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 3305472,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30307.544941,
+          "acquired": 30307.5466523,
+          "wait_ms": 1.7112999994424172,
+          "commit_start": 30308.0671993,
+          "released": 30308.0693145,
+          "hold_body_ms": 520.5470000000787,
+          "hold_ms": 522.6622000009229,
+          "transaction_ms": 524.3735000003653,
+          "commit_ms": 2.1152000008441973
+        },
+        {
+          "begin_start": 30308.0755714,
+          "acquired": 30308.0771751,
+          "wait_ms": 1.6036999986681622,
+          "commit_start": 30308.5669022,
+          "released": 30308.5695157,
+          "hold_body_ms": 489.72710000089137,
+          "hold_ms": 492.3406000016257,
+          "transaction_ms": 493.9443000002939,
+          "commit_ms": 2.613500000734348
+        }
+      ],
+      "validation_ms": [
+        480.5555999992066,
+        520.0807000001078,
+        487.0340999987093
+      ],
+      "compiler_ms": [
+        14.244799996959046,
+        14.537200000631856,
+        14.210999997885665,
+        14.085200000408804,
+        15.29339999979129,
+        14.6402999998827
+      ],
+      "safe_cut_ms": [
+        13.965599999210099,
+        14.111199998296797,
+        14.504299997497583
+      ],
+      "prefix_evidence_span_ms": [
+        20.197100002405932,
+        73.207999997976,
+        16.72070000131498
+      ],
+      "stage_ms": [
+        3.476300000329502
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 1200,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 1510.6094000002486,
+      "nodes": 128,
+      "completed": 1,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 456434,
+        "checkpoint_json_bytes": 1084,
+        "package_json_bytes": 83057,
+        "stage_json_bytes": 1177,
+        "identity_logical_bytes": 1519616,
+        "identity_sql_dump_bytes": 1141901,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 24576,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 2851072,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 12288,
+          "values.sqlite3": 28672,
+          "workflow.sqlite3": 3305472,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30312.1893049,
+          "acquired": 30312.1909343,
+          "wait_ms": 1.629400001547765,
+          "commit_start": 30312.2924633,
+          "released": 30312.2951246,
+          "hold_body_ms": 101.52899999957299,
+          "hold_ms": 104.19030000048224,
+          "transaction_ms": 105.81970000203,
+          "commit_ms": 2.6613000009092502
+        },
+        {
+          "begin_start": 30312.3016722,
+          "acquired": 30312.3032989,
+          "wait_ms": 1.626699999178527,
+          "commit_start": 30312.407808,
+          "released": 30312.4111316,
+          "hold_body_ms": 104.50910000145086,
+          "hold_ms": 107.83270000320044,
+          "transaction_ms": 109.45940000237897,
+          "commit_ms": 3.3236000017495826
+        }
+      ],
+      "validation_ms": [
+        113.1083000000217,
+        101.12609999850974,
+        101.71679999984917
+      ],
+      "compiler_ms": [
+        2.8754999984812457,
+        2.7727000015147496,
+        2.8657000002567656,
+        2.775700002530357,
+        2.846999999746913,
+        2.802800001518335
+      ],
+      "safe_cut_ms": [
+        6.5936999999394175,
+        6.609500000195112,
+        6.858900000224821
+      ],
+      "prefix_evidence_span_ms": [
+        23.452599998563528,
+        21.785900000395486,
+        21.586299997579772
+      ],
+      "stage_ms": [
+        3.573499998310581
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 435,
+        "checkpoint": 16,
+        "values": 135,
+        "provenance": 3,
+        "memory": 36,
+        "audit": 12
+      },
+      "api_ms": 340.0874999970256,
+      "nodes": 32,
+      "completed": 4,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 164675,
+        "checkpoint_json_bytes": 2019,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 2057,
+        "identity_logical_bytes": 1273856,
+        "identity_sql_dump_bytes": 931824,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 32768,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 3852232,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 20480,
+          "values.sqlite3": 45056,
+          "workflow.sqlite3": 1630208,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30315.9285074,
+          "acquired": 30315.9296131,
+          "wait_ms": 1.1057000010623597,
+          "commit_start": 30316.0830693,
+          "released": 30316.085826,
+          "hold_body_ms": 153.4561999978905,
+          "hold_ms": 156.21289999762666,
+          "transaction_ms": 157.31859999868902,
+          "commit_ms": 2.7566999997361563
+        },
+        {
+          "begin_start": 30316.0935882,
+          "acquired": 30316.0954546,
+          "wait_ms": 1.8663999981072266,
+          "commit_start": 30316.2107375,
+          "released": 30316.2125811,
+          "hold_body_ms": 115.28290000205743,
+          "hold_ms": 117.12650000117719,
+          "transaction_ms": 118.99289999928442,
+          "commit_ms": 1.8435999991197605
+        }
+      ],
+      "validation_ms": [
+        114.08850000225357,
+        153.0108000006294,
+        111.52349999974831
+      ],
+      "compiler_ms": [
+        2.7544000004127156,
+        2.780499999062158,
+        2.9568000027211383,
+        2.79450000016368,
+        2.83099999796832,
+        2.7614999999059364
+      ],
+      "safe_cut_ms": [
+        6.838599998445716,
+        7.018100001005223,
+        6.990599998971447
+      ],
+      "prefix_evidence_span_ms": [
+        24.178499999834457,
+        24.386400000366848,
+        26.671899999200832
+      ],
+      "stage_ms": [
+        4.1311999993922655
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 435,
+        "checkpoint": 16,
+        "values": 135,
+        "provenance": 3,
+        "memory": 36,
+        "audit": 12
+      },
+      "api_ms": 403.76479999758885,
+      "nodes": 32,
+      "completed": 4,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 164681,
+        "checkpoint_json_bytes": 2019,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 2057,
+        "identity_logical_bytes": 1273856,
+        "identity_sql_dump_bytes": 931866,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 32768,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 3852232,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 20480,
+          "values.sqlite3": 45056,
+          "workflow.sqlite3": 1630208,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30319.8211471,
+          "acquired": 30319.8228223,
+          "wait_ms": 1.6752000010455959,
+          "commit_start": 30319.9284381,
+          "released": 30319.9314892,
+          "hold_body_ms": 105.61579999921378,
+          "hold_ms": 108.66689999966184,
+          "transaction_ms": 110.34210000070743,
+          "commit_ms": 3.0511000004480593
+        },
+        {
+          "begin_start": 30319.9378211,
+          "acquired": 30319.9395704,
+          "wait_ms": 1.7493000013928395,
+          "commit_start": 30320.0958991,
+          "released": 30320.098292,
+          "hold_body_ms": 156.32869999899413,
+          "hold_ms": 158.72159999707947,
+          "transaction_ms": 160.4708999984723,
+          "commit_ms": 2.3928999980853405
+        }
+      ],
+      "validation_ms": [
+        132.49670000004699,
+        105.15500000110478,
+        153.41859999898588
+      ],
+      "compiler_ms": [
+        2.825499999744352,
+        2.864000001864042,
+        2.8836999990744516,
+        2.8179000000818633,
+        2.8692999985651113,
+        3.3604000018385705
+      ],
+      "safe_cut_ms": [
+        6.746300001395866,
+        6.986600001255283,
+        6.99710000117193
+      ],
+      "prefix_evidence_span_ms": [
+        26.4978000013798,
+        22.793299998738803,
+        22.038300001440803
+      ],
+      "stage_ms": [
+        3.3834999994724058
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 435,
+        "checkpoint": 16,
+        "values": 135,
+        "provenance": 3,
+        "memory": 36,
+        "audit": 12
+      },
+      "api_ms": 414.895300000353,
+      "nodes": 32,
+      "completed": 4,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 164675,
+        "checkpoint_json_bytes": 2019,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 2057,
+        "identity_logical_bytes": 1273856,
+        "identity_sql_dump_bytes": 931846,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 32768,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 4096,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 3852232,
+          "memory.sqlite3": 12288,
+          "provenance.sqlite3": 20480,
+          "values.sqlite3": 45056,
+          "workflow.sqlite3": 1630208,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30325.2502829,
+          "acquired": 30325.2520965,
+          "wait_ms": 1.8135999998776242,
+          "commit_start": 30325.3992982,
+          "released": 30325.4028177,
+          "hold_body_ms": 147.20170000146027,
+          "hold_ms": 150.7211999996798,
+          "transaction_ms": 152.53479999955744,
+          "commit_ms": 3.519499998219544
+        },
+        {
+          "begin_start": 30325.4099998,
+          "acquired": 30325.4118554,
+          "wait_ms": 1.8556000031821895,
+          "commit_start": 30325.5560578,
+          "released": 30325.5587581,
+          "hold_body_ms": 144.20239999890327,
+          "hold_ms": 146.9026999984635,
+          "transaction_ms": 148.7583000016457,
+          "commit_ms": 2.7002999995602295
+        }
+      ],
+      "validation_ms": [
+        167.24140000223997,
+        146.62890000181505,
+        140.87329999892972
+      ],
+      "compiler_ms": [
+        3.0612000009568874,
+        2.9982000014570076,
+        3.170500000123866,
+        2.9673999997612555,
+        3.114099999947939,
+        3.008899999258574
+      ],
+      "safe_cut_ms": [
+        9.088200000405777,
+        10.099499999341788,
+        9.122600000409875
+      ],
+      "prefix_evidence_span_ms": [
+        48.46299999917392,
+        48.775700000987854,
+        44.21530000036
+      ],
+      "stage_ms": [
+        3.7004000005254056
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 567,
+        "checkpoint": 16,
+        "values": 255,
+        "provenance": 3,
+        "memory": 72,
+        "audit": 24
+      },
+      "api_ms": 482.0971000008285,
+      "nodes": 32,
+      "completed": 8,
+      "repeat": 0,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 203189,
+        "checkpoint_json_bytes": 3275,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 3237,
+        "identity_logical_bytes": 2248704,
+        "identity_sql_dump_bytes": 1880185,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 49152,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 1466368,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 4181832,
+          "memory.sqlite3": 20480,
+          "provenance.sqlite3": 28672,
+          "values.sqlite3": 77824,
+          "workflow.sqlite3": 2465792,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30330.7360049,
+          "acquired": 30330.7384798,
+          "wait_ms": 2.474899996741442,
+          "commit_start": 30330.8960596,
+          "released": 30330.8978286,
+          "hold_body_ms": 157.57980000125826,
+          "hold_ms": 159.3487999998615,
+          "transaction_ms": 161.82369999660295,
+          "commit_ms": 1.768999998603249
+        },
+        {
+          "begin_start": 30330.9047329,
+          "acquired": 30330.9067573,
+          "wait_ms": 2.0244000006641727,
+          "commit_start": 30331.0557956,
+          "released": 30331.0584514,
+          "hold_body_ms": 149.03830000184826,
+          "hold_ms": 151.69410000089556,
+          "transaction_ms": 153.71850000155973,
+          "commit_ms": 2.6557999990473036
+        }
+      ],
+      "validation_ms": [
+        188.03530000150204,
+        157.03229999780888,
+        145.79959999900893
+      ],
+      "compiler_ms": [
+        3.262199999880977,
+        3.1318999972427264,
+        3.5253999994893093,
+        3.4609999966050964,
+        3.149299998767674,
+        3.8253999991866294
+      ],
+      "safe_cut_ms": [
+        11.077399998612236,
+        9.88379999762401,
+        9.163399998215027
+      ],
+      "prefix_evidence_span_ms": [
+        62.92029999895021,
+        46.573700001317775,
+        46.32560000027297
+      ],
+      "stage_ms": [
+        3.6770000006072223
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 567,
+        "checkpoint": 16,
+        "values": 255,
+        "provenance": 3,
+        "memory": 72,
+        "audit": 24
+      },
+      "api_ms": 516.8949000035354,
+      "nodes": 32,
+      "completed": 8,
+      "repeat": 1,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 203181,
+        "checkpoint_json_bytes": 3275,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 3237,
+        "identity_logical_bytes": 2248704,
+        "identity_sql_dump_bytes": 1880128,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 49152,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 1466368,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 4181832,
+          "memory.sqlite3": 20480,
+          "provenance.sqlite3": 28672,
+          "values.sqlite3": 77824,
+          "workflow.sqlite3": 2465792,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30336.4749673,
+          "acquired": 30336.4768665,
+          "wait_ms": 1.8992000004800502,
+          "commit_start": 30336.6238307,
+          "released": 30336.6275224,
+          "hold_body_ms": 146.96419999745558,
+          "hold_ms": 150.6558999972185,
+          "transaction_ms": 152.55509999769856,
+          "commit_ms": 3.691699999762932
+        },
+        {
+          "begin_start": 30336.6350338,
+          "acquired": 30336.6369501,
+          "wait_ms": 1.9162999997206498,
+          "commit_start": 30336.79274,
+          "released": 30336.7957903,
+          "hold_body_ms": 155.7898999999452,
+          "hold_ms": 158.84019999793964,
+          "transaction_ms": 160.75649999766028,
+          "commit_ms": 3.0502999979944434
+        }
+      ],
+      "validation_ms": [
+        222.4021999973047,
+        146.37539999966975,
+        152.15909999824362
+      ],
+      "compiler_ms": [
+        3.0805999995209277,
+        56.6571000017575,
+        3.124700000626035,
+        3.0047999971429817,
+        3.1715000004624017,
+        3.26879999920493
+      ],
+      "safe_cut_ms": [
+        9.470199998759199,
+        9.48200000129873,
+        9.659999999712454
+      ],
+      "prefix_evidence_span_ms": [
+        50.86300000039046,
+        48.877000001084525,
+        47.49369999990449
+      ],
+      "stage_ms": [
+        3.857399999105837
+      ],
+      "selects": {
+        "workflow": 60,
+        "identity": 567,
+        "checkpoint": 16,
+        "values": 255,
+        "provenance": 3,
+        "memory": 72,
+        "audit": 24
+      },
+      "api_ms": 549.6999999995751,
+      "nodes": 32,
+      "completed": 8,
+      "repeat": 2,
+      "status": "STATE_PREPARED",
+      "sizes": {
+        "run_bytes": 203180,
+        "checkpoint_json_bytes": 3275,
+        "package_json_bytes": 20945,
+        "stage_json_bytes": 3237,
+        "identity_logical_bytes": 2248704,
+        "identity_sql_dump_bytes": 1880079,
+        "database_file_bytes": {
+          "audit.sqlite3": 12288,
+          "checkpoint.sqlite3": 49152,
+          "content.sqlite3": 4096,
+          "content.sqlite3-shm": 32768,
+          "content.sqlite3-wal": 37112,
+          "identity.sqlite3": 1466368,
+          "identity.sqlite3-shm": 32768,
+          "identity.sqlite3-wal": 4181832,
+          "memory.sqlite3": 20480,
+          "provenance.sqlite3": 28672,
+          "values.sqlite3": 77824,
+          "workflow.sqlite3": 2465792,
+          "workflow.sqlite3-shm": 32768,
+          "workflow.sqlite3-wal": 0
+        }
+      }
+    }
+  ],
+  "contention": [
+    {
+      "transactions": [
+        {
+          "begin_start": 30338.8759415,
+          "acquired": 30338.8770928,
+          "wait_ms": 1.1513000026752707,
+          "commit_start": 30338.9145852,
+          "released": 30338.9174928,
+          "hold_body_ms": 37.49239999888232,
+          "hold_ms": 40.39999999804422,
+          "transaction_ms": 41.55130000071949,
+          "commit_ms": 2.907599999161903
+        },
+        {
+          "begin_start": 30338.9214916,
+          "acquired": 30338.9295799,
+          "wait_ms": 8.0883000009635,
+          "commit_start": 30338.9748699,
+          "released": 30338.9760653,
+          "hold_body_ms": 45.29000000184169,
+          "hold_ms": 46.48540000198409,
+          "transaction_ms": 54.57370000294759,
+          "commit_ms": 1.1954000001423992
+        }
+      ],
+      "validation_ms": [
+        88.74839999771211,
+        37.11920000205282,
+        37.594999997963896
+      ],
+      "compiler_ms": [
+        0.6245000004128087,
+        0.5057000016677193,
+        0.6085999993956648,
+        0.4549999976006802,
+        0.6228999991435558,
+        0.4474000015761703
+      ],
+      "safe_cut_ms": [
+        3.8506000018969644,
+        3.5108999982185196,
+        3.461199998127995
+      ],
+      "prefix_evidence_span_ms": [
+        19.37950000137789,
+        7.228199996461626,
+        7.323599998926511
+      ],
+      "stage_ms": [
+        3.5155999976268504
+      ],
+      "selects": {
+        "workflow": 72,
+        "identity": 84,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 200.62489999691024,
+      "nodes": 4,
+      "status": "STATE_PREPARED",
+      "busy_timeout_ms": 5000,
+      "writers": [
+        {
+          "phase": "outside",
+          "status": "SAVED",
+          "elapsed_ms": 7.513799999287585
+        },
+        {
+          "phase": "final",
+          "status": "SAVED",
+          "elapsed_ms": 64.3478000019968
+        },
+        {
+          "phase": "retry",
+          "status": "SAVED",
+          "elapsed_ms": 4.373999996460043
+        }
+      ],
+      "writer_transactions": [
+        {
+          "begin_start": 30338.7832501,
+          "acquired": 30338.7832656,
+          "wait_ms": 0.015499997971346602,
+          "commit_start": 30338.784545,
+          "released": 30338.7866135,
+          "hold_body_ms": 1.2793999994755723,
+          "hold_ms": 3.3479000012448523,
+          "transaction_ms": 3.363399999216199,
+          "commit_ms": 2.06850000176928
+        },
+        {
+          "begin_start": 30338.9342703,
+          "acquired": 30338.9919748,
+          "wait_ms": 57.70449999909033,
+          "commit_start": 30338.9933552,
+          "released": 30338.9941481,
+          "hold_body_ms": 1.3804000009258743,
+          "hold_ms": 2.1732999994128477,
+          "transaction_ms": 59.87779999850318,
+          "commit_ms": 0.7928999984869733
+        }
+      ]
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30341.8044419,
+          "acquired": 30341.806473,
+          "wait_ms": 2.031100000749575,
+          "commit_start": 30341.899711,
+          "released": 30341.9026674,
+          "hold_body_ms": 93.2379999976547,
+          "hold_ms": 96.19440000096802,
+          "transaction_ms": 98.22550000171759,
+          "commit_ms": 2.9564000033133198
+        },
+        {
+          "begin_start": 30341.9098725,
+          "acquired": 30341.9117664,
+          "wait_ms": 1.8939000001410022,
+          "commit_start": 30342.0224904,
+          "released": 30342.025577,
+          "hold_body_ms": 110.7239999982994,
+          "hold_ms": 113.81059999985155,
+          "transaction_ms": 115.70449999999255,
+          "commit_ms": 3.086600001552142
+        }
+      ],
+      "validation_ms": [
+        124.09519999710028,
+        92.76139999929,
+        92.64629999961471
+      ],
+      "compiler_ms": [
+        3.0590999995183665,
+        2.8818000027968083,
+        3.063200001633959,
+        3.104499999608379,
+        3.121499998087529,
+        3.183999997418141
+      ],
+      "safe_cut_ms": [
+        5.92069999765954,
+        6.250900001759874,
+        6.754500001989072
+      ],
+      "prefix_evidence_span_ms": [
+        13.182200000301236,
+        10.673000000679167,
+        12.175200001365738
+      ],
+      "stage_ms": [
+        3.826700001809513
+      ],
+      "selects": {
+        "workflow": 72,
+        "identity": 336,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 357.8443000005791,
+      "nodes": 32,
+      "status": "STATE_PREPARED",
+      "busy_timeout_ms": 5000,
+      "writers": [
+        {
+          "phase": "outside",
+          "status": "SAVED",
+          "elapsed_ms": 8.321700002852594
+        },
+        {
+          "phase": "final",
+          "status": "SAVED",
+          "elapsed_ms": 120.03189999813912
+        },
+        {
+          "phase": "retry",
+          "status": "SAVED",
+          "elapsed_ms": 5.4212000031839125
+        }
+      ],
+      "writer_transactions": [
+        {
+          "begin_start": 30341.6757463,
+          "acquired": 30341.6757674,
+          "wait_ms": 0.021100000594742596,
+          "commit_start": 30341.676958,
+          "released": 30341.679838,
+          "hold_body_ms": 1.1905999999726191,
+          "hold_ms": 4.070599999977276,
+          "transaction_ms": 4.091700000572018,
+          "commit_ms": 2.8800000000046566
+        },
+        {
+          "begin_start": 30341.9261625,
+          "acquired": 30342.029498,
+          "wait_ms": 103.33549999995739,
+          "commit_start": 30342.0309919,
+          "released": 30342.0320296,
+          "hold_body_ms": 1.4938999993319158,
+          "hold_ms": 2.531599999201717,
+          "transaction_ms": 105.86709999915911,
+          "commit_ms": 1.037699999869801
+        }
+      ]
+    },
+    {
+      "transactions": [
+        {
+          "begin_start": 30349.6018668,
+          "acquired": 30349.6037256,
+          "wait_ms": 1.8588000020827167,
+          "commit_start": 30350.1620672,
+          "released": 30350.1650334,
+          "hold_body_ms": 558.3415999972203,
+          "hold_ms": 561.3077999987581,
+          "transaction_ms": 563.1666000008408,
+          "commit_ms": 2.9662000015378
+        },
+        {
+          "begin_start": 30350.1722675,
+          "acquired": 30350.1741149,
+          "wait_ms": 1.8474000025889836,
+          "commit_start": 30350.6866915,
+          "released": 30350.6936031,
+          "hold_body_ms": 512.5765999982832,
+          "hold_ms": 519.4881999996142,
+          "transaction_ms": 521.3356000022031,
+          "commit_ms": 6.911600001330953
+        }
+      ],
+      "validation_ms": [
+        550.9391000014148,
+        557.8414000010525,
+        496.7913000000408
+      ],
+      "compiler_ms": [
+        16.154000000824453,
+        16.44259999739006,
+        15.505999999732012,
+        15.677999999752501,
+        15.822600002138643,
+        15.78009999866481
+      ],
+      "safe_cut_ms": [
+        15.657200001442106,
+        15.800699999090284,
+        14.534199999616249
+      ],
+      "prefix_evidence_span_ms": [
+        20.622000000003027,
+        18.338299996685237,
+        18.15360000182409
+      ],
+      "stage_ms": [
+        4.154799997195369
+      ],
+      "selects": {
+        "workflow": 72,
+        "identity": 1200,
+        "checkpoint": 16,
+        "values": 45,
+        "provenance": 3,
+        "memory": 9,
+        "audit": 3
+      },
+      "api_ms": 1655.9157999981835,
+      "nodes": 128,
+      "status": "STATE_PREPARED",
+      "busy_timeout_ms": 5000,
+      "writers": [
+        {
+          "phase": "outside",
+          "status": "SAVED",
+          "elapsed_ms": 8.611900000687456
+        },
+        {
+          "phase": "final",
+          "status": "SAVED",
+          "elapsed_ms": 623.7170000022161
+        },
+        {
+          "phase": "retry",
+          "status": "SAVED",
+          "elapsed_ms": 5.203299999266164
+        }
+      ],
+      "writer_transactions": [
+        {
+          "begin_start": 30349.0460754,
+          "acquired": 30349.0460932,
+          "wait_ms": 0.017799997294787318,
+          "commit_start": 30349.0473831,
+          "released": 30349.0503201,
+          "hold_body_ms": 1.2899000030301977,
+          "hold_ms": 4.2269000005035195,
+          "transaction_ms": 4.244699997798307,
+          "commit_ms": 2.936999997473322
+        },
+        {
+          "begin_start": 30350.1865809,
+          "acquired": 30350.7945073,
+          "wait_ms": 607.9263999999966,
+          "commit_start": 30350.7958933,
+          "released": 30350.798046,
+          "hold_body_ms": 1.3859999999112915,
+          "hold_ms": 3.5386999988986645,
+          "transaction_ms": 611.4650999988953,
+          "commit_ms": 2.152699998987373
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "All timing fields are ms except absolute perf_counter seconds in transaction boundary timestamps.",
+    "wait_ms is BEGIN IMMEDIATE call latency, including SQLite overhead; not pure internal busy wait.",
+    "hold_ms is successful BEGIN return to COMMIT return; hold_body_ms ends at COMMIT entry.",
+    "prefix_evidence_span_ms excludes earlier source Identity plan-map verification; validation_ms includes it.",
+    "SQL SELECT statement counts include persistent and newly opened connections.",
+    "Identity sizes include both source Mission and a one-node writer Mission plus schema.",
+    "Three fresh independent fixtures per shape; no p95 or worst-case claim."
+  ]
+}

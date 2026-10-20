@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="170" viewBox="0 0 720 170" role="img" aria-label="知弈 AgentOS">
+  <title>知弈 AgentOS</title>
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#d9b878"/>
+      <stop offset="0.45" stop-color="#c19a53"/>
+      <stop offset="1" stop-color="#9a732f"/>
+    </linearGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a9823f" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#c9a25f" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#a9823f" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <text x="360" y="104" text-anchor="middle" font-size="104" fill="url(#gold)"><tspan font-family="'KaiTi','STKaiti','Kaiti SC','Noto Serif SC','Songti SC',serif" font-weight="400">知弈</tspan><tspan dx="26" font-family="'Palatino Linotype','Palatino','Book Antiqua',Georgia,serif" font-style="italic" letter-spacing="1.5">AgentOS</tspan></text>
+
+  <path d="M236 152 C 300 146, 420 158, 484 151" fill="none" stroke="url(#rule)" stroke-width="1.6" stroke-linecap="round">
+    <animate attributeName="stroke-dasharray" values="0 400;400 0" dur="1.6s" begin="0.2s" fill="freeze"/>
+  </path>
+  <g transform="translate(360 152)">
+    <rect x="-3.6" y="-3.6" width="7.2" height="7.2" fill="#c19a53" fill-opacity="0.9" transform="rotate(45)">
+      <animate attributeName="fill-opacity" values="0.9;0.45;0.9" dur="3.6s" begin="1.8s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>

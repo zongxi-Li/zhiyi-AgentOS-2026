@@ -26,6 +26,8 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         self, *, collaborators: RuntimeCollaborators, load_goal: Callable[[str], str],
         planner_for_run: Callable, validate_references: Callable,
         apply_decision: Callable[..., Awaitable[str]], guarded_save: Callable,
+        decision_gate: Callable | None = None,
+        pending_commit_wait: Callable | None = None,
     ):
         self.ports = collaborators
         self.load_goal = load_goal
@@ -33,6 +35,8 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         self.validate_references = validate_references
         self.apply_decision = apply_decision
         self.guarded_save = guarded_save
+        self.decision_gate = decision_gate
+        self.pending_commit_wait = pending_commit_wait
         self.observation_builder = RuntimePlanningObservationBuilder(
             collaborators=collaborators, load_goal=load_goal, validate_references=validate_references,
         )
@@ -48,6 +52,10 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         if not isinstance(raw, dict):
             return "complete" if reason == "exhausted" else "continue"
         loop = RuntimePlanningState.model_validate(raw)
+        if self.pending_commit_wait is not None:
+            pending = await self.pending_commit_wait(run, state, loop)
+            if pending is not None:
+                return pending
         if not state.active_step_ids and not state.review_payload and not state.control_frames:
             known = {(item.source_run_id, item.operation_id) for item in loop.user_inputs}
             inputs = tuple(RuntimeUserInput.model_validate(item) for item in self.workflow_store.list_planning_inputs(run.run_id)
@@ -124,9 +132,17 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
                 except Exception as exc:
                     # Persist a safe wait, not a speculative fallback plan or raw model text.
                     decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=f"Runtime Planner unavailable: {type(exc).__name__}")
+            if self.decision_gate is not None:
+                decision = await self.decision_gate(run, observation, decision)
             current = current.model_copy(update={"decision": decision, "status": "decided"})
             loop = loop.model_copy(update={"current": current})
             self._save(run, loop, "decided")
+        elif self.decision_gate is not None and current.decision.action == "revise":
+            decision = await self.decision_gate(run, observation, current.decision)
+            if decision != current.decision:
+                current = current.model_copy(update={"decision": decision, "status": "decided"})
+                loop = loop.model_copy(update={"current": current})
+                self._save(run, loop, "decided")
         decision = current.decision
         try:
             self.validate_decision(observation, decision)

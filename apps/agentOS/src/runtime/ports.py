@@ -62,6 +62,7 @@ class RuntimeCollaborators:
     model_runtime: object | None
     default_model_binding: dict[str, str] | None
     fault_hook: Callable[[str], None] | None
+    execution_permit_authority: object | None = None
 
 
 class CollaboratorAccess:
@@ -73,6 +74,14 @@ class CollaboratorAccess:
     """
 
     ports: RuntimeCollaborators
+
+    @property
+    def execution_permit_authority(self):
+        return self.ports.execution_permit_authority
+
+    @execution_permit_authority.setter
+    def execution_permit_authority(self, value):
+        self.ports.execution_permit_authority = value
 
     @property
     def workflow_store(self) -> WorkflowStore:

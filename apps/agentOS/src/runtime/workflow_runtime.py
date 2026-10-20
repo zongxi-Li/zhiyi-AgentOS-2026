@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from copy import deepcopy
 from datetime import datetime
 import json
@@ -80,6 +81,7 @@ from contracts.workflow import (
 )
 from contracts.execution import WorkflowProgressPhase
 from contracts.recovery import GraphPatchResult, SemanticPatchRequest
+from contracts.planning_commit import PlanningCommitReceipt
 from runtime.compatibility import GLOBAL_RUN_LOCK_MANAGER, RunLockManager
 from runtime.execution_migration import ExecutionEngineMigratingError
 from support.acg.capabilities import CapabilityCatalog
@@ -258,6 +260,7 @@ class ExecutionRuntime(CollaboratorAccess):
         model_max_concurrency: int = 4,
         model_min_interval_seconds: float = 0.0,
         resource_execution_adapters: Optional[Mapping[str, ResourceExecutionAdapter]] = None,
+        planning_commit_store: object | None = None,
     ):
         if scheduler_wait_timeout <= 0:
             raise ValueError("scheduler_wait_timeout must be positive")
@@ -427,6 +430,8 @@ class ExecutionRuntime(CollaboratorAccess):
             validate_references=self._validate_acg_state_references,
             apply_decision=self._apply_runtime_planning_decision,
             guarded_save=self._save_runtime_planning_round,
+            decision_gate=self._gate_planning_commit_decision,
+            pending_commit_wait=self._resume_pending_commit_wait,
         )
         self.runtime_planning_application = RuntimePlanningApplication(
             collaborators=self.ports, state_persistence=self.acg_state_persistence,
@@ -445,9 +450,17 @@ class ExecutionRuntime(CollaboratorAccess):
         # 原子认领执行槽，重复入口立即失败，而不是对同一批未提交步骤双跑。
         self._execution_slot_guard = threading.Lock()
         self._active_execution_slots: set[str] = set()
+        self._execution_fences = {}
         # 协作式取消信号：cancel() 写入，_execute_acg 的调度边界读取并清理。
         self._run_cancel_guard = threading.Lock()
         self._run_cancel_events: dict[str, threading.Event] = {}
+        self.planning_commit_authority = None
+        self.graph_materialization_authority = None
+        self.graph_activation_authority = None
+        self.graph_handoff_authority = None
+        self.execution_permit_authority = None
+        if planning_commit_store is not None:
+            self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
         self._runtime_adapters: dict[str, object] = {}
         self.execution_adapter_factories: dict[str, ExecutionAdapterFactory] = {
@@ -610,6 +623,8 @@ class ExecutionRuntime(CollaboratorAccess):
         mission_revision_decision: dict | None = None,
     ) -> tuple[RuntimeMissionRecord, RuntimeRunRecord]:
         """Freeze authorized Mission input before synchronous or deferred planning."""
+        if self.planning_commit_authority is not None:
+            defer_acg_planning = True
         if self.mission_semantic_service is not None:
             if semantic_principal is None and self.semantic_principal_provider is not None:
                 semantic_principal = self.semantic_principal_provider()
@@ -767,6 +782,8 @@ class ExecutionRuntime(CollaboratorAccess):
             run.execution_state["evolutionPolicy"] = dict(active_evolution.policy)
         if is_acg and defer_acg_planning:
             run.execution_state["planningDeferred"] = True
+            if self.planning_commit_authority is not None:
+                run.execution_state["planningCommitRequired"] = True
         elif is_acg:
             self._materialize_acg_run(task=task, run=run, workflow=workflow, scope=scope)
         self.trace_store.append(
@@ -857,6 +874,13 @@ class ExecutionRuntime(CollaboratorAccess):
         scope: RunExecutionScope,
     ) -> None:
         """Run the existing L1-L3 plan/build/compile path for one persisted Run."""
+        if run.execution_state.get("planningCommitRequired"):
+            if self.planning_commit_authority is None:
+                raise ValueError("Planning Commit authority is required for this Run")
+            receipt = self.planning_commit_authority.accept_initial(run.run_id)
+            if receipt.status == "REJECTED":
+                raise ValueError(f"Planning Commit rejected: {receipt.code.value}")
+            return
         frozen_task_acceptance(run)
         provided_explicit = run.input.get("acgBlueprint") or run.acg_blueprint or None
         explicit_blueprint = isinstance(provided_explicit, dict) and bool(provided_explicit.get("nodes"))
@@ -949,6 +973,10 @@ class ExecutionRuntime(CollaboratorAccess):
         if scope is None:
             raise ValueError("deferred ACG planning requires a frozen execution scope")
         self._materialize_acg_run(task=task, run=run, workflow=workflow, scope=scope)
+        if run.execution_state.get("planningCommitRequired"):
+            # Acceptance persisted only ledger/outbox. Never save the worker's
+            # pre-planning Run snapshot over later operator/lifecycle changes.
+            return self.workflow_store.get_run(run_id)
         # Planning runs in a worker thread. Re-check and commit under the same
         # short run lock used by cancel(), otherwise a stale planner snapshot
         # can overwrite CANCELLED and hand the run back to the executor.
@@ -966,6 +994,8 @@ class ExecutionRuntime(CollaboratorAccess):
 
         run = self.workflow_store.get_run(run_id)
         if self._normalize_runtime_engine(run.runtime_engine) == "acg":
+            if run.execution_state.get("planningCommitRequired") and self.planning_commit_authority is None:
+                return run
             if run.status in _TERMINAL_RUN_STATUSES:
                 return run
             if run.status == WorkflowStatus.WAITING_REVIEW:
@@ -995,6 +1025,8 @@ class ExecutionRuntime(CollaboratorAccess):
                     latest = self.workflow_store.get_run(run.run_id)
                     self._discard_run_cancellation(run.run_id)
                     return latest
+                if run.execution_state.get("planningDeferred"):
+                    return run  # accepted planning fact; no graph has been materialized
             retry_state = (
                 acg_execution_state_from_run(run)
                 if (
@@ -1005,6 +1037,22 @@ class ExecutionRuntime(CollaboratorAccess):
                 )
                 else None
             )
+            permit_projection = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
+            if isinstance(permit_projection, dict):
+                checkpoint_id = run.execution_state.get("checkpointId")
+                if not isinstance(checkpoint_id, str) or checkpoint_id != permit_projection.get("checkpointId"):
+                    # Once execution has advanced, the Run may reference a later
+                    # checkpoint; the immutable permit remains bound to the
+                    # promoted initial checkpoint and generation in every state.
+                    if not isinstance(checkpoint_id, str):
+                        raise ValueError("permitted Run has no explicit recovery checkpoint")
+                payload = self.checkpoint_store.load(run_id=run.run_id, checkpoint_id=checkpoint_id)
+                if payload is None:
+                    raise ValueError("permitted Run checkpoint is missing")
+                retry_state = ACGExecutionState.model_validate(payload)
+                if (retry_state.execution_permit_id != run.execution_state.get("executionPermitId")
+                        or retry_state.execution_generation != run.execution_state.get("executionGeneration")):
+                    raise ValueError("permitted Run checkpoint belongs to another execution generation")
             return await self._execute_acg(run, state=retry_state)
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
@@ -1059,9 +1107,9 @@ class ExecutionRuntime(CollaboratorAccess):
         """
         if run.status in _TERMINAL_RUN_STATUSES:
             return run
-        frozen_task_acceptance(run)
-        if not self._claim_execution_slot(run.run_id):
-            raise ValueError(f"run {run.run_id} already has an active execution")
+        if run.execution_state.get("planningCommitRequired") and self.planning_commit_authority is None:
+            return run
+        self._claim_acg_execution(run)
         while True:
             executed_run_id = run.run_id
             try:
@@ -1076,32 +1124,231 @@ class ExecutionRuntime(CollaboratorAccess):
                 run = result
             else:
                 return result
+            self._claim_acg_execution(run)
+            state = acg_execution_state_from_run(run)
+            command = None
+
+    def _claim_acg_execution(self, run: RuntimeRunRecord) -> None:
+        """Fence every initial/retry/successor execution before claiming a slot."""
+        # Serialize the durable execution fence and slot claim against activation.
+        # A head is authoritative even if its optional Run projection was lost.
+        from contextlib import ExitStack
+        from support.run_execution_fence import acquire_run_fence
+        with self.run_lock_manager.lock_for(run.run_id), ExitStack() as lifetime:
+            from support.stores.graph_activation_store import validate_activation_run
+            from support.stores.memory_workflow_store import MemoryWorkflowStore
+            if isinstance(self.workflow_store, MemoryWorkflowStore):
+                # This legacy backend has no durable activation capability. It
+                # cannot be used to resume an activation projection or authority.
+                latest = self.workflow_store.get_run(run.run_id)
+                if self.graph_activation_authority is not None or "graphActivation" in latest.execution_state:
+                    raise ValueError("durable activation evidence unavailable in the memory backend")
+            else:
+                # Hold the same OS fence as activation BEFORE reading the Head,
+                # and retain it through the full executor lifetime. A snapshot
+                # write rejection after an external call is too late a fence.
+                lifetime.enter_context(acquire_run_fence(self.workflow_store.db_path, run.run_id))
+                with self.workflow_store._connect() as conn:
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("BEGIN")
+                    row = conn.execute("SELECT payload FROM runs WHERE run_id=?", (run.run_id,)).fetchone()
+                    latest = RuntimeRunRecord.model_validate_json(row["payload"])
+                    head = validate_activation_run(conn, latest)
+                    if head is not None:
+                        if self.execution_permit_authority is None:
+                            raise ValueError("activated but paused; no execution permit authority is attached")
+                        self.execution_permit_authority.assert_dispatchable(latest)
+                        supplied_permit = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
+                        current_permit = (latest.execution_state.get("graphActivation") or {}).get("executionPermit")
+                        if supplied_permit != current_permit:
+                            raise ExecutionStateChanged("execution permit changed while the executor was starting")
+            if (isinstance(latest.acg_blueprint, dict) and isinstance(run.acg_blueprint, dict)
+                    and latest.acg_blueprint.get("version") != run.acg_blueprint.get("version")):
+                raise ExecutionStateChanged("run graph version changed while the executor was starting")
             frozen_task_acceptance(run)
             if not self._claim_execution_slot(run.run_id):
                 raise ValueError(f"run {run.run_id} already has an active execution")
-            state = acg_execution_state_from_run(run)
-            command = None
+            with self._execution_slot_guard:
+                self._execution_fences[run.run_id] = lifetime.pop_all()
 
     def _save_runtime_planning_round(self, run: RuntimeRunRecord) -> None:
         """Model calls run outside the lock; stale/cancelled decisions cannot commit."""
         with self.run_lock_manager.lock_for(run.run_id):
             self._assert_runtime_planning_current(run)
+            if self.planning_commit_authority is not None:
+                run.execution_state["planningCommitRequired"] = True
             run.runtime_revision += 1
             run.updated_at = utc_now()
             self.workflow_store.save_run(run)
 
-    def _assert_runtime_planning_current(self, run: RuntimeRunRecord) -> None:
+    def enable_planning_commit(self, store) -> None:
+        """Explicitly attach an already-upgraded ledger; never run schema DDL."""
+        from runtime.planning_commit import RuntimePlanningCommitAuthority
+        self.planning_commit_authority = RuntimePlanningCommitAuthority(runtime=self, store=store)
+
+    def enable_graph_materialization(self, store) -> None:
+        """Explicit server assembly only; never initialize or migrate a database."""
+        from runtime.graph_materialization import GraphMaterializationAuthority
+        self.graph_materialization_authority = GraphMaterializationAuthority(self, store)
+
+    def enable_graph_activation(self, store) -> None:
+        """Explicit server assembly only; never initialize or migrate a database."""
+        from runtime.graph_activation import GraphActivationAuthority
+        self.graph_activation_authority = GraphActivationAuthority(self, store)
+
+    def enable_graph_handoff(self, store, staged_checkpoint_store) -> None:
+        """Attach explicitly upgraded handoff stores; never issue a permit."""
+        from runtime.graph_handoff import GraphHandoffAuthority
+        self.graph_handoff_authority = GraphHandoffAuthority(self, store, staged_checkpoint_store)
+
+    def enable_execution_permit(self, store) -> None:
+        """Attach an explicitly upgraded permit ledger; no DDL or auto-issuance."""
+        from runtime.execution_permit import ExecutionPermitAuthority
+        self.execution_permit_authority = ExecutionPermitAuthority(self, store)
+
+    def issue_execution_permit(self, handoff_id, *, idempotency_key):
+        """Promote a verified staged checkpoint and issue one explicit graph permit."""
+        if self.execution_permit_authority is None:
+            from runtime.execution_permit import rejected
+            return rejected("AUTHORITY_DENIED", "execution permit authority unavailable")
+        return self.execution_permit_authority.issue(handoff_id, idempotency_key=idempotency_key)
+
+    def prepare_graph_handoff(self, activation_id, *, idempotency_key):
+        """Prepare a staged execution state; no recovery head or Run mutation."""
+        if self.graph_handoff_authority is None:
+            from runtime.graph_handoff import rejected
+            return rejected("AUTHORITY_DENIED", "graph handoff authority unavailable")
+        return self.graph_handoff_authority.prepare(activation_id, idempotency_key=idempotency_key)
+
+    def prepare_graph_activation(self, materialization_id, *, idempotency_key):
+        """Persist one verified activation preparation; never switch the graph."""
+        if self.graph_activation_authority is None:
+            from runtime.graph_activation import rejected
+            from contracts.planning_commit import PlanningCommitRejectionCode
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "graph activation authority unavailable")
+        return self.graph_activation_authority.prepare(materialization_id, idempotency_key=idempotency_key)
+
+    def commit_graph_activation(self, materialization_id, *, idempotency_key):
+        """Atomically switch the formal GraphVersion head and Run projection.
+
+        The activated graph stays paused: no execution permit is issued here
+        and every scheduling entry point keeps refusing the Run.
+        """
+        if self.graph_activation_authority is None:
+            from runtime.graph_activation import rejected
+            from contracts.planning_commit import PlanningCommitRejectionCode
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "graph activation authority unavailable")
+        return self.graph_activation_authority.commit(materialization_id, idempotency_key=idempotency_key)
+
+    def materialize_graph_revision(self, commit_id, *, idempotency_key):
+        """Persist an inactive package; no graph activation or execution."""
+        if self.graph_materialization_authority is None:
+            from runtime.graph_materialization import rejected
+            from contracts.planning_commit import PlanningCommitRejectionCode
+            return rejected(PlanningCommitRejectionCode.AUTHORITY_DENIED, "materialization authority unavailable")
+        return self.graph_materialization_authority.materialize(commit_id, idempotency_key=idempotency_key)
+
+    def accept_graph_revision(self, run_id, source_commit_id, *, idempotency_key):
+        """Explicit server-side acceptance; never materialize or apply a graph."""
+        if self.planning_commit_authority is None:
+            from contracts.planning_commit import PlanningCommitRejection, PlanningCommitRejectionCode
+            return PlanningCommitRejection(code=PlanningCommitRejectionCode.AUTHORITY_DENIED,
+                                           reason="Planning Commit authority is unavailable")
+        return self.planning_commit_authority.accept_graph_revision(
+            run_id, source_commit_id, idempotency_key=idempotency_key)
+
+    def _mark_planning_commit_required(self, run) -> None:
+        """Orchestration fence, outside the Commit service; caller holds Run lock."""
+        if run.execution_state.get("planningCommitRequired"):
+            return
+        principal = self.semantic_principal_provider() if self.semantic_principal_provider else None
+        if self.mission_semantic_service is None or principal is None:
+            raise PermissionError("trusted planning authority is required")
+        self.mission_semantic_service.require_write_access(principal, run.mission_id)
+        if run.active_step_ids or any(s.status in {StepStatus.RUNNING, StepStatus.RETRYING} for s in run.steps):
+            raise ValueError("planning mode cannot change while work is active")
+        self._assert_runtime_planning_current(run)
+        run.execution_state["planningCommitRequired"] = True
+        run.runtime_revision += 1
+        run.updated_at = utc_now()
+        self.workflow_store.save_run(run)
+
+    def require_planning_commit(self, run_id) -> None:
+        """Explicitly opt an existing quiescent Run into fail-closed acceptance."""
+        if self.planning_commit_authority is None:
+            raise ValueError("Planning Commit authority is required")
+        with self.run_lock_manager.lock_for(run_id):
+            self._mark_planning_commit_required(self.workflow_store.get_run(run_id))
+
+    async def _gate_planning_commit_decision(self, run, observation, decision):
+        """Persist only wait after acceptance, so restart cannot adopt a revision."""
+        if decision.action != "revise":
+            return decision
+        if self.planning_commit_authority is None and not run.execution_state.get("planningCommitRequired"):
+            return decision
+        from contracts.runtime_planning import RuntimePlanningDecision
+        async with self.run_lock_manager.lock_for(run.run_id):
+            self._assert_runtime_planning_current(run)
+            if self.planning_commit_authority is None:
+                reason = "Planning Commit authority unavailable; revision remains unaccepted"
+            else:
+                try:
+                    self._mark_planning_commit_required(run)
+                    self.runtime_planning_coordinator.validate_decision(observation, decision)
+                    receipt = self.planning_commit_authority.accept_patch_locked(run.run_id, decision.task_plan_patch,
+                        proposal_id="runtime:" + observation.fingerprint(),
+                        idempotency_key="runtime-planning:" + run.run_id + ":" + observation.fingerprint())
+                    reason = (f"Planning Commit {receipt.commit_id} accepted; awaiting materialization"
+                              if receipt.status != "REJECTED" else f"Planning Commit rejected: {receipt.code.value}")
+                except (ValueError, KeyError, PermissionError) as exc:
+                    reason = f"Planning Commit rejected: {type(exc).__name__}"
+        return RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait", reason=reason)
+
+    async def _resume_pending_commit_wait(self, run, state, loop):
+        """Finish a durable acceptance barrier before refreshing volatile observations."""
+        current = loop.current
+        authority = self.planning_commit_authority
+        if (authority is None or current is None or current.status not in {"observed", "decided"}
+                or (current.decision is not None and (current.decision.action != "wait"
+                    or current.decision.wait_for is not None or current.decision.question is not None))
+                or not run.execution_state.get("planningCommitRequired")):
+            return None
+        record = authority.store.get_by_idempotency_key("runtime-planning:" + run.run_id + ":" + current.observation_id)
+        if (record is None or record.mission_id != run.mission_id
+                or record.proposal_type != "plan_revision"
+                or record.sources.observation_id != current.observation_id
+                or record.proposal_id != authority.proposal_identity(run.run_id, "runtime:" + current.observation_id)):
+            return None
+        self._validate_acg_state_references(run=run, state=state)
+        from contracts.runtime_planning import RuntimePlanningDecision
+        decision = current.decision or RuntimePlanningDecision(observationId=current.observation_id,
+            action="wait", reason=f"Planning Commit {record.commit_id} accepted; awaiting materialization")
+        applied = loop.model_copy(update={"current": current.model_copy(update={"status": "applied", "decision": decision})})
+        async with self.run_lock_manager.lock_for(run.run_id):
+            # Completing a plain wait neither accepts new facts nor executes work.
+            # Keep the independent operator inbox unconsumed for the next review;
+            # its arrival must not indefinitely block this crash-recovery barrier.
+            self._assert_runtime_planning_current(run, allow_unconsumed_operator_input=True)
+            return self.runtime_planning_application.apply(run, state, current.observation, decision, applied)
+
+    def _assert_runtime_planning_current(self, run: RuntimeRunRecord, *, allow_unconsumed_operator_input=False) -> None:
         latest = self.workflow_store.get_run(run.run_id)
         if latest.status in _TERMINAL_RUN_STATUSES or self._run_cancellation_requested(run.run_id):
             raise ExecutionRunCancelled("runtime planning stopped by terminal lifecycle")
         if latest.runtime_revision != run.runtime_revision:
             raise ExecutionStateChanged("runtime changed while Planner was deciding")
         known = {(i.get("sourceRunId"), i.get("operationId")) for i in (run.execution_state.get("planningLoop") or {}).get("userInputs", [])}
-        if any((i["sourceRunId"], i["operationId"]) not in known for i in self.workflow_store.list_planning_inputs(run.run_id)):
+        if (not allow_unconsumed_operator_input
+                and any((i["sourceRunId"], i["operationId"]) not in known for i in self.workflow_store.list_planning_inputs(run.run_id))):
             raise ExecutionStateChanged("operator input arrived while Planner was deciding")
 
     async def _apply_runtime_planning_decision(self, run, state, observation, decision, loop) -> str:
         """Retain lifecycle locking; deterministic application lives in its service."""
+        if decision.action == "revise" and (self.planning_commit_authority is not None
+                or run.execution_state.get("planningCommitRequired")):
+            decision = await self._gate_planning_commit_decision(run, observation, decision)
+            if loop.current is not None:
+                loop = loop.model_copy(update={"current": loop.current.model_copy(update={"decision": decision})})
         async with self.run_lock_manager.lock_for(run.run_id):
             self._assert_runtime_planning_current(run)
             return self.runtime_planning_application.apply(run, state, observation, decision, loop)
@@ -1639,6 +1886,9 @@ class ExecutionRuntime(CollaboratorAccess):
     def _release_execution_slot(self, run_id: str) -> None:
         with self._execution_slot_guard:
             self._active_execution_slots.discard(run_id)
+            fence = self._execution_fences.pop(run_id, None)
+        if fence is not None:
+            fence.close()
 
     def _signal_run_cancellation(self, run_id: str) -> None:
         """写入协作式取消信号；执行侧在下一次调度边界感知并停止推进。"""
@@ -2085,10 +2335,17 @@ class ExecutionRuntime(CollaboratorAccess):
 
     async def apply_semantic_patch(
         self, request: SemanticPatchRequest
-    ) -> GraphPatchResult:
-        """Create a replacement Run from a validated TaskPlan revision."""
+    ) -> GraphPatchResult | PlanningCommitReceipt:
+        """Accept an opt-in candidate, or use the existing replacement-Run lane."""
         async with self.run_lock_manager.lock_for(request.run_id):
             run = self.workflow_store.get_run(request.run_id)
+            if self.planning_commit_authority is not None or run.execution_state.get("planningCommitRequired"):
+                if self.planning_commit_authority is None:
+                    raise ValueError("Planning Commit authority is required for this Run")
+                self._mark_planning_commit_required(run)
+                return self.planning_commit_authority.accept_patch_locked(run.run_id, request.task_plan_patch,
+                    proposal_id=request.patch_id, idempotency_key=request.idempotency_key,
+                    graph_id=request.graph_id, graph_version=request.base_graph_version)
             service = self.semantic_revision_service
             prepared = service.prepare(
                 request=request,
@@ -2169,22 +2426,73 @@ class ExecutionRuntime(CollaboratorAccess):
         )
 
     def _planning_engine_for_run(self, run: RuntimeRunRecord):
-        if run.execution_scope is None:
+        if run.execution_scope is None and not self._react_planning_active():
             return self.planning_engine
         from components.planner.service import PlanningEngine
 
-        return PlanningEngine(
-            workflow_registry=self.plugin_scope_resolver.scoped_workflows(
-                run.execution_scope
-            ),
-            agent_registry=self.plugin_scope_resolver.scoped_agents(
-                run.execution_scope
-            ),
-            capability_catalog=self.plugin_scope_resolver.scoped_catalog(
-                run.execution_scope
-            ),
-            intent_llm=self._intent_llm,
+        if run.execution_scope is None:
+            engine = PlanningEngine(
+                workflow_registry=self.workflow_registry,
+                agent_registry=self.agent_registry,
+                capability_catalog=self.capability_catalog,
+                intent_llm=self._intent_llm,
+            )
+        else:
+            engine = PlanningEngine(
+                workflow_registry=self.plugin_scope_resolver.scoped_workflows(
+                    run.execution_scope
+                ),
+                agent_registry=self.plugin_scope_resolver.scoped_agents(
+                    run.execution_scope
+                ),
+                capability_catalog=self.plugin_scope_resolver.scoped_catalog(
+                    run.execution_scope
+                ),
+                intent_llm=self._intent_llm,
+            )
+        return self._attach_react_loop(engine, run)
+
+    def _react_planning_active(self) -> bool:
+        """PR-S01-02 opt-in：环境开关打开且注入了意图 LLM 才激活 ReAct 循环。"""
+        from components.planner.react_loop import react_planning_enabled
+
+        return react_planning_enabled() and self._intent_llm is not None
+
+    def _attach_react_loop(self, engine, run: RuntimeRunRecord):
+        if not self._react_planning_active():
+            return engine
+        from components.planner.react_loop import BoundedReActPlanningLoop
+        from components.planner.unified_actions import PlannerActionGateway
+
+        def react_audit(payload: dict) -> None:
+            # 与 planning_loop._save 同款 Runtime Event；负载由循环侧保证
+            # 有界脱敏（拒绝码/目标/指纹），不携带提案原文或模型推理文本。
+            self.trace_store.append(
+                run,
+                TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                observation=f"ReAct planner {str(payload.get('runtimeEvent') or 'event')}",
+                payload=payload,
+            )
+
+        gateway = PlannerActionGateway(
+            workflow_store=self.workflow_store,
+            capability_catalog=engine.capability_catalog,
+            audit_sink=react_audit,
+            cancellation_requested=self._run_cancellation_requested,
         )
+        from components.planner.htn import HTNMethodSelector, build_native_htn_catalog, htn_planning_enabled
+
+        if htn_planning_enabled():
+            gateway.htn_selector = HTNMethodSelector(
+                catalog=build_native_htn_catalog(), capability_catalog=engine.capability_catalog)
+        from components.planner.horizon import AdaptiveHorizonSelector, horizon_planning_enabled
+
+        if horizon_planning_enabled():
+            gateway.horizon_selector = AdaptiveHorizonSelector(engine.capability_catalog)
+        engine.react_loop = BoundedReActPlanningLoop(
+            llm=self._intent_llm, gateway=gateway, audit_sink=react_audit
+        )
+        return engine
 
     def _workflow_for_run(self, run: RuntimeRunRecord) -> WorkflowDefinition:
         if run.execution_scope is None:

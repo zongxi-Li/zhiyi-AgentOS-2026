@@ -542,10 +542,14 @@ class SQLiteExecutionValueStore:
 
     def list_node_commits(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
         """按 run 列举提交的安全载荷，数据库查询不包含执行正文表。"""
-        rows = self._connection.execute(
-            "SELECT payload_json FROM acg_node_commits WHERE run_id = ? ORDER BY commit_id",
-            (run_id,),
-        ).fetchall()
+        # Proposal workers borrow a read-only connection, never the executor's
+        # thread-owned write connection. No schema initialization is performed.
+        conn = sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            rows = conn.execute("SELECT payload_json FROM acg_node_commits WHERE run_id = ? ORDER BY commit_id",
+                                (run_id,)).fetchall()
+        finally:
+            conn.close()
         return tuple(deepcopy(json.loads(str(row[0]))) for row in rows)
 
     def transition_node_execution(self, record: NodeExecutionRecord) -> NodeExecutionRecord:
