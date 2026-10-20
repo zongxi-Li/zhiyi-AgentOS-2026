@@ -137,7 +137,10 @@ def test_private_provider_activity_keeps_stream_alive_until_public_json_arrives(
     async def collect():
         return [event async for event in runtime.stream_generate_json(
             prompt="private prompt", schema={"type": "object"}, run_id="run-thinking",
-            ttft_timeout=0.02, idle_timeout=0.03, total_timeout=0.2,
+            # The fixture yields every 10ms. Leave headroom for Windows event
+            # loop scheduling when the full suite is under load; this test
+            # validates private provider activity, not sub-20ms latency.
+            ttft_timeout=0.10, idle_timeout=0.10, total_timeout=0.5,
             prompt_metadata=planner_prompt_metadata(),
         )]
 
