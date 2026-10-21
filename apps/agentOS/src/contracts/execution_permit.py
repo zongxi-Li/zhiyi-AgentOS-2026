@@ -23,14 +23,15 @@ class ExecutionPermitRecord(GraphContract):
     mission_id: Ref = Field(alias="missionId")
     run_id: Ref = Field(alias="runId")
     graph_id: Ref = Field(alias="graphId")
-    graph_version: int = Field(strict=True, ge=2, alias="graphVersion")
+    source_kind: Literal["graph_revision", "initial_plan"] = Field(default="graph_revision", alias="sourceKind", exclude_if=lambda v: v == "graph_revision")
+    graph_version: int = Field(strict=True, ge=1, alias="graphVersion")
     package_checksum: Digest = Field(alias="packageChecksum")
     staged_checkpoint_id: Ref = Field(alias="stagedCheckpointId")
     staged_checkpoint_fingerprint: Digest = Field(alias="stagedCheckpointFingerprint")
-    source_checkpoint_id: Ref = Field(alias="sourceCheckpointId")
-    source_checkpoint_version: int = Field(strict=True, ge=1, alias="sourceCheckpointVersion")
+    source_checkpoint_id: Ref | None = Field(alias="sourceCheckpointId")
+    source_checkpoint_version: int | None = Field(strict=True, ge=1, alias="sourceCheckpointVersion")
     promoted_checkpoint_id: Ref = Field(alias="promotedCheckpointId")
-    promoted_checkpoint_version: int = Field(strict=True, ge=2, alias="promotedCheckpointVersion")
+    promoted_checkpoint_version: int = Field(strict=True, ge=1, alias="promotedCheckpointVersion")
     source_run_fingerprint: Digest = Field(alias="sourceRunFingerprint")
     handoff_fingerprint: Digest = Field(alias="handoffFingerprint")
     source_identity_fingerprint: Digest = Field(alias="sourceIdentityFingerprint")
@@ -41,7 +42,11 @@ class ExecutionPermitRecord(GraphContract):
 
     @model_validator(mode="after")
     def consistent(self):
-        if self.promoted_checkpoint_version != self.source_checkpoint_version + 1:
+        if self.source_kind == "initial_plan":
+            if self.graph_version != 1 or self.source_checkpoint_id is not None or self.source_checkpoint_version is not None or self.promoted_checkpoint_version != 1:
+                raise ValueError("initial permit requires the first checkpoint without a historical source")
+        elif (self.graph_version < 2 or self.source_checkpoint_id is None or self.source_checkpoint_version is None
+                or self.promoted_checkpoint_version != self.source_checkpoint_version + 1):
             raise ValueError("permit checkpoint promotion must advance exactly one version")
         return self
 

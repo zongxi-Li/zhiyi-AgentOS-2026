@@ -62,6 +62,9 @@ def _issued_permit(conn, projection, activation, materialization):
                 or handoff.candidate.package_checksum != permit.package_checksum
                 or handoff.graph_version != permit.graph_version):
             raise ValueError("permit does not match its confirmed handoff")
+        if (handoff.source_kind != permit.source_kind or permit.source_kind != activation.source_kind
+                or materialization.source_kind != permit.source_kind):
+            raise ValueError("execution permit source kind mismatch")
         if (permit.status != "ISSUED" or permit.activation_id != activation.activation_id
                 or permit.run_id != activation.run_id or permit.mission_id != activation.mission_id
                 or permit.graph_id != activation.graph_id or permit.graph_version != activation.candidate_graph_version

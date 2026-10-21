@@ -76,6 +76,9 @@ class GraphHandoffAuthority:
                 raise HandoffEvidenceError("live execution occupies handoff")
         mat = store.get_materialization(activation.materialization_id)
         graph = store.get(activation.source_commit_id)
+        if activation.source_kind == "initial_plan":
+            from runtime.initial_execution import build_initial_handoff
+            return build_initial_handoff(self, activation, run, key)
         if graph is None or not isinstance(graph.proposal_payload, GraphRevisionProposal):
             raise HandoffEvidenceError("accepted graph revision required")
         proposal = graph.proposal_payload
