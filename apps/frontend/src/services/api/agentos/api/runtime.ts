@@ -64,6 +64,11 @@ export const createRuntimeApi = () => ({
     return response.data
   },
 
+  async setNodeEnabled(nodeId: string, enabled: boolean): Promise<{ nodeId: string; enabled: boolean }> {
+    const response = await agentosRequest.post(`/nodes/${encodeURIComponent(nodeId)}/enabled`, { enabled })
+    return response.data
+  },
+
   async listResourceUsage(
     resourceId: string,
     options: { limit?: number; signal?: AbortSignal } = {}

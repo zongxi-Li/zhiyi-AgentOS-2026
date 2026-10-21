@@ -1279,6 +1279,24 @@ def create_router(
             })
         return {"items": items, "total": len(items)}
 
+    @router.post("/nodes/{node_id}/enabled")
+    async def set_node_enabled(node_id: str, request: ResourceEnabledRequest):
+        """Toggle a customer's Node scheduling switch within its tenant."""
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
+            raise HTTPException(status_code=503, detail="node mutation source unavailable")
+        try:
+            profile = plane.node(node_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="node not found") from exc
+        actor = current_trusted_user()
+        if actor is None:
+            raise HTTPException(status_code=401, detail="trusted user context required")
+        if actor.tenant_id and actor.tenant_id != profile.owner_scope:
+            raise HTTPException(status_code=403, detail="node owner scope does not match operator tenant")
+        updated = plane.set_node_enabled(node_id, enabled=request.enabled)
+        return {"nodeId": updated.node_id, "enabled": updated.enabled}
+
     @router.get("/agents")
     async def get_agents():
         """Return the logical agents callable through the embedded runtime.

@@ -13,7 +13,7 @@
     </header>
 
     <section class="resource-detail__section">
-      <h3>运行状态</h3>
+      <h3>资源概览</h3>
       <dl class="resource-detail__kv">
         <div><dt>健康状态</dt><dd :class="`is-${item.snapshot.healthStatus}`">{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
         <template v-if="!isModelEndpoint">
@@ -22,28 +22,7 @@
           <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
           <div><dt>可靠性</dt><dd>{{ formatPercent(item.snapshot.reliability) }}</dd></div>
         </template>
-        <div>
-          <dt>参与调度</dt>
-          <dd class="resource-detail__toggle">
-            <el-switch v-if="!isModelEndpoint"
-              :model-value="item.profile.enabled"
-              :loading="enabledPending"
-              size="small"
-              aria-label="切换该资源是否参与调度"
-              @change="onToggleEnabled"
-            />
-            <span :class="{ 'is-off': !item.profile.enabled }">{{ item.profile.enabled ? '已启用' : '已停用' }}</span>
-          </dd>
-        </div>
       </dl>
-      <div v-if="canProbe" class="resource-detail__probe">
-        <button type="button" :disabled="probePending" @click="onProbe">
-          {{ probePending ? '探测中…' : '立即探测' }}
-        </button>
-        <span v-if="probeResult" :class="{ 'is-offline': !probeResult.healthy }">
-          {{ probeResult.healthy ? '探测成功' : '探测失败' }} · {{ formatMetric(probeResult.latencyMs, 'ms') }}
-        </span>
-      </div>
     </section>
 
     <section v-if="healthEvents.length" class="resource-detail__section">
@@ -84,14 +63,27 @@
       <router-link class="resource-detail__history-link" :to="{ path: '/history', query: { tab: 'acg' } }">在运行记忆中查看 →</router-link>
     </section>
 
-    <section v-if="item.profile.computeCapacity" class="resource-detail__section">
+    <section v-if="isModelEndpoint" class="resource-detail__section">
+      <h3>模型概况</h3>
+      <dl class="resource-detail__kv">
+        <div><dt>供应商</dt><dd>{{ item.profile.provider || '未登记' }}</dd></div>
+        <div><dt>模型</dt><dd>{{ item.profile.model || item.profile.modelIds?.[0] || '未登记' }}</dd></div>
+        <div><dt>上下文窗口</dt><dd>{{ formatMetric(item.profile.contextWindowTokens, 'tokens') }}</dd></div>
+        <div><dt>最大输出</dt><dd>{{ formatMetric(item.profile.maxOutputTokens, 'tokens') }}</dd></div>
+      </dl>
+    </section>
+
+    <details v-if="!isModelEndpoint" class="resource-detail__advanced">
+      <summary>高级设置</summary>
+      <p>停止后不会删除资源或历史记录；新的任务将不再使用此资源。</p>
+      <section v-if="item.profile.computeCapacity" class="resource-detail__section">
       <h3>算力画像</h3>
       <dl class="resource-detail__kv">
         <div><dt>登记算力</dt><dd>{{ formatCapacity(item.profile.computeCapacity) }}</dd></div>
       </dl>
-    </section>
+      </section>
 
-    <section class="resource-detail__section">
+      <section class="resource-detail__section">
       <h3>部署与归属</h3>
       <dl class="resource-detail__kv">
         <div><dt>资源类型</dt><dd>{{ resourceTypeMeta(item.profile.runtimeKind || item.profile.resourceType).label }}</dd></div>
@@ -105,55 +97,44 @@
         <div><dt>归属</dt><dd>{{ item.profile.ownerScope || '未标注' }}</dd></div>
         <!-- 执行端点与凭据引用已随 N1.2 投影迁移从资源目录移除（任务书：资源目录无 endpoint/credential）。 -->
       </dl>
-    </section>
+      </section>
 
-    <section v-if="isModelEndpoint" class="resource-detail__section">
-      <h3>模型端点</h3>
-      <dl class="resource-detail__kv">
-        <div><dt>供应商</dt><dd>{{ item.profile.provider || '未登记' }}</dd></div>
-        <div><dt>模型</dt><dd>{{ item.profile.model || item.profile.modelIds?.[0] || '未登记' }}</dd></div>
-        <div><dt>上下文窗口</dt><dd>{{ formatMetric(item.profile.contextWindowTokens, 'tokens') }}</dd></div>
-        <div><dt>最大输出</dt><dd>{{ formatMetric(item.profile.maxOutputTokens, 'tokens') }}</dd></div>
-      </dl>
-      <p class="resource-detail__empty">模型端点由模型配置同步；这里展示注册状态，不代表实际调用已验证。</p>
-    </section>
-
-    <section v-if="item.profile.capabilities.length" class="resource-detail__section">
+      <section v-if="item.profile.capabilities.length" class="resource-detail__section">
       <h3>能力</h3>
       <div class="resource-detail__chips">
         <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
       </div>
-    </section>
+      </section>
 
-    <section v-if="item.profile.domains.length" class="resource-detail__section">
+      <section v-if="item.profile.domains.length" class="resource-detail__section">
       <h3>领域</h3>
       <div class="resource-detail__chips">
         <span v-for="domain in item.profile.domains" :key="domain">{{ domain }}</span>
       </div>
-    </section>
+      </section>
 
-    <section v-if="item.profile.modelIds?.length" class="resource-detail__section">
+      <section v-if="item.profile.modelIds?.length" class="resource-detail__section">
       <h3>挂载模型</h3>
       <div class="resource-detail__chips">
         <span v-for="modelId in item.profile.modelIds" :key="modelId">{{ modelId }}</span>
       </div>
-    </section>
+      </section>
 
-    <section v-if="item.profile.labels?.length" class="resource-detail__section">
+      <section v-if="item.profile.labels?.length" class="resource-detail__section">
       <h3>标签</h3>
       <dl class="resource-detail__kv">
         <div v-for="label in item.profile.labels" :key="label.key"><dt>{{ label.key }}</dt><dd>{{ label.value }}</dd></div>
       </dl>
-    </section>
+      </section>
 
-    <section v-if="item.profile.costMetadata?.length" class="resource-detail__section">
+      <section v-if="item.profile.costMetadata?.length" class="resource-detail__section">
       <h3>成本元数据</h3>
       <dl class="resource-detail__kv">
         <div v-for="cost in item.profile.costMetadata" :key="cost.key"><dt>{{ cost.key }}</dt><dd>{{ cost.value }}</dd></div>
       </dl>
-    </section>
+      </section>
 
-    <section v-if="credential" class="resource-detail__section">
+      <section v-if="credential" class="resource-detail__section">
       <h3>凭据</h3>
       <dl class="resource-detail__kv">
         <div><dt>凭据 ID</dt><dd class="resource-detail__mono">{{ credential.credentialId }}</dd></div>
@@ -164,15 +145,35 @@
           {{ rotatePending ? '轮换中…' : '轮换凭据' }}
         </button>
       </div>
-    </section>
+      </section>
 
-    <section class="resource-detail__section">
+      <section class="resource-detail__section">
       <h3>观测信息</h3>
       <dl class="resource-detail__kv">
         <div><dt>观测时间</dt><dd>{{ formatDate(item.snapshot.observedAt) }}</dd></div>
         <div><dt>快照版本</dt><dd>v{{ item.snapshotVersion }}</dd></div>
       </dl>
-    </section>
+      </section>
+      <div v-if="!isModelEndpoint" class="resource-detail__toggle">
+        <span>参与调度</span>
+        <el-switch
+          :model-value="item.profile.enabled"
+          :loading="enabledPending"
+          size="small"
+          aria-label="切换该资源是否参与调度"
+          @change="onToggleEnabled"
+        />
+        <span :class="{ 'is-off': !item.profile.enabled }">{{ item.profile.enabled ? '已启用' : '已停用' }}</span>
+      </div>
+      <div v-if="canProbe" class="resource-detail__probe">
+        <button type="button" :disabled="probePending" @click="onProbe">
+          {{ probePending ? '检测中…' : '检测连接' }}
+        </button>
+        <span v-if="probeResult" :class="{ 'is-offline': !probeResult.healthy }">
+          {{ probeResult.healthy ? '连接正常' : '连接失败' }} · {{ formatMetric(probeResult.latencyMs, 'ms') }}
+        </span>
+      </div>
+    </details>
   </div>
 </template>
 
@@ -236,6 +237,17 @@ watch(() => props.item.profile.resourceId, () => { void loadDetailData() })
 const onToggleEnabled = async (value: string | number | boolean) => {
   const enabled = Boolean(value)
   const resourceId = props.item.profile.resourceId
+  if (!enabled) {
+    try {
+      await ElMessageBox.confirm(
+        '停止后，新的任务不会再使用此资源；资源配置和历史记录会保留。继续？',
+        '停止使用资源',
+        { confirmButtonText: '停止使用', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  }
   enabledPending.value = true
   try {
     const result = await agentosApi.setResourceEnabled(resourceId, enabled)
@@ -356,6 +368,9 @@ const latencyPoints = computed(() => {
 .resource-detail__section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .resource-detail__section-head span { color: var(--text-muted); font-size: 10px; }
 .resource-detail__toggle { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.resource-detail__advanced { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--border-light); border-radius: var(--radius-card, 9px); background: var(--bg-card); }
+.resource-detail__advanced summary { color: var(--text-secondary); cursor: pointer; font-size: 11px; font-weight: 650; }
+.resource-detail__advanced p { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.6; }
 .resource-detail__toggle span.is-off { color: var(--text-muted); }
 .resource-detail__probe { display: flex; align-items: center; gap: 10px; }
 .resource-detail__probe button { padding: 4px 12px; border: 1px solid var(--primary-line); border-radius: 5px; color: var(--primary-color); background: var(--primary-fade); cursor: pointer; font: inherit; font-size: 11px; transition: var(--transition); }

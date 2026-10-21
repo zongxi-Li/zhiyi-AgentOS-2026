@@ -19,7 +19,10 @@ const createTestRouter = async () => {
 }
 
 describe('ResourceCenterView', () => {
-  beforeEach(() => { vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 }) })
+  beforeEach(() => {
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(federatedModelApi, 'listModels').mockResolvedValue({ success: true, data: {} })
+  })
   afterEach(() => vi.restoreAllMocks())
 
   it('renders ResourceService health as unknown without inventing availability metrics', async () => {
@@ -43,7 +46,7 @@ describe('ResourceCenterView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.resource-row').text()).toContain('Unknown / 未知')
+    expect(wrapper.find('.resource-row').text()).toContain('待检测')
     expect(wrapper.find('.resource-row').text()).toContain('算力')
     expect(wrapper.find('.resource-row').text()).toContain('未观测')
     expect(wrapper.text()).not.toContain('Online')
@@ -58,7 +61,7 @@ describe('ResourceCenterView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.resource-state').text()).toContain('暂无已登记 Resource')
+    expect(wrapper.find('.resource-state').text()).toContain('还没有接入资源')
   })
 
   it('switches between resource tabs and synchronizes the selected tab to the URL', async () => {
@@ -149,7 +152,8 @@ describe('ResourceCenterView', () => {
       global: { plugins: [await createTestRouter(), createPinia()], stubs: { WorkbenchLayout: layoutStub, 'el-icon': true } }
     })
 
-    expect(wrapper.get('h1').text()).toBe('资源中心')
+    expect(wrapper.get('h1').text()).toBe('资源与连接中心')
+    expect(wrapper.text()).toContain('接入资源')
     expect(wrapper.get('.resource-center__main').attributes('data-max-width')).toBe('1400px')
   })
 
