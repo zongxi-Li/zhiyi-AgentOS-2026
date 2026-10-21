@@ -4,6 +4,10 @@
     <main class="user-content">
       <header class="content-header">
         <div>
+          <button class="back-to-app" type="button" @click="goBack">
+            <el-icon><ArrowLeft /></el-icon>
+            返回
+          </button>
           <span class="content-eyebrow">{{ activeSection === 'profile' ? 'PROFILE' : 'SECURITY' }}</span>
           <h1>{{ activeSection === 'profile' ? '个人资料' : '账户安全' }}</h1>
           <p>{{ activeSection === 'profile' ? '管理您的个人资料信息与工作活动。' : '修改密码和账户安全设置。' }}</p>
@@ -96,7 +100,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Camera, Check, Edit, Lock, Promotion, Share, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Camera, Check, Edit, Lock, Promotion, Share, User } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { useChatStore } from '@/stores/chat'
@@ -112,6 +116,14 @@ type ActivityColumn = { key: string; days: ActivityDay[] }
 
 const props = defineProps<{ section?: 'profile' | 'security' }>()
 const router = useRouter()
+
+const goBack = () => {
+  if (window.history.length > 1) {
+    router.back()
+    return
+  }
+  void router.push('/chat')
+}
 const route = useRoute()
 const userStore = useUserStore()
 const chatStore = useChatStore()
@@ -347,6 +359,8 @@ onBeforeUnmount(releaseAvatarObjectUrl)
 .user-view { width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--bg-app); color: var(--text-primary); }
 .user-content { width: min(100%, 1400px); height: 100%; min-width: 0; min-height: 0; margin: 0 auto; padding: 30px clamp(20px, 4vw, 58px) 52px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; overflow-x: hidden; }
 .content-header { padding-bottom: 21px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--border-light); }
+.back-to-app { min-height: 30px; margin: 0 0 12px; padding: 0; display: inline-flex; align-items: center; gap: 6px; border: 0; color: var(--text-secondary); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.back-to-app:hover, .back-to-app:focus-visible { color: var(--text-primary); }.back-to-app:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; }
 .content-eyebrow, .card-kicker { display: block; color: var(--primary-color); font: 600 10px/1 var(--font-mono, monospace); letter-spacing: .12em; }
 .content-eyebrow { margin-bottom: 6px; } .content-header h1 { margin: 0; color: var(--text-primary); font: 650 clamp(24px, 2.4vw, 32px)/1.15 var(--font-serif); letter-spacing: -.025em; } .content-header p { margin: 7px 0 0; color: var(--text-secondary); font-size: 12px; }
 .content-actions { display: flex; align-items: center; gap: 8px; } .profile-action, .activity-mode { border: 0; color: var(--text-secondary); background: transparent; font: inherit; cursor: pointer; transition: var(--transition); } .profile-action { min-height: 33px; padding: 0 4px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; } .profile-action:hover, .profile-action:focus-visible { color: var(--text-primary); } .profile-action:focus-visible, .avatar-uploader:focus-visible, .activity-mode:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; } .profile-status { color: var(--text-muted); cursor: default; }

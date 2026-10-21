@@ -53,7 +53,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/UserView.vue'),
     meta: {
       title: '用户中心',
-      requiresAuth: true
+      requiresAuth: true,
+      hideNavigation: true
     }
   },
   {
@@ -109,7 +110,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SettingsView.vue'),
     meta: {
       title: '设置',
-      requiresAuth: true
+      requiresAuth: true,
+      hideNavigation: true
     }
   },
   {

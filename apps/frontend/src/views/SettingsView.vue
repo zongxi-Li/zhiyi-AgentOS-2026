@@ -2,6 +2,10 @@
 <template>
   <div class="settings-view">
     <aside class="settings-rail" aria-label="设置导航">
+      <button class="back-to-app" type="button" @click="goBack">
+        <el-icon><ArrowLeft /></el-icon>
+        返回
+      </button>
       <div class="settings-search">
         <el-icon aria-hidden="true"><Search /></el-icon>
         <input v-model="searchTerm" type="search" placeholder="搜索设置..." aria-label="搜索设置" />
@@ -14,7 +18,7 @@
             v-for="item in section.items"
             :key="item.id"
             class="settings-nav-item"
-            :class="{ active: activeTab === item.id && !item.route && (section.label === '个人' || (section.label === '工作区' && (item.id === 'chat' || item.id === 'model'))) }"
+            :class="{ active: activeTab === item.id && !item.route }"
             type="button"
             @click="selectSettingsItem(item)"
           >
@@ -407,7 +411,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { apiUrl } from '@/platform/api'
 import UserAvatar from '@/components/UserAvatar.vue'
-import { ArrowLeft, Brush, ChatDotRound, Check, Connection, Cpu, Download, FolderOpened, InfoFilled, Key, Lock, Microphone, Monitor, Search, Setting } from '@element-plus/icons-vue'
+import { ArrowLeft, Brush, ChatDotRound, Check, Cpu, Download, InfoFilled, Key, Lock, Microphone, Search, Setting } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { UI_ZOOM_BASE, UI_ZOOM_MAX_LEVEL, UI_ZOOM_MIN_LEVEL, UI_ZOOM_STORAGE_KEY, setUiZoomLevel, uiZoomPercentage, uiZoomState } from '@/composables/useUiZoom'
 import { colorSchemes, type ColorSchemeId } from '@/themes/presets'
@@ -478,16 +482,7 @@ const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
     label: '工作区',
     items: [
       { id: 'chat', label: '对话', icon: ChatDotRound, description: '管理消息发送与历史对话体验。' },
-      { id: 'model', label: '模型与 API', icon: Cpu, description: '配置当前浏览器使用的模型连接。' },
       { id: 'general', label: '导入', icon: Download, description: '管理工作区权限、默认目录与基础偏好。' }
-    ]
-  },
-  {
-    label: '集成',
-    items: [
-      { id: 'model', label: '连接', icon: Connection, description: '配置当前浏览器使用的模型连接。' },
-      { id: 'general', label: '浏览器', icon: Monitor, description: '管理工作区权限、默认目录与基础偏好。' },
-      { id: 'general', label: '环境', icon: FolderOpened, description: '管理工作区权限、默认目录与基础偏好。' }
     ]
   }
 ]
@@ -596,6 +591,14 @@ function migrateLegacyFontSize(legacy: unknown): void {
 function handleLanguageChange(newLang: 'zh-CN' | 'en'): void {
   locale.value = newLang
   inlineHint.value = `语言已切换为 ${newLang === 'zh-CN' ? '简体中文' : 'English'}，记得保存设置。`
+}
+
+function goBack(): void {
+  if (window.history.length > 1) {
+    router.back()
+    return
+  }
+  void router.push('/chat')
 }
 
 function selectSettingsItem(item: NavigationItem): void {

@@ -2,7 +2,7 @@
 <template>
   <el-container class="app-layout" :class="{ 'immersive-mode': isImmersive }">
         <AppTopBar
-          v-if="!isImmersive"
+          v-if="showNavigation"
           :navigation-state="usesDrawerNavigation ? 'drawer' : (mainSidebarCompact ? 'collapsed' : 'expanded')"
           @menu="handleTopChromeMenu"
           @navigate="handleTopChromeNavigate"
@@ -11,7 +11,7 @@
         <el-container class="app-shell-body" :class="{ 'docked-workspace-shell': isDockedWorkspaceRoute, 'is-chat-route': isChatRoute, 'has-dock-status': hasDockStatus }">
           <!-- Sidebar Navigation -->
           <el-aside
-            v-if="!isImmersive && !usesDrawerNavigation"
+            v-if="showNavigation && !usesDrawerNavigation"
             :width="sidebarAsideWidth"
             class="app-sidebar"
             :class="{ collapsed: mainSidebarCompact, 'chat-panel-open': secondaryNavOpen, resizing: sidebarResizing || chatPanelResizing }"
@@ -268,7 +268,7 @@
           </el-aside>
 
         <el-drawer
-          v-if="usesDrawerNavigation"
+          v-if="showNavigation && usesDrawerNavigation"
           v-model="simpleNavOpen"
           direction="ltr"
           :size="248"
@@ -920,8 +920,10 @@ const isImmersive = computed(() => {
   return path === '/' && route.query.auth === '1'
 })
 
+const showNavigation = computed(() => !isImmersive.value && !route.meta.hideNavigation)
+
 const usesDrawerNavigation = computed(() => {
-  return !isImmersive.value && isMobileViewport.value
+  return showNavigation.value && isMobileViewport.value
 })
 
 const userIdentityActionLabel = computed(() => {
