@@ -21,9 +21,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTOS = ROOT / "apps" / "agentOS"
-# Exact independently accepted C2A-1 raw-byte manifest. Its uncommitted files
-# remain protected; the C2A-2 gate measures changes against that accepted tree.
-DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "s03-02c2a1-accepted.json"
+# Exact C2A-2 ACCEPT manifest at the verified entry Commit 44663b0.
+DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "c2a2-accepted.json"
 DEFAULT_BUDGET_SECONDS = 300
 SLOW_EXCLUSION = "not slow_benchmark and not slow_multiprocess and not slow_fault_injection"
 FAST_OR_CRITICAL = (
@@ -35,6 +34,15 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/runtime/initial_execution.py", ("tests/components/planner/test_initial_execution_permit.py",
+        "tests/architecture/test_capability_upgrade_gates.py")),
+    ("src/runtime/graph_handoff.py", ("tests/components/planner/test_initial_execution_permit.py",
+        "tests/components/planner/test_graph_handoff.py::test_real_prefix_handoff_preserves_all_existing_facts",
+        "tests/components/planner/test_graph_handoff.py::test_restart_reconstructs_same_preparation_but_cannot_execute")),
+    ("src/runtime/execution_permit.py", ("tests/components/planner/test_initial_execution_permit.py",
+        "tests/components/planner/test_execution_permit_audit.py")),
+    ("src/contracts/graph_handoff.py", ("tests/components/planner/test_initial_execution_permit.py",)),
+    ("src/contracts/execution_permit.py", ("tests/components/planner/test_initial_execution_permit.py",)),
     ("src/runtime/initial_graph_compilation.py", ("tests/components/planner/test_initial_graph_materialization.py",
         "tests/contracts/test_compiled_acg.py", "tests/contracts/test_binding_authority.py",
         "tests/architecture/test_capability_upgrade_gates.py")),
@@ -51,7 +59,11 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "tests/components/planner/test_graph_activation.py::test_stale_sources_are_rejected_before_and_after_preparation",
         "tests/components/planner/test_graph_activation.py::test_activation_transaction_failure_rolls_back_completely",
         "tests/components/planner/test_graph_activation.py::test_scheduler_entries_refuse_the_paused_graph")),
-    ("src/support/stores/graph_activation_store.py", ("tests/components/planner/test_initial_graph_materialization.py",
+    ("src/support/stores/graph_activation_store.py", (
+        "tests/components/planner/test_initial_execution_permit.py",
+        "tests/components/planner/test_initial_graph_materialization.py::test_initial_v1_paused_and_real_claim_denied",
+        "tests/components/planner/test_initial_graph_materialization.py::test_real_process_exit_recovers_same_initial_fact",
+        "tests/components/planner/test_initial_graph_materialization.py::test_initial_concurrent_activation_cannot_replace_head",
         "tests/components/planner/test_graph_activation.py::test_old_thread_snapshot_cannot_regress_the_graph_version")),
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_initial_graph_materialization.py",)),
     ("src/runtime/workflow_runtime.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
@@ -252,7 +264,7 @@ def check_diff_whitespace() -> tuple[int, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE,
-                        help="prior src/tests snapshot manifest (default: independently accepted C2A-1)")
+                        help="prior src/tests snapshot manifest (default: independently accepted C2A-2)")
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
                         help="hard stage-freeze budget; values above 300 are rejected")
     parser.add_argument("--dry-run", action="store_true", help="show selected tests without executing pytest")
