@@ -91,6 +91,27 @@ def test_run_permit_semantic_identity_is_checked_even_with_valid_checksums(two_p
     assert contents(dbs) == before
 
 
+@pytest.mark.parametrize("damage", ["run_projection_missing", "run_missing"])
+def test_every_issued_permit_requires_its_exact_run_projection(two_permits, damage):
+    rt, workflow, dbs, issued = two_permits
+    run, permit = issued[0]
+    if damage == "run_projection_missing":
+        # Keep the Activation projection and ledger intact, but remove the
+        # reverse-link that makes this ISSUED Permit executable for the Run.
+        run.execution_state["graphActivation"].pop("executionPermit")
+        sql(dbs["workflow"], "UPDATE runs SET payload=? WHERE run_id=?",
+            (run.model_dump_json(by_alias=True), run.run_id))
+    else:
+        # A valid Permit/Handoff/Checkpoint chain cannot outlive its owning Run.
+        sql(dbs["workflow"], "DELETE FROM runs WHERE run_id=?", (run.run_id,))
+    before = contents(dbs)
+    inspection = ops.inspect_databases(**dbs)
+    assert inspection["workflow"]["status"] == "INVALID", inspection
+    with pytest.raises(ops.SchemaUpgradeError, match="preflight rejected"):
+        ops.upgrade_databases(**dbs)
+    assert contents(dbs) == before
+
+
 def test_two_valid_run_permits_remain_ready_without_mutation(two_permits):
     _, _, dbs, _ = two_permits
     before = contents(dbs)
