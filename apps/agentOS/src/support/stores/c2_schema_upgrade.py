@@ -15,6 +15,7 @@ from components.recovery.checkpoint import ACGCheckpointStore
 from storage.v2.sqlite import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
+from support.stores.planning_commit_store import content_fingerprint
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
 from support.stores.graph_activation_store import SQLiteGraphActivationStore
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore, SQLiteStagedGraphCheckpointStore
@@ -192,6 +193,85 @@ def _inspect_one(role, path, reference, initialize_empty):
         return result
 
 
+def _inspect_evidence(paths, result):
+    """Check installed evidence dependencies, not current execution authority.
+
+    A STAGING intent may precede its body COMMIT, but its table was installed
+    before the Authority could run. STATE_PREPARED and every Permit require
+    the immutable body. No missing historical fact may be recreated by DDL.
+    These are read-only cross-file checks under the maintenance-window rule,
+    not a joint SQLite snapshot or a new Handoff/Permit acceptance authority.
+    """
+    if result["workflow"]["status"] in {"INVALID", "EMPTY_REQUIRES_INITIALIZATION"}:
+        return
+
+    def invalid(role, reason):
+        result[role]["status"] = "INVALID"
+        result[role]["error"] = f"{role}: missing or inconsistent C2 evidence: {reason}"
+
+    try:
+        with _connect(paths["workflow"]) as conn:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "graph_handoffs" not in tables and tables & {"graph_execution_permit_schema", "graph_execution_permits"}:
+                invalid("workflow", "graph_handoffs is required by the installed execution Permit schema")
+                return
+            handoff_ids = [r[0] for r in conn.execute("SELECT handoff_id FROM graph_handoffs")] if "graph_handoffs" in tables else []
+            permit_ids = [r[0] for r in conn.execute("SELECT permit_id FROM graph_execution_permits")] if "graph_execution_permits" in tables else []
+            # Only opted-in projections are relevant; unrelated legacy rows
+            # are not reinterpreted or backfilled by this Schema operation.
+            projections = conn.execute("""SELECT run_id, json_extract(payload,
+                '$.executionState.graphActivation.executionPermit.permitId') FROM runs
+                WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,
+                '$.executionState.graphActivation.executionPermit') END IS NOT NULL""").fetchall()
+        for run_id, permit_id in projections:
+            if permit_id not in permit_ids:
+                invalid("workflow", f"Run {run_id} references absent Permit {permit_id}")
+                return
+        if not handoff_ids and not permit_ids:
+            return  # Workflow installation may legitimately precede CP DDL.
+        handoffs = SQLiteGraphHandoffStore(paths["workflow"])
+        records = {key: handoffs.get_handoff(key) for key in handoff_ids}
+        if any(record is None for record in records.values()):
+            invalid("workflow", "Handoff disappeared during read-only inspection; stop concurrent writers")
+            return
+        if permit_ids:
+            permits = SQLiteExecutionPermitStore(paths["workflow"])
+            for key in permit_ids:
+                permit = permits.get_permit(key)  # original Contract/checksum/index validation
+                if permit is None:
+                    invalid("workflow", f"Permit {key} disappeared during inspection")
+                    return
+                handoff = records.get(permit.handoff_id)
+                if (handoff is None or handoff.status != "STATE_PREPARED"
+                        or handoff.run_id != permit.run_id or handoff.activation_id != permit.activation_id
+                        or handoff.source_kind != permit.source_kind or handoff.graph_version != permit.graph_version
+                        or handoff.candidate.checkpoint_id != permit.staged_checkpoint_id
+                        or handoff.candidate.package_checksum != permit.package_checksum
+                        or content_fingerprint(handoff) != permit.handoff_fingerprint
+                        or content_fingerprint(handoff.candidate) != permit.staged_checkpoint_fingerprint):
+                    invalid("workflow", f"Permit {key} requires intact confirmed Handoff {permit.handoff_id}")
+                    return
+    except (RuntimeError, ValueError, sqlite3.Error) as exc:
+        invalid("workflow", str(exc))
+        return
+    if result["checkpoint"]["status"] == "INVALID":
+        return  # retain the more specific existing Schema error
+    if "staged_graph_checkpoints" not in result["checkpoint"].get("present", []):
+        invalid("checkpoint", f"staged_graph_checkpoints is required by persisted Handoff {handoff_ids[0]}")
+        return
+    try:
+        stages = SQLiteStagedGraphCheckpointStore(paths["checkpoint"])
+        for key, handoff in records.items():
+            body = stages.get(handoff.candidate.checkpoint_id)
+            if body is None and handoff.status == "STAGING":
+                continue  # legal intent-before-external-COMMIT Saga window
+            if body != handoff.candidate:
+                invalid("checkpoint", f"Handoff {key} requires staged Checkpoint {handoff.candidate.checkpoint_id}")
+                return
+    except (RuntimeError, ValueError, sqlite3.Error) as exc:
+        invalid("checkpoint", str(exc))
+
+
 def inspect_databases(workflow, checkpoint, identity, *, initialize_empty=False):
     """Read-only target inspection. No constructor runs against existing files."""
     paths = _paths(workflow, checkpoint, identity)
@@ -202,6 +282,7 @@ def inspect_databases(workflow, checkpoint, identity, *, initialize_empty=False)
             result[role] = {"path": str(path), **_inspect_one(role, path, reference[role], initialize_empty)}
         except (SchemaUpgradeError, sqlite3.Error) as exc:
             result[role] = {"path": str(path), "status": "INVALID", "error": str(exc)}
+    _inspect_evidence(paths, result)
     return result
 
 
