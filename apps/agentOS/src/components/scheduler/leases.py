@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Protocol
 
@@ -68,6 +69,52 @@ return active_slots
 """
 
 
+_RENEW_LEASE_LUA = r"""
+local payload = redis.call('GET', KEYS[1])
+if not payload then
+  return 0
+end
+local lease = cjson.decode(payload)
+if lease['ownerId'] ~= ARGV[1] then
+  return -1
+end
+if tonumber(lease['version'] or 1) ~= tonumber(ARGV[2]) then
+  return -2
+end
+if tonumber(lease['expiresAtEpochMs'] or 0) <= tonumber(ARGV[3]) then
+  return -3
+end
+local slot_key = redis.call('HGET', KEYS[2], ARGV[7])
+if not slot_key then
+  return 0
+end
+lease['version'] = tonumber(ARGV[2]) + 1
+lease['expiresAt'] = ARGV[4]
+lease['expiresAtEpochMs'] = tonumber(ARGV[5])
+redis.call('SET', KEYS[1], cjson.encode(lease), 'PX', ARGV[6], 'XX')
+redis.call('ZADD', slot_key .. ':leases', ARGV[5], ARGV[7])
+return lease['version']
+"""
+
+
+class LeaseRenewalFailedError(RuntimeError):
+    """A lease could not be renewed by its current owner/version."""
+
+
+@dataclass(frozen=True)
+class CapacityView:
+    """Separate declared capacity, coordinated occupancy, and remote telemetry."""
+
+    static_capacity: int
+    active_leases: int
+    remote_available_slots: int | None
+    snapshot_state: str
+
+    @property
+    def has_local_capacity(self) -> bool:
+        return self.static_capacity - self.active_leases > 0
+
+
 class LeaseCoordinator(Protocol):
     def active_slots(self, resource_id: str, *, now: datetime | None = None) -> int: ...
 
@@ -86,6 +133,11 @@ class LeaseCoordinator(Protocol):
     ) -> ResourceLease | None: ...
 
     def release(self, lease_id: str) -> bool: ...
+
+    def renew(
+        self, *, lease_id: str, owner_id: str, version: int, ttl: timedelta,
+        now: datetime | None = None,
+    ) -> ResourceLease: ...
 
 
 class InMemoryLeaseCoordinator:
@@ -134,6 +186,7 @@ class InMemoryLeaseCoordinator:
                 stepId=step_id,
                 attemptId=attempt_id,
                 slotCount=slot_count,
+                version=1,
                 createdAt=current,
                 expiresAt=current + ttl,
             )
@@ -147,6 +200,31 @@ class InMemoryLeaseCoordinator:
                 return False
             self._leases[lease_id] = lease.model_copy(update={"status": "released"})
             return True
+
+    def renew(
+        self, *, lease_id: str, owner_id: str, version: int, ttl: timedelta,
+        now: datetime | None = None,
+    ) -> ResourceLease:
+        current = now or datetime.now(timezone.utc)
+        if ttl <= timedelta(0):
+            raise ValueError("lease ttl must be positive")
+        with self._lock:
+            self._expire(current)
+            lease = self._leases.get(lease_id)
+            if lease is None or lease.status == "expired":
+                raise LeaseRenewalFailedError("lease expired or not found")
+            if lease.status != "active":
+                raise LeaseRenewalFailedError(f"lease is not active: {lease.status}")
+            if lease.owner_id != owner_id:
+                raise LeaseRenewalFailedError("lease owner does not match")
+            if lease.version != version:
+                raise LeaseRenewalFailedError("lease version does not match")
+            renewed = lease.model_copy(update={
+                "version": lease.version + 1,
+                "expires_at": current + ttl,
+            })
+            self._leases[lease_id] = renewed
+            return renewed.model_copy(deep=True)
 
     def active_slots(
         self,
@@ -214,6 +292,7 @@ class RedisLeaseCoordinator:
             stepId=step_id,
             attemptId=attempt_id,
             slotCount=slot_count,
+            version=1,
             createdAt=current,
             expiresAt=current + ttl,
         )
@@ -235,7 +314,7 @@ class RedisLeaseCoordinator:
                     self._epoch_ms(current),
                     self._epoch_ms(current + ttl),
                     ttl_ms,
-                    lease.model_dump_json(by_alias=True),
+                    self._redis_payload(lease),
                 )
             )
             if result == 0:
@@ -244,7 +323,7 @@ class RedisLeaseCoordinator:
                 payload = self.client.get(lease_key)
                 if payload is None:
                     raise SchedulerUnavailable("SCHEDULER_UNAVAILABLE: lease identity was lost")
-                return ResourceLease.model_validate_json(payload)
+                return self._from_redis_payload(payload)
             return lease
         except SchedulerUnavailable:
             raise
@@ -265,6 +344,31 @@ class RedisLeaseCoordinator:
             )
         except Exception as exc:
             raise SchedulerUnavailable("SCHEDULER_UNAVAILABLE: Redis lease release failed") from exc
+
+    def renew(
+        self, *, lease_id: str, owner_id: str, version: int, ttl: timedelta,
+        now: datetime | None = None,
+    ) -> ResourceLease:
+        current = now or datetime.now(timezone.utc)
+        if ttl <= timedelta(0):
+            raise ValueError("lease ttl must be positive")
+        ttl_ms = max(1, int(ttl.total_seconds() * 1000))
+        try:
+            result = int(self.client.eval(
+                _RENEW_LEASE_LUA, 2, self._lease_key(lease_id), self._index_key,
+                owner_id, version, self._epoch_ms(current), (current + ttl).isoformat(),
+                self._epoch_ms(current + ttl), ttl_ms, lease_id,
+            ))
+        except Exception as exc:
+            raise SchedulerUnavailable("SCHEDULER_UNAVAILABLE: Redis lease renewal failed") from exc
+        reasons = {0: "lease expired or not found", -1: "lease owner does not match",
+                   -2: "lease version does not match", -3: "lease expired"}
+        if result <= 0:
+            raise LeaseRenewalFailedError(reasons.get(result, "lease renewal rejected"))
+        payload = self.client.get(self._lease_key(lease_id))
+        if payload is None:
+            raise SchedulerUnavailable("SCHEDULER_UNAVAILABLE: renewed lease identity was lost")
+        return self._from_redis_payload(payload)
 
     def active_slots(
         self,
@@ -300,6 +404,20 @@ class RedisLeaseCoordinator:
     def _lease_key(self, lease_id: str) -> str:
         return f"{self.key_prefix}:lease:{lease_id}"
 
+    @staticmethod
+    def _redis_payload(lease: ResourceLease) -> str:
+        payload = lease.model_dump(by_alias=True, mode="json")
+        payload["expiresAtEpochMs"] = int(lease.expires_at.timestamp() * 1000)
+        import json
+        return json.dumps(payload, separators=(",", ":"))
+
+    @staticmethod
+    def _from_redis_payload(payload: bytes | str) -> ResourceLease:
+        import json
+        decoded = json.loads(payload.decode() if isinstance(payload, bytes) else payload)
+        decoded.pop("expiresAtEpochMs", None)
+        return ResourceLease.model_validate(decoded)
+
     def _slot_key(self, resource_id: str) -> str:
         return f"{self.key_prefix}:resource:{resource_id}"
 
@@ -319,4 +437,4 @@ def issue_lease(lease_id: str, resource_id: str, owner_id: str, seconds: int = 6
     )
 
 
-__all__ = ["InMemoryLeaseCoordinator", "LeaseCoordinator", "RedisLeaseCoordinator", "issue_lease"]
+__all__ = ["CapacityView", "InMemoryLeaseCoordinator", "LeaseCoordinator", "LeaseRenewalFailedError", "RedisLeaseCoordinator", "issue_lease"]

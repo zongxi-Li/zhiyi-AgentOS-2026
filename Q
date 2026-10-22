@@ -1,0 +1,219 @@
+分析范围：`ResourcePlane`、`ResourceBinder`、Node/Runtime 健康监控、SQLite 存储和 Redis 租约。
+
+## 主要问题
+
+### 1. 租约没有续租机制，长任务存在重复占用风险（高）
+
+`ResourceBinder` 默认租约只有 60 秒：
+
+- [binder.py:150](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:150)
+- [binder.py:276](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:276)
+
+当前租约接口只有 `acquire`、`release` 和查询，没有 `renew/extend`：
+
+- [leases.py:71](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/leases.py:71)
+
+因此一个执行超过 60 秒后，Redis 会认为租约已过期，另一个任务可能重新获得同一资源槽位，而原任务实际上仍在执行。
+
+影响：
+A
+- 实际并发数超过 Runtime `capacity`
+- 远程节点过载
+- 同一资源上的任务互相干扰
+- 任务完成时释放的是已经过期的租约，无法恢复真实占用状态
+
+建议优先增加带 `lease_id` 和 owner 校验的续租机制，并让执行器定期续租。
+
+---
+
+### 2. Node 健康状态没有真正跨进程共享（高）
+
+生产环境虽然使用了 `SQLiteNodeStore`，但节点健康监控仍然是进程内存对象：
+
+- [service.py:92](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/service.py:92)
+- [node_health.py:35](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/node_health.py:35)
+
+更严重的是调度器直接读取内存监控器：
+
+- [binder.py:333](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:333)
+
+而不是调用已经具备持久化快照回退逻辑的：
+
+- [service.py:205](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/service.py:205)
+
+结果是：
+
+- 进程 A 收到远程节点心跳；
+- 进程 B 使用同一个 SQLite 数据库调度；
+- 进程 B 的 `NodeHealthMonitor` 没有心跳记录；
+- 该节点会被判定为 `OFFLINE`，即使 SQLite 中保存的是最新健康快照。
+
+这与文档中宣称的跨进程资源中心不一致，也是当前最明显的架构断裂之一。
+
+---
+
+### 3. 调度没有完整使用 Node 层约束（高）
+
+`hard_constraint_reasons()` 主要检查 Runtime 自身字段：
+
+- [binder.py:51](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:51)
+- [binder.py:58](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:74)
+
+但没有真正检查宿主 Node 的：
+
+- CPU 核数
+- 内存
+- GPU 类型和显存
+- Node 标签
+- Node 数据区域
+- Node owner scope
+- Node 级别的远程执行策略
+
+当前 Runtime 只校验 placement 和 trust 是否不超过 Node：
+
+- [service.py:431](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/service.py:431)
+
+这意味着资源注册时虽然区分了 Node 和 Runtime，但调度时实际上仍主要依赖 Runtime 自报信息。Runtime 与宿主 Node 的能力可能不一致，导致：
+
+- 任务被调度到显存不足的节点；
+- 数据区域约束被 Runtime 字段绕过；
+- 节点标签和租户隔离失效；
+- 端边云资源选择不符合真实硬件条件。
+
+项目设计文档本身也承认这些字段尚未全部接入调度逻辑：
+
+- [资源注册中心-两张表重构设计.md:321](E:/Project/Kinlin_AI/docs/架构设计/资源注册中心-两张表重构设计.md:321)
+- [资源注册中心-两张表重构设计.md:434](E:/Project/Kinlin_AI/docs/架构设计/资源注册中心-两张表重构设计.md:434)
+
+---
+
+### 4. 资源快照容量与租约容量是两套独立事实，容易不一致（中高）
+
+调度同时依赖：
+
+1. 远程 Runtime 上报的 `snapshot.available_slots`
+2. Redis 中实际存在的活动租约
+
+快照容量在这里直接参与硬过滤：
+
+- [binder.py:78](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:78)
+
+租约容量则由 Redis 单独计算：
+
+- [binder.py:222](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/binder.py:222)
+- [leases.py:269](E:/Project/Kinlin_AI/apps/agentOS/src/components/scheduler/leases.py:269)
+
+这会产生两种问题：
+
+- 远程快照滞后时，即使 Redis 已释放租约，资源仍会被判定为无容量；
+- 远程节点上报的 `available_slots` 与 Redis 实际租约不一致时，没有统一的仲裁规则。
+
+当前系统没有明确“快照是资源能力上限，Redis 是执行占用事实，二者冲突时谁优先”。建议明确：
+
+- 静态 capacity：来自 Runtime Profile；
+- 动态占用：只以租约协调器为准；
+- 远程 available slots：仅用于排序、预警或准入上限；
+- 快照过期时应明确进入 `STALE`，而不是继续作为正常容量依据。
+
+---
+
+### 5. 执行观测回写失败会被静默吞掉（中高）
+
+`observe_execution()` 最多尝试三次更新快照，但三次都失败后仍然返回健康结果：
+
+- [service.py:509](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/service.py:509)
+- [service.py:527](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/service.py:529)
+
+代码捕获了所有异常：
+
+```python
+except Exception:
+    continue
+```
+
+循环结束后没有重新抛出异常，也没有返回“观测未持久化”的状态。
+
+结果是：
+
+- 调度器认为执行结果已经更新；
+- SQLite 中可能仍是旧的可靠性和延迟；
+- 后续调度使用过期健康数据；
+- 数据库锁、I/O 错误和版本冲突都会被伪装成成功。
+
+这里至少应该在三次失败后抛出明确的 `VersionConflict` 或 `ResourceObservationPersistenceError`，并记录告警。
+
+---
+
+### 6. SQLite 资源库没有针对多进程写入配置并发策略（中）
+
+健康库配置了 WAL 和 `busy_timeout`：
+
+- [health_store.py:83](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/health_store.py:83)
+
+但 Runtime 资源库和 Node 资源库没有同等配置：
+
+- [store.py:319](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/store.py:319)
+- [node_store.py:212](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/node_store.py:212)
+
+在多个容器、多个 Worker 或节点观测并发写入时，容易出现：
+
+- `database is locked`
+- 观测回写失败
+- 注册和快照更新互相阻塞
+- 进程间读到不同时间点的数据
+
+如果资源中心未来保持 SQLite，应至少统一：
+
+- `PRAGMA journal_mode=WAL`
+- `busy_timeout`
+- 事务隔离策略
+- 写入重试和退避
+- 统一的跨进程 CAS 失败处理
+
+如果目标是多 Worker、多节点生产部署，则应考虑将资源事实和租约协调迁移到 PostgreSQL/Redis 组合，而不是让 SQLite 同时承担资源注册中心职责。
+
+---
+
+## 次要问题
+
+### 7. 远程注册不是幂等的
+
+`register_remote_node()` 和 `register_remote_runtime()` 每次都会生成或接受新凭据，然后执行注册；如果客户端在服务端提交成功后超时重试，第二次会收到“已存在”错误。
+
+这会导致典型的网络重试问题：
+
+1. 服务端已经完成注册；
+2. 客户端没有收到响应；
+3. 客户端重试；
+4. 服务端无法返回原注册结果，也没有注册幂等键。
+
+建议增加 `registration_id` 或由调用方提供稳定的资源 ID，并支持“相同配置重复注册返回当前记录”的幂等行为。
+
+### 8. 远程观测只按序号防旧数据，没有严格校验时间语义
+
+`observe_remote_runtime()` 检查的是 `observation_sequence`：
+
+- [service.py:545](E:/Project/Kinlin_AI/apps/agentOS/src/components/resource/service.py:545)
+
+但没有限制 `observed_at` 不能明显位于未来，也没有检查跨序号的时间倒退。若远程节点时钟异常或恶意上报未来时间，健康监控可能长时间保持在线。
+
+签名请求有时间戳校验，但业务观测时间仍应单独做合理范围校验。
+
+## 总结
+
+当前资源器已经具备较完整的原型结构：
+
+- Node / Runtime 分层
+- SQLite 持久化
+- 远程签名观测
+- 资源版本 CAS
+- Redis 原子租约
+- 可解释的候选评分
+
+但目前最关键的三个缺口是：
+
+1. 租约不能续租，长任务可能重复占用资源；
+2. Node 健康状态在调度器中仍是进程内存状态；
+3. Node 级硬约束尚未真正参与调度。
+
+这三个问题会直接影响端边云部署、跨进程运行和长任务稳定性，优先级高于评分算法或前端展示。

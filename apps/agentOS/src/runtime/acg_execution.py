@@ -670,6 +670,12 @@ class ACGExecutionService(CollaboratorAccess):
                 except (ValueError, KeyError, TypeError) as exc:
                     self.resource_binder.release(decision.lease.lease_id)
                     raise ExecutionRunCancelled("execution permit changed after resource allocation") from exc
+            from components.scheduler.binder import LeaseKeepAlive
+
+            keep_alive = LeaseKeepAlive(
+                self.resource_binder.coordinator, decision.lease
+            )
+            keep_alive.start()
             binding = decision.binding
             selected_resource_id = binding.resource_id
             remote_adapter = self._remote_runtime_adapter(selected_resource_id)
@@ -766,7 +772,19 @@ class ACGExecutionService(CollaboratorAccess):
                     except (ValueError, KeyError, TypeError) as exc:
                         raise ExecutionRunCancelled("execution permit changed before node dispatch") from exc
                 execution_started = monotonic()
-                result = await runner(step_id, state)
+                runner_task = asyncio.create_task(runner(step_id, state))
+                renewal_failure_task = asyncio.create_task(keep_alive.wait_failed())
+                done, pending = await asyncio.wait(
+                    {runner_task, renewal_failure_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if renewal_failure_task in done:
+                    runner_task.cancel()
+                    await asyncio.gather(runner_task, return_exceptions=True)
+                    raise renewal_failure_task.result()
+                renewal_failure_task.cancel()
+                await asyncio.gather(renewal_failure_task, return_exceptions=True)
+                result = runner_task.result()
                 execution_outcome = "completed"
                 self._observe_resource_execution(
                     selected_resource_id,
@@ -840,6 +858,7 @@ class ACGExecutionService(CollaboratorAccess):
                 self._flush_identity_outbox()
                 raise
             finally:
+                await keep_alive.stop()
                 finished = monotonic()
                 started = execution_started or finished
                 run.execution_state.setdefault("stepPerformance", {})[step_id] = {

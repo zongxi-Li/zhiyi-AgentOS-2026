@@ -2,12 +2,12 @@
   <div class="resource-center">
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.layout.v1">
       <template #main>
-        <main class="resource-center__main" aria-label="资源中心" data-max-width="1400px">
-          <WorkspacePageHero eyebrow="RESOURCE CENTER" title="资源中心" description="查看设备与节点承载的执行、模型和工具服务，以及可用模型端点。">
+        <main class="resource-center__main" aria-label="资源与连接中心" data-max-width="1400px">
+          <WorkspacePageHero eyebrow="RESOURCE & CONNECTIONS" title="资源与连接中心" description="连接并管理您的设备、模型和工具；任务会在符合数据与能力要求的位置运行。">
             <template #actions>
               <button class="resource-action resource-action--primary" type="button" @click="openRegistration">
                 <el-icon aria-hidden="true"><Plus /></el-icon>
-                <span>注册资源</span>
+                <span>接入资源</span>
               </button>
               <button class="resource-action" type="button" :disabled="resourceTab !== 'overview'" @click="refreshOverview">
                 <el-icon aria-hidden="true"><Refresh /></el-icon>

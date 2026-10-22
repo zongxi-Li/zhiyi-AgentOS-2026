@@ -10,6 +10,7 @@ import pytest
 
 from components.resource.node_store import InMemoryNodeStore, SQLiteNodeStore
 from components.resource.service import ResourcePlane
+from components.resource.errors import ResourceObservationTimeInvalidError
 from components.resource.store import ResourceCredentialRecord, SQLiteResourceStore
 from contracts.resource import (
     NodeHealthStatus,
@@ -129,6 +130,22 @@ def test_node_health_recovers_from_persisted_snapshot_after_restart(tmp_path: Pa
     restarted.store.close()
 
 
+def test_node_health_is_shared_through_persisted_snapshot_between_processes(tmp_path: Path) -> None:
+    db_path = tmp_path / "nodes.sqlite3"
+    writer = ResourcePlane(node_store=SQLiteNodeStore(db_path))
+    writer.ensure_node("node:edge-1", placement=Placement.EDGE)
+    now = datetime.now(timezone.utc)
+    writer.observe_node("node:edge-1", observation_sequence=1, observed_at=now)
+
+    reader = ResourcePlane(node_store=SQLiteNodeStore(db_path))
+    health = reader.get_node_health("node:edge-1", now=now + timedelta(seconds=1))
+
+    assert health.status is NodeHealthStatus.ONLINE
+    assert health.last_heartbeat == now
+    writer.node_store.close()
+    reader.node_store.close()
+
+
 def test_node_health_persists_consecutive_failures(tmp_path: Path) -> None:
     db_path = tmp_path / "nodes.sqlite3"
     plane = ResourcePlane(
@@ -151,6 +168,28 @@ def test_node_health_persists_consecutive_failures(tmp_path: Path) -> None:
     assert restarted.node_health("node:edge-1").consecutive_failures == 2
     restarted.node_store.close()
     restarted.store.close()
+
+
+def test_node_observation_rejects_future_timestamp() -> None:
+    plane = ResourcePlane()
+    plane.ensure_node("node:edge-1", placement=Placement.EDGE)
+    with pytest.raises(ResourceObservationTimeInvalidError):
+        plane.observe_node(
+            "node:edge-1", observation_sequence=1,
+            observed_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+        )
+
+
+def test_repeated_node_clock_anomalies_mark_node_suspicious() -> None:
+    plane = ResourcePlane()
+    plane.ensure_node("node:edge-1", placement=Placement.EDGE)
+    for _ in range(3):
+        with pytest.raises(ResourceObservationTimeInvalidError):
+            plane.observe_node(
+                "node:edge-1", observation_sequence=1,
+                observed_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+            )
+    assert plane.node_snapshot("node:edge-1").snapshot.health_status is NodeHealthStatus.SUSPICIOUS
 
 
 def test_in_memory_node_store_matches_sqlite_contract() -> None:

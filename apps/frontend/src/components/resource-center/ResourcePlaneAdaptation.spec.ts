@@ -1,10 +1,15 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type RuntimeResourceItem } from '@/services/api/agentos'
 import ResourceOverviewPanel from './ResourceOverviewPanel.vue'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
 import ResourceRegistrationDialog from './ResourceRegistrationDialog.vue'
 
+beforeEach(() => {
+  vi.spyOn(agentosApi, 'listResourceUsage').mockResolvedValue({ resourceId: 'fixture', items: [], total: 0 })
+  vi.spyOn(agentosApi, 'getResourceHealthHistory').mockResolvedValue({ resourceId: 'fixture', items: [], total: 0 })
+  vi.spyOn(agentosApi, 'getResourceCredential').mockResolvedValue({ resourceId: 'fixture', credentialId: 'credential-fixture', createdAt: '2026-01-01T00:00:00Z' })
+})
 afterEach(() => vi.restoreAllMocks())
 const item = (id: string, placement: string): RuntimeResourceItem => ({
   profile: { resourceId: id, resourceType: 'worker', runtimeKind: 'execution_backend', nodeId: 'node-1',
@@ -50,6 +55,60 @@ describe('resource plane adaptation', () => {
     wrapper.unmount()
   })
 
+  it('groups resources by customer deployment and surfaces an offline connection action', async () => {
+    const local = item('local', 'local'); local.snapshot.healthStatus = 'online'
+    const edge = item('edge', 'edge'); edge.snapshot.healthStatus = 'offline'
+    const cloud = item('cloud', 'cloud'); cloud.snapshot.healthStatus = 'online'
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [local, edge, cloud], total: 3 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('我的设备')
+    expect(wrapper.text()).toContain('边缘节点')
+    expect(wrapper.text()).toContain('云端服务')
+    expect(wrapper.text()).toContain('检测连接')
+    wrapper.unmount()
+  })
+
+  it('filters catalog items by customer resource type and health', async () => {
+    const model = item('model', 'cloud'); model.profile.runtimeKind = 'model_server'
+    const offlineTool = item('tool', 'edge'); offlineTool.profile.runtimeKind = 'tool_service'; offlineTool.snapshot.healthStatus = 'offline'
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [model, offlineTool], total: 2 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    const selects = wrapper.findAll('.resource-catalog-filters select')
+    await selects[0].setValue('tool')
+    await selects[2].setValue('offline')
+    expect(wrapper.findAll('.resource-row')).toHaveLength(1)
+    expect(wrapper.find('.resource-row').text()).toContain('tool')
+    wrapper.unmount()
+  })
+
+  it('shows registered nodes before they have a runtime attached', async () => {
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [{ profile: { nodeId: 'node:new', displayName: '新设备', placement: 'edge', trust: 'trusted', ownerScope: 'customer', enabled: true, computeCapacity: { cpuCores: 4, memoryMb: 8192 } }, healthStatus: 'offline', snapshotVersion: 1 }], total: 1 })
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    expect(wrapper.find('.resource-topology').text()).toContain('新设备')
+    expect(wrapper.find('.resource-topology').text()).toContain('边缘节点')
+    expect(wrapper.find('.resource-topology').text()).toContain('4 核 CPU')
+    wrapper.unmount()
+  })
+
+  it('enables a registered device through the tenant-scoped node command', async () => {
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [{ profile: { nodeId: 'node:paused', displayName: '暂停设备', placement: 'edge', trust: 'trusted', ownerScope: 'customer', enabled: false }, healthStatus: 'offline', snapshotVersion: 1 }], total: 1 })
+    const enable = vi.spyOn(agentosApi, 'setNodeEnabled').mockResolvedValue({ nodeId: 'node:paused', enabled: true })
+    const wrapper = mount(ResourceOverviewPanel, { global: { stubs } })
+    await flushPromises()
+    await wrapper.get('.resource-topology__manage').trigger('click')
+    await flushPromises()
+    expect(enable).toHaveBeenCalledWith('node:paused', true)
+    expect(wrapper.get('.resource-topology__manage').text()).toBe('停用设备')
+    wrapper.unmount()
+  })
+
   it('does not send runtime commands for a model endpoint', async () => {
     const model = item('endpoint-1', 'cloud'); model.profile.runtimeKind = 'model_endpoint'
     model.profile.provider = 'provider'; model.profile.model = 'model'; model.profile.contextWindowTokens = 8192
@@ -62,12 +121,22 @@ describe('resource plane adaptation', () => {
     wrapper.unmount()
   })
 
+  it('presents resource details before advanced settings', async () => {
+    const wrapper = mount(ResourceDetailPanel, { props: { item: item('edge', 'edge') }, global: { stubs: { 'el-icon': true, 'el-switch': true, 'router-link': true } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('资源概览')
+    expect(wrapper.text()).toContain('高级设置')
+    expect(wrapper.text()).toContain('停止后不会删除资源或历史记录')
+    wrapper.unmount()
+  })
+
   it('registers a node with the new contract and keeps the one-time secret until acknowledged', async () => {
     vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [], total: 0 })
     const register = vi.spyOn(agentosApi, 'registerNode').mockResolvedValue({ nodeId: 'node:edge:new', credentialId: 'nc-1', secret: 'one-time-secret', ownerScope: 'scope' })
     const wrapper = mount(ResourceRegistrationDialog, { props: { modelValue: false }, global: { stubs: { 'el-icon': true,
       'el-dialog': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' } } } })
     await wrapper.setProps({ modelValue: true }); await flushPromises()
+    expect(wrapper.text()).toContain('接入设备')
     await wrapper.findAll('input')[0].setValue('node:edge:new')
     await wrapper.findAll('input')[2].setValue('scope')
     await wrapper.get('.rr-submit').trigger('click'); await flushPromises()
@@ -79,7 +148,7 @@ describe('resource plane adaptation', () => {
     wrapper.unmount()
   })
 
-  it('registers a runtime with its host placement and trust rather than the legacy agent profile', async () => {
+  it('registers a customer model with its host placement and trust', async () => {
     vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [{ profile: { nodeId: 'node:edge:1',
       displayName: 'Edge', placement: 'edge', trust: 'sandboxed', ownerScope: 'scope', enabled: true },
       healthStatus: 'offline', snapshotVersion: 1 }], total: 1 })
@@ -96,10 +165,30 @@ describe('resource plane adaptation', () => {
     await wrapper.findAll('input')[2].setValue('https://worker.example.com')
     await wrapper.get('.rr-submit').trigger('click'); await flushPromises()
     expect(register.mock.calls[0][0]).toMatchObject({ profile: { runtimeId: 'runtime:1', nodeId: 'node:edge:1',
-      kind: 'execution_backend', placement: 'edge', trust: 'sandboxed', ownerScope: 'scope',
+      kind: 'model_server', placement: 'edge', trust: 'sandboxed', ownerScope: 'scope',
       capabilities: ['exec.research'], endpoint: { protocol: 'https', address: 'https://worker.example.com' } },
       snapshot: { runtimeId: 'runtime:1', healthStatus: 'unknown' } })
     expect(register.mock.calls[0][0].profile).not.toHaveProperty('resourceType')
+    wrapper.unmount()
+  })
+
+  it('registers a customer tool as a tool service runtime', async () => {
+    vi.spyOn(agentosApi, 'listNodes').mockResolvedValue({ items: [{ profile: { nodeId: 'node:edge:1',
+      displayName: 'Edge', placement: 'edge', trust: 'trusted', ownerScope: 'scope', enabled: true },
+      healthStatus: 'offline', snapshotVersion: 1 }], total: 1 })
+    const register = vi.spyOn(agentosApi, 'registerResource').mockResolvedValue({ resourceId: 'tool:1', credentialId: 'rc-1', secret: 'one-time', ownerScope: 'scope' })
+    const wrapper = mount(ResourceRegistrationDialog, { props: { modelValue: true }, global: { stubs: {
+      'el-icon': true, 'el-dialog': { template: '<div><slot /><slot name="footer" /></div>' },
+      'el-select': { name: 'ElSelect', props: ['modelValue'], template: '<div />' }
+    } } })
+    await flushPromises()
+    await wrapper.findAll('.rr-type')[2].trigger('click')
+    await wrapper.findAll('input')[0].setValue('tool:1')
+    await wrapper.findAll('select')[0].setValue('node:edge:1')
+    wrapper.findAllComponents({ name: 'ElSelect' })[0].vm.$emit('update:modelValue', ['tool.search'])
+    await wrapper.findAll('input')[2].setValue('https://tools.example.com')
+    await wrapper.get('.rr-submit').trigger('click'); await flushPromises()
+    expect(register).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ kind: 'tool_service', runtimeId: 'tool:1' }) }))
     wrapper.unmount()
   })
 })

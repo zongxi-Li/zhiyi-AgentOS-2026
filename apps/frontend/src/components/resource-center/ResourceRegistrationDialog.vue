@@ -3,15 +3,15 @@
     :show-close="!issued" :close-on-click-modal="false" :close-on-press-escape="!issued"
     @update:model-value="emit('update:modelValue', $event)" @closed="resetForm">
     <template #header><div class="rr-header"><span class="rr-header__icon"><el-icon><Connection /></el-icon></span>
-      <div class="rr-header__copy"><strong>注册节点或运行服务</strong><span>节点承载服务；模型端点由模型配置同步</span></div></div></template>
+      <div class="rr-header__copy"><strong>接入您的资源</strong><span>连接设备、模型和工具服务，供任务在授权范围内使用</span></div></div></template>
     <div v-if="issued" class="rr-body" role="status">
-      <h3>注册成功，请保存接入凭据</h3>
-      <p>密钥仅在本次注册时返回。远端需要使用它提交签名心跳，注册本身不会证明服务可用。</p>
+      <h3>接入信息已创建，请保存凭据</h3>
+      <p>密钥仅在本次显示。完成设备连接后，返回资源中心执行“检测连接”确认可用状态。</p>
       <label class="rr-field"><span>凭据 ID</span><input :value="issued.credentialId" readonly /></label>
       <label class="rr-field"><span>接入密钥</span><textarea :value="issued.secret" readonly aria-label="一次性接入密钥" /></label>
     </div>
     <div v-else class="rr-body">
-      <section class="rr-section"><h3 class="rr-section__title">注册对象</h3>
+      <section class="rr-section"><h3 class="rr-section__title">选择接入类型</h3>
         <div class="rr-type-grid">
           <button v-for="option in registrationTypes" :key="option.value" type="button" class="rr-type"
             :class="{ 'is-active': form.kind === option.value }" @click="form.kind = option.value">
@@ -20,10 +20,10 @@
       </section>
       <section class="rr-section"><h3 class="rr-section__title">基础信息</h3><div class="rr-form">
         <div class="rr-grid rr-grid--2">
-          <label class="rr-field"><span>{{ isNode ? '节点 ID' : 'Runtime ID' }} *</span><input v-model="form.id" placeholder="例如 node:edge:research / runtime:research" /></label>
+          <label class="rr-field"><span>{{ isDevice ? '设备 ID' : '服务 ID' }} *</span><input v-model="form.id" placeholder="例如 device:edge:research / service:research" /></label>
           <label class="rr-field"><span>显示名称</span><input v-model="form.name" placeholder="便于识别的名称" /></label>
         </div>
-        <template v-if="isNode">
+        <template v-if="isDevice">
           <div class="rr-grid rr-grid--3">
             <label class="rr-field"><span>部署位置</span><select v-model="form.placement"><option value="edge">边缘节点</option><option value="cloud">云端节点</option></select></label>
             <label class="rr-field"><span>信任等级</span><select v-model="form.trust"><option value="trusted">Trusted</option><option value="sandboxed">Sandboxed</option><option value="untrusted">Untrusted</option></select></label>
@@ -41,7 +41,7 @@
             <option value="">{{ nodesLoading ? '正在读取节点…' : '选择已登记的远程节点' }}</option>
             <option v-for="node in remoteNodes" :key="node.profile.nodeId" :value="node.profile.nodeId">{{ node.profile.displayName || node.profile.nodeId }} · {{ node.profile.placement }}</option>
           </select></label>
-          <p v-if="!nodesLoading && !remoteNodes.length" class="rr-hint">暂无远程节点，请先选择“节点”完成登记。进程内服务由系统自行注册。</p>
+          <p v-if="!nodesLoading && !remoteNodes.length" class="rr-hint">暂无可用设备，请先完成“接入设备”。</p>
           <p v-if="selectedNode" class="rr-hint">归属：{{ selectedNode.profile.ownerScope }} · 信任：{{ selectedNode.profile.trust }}</p>
           <div class="rr-grid rr-grid--2">
             <label class="rr-field"><span>能力 *</span><el-select v-model="form.capabilities" multiple filterable allow-create default-first-option placeholder="输入能力后回车" /></label>
@@ -52,14 +52,14 @@
             <label class="rr-field"><span>服务地址 *</span><input v-model="form.address" placeholder="例如 https://worker.example.com" /></label>
           </div>
           <label class="rr-field rr-field--capacity"><span>并发容量</span><input v-model.number="form.capacity" type="number" min="1" step="1" /></label>
-          <label v-if="form.kind === 'model_server'" class="rr-field"><span>服务的模型标识</span><el-select v-model="form.modelIds" multiple filterable allow-create default-first-option placeholder="模型名称；端点能力仍由模型配置登记" /></label>
+          <label v-if="form.kind === 'model'" class="rr-field"><span>模型标识</span><el-select v-model="form.modelIds" multiple filterable allow-create default-first-option placeholder="输入模型名称后回车" /></label>
         </template>
       </div></section>
       <p v-if="errorMessage" class="rr-error" role="alert">{{ errorMessage }}</p>
     </div>
     <template #footer><div class="rr-footer">
       <button v-if="!issued" type="button" class="rr-cancel" :disabled="submitting" @click="emit('update:modelValue', false)">取消</button>
-      <button type="button" class="rr-submit" :disabled="submitting" @click="issued ? finish() : submit()">{{ issued ? '已保存，完成' : submitting ? '注册中…' : '注册' }}</button>
+      <button type="button" class="rr-submit" :disabled="submitting" @click="issued ? finish() : submit()">{{ issued ? '已保存，完成' : submitting ? '接入中…' : '接入资源' }}</button>
     </div></template>
   </el-dialog>
 </template>
@@ -71,12 +71,11 @@ import { agentosApi, type NodeCatalogItem, type ResourceRegistrationResult } fro
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: boolean): void; (e: 'registered'): void }>()
 const registrationTypes = [
-  { value: 'node', label: '节点', description: '部署实体与算力' },
-  { value: 'execution_backend', label: '执行后端', description: '承接任务执行' },
-  { value: 'model_server', label: '模型服务', description: '提供模型推理' },
-  { value: 'tool_service', label: '工具服务', description: '提供工具能力' }
+  { value: 'device', label: '接入设备', description: '本地或边缘设备，用于承载任务' },
+  { value: 'model', label: '接入模型', description: '连接自有模型服务或登记云端模型' },
+  { value: 'tool', label: '接入工具', description: '连接 HTTP 或 MCP 工具服务' }
 ] as const
-const defaults = () => ({ kind: 'node' as 'node' | 'execution_backend' | 'model_server' | 'tool_service',
+const defaults = () => ({ kind: 'device' as 'device' | 'model' | 'tool',
   id: '', name: '', placement: 'edge' as 'edge' | 'cloud', trust: 'trusted', ownerScope: '', nodeId: '',
   capabilities: [] as string[], domains: [] as string[], modelIds: [] as string[],
   protocol: 'https', address: '', capacity: 1, cpuCores: 0, memoryMb: 0, gpuMemoryMb: 0, gpuType: '' })
@@ -86,7 +85,7 @@ const nodesLoading = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 const issued = ref<ResourceRegistrationResult | null>(null)
-const isNode = computed(() => form.kind === 'node')
+const isDevice = computed(() => form.kind === 'device')
 const remoteNodes = computed(() => nodes.value.filter(n => n.profile.enabled && ['edge', 'cloud'].includes(n.profile.placement) && n.profile.ownerScope))
 const selectedNode = computed(() => remoteNodes.value.find(n => n.profile.nodeId === form.nodeId))
 let nodeLoad = 0
@@ -101,14 +100,14 @@ watch(() => props.modelValue, async open => {
 const submit = async () => {
   if (submitting.value) return
   errorMessage.value = ''
-  if (!form.id.trim() || (isNode.value ? !form.ownerScope.trim() : !selectedNode.value || !form.capabilities.length || !form.address.trim())) {
-    errorMessage.value = isNode.value ? '请填写节点 ID 和归属范围。' : '请填写 Runtime ID，选择宿主节点，并提供能力及服务地址。'
+  if (!form.id.trim() || (isDevice.value ? !form.ownerScope.trim() : !selectedNode.value || !form.capabilities.length || !form.address.trim())) {
+    errorMessage.value = isDevice.value ? '请填写设备 ID 和归属范围。' : '请填写服务 ID，选择承载设备，并提供能力及服务地址。'
     return
   }
-  if (!isNode.value && (!Number.isInteger(form.capacity) || form.capacity < 1)) { errorMessage.value = '并发容量必须是正整数。'; return }
+  if (!isDevice.value && (!Number.isInteger(form.capacity) || form.capacity < 1)) { errorMessage.value = '并发容量必须是正整数。'; return }
   submitting.value = true
   try {
-    if (isNode.value) {
+    if (isDevice.value) {
       issued.value = await agentosApi.registerNode({ profile: { nodeId: form.id.trim(), displayName: form.name.trim(),
         placement: form.placement, trust: form.trust, ownerScope: form.ownerScope.trim(),
         computeCapacity: { cpuCores: form.cpuCores, memoryMb: form.memoryMb, gpuMemoryMb: form.gpuMemoryMb, gpuType: form.gpuType.trim() || null, bandwidthMbps: 0 } },
@@ -116,9 +115,9 @@ const submit = async () => {
     } else {
       const node = selectedNode.value!.profile
       issued.value = await agentosApi.registerResource({ profile: { runtimeId: form.id.trim(), displayName: form.name.trim(),
-        kind: form.kind as 'execution_backend' | 'model_server' | 'tool_service', nodeId: node.nodeId,
+        kind: form.kind === 'model' ? 'model_server' : 'tool_service', nodeId: node.nodeId,
         placement: node.placement as 'edge' | 'cloud', trust: node.trust, ownerScope: node.ownerScope!,
-        capabilities: [...form.capabilities], domains: [...form.domains], modelIds: form.kind === 'model_server' ? [...form.modelIds] : [],
+        capabilities: [...form.capabilities], domains: [...form.domains], modelIds: form.kind === 'model' ? [...form.modelIds] : [],
         capacity: form.capacity, enabled: true, endpoint: { protocol: form.protocol, address: form.address.trim() } },
         snapshot: { runtimeId: form.id.trim(), availableSlots: form.capacity, utilization: 0, healthStatus: 'unknown' } })
     }

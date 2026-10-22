@@ -818,6 +818,37 @@ async def test_v2_resources_projects_registered_nodes_for_legacy_clients(tmp_pat
     assert projected["snapshot"]["latencyMs"] == 17
 
 
+async def test_v2_node_enabled_command_requires_matching_tenant(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    runtime.resource_plane.register_remote_node(
+        NodeProfile(nodeId="node:tenant-a", placement=Placement.EDGE, trust=TrustLevel.TRUSTED, ownerScope="tenant-a"),
+        NodeSnapshot(nodeId="node:tenant-a"),
+    )
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        denied = await client.post("/agentos/v2/nodes/node:tenant-a/enabled", json={"enabled": False})
+        token = _operator_context()
+        try:
+            updated = await client.post("/agentos/v2/nodes/node:tenant-a/enabled", json={"enabled": False})
+            wrong_tenant = _trusted_user_context.set(TrustedUserContext(
+                user_id="operator-b", subject="operator-b", role="operator", tenant_id="tenant-b"
+            ))
+            try:
+                forbidden = await client.post("/agentos/v2/nodes/node:tenant-a/enabled", json={"enabled": True})
+            finally:
+                _trusted_user_context.reset(wrong_tenant)
+        finally:
+            _trusted_user_context.reset(token)
+
+    assert denied.status_code == 401
+    assert updated.status_code == 200
+    assert updated.json() == {"nodeId": "node:tenant-a", "enabled": False}
+    assert forbidden.status_code == 403
+    assert runtime.resource_plane.node("node:tenant-a").enabled is False
+
+
 def _operator_context():
     return _trusted_user_context.set(
         TrustedUserContext(

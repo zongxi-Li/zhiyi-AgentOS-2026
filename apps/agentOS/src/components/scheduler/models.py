@@ -28,6 +28,14 @@ class FilterReason(str, Enum):
     LATENCY_EXCEEDED = "LATENCY_EXCEEDED"
     REMOTE_EXECUTION_DISABLED = "REMOTE_EXECUTION_DISABLED"
     MODEL_ENDPOINT_UNAVAILABLE = "MODEL_ENDPOINT_UNAVAILABLE"
+    NODE_CPU_INSUFFICIENT = "NODE_CPU_INSUFFICIENT"
+    NODE_MEMORY_INSUFFICIENT = "NODE_MEMORY_INSUFFICIENT"
+    NODE_GPU_TYPE_MISMATCH = "NODE_GPU_TYPE_MISMATCH"
+    NODE_GPU_MEMORY_INSUFFICIENT = "NODE_GPU_MEMORY_INSUFFICIENT"
+    NODE_LABEL_MISMATCH = "NODE_LABEL_MISMATCH"
+    NODE_DATA_REGION_MISMATCH = "NODE_DATA_REGION_MISMATCH"
+    NODE_OWNER_SCOPE_MISMATCH = "NODE_OWNER_SCOPE_MISMATCH"
+    NODE_REMOTE_EXECUTION_DENIED = "NODE_REMOTE_EXECUTION_DENIED"
 
 
 #: 调度结果中代表永久性配置缺口的原因；执行循环应立即失败而不是排队等待。
@@ -43,6 +51,7 @@ class CandidateDecision(BaseModel):
     resource_id: str = Field(alias="resourceId")
     accepted: bool
     reasons: list[FilterReason] = Field(default_factory=list)
+    reason_details: list[dict[str, str]] = Field(default_factory=list, alias="reasonDetails")
     score: float | None = None
 
 

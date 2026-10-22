@@ -44,9 +44,17 @@ from .models import (
 from .node_health import NodeHealthMonitor, infer_load_status
 from .node_store import InMemoryNodeStore, NodeStore, SQLiteNodeStore
 from .service import (
+    compute_registration_id,
     IssuedNodeCredential,
     IssuedResourceCredential,
     ResourcePlane,
+)
+from .errors import (
+    ResourceConfigMismatchError,
+    ResourceDatabaseLockedError,
+    ResourceObservationPersistenceError,
+    ResourceObservationTimeInvalidError,
+    ResourceVersionConflictError,
 )
 from .store import (
     InMemoryResourceStore,
@@ -77,6 +85,11 @@ __all__ = [
     "NodeStore",
     "RegisteredLocalRuntimeResource",
     "ResourceCredentialRecord",
+    "ResourceConfigMismatchError",
+    "ResourceDatabaseLockedError",
+    "ResourceObservationPersistenceError",
+    "ResourceObservationTimeInvalidError",
+    "ResourceVersionConflictError",
     "RuntimeCandidate",
     "RuntimeHealth",
     "RuntimeStore",
@@ -98,6 +111,7 @@ __all__ = [
     "VersionedNodeSnapshot",
     "VersionedRuntimeSnapshot",
     "build_resource_signature",
+    "compute_registration_id",
     "ensure_local_runtime_resource",
     "infer_load_status",
     "local_runtime_node_id",

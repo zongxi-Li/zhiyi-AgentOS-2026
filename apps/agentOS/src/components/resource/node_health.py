@@ -57,6 +57,7 @@ class NodeHealthMonitor:
         queued_tasks: int = 0,
         utilization: float = 0.0,
         success: bool = True,
+        status: NodeHealthStatus | None = None,
     ) -> NodeHealth:
         """记录一次心跳，返回新的分级健康投影。"""
         timestamp = _utc(observed_at) if observed_at is not None else datetime.now(timezone.utc)
@@ -64,7 +65,7 @@ class NodeHealthMonitor:
             failures = 0 if success else self._consecutive_failures.get(node_id, 0) + 1
             self._consecutive_failures[node_id] = failures
             self._last_heartbeat[node_id] = timestamp
-            self._load_status[node_id] = infer_load_status(queued_tasks, utilization)
+            self._load_status[node_id] = status or infer_load_status(queued_tasks, utilization)
         return NodeHealth(
             node_id=node_id,
             status=self._load_status[node_id],
@@ -72,15 +73,31 @@ class NodeHealthMonitor:
             consecutive_failures=failures,
         )
 
+    def hydrate(
+        self,
+        node_id: str,
+        *,
+        last_heartbeat: datetime | None,
+        status: NodeHealthStatus = NodeHealthStatus.UNKNOWN,
+        consecutive_failures: int = 0,
+    ) -> None:
+        """Rebuild local cache from the durable node snapshot at process start."""
+        if last_heartbeat is None:
+            return
+        with self._lock:
+            self._last_heartbeat[node_id] = _utc(last_heartbeat)
+            self._load_status[node_id] = status
+            self._consecutive_failures[node_id] = consecutive_failures
+
     def health(self, node_id: str, *, now: datetime | None = None) -> NodeHealth:
         """按调用时刻计算分级健康；心跳过期自然降级为 stale/offline。"""
         current = _utc(now) if now is not None else datetime.now(timezone.utc)
         with self._lock:
             heartbeat = self._last_heartbeat.get(node_id)
             failures = self._consecutive_failures.get(node_id, 0)
-            load_status = self._load_status.get(node_id, NodeHealthStatus.ONLINE)
+            load_status = self._load_status.get(node_id, NodeHealthStatus.UNKNOWN)
         if heartbeat is None:
-            status = NodeHealthStatus.OFFLINE
+            status = NodeHealthStatus.UNKNOWN
         elif current - heartbeat > self.offline_threshold:
             status = NodeHealthStatus.OFFLINE
         elif current - heartbeat > self.stale_threshold:

@@ -8,6 +8,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
+import sqlite3
+import time
 import hashlib
 import hmac
 import secrets
@@ -48,7 +51,22 @@ from .store import (
     RuntimeStore,
     SQLiteResourceStore,
     StaleResourceObservation,
+    VersionConflict,
 )
+from .errors import (
+    ResourceConfigMismatchError,
+    ResourceDatabaseLockedError,
+    ResourceObservationPersistenceError,
+    ResourceObservationTimeInvalidError,
+    ResourceVersionConflictError,
+)
+
+
+logger = logging.getLogger(__name__)
+_MAX_OBSERVATION_WRITE_RETRIES = 3
+_MAX_OBSERVATION_DELAY = timedelta(seconds=60)
+_MAX_OBSERVATION_CLOCK_SKEW = timedelta(seconds=30)
+_SUSPICIOUS_TIME_ANOMALY_LIMIT = 3
 
 
 @dataclass(frozen=True)
@@ -59,6 +77,7 @@ class IssuedResourceCredential:
     credential_id: str
     owner_scope: str
     secret: str
+    created: bool = True
 
 
 @dataclass(frozen=True)
@@ -69,6 +88,22 @@ class IssuedNodeCredential:
     credential_id: str
     owner_scope: str
     secret: str
+    created: bool = True
+
+
+def compute_registration_id(resource_id: str, owner_scope: str, profile: NodeProfile | RuntimeProfile) -> str:
+    """Return a stable idempotency key for a static remote registration."""
+    import json
+
+    payload = profile.model_dump(by_alias=True, mode="json")
+    payload.pop("version", None)
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.pop("registrationId", None)
+    fingerprint = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{owner_scope}:{resource_id}:{fingerprint}"
 
 
 class ResourcePlane:
@@ -91,6 +126,16 @@ class ResourcePlane:
         )
         self.node_health_monitor = node_health_monitor or NodeHealthMonitor()
         self.secret_box = ResourceSecretBox(credential_key)
+        # SQLite snapshots are the cross-process authority.  Hydrating only
+        # accelerates local reads; every scheduler still calls get_node_health.
+        for profile in self.node_store.list_profiles():
+            snapshot = self.node_store.get_snapshot(profile.node_id).snapshot
+            self.node_health_monitor.hydrate(
+                profile.node_id,
+                last_heartbeat=snapshot.last_heartbeat,
+                status=snapshot.health_status,
+                consecutive_failures=snapshot.consecutive_failures,
+            )
 
     # ------------------------------------------------------------------
     # Node 层：部署实体
@@ -164,12 +209,34 @@ class ResourcePlane:
             raise ValueError(f"node conflicts with a non-bootstrap registration: {node_id}")
         return self.node_store.update_profile(profile)
 
-    def register_remote_node(self, profile: NodeProfile, snapshot: NodeSnapshot) -> IssuedNodeCredential:
+    def register_remote_node(
+        self, profile: NodeProfile, snapshot: NodeSnapshot, *, registration_id: str | None = None
+    ) -> IssuedNodeCredential:
         """登记远程节点并生成只能在注册响应中读取一次的凭据。"""
         if profile.placement is Placement.DEVICE:
             raise ValueError("remote node must use a non-device placement")
         if not profile.owner_scope:
             raise ValueError("remote node ownerScope is required")
+        registration_id = registration_id or compute_registration_id(
+            profile.node_id, profile.owner_scope, profile
+        )
+        metadata = dict(profile.metadata)
+        metadata["registrationId"] = registration_id
+        profile = profile.model_copy(update={"metadata": metadata})
+        try:
+            existing = self.node_store.get_profile(profile.node_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if existing.metadata.get("registrationId") != registration_id or existing != profile:
+                raise ResourceConfigMismatchError(
+                    f"node registration conflicts with existing profile: {profile.node_id}"
+                )
+            credential = self.node_store.get_credential(profile.node_id)
+            return IssuedNodeCredential(
+                node_id=profile.node_id, credential_id=credential.credential_id,
+                owner_scope=credential.owner_scope, secret="", created=False,
+            )
         secret = secrets.token_urlsafe(32)
         record = ResourceCredentialRecord(
             resource_id=profile.node_id,
@@ -203,25 +270,65 @@ class ResourcePlane:
         )
 
     def node_health(self, node_id: str, *, now: datetime | None = None) -> NodeHealth:
-        live = self.node_health_monitor.health(node_id, now=now)
-        if live.last_heartbeat is not None:
-            return live
         snapshot = self.node_store.get_snapshot(node_id).snapshot
-        if snapshot.last_heartbeat is None:
-            return live
+        # Persisted snapshot is the authoritative cross-worker source.  The
+        # monitor supplies locally refreshed state only when it is newer.
+        live = self.node_health_monitor.health(node_id, now=now)
+        if (
+            live.last_heartbeat is not None
+            and (snapshot.last_heartbeat is None or live.last_heartbeat >= snapshot.last_heartbeat)
+        ):
+            base_status = live.status
+            heartbeat = live.last_heartbeat
+            failures = live.consecutive_failures
+        else:
+            base_status = snapshot.health_status
+            heartbeat = snapshot.last_heartbeat
+            failures = snapshot.consecutive_failures
+        if heartbeat is None:
+            return NodeHealth(
+                node_id=node_id, status=NodeHealthStatus.UNKNOWN,
+                last_heartbeat=None, consecutive_failures=failures,
+            )
         current = now if now is not None else datetime.now(timezone.utc)
-        age = current.astimezone(timezone.utc) - snapshot.last_heartbeat.astimezone(timezone.utc)
+        age = current.astimezone(timezone.utc) - heartbeat.astimezone(timezone.utc)
         if age > self.node_health_monitor.offline_threshold:
             status = NodeHealthStatus.OFFLINE
         elif age > self.node_health_monitor.stale_threshold:
             status = NodeHealthStatus.STALE
         else:
-            status = snapshot.health_status
+            status = base_status
         return NodeHealth(
             node_id=node_id,
             status=status,
-            last_heartbeat=snapshot.last_heartbeat,
-            consecutive_failures=snapshot.consecutive_failures,
+            last_heartbeat=heartbeat,
+            consecutive_failures=failures,
+        )
+
+    def get_node_health(self, node_id: str, *, now: datetime | None = None) -> NodeHealth:
+        """Return the durable Node health projection used by schedulers.
+
+        The method deliberately owns the memory-monitor plus persisted-snapshot
+        fallback, so callers never mistake one process' local cache for global
+        resource truth.
+        """
+        return self.node_health(node_id, now=now)
+
+    def _record_node_time_anomaly(self, node_id: str) -> None:
+        """Persist clock anomalies so suspicious state survives worker restarts."""
+        current = self.node_store.get_snapshot(node_id)
+        count = current.snapshot.time_anomaly_count + 1
+        status = (
+            NodeHealthStatus.SUSPICIOUS
+            if count >= _SUSPICIOUS_TIME_ANOMALY_LIMIT
+            else current.snapshot.health_status
+        )
+        self.node_store.update_snapshot(
+            current.snapshot.model_copy(update={
+                "time_anomaly_count": count,
+                "health_status": status,
+            }),
+            expected_version=current.version,
         )
 
     def observe_node(
@@ -247,6 +354,22 @@ class ResourcePlane:
                 f"current {current.snapshot.observation_sequence}"
             )
         timestamp = observed_at if observed_at is not None else datetime.now(timezone.utc)
+        current_time = datetime.now(timezone.utc)
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ResourceObservationTimeInvalidError("node observation timestamp must be timezone-aware")
+        timestamp = timestamp.astimezone(timezone.utc)
+        if timestamp > current_time + _MAX_OBSERVATION_CLOCK_SKEW:
+            self._record_node_time_anomaly(node_id)
+            raise ResourceObservationTimeInvalidError(
+                f"node observation timestamp is too far in the future: {timestamp.isoformat()}"
+            )
+        stale = timestamp < current_time - _MAX_OBSERVATION_DELAY
+        if timestamp < current.snapshot.observed_at - _MAX_OBSERVATION_CLOCK_SKEW:
+            self._record_node_time_anomaly(node_id)
+            logger.warning(
+                "node observation time regressed",
+                extra={"node_id": node_id, "sequence": observation_sequence},
+            )
         load = max(cpu_utilization, gpu_utilization)
         consecutive_failures = 0 if success else current.snapshot.consecutive_failures + 1
         snapshot = current.snapshot.model_copy(update={
@@ -257,9 +380,10 @@ class ResourcePlane:
             "available_memory_mb": available_memory_mb,
             "queued_tasks": queued_tasks,
             "latency_ms": latency_ms,
-            "health_status": infer_load_status(queued_tasks, load),
+            "health_status": NodeHealthStatus.STALE if stale else infer_load_status(queued_tasks, load),
             "last_heartbeat": timestamp,
             "consecutive_failures": consecutive_failures,
+            "time_anomaly_count": 0,
         })
         self.node_store.update_snapshot(snapshot, expected_version=current.version)
         return self.node_health_monitor.report(
@@ -268,6 +392,7 @@ class ResourcePlane:
             queued_tasks=queued_tasks,
             utilization=load,
             success=success,
+            status=NodeHealthStatus.STALE if stale else None,
         )
 
     def heartbeat_node(
@@ -396,6 +521,7 @@ class ResourcePlane:
         *,
         credential_id: str | None = None,
         secret: str | None = None,
+        registration_id: str | None = None,
     ) -> IssuedResourceCredential:
         """登记远程 Runtime 并生成只能在注册响应中读取一次的凭据。"""
         if profile.endpoint is None or profile.endpoint.protocol == "local":
@@ -403,6 +529,26 @@ class ResourcePlane:
         if not profile.owner_scope:
             raise ValueError("remote runtime ownerScope is required")
         self._validate_runtime_host(profile)
+        registration_id = registration_id or compute_registration_id(
+            profile.runtime_id, profile.owner_scope, profile
+        )
+        metadata = dict(profile.metadata)
+        metadata["registrationId"] = registration_id
+        profile = profile.model_copy(update={"metadata": metadata})
+        try:
+            existing = self.store.get_profile(profile.runtime_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if existing.metadata.get("registrationId") != registration_id or existing != profile:
+                raise ResourceConfigMismatchError(
+                    f"runtime registration conflicts with existing profile: {profile.runtime_id}"
+                )
+            credential = self.store.get_credential(profile.runtime_id)
+            return IssuedResourceCredential(
+                resource_id=profile.runtime_id, credential_id=credential.credential_id,
+                owner_scope=credential.owner_scope, secret="", created=False,
+            )
         if (credential_id is None) != (secret is None):
             raise ValueError("credential_id and secret must be supplied together")
         credential_id = credential_id.strip() if credential_id is not None else f"rc_{uuid.uuid4().hex}"
@@ -506,7 +652,8 @@ class ResourcePlane:
             runtime_id, success=success, latency_ms=latency_ms, observed_at=observed_at
         )
         timestamp = observed_at or datetime.now(timezone.utc)
-        for _ in range(3):
+        last_error: Exception | None = None
+        for attempt in range(_MAX_OBSERVATION_WRITE_RETRIES):
             current = self.store.get_snapshot(runtime_id)
             # model_copy(update=) 只认字段名，不认别名；别名键会被静默忽略。
             updated = current.snapshot.model_copy(update={
@@ -520,13 +667,34 @@ class ResourcePlane:
             })
             try:
                 self.store.update_snapshot(updated, expected_version=current.version)
+                return health
+            except (StaleResourceObservation, VersionConflict) as error:
+                raise ResourceVersionConflictError(
+                    f"observation sequence conflict for {runtime_id}"
+                ) from error
+            except sqlite3.OperationalError as error:
+                last_error = error
+                if "locked" not in str(error).lower() or attempt == _MAX_OBSERVATION_WRITE_RETRIES - 1:
+                    self.set_runtime_health(runtime_id, healthy=False)
+                    raise ResourceDatabaseLockedError(
+                        f"resource observation write failed for {runtime_id}"
+                    ) from error
+                time.sleep(0.01 * (2 ** attempt))
+            except OSError as error:
+                last_error = error
+                if attempt == _MAX_OBSERVATION_WRITE_RETRIES - 1:
+                    self.set_runtime_health(runtime_id, healthy=False)
+                    raise ResourceObservationPersistenceError(
+                        f"resource observation I/O failed for {runtime_id}"
+                    ) from error
+                time.sleep(0.01 * (2 ** attempt))
+            except Exception as error:
+                last_error = error
                 break
-            except StaleResourceObservation:
-                raise
-            except Exception:
-                # 并发完成回写时以最新版本为基准重放一次快照合并。
-                continue
-        return health
+        self.set_runtime_health(runtime_id, healthy=False)
+        raise ResourceObservationPersistenceError(
+            f"resource observation persistence failed for {runtime_id}"
+        ) from last_error
 
     def observe_remote_runtime(
         self,
@@ -550,13 +718,27 @@ class ResourcePlane:
                 f"current {current.snapshot.observation_sequence}"
             )
         timestamp = observed_at or datetime.now(timezone.utc)
+        current_time = datetime.now(timezone.utc)
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ResourceObservationTimeInvalidError("remote observation timestamp must be timezone-aware")
+        timestamp = timestamp.astimezone(timezone.utc)
+        if timestamp > current_time + _MAX_OBSERVATION_CLOCK_SKEW:
+            raise ResourceObservationTimeInvalidError(
+                f"remote observation timestamp is too far in the future: {timestamp.isoformat()}"
+            )
+        stale = timestamp < current_time - _MAX_OBSERVATION_DELAY
+        if timestamp < current.snapshot.observed_at - _MAX_OBSERVATION_CLOCK_SKEW:
+            logger.warning(
+                "remote resource observation time regressed",
+                extra={"runtime_id": runtime_id, "sequence": observation_sequence},
+            )
         updated = RuntimeSnapshot(
             runtimeId=runtime_id,
             observationSequence=observation_sequence,
             observedAt=timestamp,
             availableSlots=available_slots,
             utilization=utilization,
-            healthStatus=HealthStatus.ONLINE,
+            healthStatus=HealthStatus.DEGRADED if stale else HealthStatus.ONLINE,
             latencyMs=latency_ms,
         )
         self.store.update_snapshot(updated, expected_version=current.version)

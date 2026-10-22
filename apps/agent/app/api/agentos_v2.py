@@ -161,6 +161,7 @@ class RemoteResourceRegistrationRequest(BaseModel):
 
     profile: RuntimeProfile
     snapshot: RuntimeSnapshot
+    registration_id: str | None = Field(default=None, alias="registrationId", min_length=1, max_length=300)
 
 
 class NodeRegistrationRequest(BaseModel):
@@ -168,6 +169,7 @@ class NodeRegistrationRequest(BaseModel):
 
     profile: NodeProfile
     snapshot: NodeSnapshot
+    registration_id: str | None = Field(default=None, alias="registrationId", min_length=1, max_length=300)
 
 
 class ReviewApplyRequest(BaseModel):
@@ -1277,6 +1279,24 @@ def create_router(
             })
         return {"items": items, "total": len(items)}
 
+    @router.post("/nodes/{node_id}/enabled")
+    async def set_node_enabled(node_id: str, request: ResourceEnabledRequest):
+        """Toggle a customer's Node scheduling switch within its tenant."""
+        plane = getattr(runtime, "resource_plane", None)
+        if plane is None:
+            raise HTTPException(status_code=503, detail="node mutation source unavailable")
+        try:
+            profile = plane.node(node_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="node not found") from exc
+        actor = current_trusted_user()
+        if actor is None:
+            raise HTTPException(status_code=401, detail="trusted user context required")
+        if actor.tenant_id and actor.tenant_id != profile.owner_scope:
+            raise HTTPException(status_code=403, detail="node owner scope does not match operator tenant")
+        updated = plane.set_node_enabled(node_id, enabled=request.enabled)
+        return {"nodeId": updated.node_id, "enabled": updated.enabled}
+
     @router.get("/agents")
     async def get_agents():
         """Return the logical agents callable through the embedded runtime.
@@ -1319,7 +1339,9 @@ def create_router(
             raise HTTPException(status_code=422, detail="profile and snapshot runtimeId must match")
         require_resource_operator(str(profile.owner_scope or ""))
         try:
-            issued = plane.register_remote_runtime(profile, request.snapshot)
+            issued = plane.register_remote_runtime(
+                profile, request.snapshot, registration_id=request.registration_id
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
@@ -1328,6 +1350,7 @@ def create_router(
             "ownerScope": issued.owner_scope,
             "secret": issued.secret,
             "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
+            "created": issued.created,
         }
 
     @router.post("/nodes/register", status_code=status.HTTP_201_CREATED)
@@ -1341,7 +1364,9 @@ def create_router(
             raise HTTPException(status_code=422, detail="profile and snapshot nodeId must match")
         require_resource_operator(str(profile.owner_scope or ""))
         try:
-            issued = plane.register_remote_node(profile, request.snapshot)
+            issued = plane.register_remote_node(
+                profile, request.snapshot, registration_id=request.registration_id
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
@@ -1350,6 +1375,7 @@ def create_router(
             "ownerScope": issued.owner_scope,
             "secret": issued.secret,
             "signatureAlgorithm": "HMAC-SHA256-SHA256(secret)",
+            "created": issued.created,
         }
 
     @router.post("/nodes/{node_id}/observation")

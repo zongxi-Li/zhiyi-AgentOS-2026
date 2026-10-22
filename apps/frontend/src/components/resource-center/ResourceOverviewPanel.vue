@@ -2,9 +2,9 @@
   <section class="resource-overview-panel" aria-label="系统资源">
     <div class="resource-summary" aria-label="资源摘要">
       <div class="resource-summary__intro">
-        <span class="resource-summary__eyebrow">RESOURCE CATALOG</span>
-        <strong>运行时资源目录</strong>
-        <span>来自 ResourceService 的只读快照</span>
+        <span class="resource-summary__eyebrow">RESOURCE OVERVIEW</span>
+        <strong>您的资源</strong>
+        <span>设备、模型与工具的连接状态和使用情况</span>
       </div>
       <div class="resource-summary__metrics">
         <div v-for="tier in tierStats" :key="tier.id" class="resource-summary__metric resource-summary__metric--tier" :class="`is-tier-${tier.id}`">
@@ -30,15 +30,22 @@
       <label class="resource-search" :class="{ 'has-query': searchText }">
         <span class="resource-search__icon" aria-hidden="true"><el-icon><Search /></el-icon></span>
         <span class="resource-search__copy">
-          <span class="resource-search__label">筛选资源</span>
-          <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索 Resource ID 或 capability" />
+        <span class="resource-search__label">查找资源</span>
+          <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索名称、能力或位置" />
         </span>
         <kbd>/</kbd>
       </label>
       <div class="resource-toolbar__meta">
         <span class="resource-toolbar__count"><b>{{ filteredResources.length }}</b> / {{ resources.length }} 个资源</span>
-        <span class="resource-toolbar__mode"><i aria-hidden="true"></i> 只读</span>
+        <span class="resource-toolbar__mode"><i aria-hidden="true"></i> 已连接资源</span>
       </div>
+    </div>
+
+    <div class="resource-catalog-filters" aria-label="资源目录筛选">
+      <label><span>类型</span><select v-model="selectedType"><option value="">全部</option><option value="device">设备</option><option value="model">模型</option><option value="tool">工具</option></select></label>
+      <label><span>位置</span><select v-model="selectedTier"><option value="">全部位置</option><option value="device">本地</option><option value="edge">边缘</option><option value="cloud">云端</option><option v-for="tier in otherTierOptions" :key="tier" :value="tier">{{ tier }}</option></select></label>
+      <label><span>状态</span><select v-model="selectedHealth"><option value="">全部状态</option><option value="online">可用</option><option value="degraded">需关注</option><option value="offline">离线</option><option value="unknown">待检测</option></select></label>
+      <label><span>数据区域</span><select v-model="selectedDataZone"><option value="">全部区域</option><option v-for="zone in dataZoneOptions" :key="zone" :value="zone">{{ zone }}</option></select></label>
     </div>
 
     <div v-if="domainOptions.length" class="resource-domain-filter" role="group" aria-label="按领域筛选">
@@ -52,15 +59,7 @@
       >{{ domain.name }}<small>{{ domain.count }}</small></button>
     </div>
 
-    <section class="resource-node-catalog" aria-label="承载节点">
-      <h3>承载节点 <small>{{ nodes.length }} 个</small></h3>
-      <p v-if="nodesError" role="status">{{ nodesError }}</p>
-      <div v-for="node in nodes" :key="node.profile.nodeId" class="resource-node-row">
-        <strong>{{ node.profile.displayName || node.profile.nodeId }}</strong>
-        <span>{{ node.profile.nodeId }}</span><span>{{ tierLabel(node.profile.placement) }}</span>
-        <span>{{ node.healthStatus }}</span><span>{{ formatCapacity(node.profile.computeCapacity) }}</span>
-      </div>
-    </section>
+    <ResourceTopologyPanel :items="filteredResources" :nodes="filteredNodes" :nodes-error="nodesError" :pending-nodes="pendingNodes" @open="openDetail" @toggle-node="toggleNode" />
     <section v-if="loading && !resources.length" class="resource-state" role="status">
       <BrandLoader title="正在读取 ResourceService" subtitle="只读加载系统 Resource profile…" />
     </section>
@@ -70,8 +69,8 @@
       <button type="button" @click="loadResources">重新加载</button>
     </section>
     <section v-else-if="!filteredResources.length" class="resource-state" role="status">
-      <strong>{{ searchText ? '没有匹配的 Resource' : '暂无已登记 Resource' }}</strong>
-      <span>{{ searchText ? '换一个 ID 或 capability 试试。' : 'ResourceService 当前没有可展示的 profile。' }}</span>
+      <strong>{{ hasFilters ? '没有匹配的资源' : '还没有接入资源' }}</strong>
+      <span>{{ hasFilters ? '调整筛选条件，或清除筛选查看全部资源。' : '接入设备、模型或工具后，它们会显示在这里。' }}</span>
     </section>
     <div v-else class="resource-groups" aria-label="系统资源">
       <section v-for="group in groupedResources" :key="group.tier" class="resource-tier-group" :class="`is-tier-${group.tier}`">
@@ -89,23 +88,22 @@
               </span>
               <div>
                 <strong>{{ item.profile.displayName || item.profile.resourceId }}</strong>
-                <span class="resource-row__meta"><ResourceTypeBadge :type="item.profile.runtimeKind || item.profile.resourceType" /> · v{{ item.profile.version }}</span>
-                <span class="resource-row__meta">{{ item.profile.resourceId }}<template v-if="item.profile.nodeId"> · {{ item.profile.nodeId }}</template></span>
+                <span class="resource-row__meta">{{ customerResourceType(item.profile.runtimeKind || item.profile.resourceType) }}<template v-if="item.profile.provider"> · {{ item.profile.provider }}</template></span>
               </div>
             </div>
             <div class="resource-row__capabilities">
               <span v-for="capability in item.profile.capabilities" :key="capability">{{ capability }}</span>
             </div>
             <dl class="resource-row__facts">
-              <div><dt>Health</dt><dd :class="`is-${item.snapshot.healthStatus}`"><i class="resource-status-dot" aria-hidden="true"></i>{{ healthLabel(item.snapshot.healthStatus) }}</dd></div>
+              <div><dt>连接状态</dt><dd :class="`is-${item.snapshot.healthStatus}`"><i class="resource-status-dot" aria-hidden="true"></i>{{ customerHealthLabel(item.snapshot.healthStatus) }}</dd></div>
               <div><dt>算力</dt><dd class="resource-row__capacity">{{ formatCapacity(item.profile.computeCapacity) }}</dd></div>
               <div><dt>利用率</dt><dd class="resource-row__util"><span class="resource-row__util-track"><i :style="{ width: utilizationPercent(item.snapshot.utilization) }"></i></span><em>{{ formatPercent(item.snapshot.utilization) }}</em></dd></div>
               <div><dt>延迟</dt><dd>{{ formatMetric(item.snapshot.latencyMs, 'ms') }}</dd></div>
             </dl>
             <div class="resource-row__extra">
-              <span class="resource-row__privacy">{{ item.profile.privacyLevel || 'internal' }}</span>
+              <span class="resource-row__privacy">{{ customerPrivacyLabel(item.profile.privacyLevel) }}</span>
               <span v-if="item.profile.dataZone" class="resource-row__zone">{{ item.profile.dataZone }}</span>
-              <button type="button" class="resource-row__open" :aria-label="`查看 ${item.profile.resourceId} 详情`" @click.stop="openDetail(item)">详情</button>
+              <button type="button" class="resource-row__open" :aria-label="`查看 ${item.profile.displayName || '资源'}详情`" @click.stop="openDetail(item)">详情</button>
             </div>
           </article>
         </div>
@@ -120,19 +118,26 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { agentosApi, type RuntimeResourceItem, type NodeCatalogItem } from '@/services/api/agentos'
 import ResourceDetailPanel from './ResourceDetailPanel.vue'
-import ResourceTypeBadge from './ResourceTypeBadge.vue'
+import ResourceTopologyPanel from './ResourceTopologyPanel.vue'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import { formatCapacity, formatMetric, formatPercent, healthLabel, resourceTypeMeta, resourcePlacement, tierLabel } from '@/utils/resourceFormat'
 import { resourceTypeIcon } from '@/utils/resourceTypeIcons'
+import { customerHealthLabel, customerPrivacyLabel, customerResourceType } from './resourceCenterPresentation'
 
 const resources = ref<RuntimeResourceItem[]>([])
 const nodes = ref<NodeCatalogItem[]>([])
 const nodesError = ref('')
+const pendingNodes = ref<string[]>([])
 const searchText = ref('')
 const selectedDomain = ref('')
+const selectedType = ref('')
+const selectedTier = ref('')
+const selectedHealth = ref('')
+const selectedDataZone = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 const selectedResource = ref<RuntimeResourceItem | null>(null)
@@ -189,10 +194,29 @@ const domainOptions = computed(() => {
     .map(([name, count]) => ({ name, count }))
 })
 
+const dataZoneOptions = computed(() => [...new Set(resources.value.map(item => item.profile.dataZone).filter((zone): zone is string => Boolean(zone)))].sort())
+const otherTierOptions = computed(() => [...new Set(resources.value.map(item => resourcePlacement(item.profile.deploymentTier)))].filter(tier => !['device', 'edge', 'cloud'].includes(tier)).sort())
+const hasFilters = computed(() => Boolean(searchText.value || selectedDomain.value || selectedType.value || selectedTier.value || selectedHealth.value || selectedDataZone.value))
+const filteredNodes = computed(() => nodes.value.filter(node => {
+  if (selectedType.value && selectedType.value !== 'device') return false
+  if (selectedTier.value && resourcePlacement(node.profile.placement) !== selectedTier.value) return false
+  if (selectedHealth.value && node.healthStatus !== selectedHealth.value) return false
+  if (selectedDataZone.value) return false
+  const query = searchText.value.trim().toLocaleLowerCase()
+  return !query || [node.profile.displayName || '', node.profile.nodeId, node.profile.placement].some(value => value.toLocaleLowerCase().includes(query))
+}))
+
 const filteredResources = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase()
   const domain = selectedDomain.value
   return resources.value.filter(item => {
+    const runtimeKind = item.profile.runtimeKind || item.profile.resourceType
+    const type = runtimeKind === 'model_endpoint' || runtimeKind === 'model_server' || item.profile.resourceType === 'model' ? 'model'
+      : runtimeKind === 'tool_service' || item.profile.resourceType === 'tool' || item.profile.resourceType === 'mcp' ? 'tool' : 'device'
+    if (selectedType.value && type !== selectedType.value) return false
+    if (selectedTier.value && resourcePlacement(item.profile.deploymentTier) !== selectedTier.value) return false
+    if (selectedHealth.value && item.snapshot.healthStatus !== selectedHealth.value) return false
+    if (selectedDataZone.value && item.profile.dataZone !== selectedDataZone.value) return false
     if (domain && !(item.profile.domains || []).includes(domain)) return false
     if (!query) return true
     return [
@@ -242,6 +266,34 @@ const handleEnabledChanged = (payload: { resourceId: string; enabled: boolean })
   }
 }
 
+const toggleNode = async (payload: { nodeId: string; enabled: boolean }) => {
+  if (pendingNodes.value.includes(payload.nodeId)) return
+  if (!payload.enabled) {
+    try {
+      await ElMessageBox.confirm(
+        '停用后，该设备上的新任务将暂停；设备配置和历史记录会保留。继续？',
+        '停用设备',
+        { confirmButtonText: '停用设备', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  }
+  pendingNodes.value = [...pendingNodes.value, payload.nodeId]
+  try {
+    const result = await agentosApi.setNodeEnabled(payload.nodeId, payload.enabled)
+    nodes.value = nodes.value.map(node => node.profile.nodeId === result.nodeId
+      ? { ...node, profile: { ...node.profile, enabled: result.enabled } }
+      : node)
+    ElMessage.success(result.enabled ? '设备已启用' : '设备已停用')
+  } catch (error: unknown) {
+    const status = (error as { response?: { status?: number } })?.response?.status
+    ElMessage.error(status === 403 ? '无权管理此设备' : '设备状态更新失败，请稍后重试')
+  } finally {
+    pendingNodes.value = pendingNodes.value.filter(nodeId => nodeId !== payload.nodeId)
+  }
+}
+
 const loadResources = async () => {
   controller?.abort()
   controller = new AbortController()
@@ -282,11 +334,6 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 </script>
 
 <style scoped>
-.resource-node-catalog { margin: 18px 0; padding: 14px 18px; border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-card); }
-.resource-node-catalog h3 { margin: 0 0 10px; font-size: 12px; }
-.resource-node-catalog small, .resource-node-catalog p { color: var(--text-muted); font-size: 11px; }
-.resource-node-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding: 9px 0; font-size: 11px; }
-.resource-node-row span { color: var(--text-secondary); }
 .resource-overview-panel {
   --resource-surface: color-mix(in srgb, var(--bg-card) 92%, var(--bg-panel));
   --resource-inset: color-mix(in srgb, var(--bg-input) 78%, var(--bg-card));
@@ -310,7 +357,7 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-summary__intro strong { color: var(--text-primary); font-size: 14px; font-weight: 650; }
 .resource-summary__intro > span:last-child { color: var(--text-muted); font-size: 10px; }
 .resource-summary__eyebrow { color: var(--primary-color); font: 9px var(--font-mono, monospace); letter-spacing: .12em; }
-.resource-summary__metrics { display: grid; grid-template-columns: repeat(6, minmax(96px, 1fr)); min-width: min(600px, 62%); }
+.resource-summary__metrics { display: grid; grid-template-columns: repeat(5, minmax(96px, 1fr)); min-width: min(600px, 62%); }
 .resource-summary__metric { display: grid; align-content: center; gap: 1px; padding: 0 18px; border-left: 1px solid var(--border-light); }
 .resource-summary__metric span, .resource-summary__metric small { color: var(--text-muted); font-size: 10px; }
 .resource-summary__metric strong { color: var(--text-primary); font: 650 20px/1.2 var(--font-mono, monospace); }
@@ -337,6 +384,10 @@ onBeforeUnmount(() => { controller?.abort(); window.removeEventListener('keydown
 .resource-search input::placeholder { color: var(--text-secondary); }
 .resource-search kbd { min-width: 18px; padding: 2px 5px; border: 1px solid var(--border-light); border-radius: 4px; color: var(--text-muted); background: var(--bg-card); font: 10px var(--font-mono, monospace); text-align: center; }
 .resource-toolbar__meta { display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+.resource-catalog-filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 12px; }
+.resource-catalog-filters label { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 9px; border: 1px solid var(--border-light); border-radius: 5px; background: var(--bg-card); }
+.resource-catalog-filters label > span { color: var(--text-muted); font-size: 10px; }
+.resource-catalog-filters select { max-width: 150px; border: 0; outline: 0; color: var(--text-secondary); background: transparent; font: inherit; font-size: 11px; }
 .resource-toolbar__count b { color: var(--text-primary); font: 650 12px var(--font-mono, monospace); }
 .resource-toolbar__mode { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font: 9px var(--font-mono, monospace); text-transform: uppercase; letter-spacing: .05em; }
 .resource-toolbar__mode i { width: 5px; height: 5px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-fade); }

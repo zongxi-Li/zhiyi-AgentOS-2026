@@ -8,27 +8,89 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+from typing import Awaitable, Callable
 
 from components.resource.models import RuntimeCandidate, RuntimeHealth
-from components.resource.node_health import NodeHealthMonitor
 from components.resource.service import ResourcePlane
 from contracts.resource import (
+    NodeProfile,
     ExecutionBinding,
     ExecutionRequirement,
     ModelEndpointBinding,
     NodeHealthStatus,
     Placement,
+    RemoteExecutionPolicy,
     RuntimeProfile,
     RuntimeSnapshot,
     TrustLevel,
+    ResourceLease,
 )
 
-from .leases import InMemoryLeaseCoordinator, LeaseCoordinator
+from .leases import CapacityView, InMemoryLeaseCoordinator, LeaseCoordinator, LeaseRenewalFailedError
 from .models import CandidateDecision, FilterReason, ReadyNodeSchedulingResult, RequirementReadiness, SchedulerUnavailable
 
 #: 路由先验的最大评分权重；语义提示永远无法逆转硬约束排序一个数量级。
 _ROUTING_HINT_WEIGHT = 0.05
+
+
+class LeaseKeepAlive:
+    """Async best-effort lease renewal owned by one executing attempt."""
+
+    def __init__(
+        self, coordinator: LeaseCoordinator, lease: ResourceLease, *,
+        interval: timedelta = timedelta(seconds=20), ttl: timedelta = timedelta(seconds=90),
+        on_failure: Callable[[Exception], Awaitable[None] | None] | None = None,
+    ) -> None:
+        if interval <= timedelta(0) or ttl <= interval:
+            raise ValueError("lease keep-alive requires positive interval below ttl")
+        self.coordinator = coordinator
+        self.lease = lease
+        self.interval = interval
+        self.ttl = ttl
+        self.on_failure = on_failure
+        self.failure: Exception | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._stopped = asyncio.Event()
+        self._failed = asyncio.Event()
+
+    def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        self._stopped.set()
+        if self._task is not None:
+            await self._task
+
+    async def wait_failed(self) -> Exception:
+        await self._failed.wait()
+        assert self.failure is not None
+        return self.failure
+
+    async def _run(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stopped.wait(), timeout=self.interval.total_seconds()
+                )
+                break
+            except TimeoutError:
+                pass
+            try:
+                self.lease = self.coordinator.renew(
+                    lease_id=self.lease.lease_id, owner_id=self.lease.owner_id or "",
+                    version=self.lease.version, ttl=self.ttl,
+                )
+            except Exception as exc:
+                self.failure = exc if isinstance(exc, LeaseRenewalFailedError) else LeaseRenewalFailedError(str(exc))
+                self._failed.set()
+                if self.on_failure is not None:
+                    result = self.on_failure(self.failure)
+                    if hasattr(result, "__await__"):
+                        await result
+                return
 
 
 def _non_empty_string(value: object) -> str | None:
@@ -43,15 +105,50 @@ def hard_constraint_reasons(
     *,
     healthy: bool,
     node_status: NodeHealthStatus | None,
+    node: NodeProfile | None = None,
     requirement: ExecutionRequirement,
 ) -> list[FilterReason]:
     """按硬约束判定 Runtime 是否具备本次绑定资格；不产生任何状态变更。"""
     reasons: list[FilterReason] = []
+    if node is not None:
+        if not node.enabled or node_status in {
+            NodeHealthStatus.UNKNOWN, NodeHealthStatus.STALE,
+            NodeHealthStatus.OFFLINE, NodeHealthStatus.SUSPICIOUS,
+        }:
+            reasons.append(FilterReason.NODE_UNHEALTHY)
+        if requirement.min_cpu_cores is not None and node.compute.cpu_cores < requirement.min_cpu_cores:
+            reasons.append(FilterReason.NODE_CPU_INSUFFICIENT)
+        required_memory_mb = (requirement.min_memory_bytes or 0) / (1024 * 1024)
+        if requirement.min_memory_bytes is not None and node.compute.memory_mb < required_memory_mb:
+            reasons.append(FilterReason.NODE_MEMORY_INSUFFICIENT)
+        if requirement.required_gpu_type is not None and node.compute.gpu_type != requirement.required_gpu_type:
+            reasons.append(FilterReason.NODE_GPU_TYPE_MISMATCH)
+        required_gpu_memory_mb = (requirement.min_gpu_memory_bytes or 0) / (1024 * 1024)
+        if requirement.min_gpu_memory_bytes is not None and node.compute.gpu_memory_mb < required_gpu_memory_mb:
+            reasons.append(FilterReason.NODE_GPU_MEMORY_INSUFFICIENT)
+        if any(node.labels.get(key) != value for key, value in requirement.required_node_labels.items()):
+            reasons.append(FilterReason.NODE_LABEL_MISMATCH)
+        if requirement.required_data_region and node.data_region != requirement.required_data_region:
+            reasons.append(FilterReason.NODE_DATA_REGION_MISMATCH)
+        if requirement.allowed_owner_scopes and node.owner_scope not in requirement.allowed_owner_scopes:
+            reasons.append(FilterReason.NODE_OWNER_SCOPE_MISMATCH)
+        if (
+            profile.placement is not Placement.DEVICE
+            and node.remote_execution_policy is RemoteExecutionPolicy.DENY
+        ):
+            reasons.append(FilterReason.NODE_REMOTE_EXECUTION_DENIED)
+        allowlist = node.metadata.get("remoteExecutionAllowlist", [])
+        if (
+            profile.placement is not Placement.DEVICE
+            and node.remote_execution_policy is RemoteExecutionPolicy.ALLOWLIST_ONLY
+            and profile.runtime_id not in allowlist
+        ):
+            reasons.append(FilterReason.NODE_REMOTE_EXECUTION_DENIED)
     if not profile.enabled:
         reasons.append(FilterReason.DISABLED)
     if not healthy:
         reasons.append(FilterReason.UNHEALTHY)
-    if node_status is not None and node_status in {NodeHealthStatus.STALE, NodeHealthStatus.OFFLINE}:
+    if node is None and node_status is not None and node_status in {NodeHealthStatus.STALE, NodeHealthStatus.OFFLINE}:
         reasons.append(FilterReason.NODE_UNHEALTHY)
     if not set(requirement.required_capabilities).issubset(profile.capabilities):
         reasons.append(FilterReason.CAPABILITY_MISMATCH)
@@ -75,8 +172,6 @@ def hard_constraint_reasons(
         reasons.append(FilterReason.DATA_ZONE_MISMATCH)
     if requirement.owner_scope and profile.owner_scope != requirement.owner_scope:
         reasons.append(FilterReason.OWNER_SCOPE_MISMATCH)
-    if snapshot.available_slots < 1:
-        reasons.append(FilterReason.NO_CAPACITY)
     if requirement.max_cost is not None and profile.cost_metadata.get("unit", 0.0) > requirement.max_cost:
         reasons.append(FilterReason.COST_EXCEEDED)
     if requirement.max_latency_ms is not None and (
@@ -84,6 +179,18 @@ def hard_constraint_reasons(
     ):
         reasons.append(FilterReason.LATENCY_EXCEEDED)
     return reasons
+
+
+def _reason_details(reasons: list[FilterReason]) -> list[dict[str, str]]:
+    """Compatibility projection for APIs that need explainable rejection data."""
+    return [
+        {
+            "level": "node" if reason.value.startswith("NODE_") else "runtime",
+            "code": reason.value,
+            "message": reason.value.replace("_", " ").lower(),
+        }
+        for reason in reasons
+    ]
 
 
 def placement_score(
@@ -96,6 +203,7 @@ def placement_score(
 ) -> tuple[float, dict[str, float]]:
     """计算可解释的确定性软分数；硬约束由 ``hard_constraint_reasons`` 负责。"""
     capacity = snapshot.available_slots / max(profile.capacity, 1)
+    snapshot_penalty = 0.5 if snapshot.health_status.value in {"degraded", "unknown"} else 1.0
     latency = 1.0 if latency_ms is None else 1.0 / (1.0 + latency_ms / 1000.0)
     cost = 1.0 / (1.0 + profile.cost_metadata.get("unit", 0.0))
     preferred = 1.0 if requirement.preferences.get("preferredRuntimeId") == profile.runtime_id else 0.0
@@ -118,7 +226,10 @@ def placement_score(
         + 0.05 * factors["preference"]
         + _ROUTING_HINT_WEIGHT * factors["routingPrior"]
     )
-    return round(score, 9), {key: round(value, 9) for key, value in factors.items()}
+    return round(score * snapshot_penalty, 9), {
+        **{key: round(value, 9) for key, value in factors.items()},
+        "snapshotPenalty": snapshot_penalty,
+    }
 
 
 def _routing_hint_factor(profile: RuntimeProfile, hints: dict) -> float:
@@ -152,6 +263,10 @@ class ResourceBinder:
         self.plane = plane
         self.coordinator = coordinator or InMemoryLeaseCoordinator()
         self.lease_ttl = lease_ttl
+        self.capacity_metrics: dict[str, int] = {
+            "capacity_conflict_total": 0,
+            "snapshot_stale_total": 0,
+        }
 
     def evaluate(
         self,
@@ -165,12 +280,14 @@ class ResourceBinder:
         for profile in self.plane.runtimes():
             versioned = self.plane.runtime_snapshot(profile.runtime_id)
             health = self.plane.health_monitor.health(profile.runtime_id, now=current)
-            node_status = self._host_node_status(profile, now=current)
+            node = self.plane.node(profile.node_id)
+            node_status = self.plane.get_node_health(profile.node_id, now=current).status
             reasons = hard_constraint_reasons(
                 profile,
                 versioned.snapshot,
                 healthy=health.healthy,
                 node_status=node_status,
+                node=node,
                 requirement=requirement,
             )
             if reasons:
@@ -178,6 +295,7 @@ class ResourceBinder:
                     resourceId=profile.runtime_id,
                     accepted=False,
                     reasons=reasons,
+                    reasonDetails=_reason_details(reasons),
                 ))
                 continue
             score, _ = placement_score(
@@ -204,7 +322,7 @@ class ResourceBinder:
         """
         current = now or datetime.now(timezone.utc)
         candidates = self.evaluate(requirement, now=current)
-        eligible = [c for c in candidates if not set(c.reasons) - {FilterReason.NO_CAPACITY}]
+        eligible = [c for c in candidates if c.accepted]
         endpoints = self.plane.model_candidates(requirement.model, now=current) if requirement.model else []
         runtime_versions = {c.resource_id: self.plane.runtime_snapshot(c.resource_id).version for c in candidates}
         node_ids = {self.plane.runtime(c.resource_id).node_id for c in candidates}
@@ -218,9 +336,10 @@ class ResourceBinder:
             reason = "NO_MODEL_ENDPOINT"
         else:
             try:
-                available = tuple(c.resource_id for c in eligible if c.accepted
-                    and self.coordinator.active_slots(c.resource_id, now=current)
-                    < self.plane.runtime(c.resource_id).capacity)
+                available = tuple(
+                    c.resource_id for c in eligible
+                    if self.capacity_view(c.resource_id, now=current).has_local_capacity
+                )
                 if not available:
                     reason = "NO_CAPACITY"
             except SchedulerUnavailable:
@@ -228,6 +347,32 @@ class ResourceBinder:
         return RequirementReadiness(ready=reason is None, reason=reason, candidates=candidates,
             runtimeVersions=runtime_versions, nodeVersions=node_versions, modelEndpointVersions=model_versions,
             availableRuntimeIds=available)
+
+    def capacity_view(self, runtime_id: str, *, now: datetime | None = None) -> CapacityView:
+        """Return the declared capacity, Redis occupancy, and telemetry separately."""
+        profile = self.plane.runtime(runtime_id)
+        snapshot = self.plane.runtime_snapshot(runtime_id).snapshot
+        current = now or datetime.now(timezone.utc)
+        age = current - snapshot.observed_at.astimezone(timezone.utc)
+        snapshot_state = (
+            "UNKNOWN" if snapshot.health_status.value == "unknown"
+            else "STALE" if age > timedelta(seconds=60) else "FRESH"
+        )
+        active_leases = self.coordinator.active_slots(runtime_id, now=current)
+        view = CapacityView(
+            static_capacity=profile.capacity,
+            active_leases=active_leases,
+            remote_available_slots=snapshot.available_slots,
+            snapshot_state=snapshot_state,
+        )
+        if snapshot_state == "STALE":
+            self.capacity_metrics["snapshot_stale_total"] += 1
+        if (
+            snapshot.available_slots is not None
+            and snapshot.available_slots != max(0, profile.capacity - active_leases)
+        ):
+            self.capacity_metrics["capacity_conflict_total"] += 1
+        return view
 
     def bind_ready(
         self,
@@ -302,6 +447,8 @@ class ResourceBinder:
                 trust=profile.trust,
                 modelBinding=model_binding,
                 snapshotVersion=confirmed.version,
+                leaseId=lease.lease_id,
+                leaseVersion=lease.version,
                 metadata={
                     "score": decision.score,
                     "deploymentTier": profile.placement.value,
@@ -330,14 +477,4 @@ class ResourceBinder:
     def release(self, lease_id: str) -> bool:
         return self.coordinator.release(lease_id)
 
-    def _host_node_status(self, profile: RuntimeProfile, *, now: datetime) -> NodeHealthStatus | None:
-        monitor: NodeHealthMonitor = self.plane.node_health_monitor
-        if not isinstance(monitor, NodeHealthMonitor):
-            return None
-        try:
-            return monitor.health(profile.node_id, now=now).status
-        except Exception:
-            return None
-
-
-__all__ = ["ResourceBinder", "hard_constraint_reasons", "placement_score"]
+__all__ = ["LeaseKeepAlive", "ResourceBinder", "hard_constraint_reasons", "placement_score"]

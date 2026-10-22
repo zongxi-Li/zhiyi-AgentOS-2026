@@ -13,6 +13,7 @@ from contracts.resource import NodeProfile, NodeSnapshot
 
 from .models import VersionedNodeSnapshot
 from .store import ResourceCredentialRecord, StaleResourceObservation, VersionConflict
+from .sqlite_support import configure_sqlite_connection
 
 
 class NodeStore(Protocol):
@@ -212,7 +213,9 @@ class SQLiteNodeStore:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._connection = configure_sqlite_connection(
+            sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+        )
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS nodes (
                 node_id TEXT PRIMARY KEY,
