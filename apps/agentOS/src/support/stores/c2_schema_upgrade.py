@@ -19,6 +19,7 @@ from support.stores.planning_commit_store import content_fingerprint
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
 from support.stores.graph_activation_store import SQLiteGraphActivationStore, validate_activation_run
 from contracts.workflow import RuntimeRunRecord
+from contracts.execution_permit import execution_permit_projection
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore, SQLiteStagedGraphCheckpointStore
 from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 
@@ -243,6 +244,42 @@ def _inspect_evidence(paths, result):
                         raise ValueError("Permit projection has no formal activation Head")
                 except ValueError as exc:
                     invalid("workflow", f"Run {run_id} Permit {permit_id}: {exc}")
+                    return
+
+            # Reverse association: every issued authority must still be owned
+            # by its exact Run projection. The forward scan above cannot see a
+            # Permit whose projection was deleted or whose Run row disappeared.
+            # PREPARING is a legal Saga recovery cut and is intentionally exempt.
+            for permit_id in permit_ids:
+                row = conn.execute("SELECT * FROM graph_execution_permits WHERE permit_id=?",
+                                   (permit_id,)).fetchone()
+                if row is None:
+                    invalid("workflow", f"Permit {permit_id} disappeared during read-only inspection")
+                    return
+                permit = SQLiteExecutionPermitStore._decode(row)
+                if permit.status != "ISSUED":
+                    continue
+                run_row = conn.execute(
+                    "SELECT run_id, mission_id, payload FROM runs WHERE run_id=?", (permit.run_id,)
+                ).fetchone()
+                if run_row is None:
+                    invalid("workflow", f"ISSUED Permit {permit_id} has no Run {permit.run_id}")
+                    return
+                run = RuntimeRunRecord.model_validate_json(run_row["payload"])
+                if (run.run_id != run_row["run_id"] or run.mission_id != run_row["mission_id"]
+                        or run.run_id != permit.run_id or run.mission_id != permit.mission_id):
+                    invalid("workflow", f"ISSUED Permit {permit_id} Run identity differs from its ledger")
+                    return
+                projection = run.execution_state.get("graphActivation")
+                if (not isinstance(projection, dict)
+                        or projection.get("executionPermit") != execution_permit_projection(permit)):
+                    invalid("workflow", f"ISSUED Permit {permit_id} is not referenced by its exact Run projection")
+                    return
+                try:
+                    if validate_activation_run(conn, run) is None:
+                        raise ValueError("ISSUED Permit has no formal activation Head")
+                except ValueError as exc:
+                    invalid("workflow", f"Permit {permit_id} Run {run.run_id}: {exc}")
                     return
         if not handoff_ids and not permit_ids:
             return  # Workflow installation may legitimately precede CP DDL.
