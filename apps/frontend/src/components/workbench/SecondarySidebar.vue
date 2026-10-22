@@ -125,7 +125,7 @@ watch(views, nextViews => {
 .secondary-sidebar__tabs::-webkit-scrollbar { display: none; }
 .secondary-sidebar__tabs button { flex: 1 0 auto; min-height: 32px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; transition: color 140ms var(--ease-out), background 140ms var(--ease-out), box-shadow 140ms var(--ease-out), transform 140ms var(--ease-out); }
 .secondary-sidebar__tabs button:hover { color: var(--wb-text-secondary); background: var(--wb-hover); }
-.secondary-sidebar__tabs button.is-active { color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 10%, var(--wb-surface-section)); box-shadow: none; font-weight: 650; }
+.secondary-sidebar__tabs button.is-active { color: var(--wb-accent); background: var(--wb-surface-2); box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 2px 8px rgba(0,0,0,.04); font-weight: 650; }
 .secondary-sidebar__tabs button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -1px; }
 .secondary-sidebar__body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 14px 18px; background: var(--wb-surface-1); scrollbar-gutter: stable; overscroll-behavior: contain; }
 .secondary-sidebar__body :deep(.inspector-section) { margin-bottom: 10px; }

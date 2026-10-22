@@ -87,6 +87,7 @@
                   :blueprint="projection.activeGraph || null"
                   :focus-node-id="graphFocusNodeId"
                   :runtime-phases="graphRuntimePhases"
+                  :run-id="resolvedRunId"
                   workbench
                   @node-selected="selectGraphNode"
                   @node-double-clicked="openGraphNode"

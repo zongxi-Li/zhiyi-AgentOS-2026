@@ -1,7 +1,7 @@
 <template>
   <section class="graph-editor" aria-label="graph.acg">
     <header class="graph-editor__header">
-      <div>
+      <div class="graph-editor__title">
         <span class="graph-editor__eyebrow">GRAPH EDITOR</span>
         <strong>graph.acg</strong>
         <small v-if="graph">Graph {{ graph.graphId }} · v{{ graphVersion || '—' }}</small>
@@ -13,6 +13,7 @@
         :blueprint="graph"
         :focus-node-id="focusNodeId"
         :runtime-phases="runtimePhases"
+        :run-id="runId"
         :workbench="true"
         :observe-resize="true"
         @node-selected="handleNodeSelected"
@@ -59,11 +60,10 @@ const handleNodeDoubleClicked = (nodeId: string) => emit('openSemanticTask', res
 
 <style scoped>
 .graph-editor { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; min-width: 0; height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-section); color: var(--wb-text); box-shadow: var(--wb-shadow-section); }
-.graph-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 44px; padding: 7px 16px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
-.graph-editor__header strong,
-.graph-editor__header small { display: block; }
-.graph-editor__header strong { margin-top: 2px; color: var(--wb-text); font-size: 13px; }
-.graph-editor__header small { margin-top: 2px; color: var(--wb-text-muted); font-size: 10px; }
+.graph-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 26px; padding: 3px 16px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
+.graph-editor__title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.graph-editor__header strong { color: var(--wb-text); font-size: 12px; }
+.graph-editor__header small { overflow: hidden; color: var(--wb-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .graph-editor__eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
 .graph-editor__selection { max-width: 40%; overflow: hidden; color: var(--wb-text-secondary); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .graph-editor__canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; }

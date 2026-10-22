@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN" data-color-scheme="light"><meta charset="utf-8"><title>执行链可读性预览</title><style>html,body{margin:0;height:100%;font-family:system-ui}body{background:#f6f7fb}#app{height:100vh;display:flex;flex-direction:column;box-sizing:border-box;padding:20px;gap:12px}.preview-note{font-size:13px;color:#677085;display:flex;justify-content:space-between}.graph-editor{flex:1}</style><body><div id="app"></div><script type="module">
+import {createApp,h} from 'vue';
+import GraphEditor from '/src/components/workspace/GraphEditor.vue';
+import '/src/styles/global.css';
+import {useTheme} from '/src/composables/useTheme.ts';
+useTheme().applyColorScheme('blue-purple');
+document.title='执行链可读性预览';
+const names=['任务理解与目标界定','从任务材料提取可追溯约束','将15项硬约束转为可验证指标','检索并标注待核验的行业资料','评估行业基准证据可信度','基于年度产量与班次核算产能','IC-200装配流程拆解与工序梳理','各工序自动化与半自动化评估','候选方案A：高自动化产线设计','候选方案B：半自动化产线设计','候选方案六维对比与推荐','推荐方案设备与工装配置','厂房布局与厂内物流规划','ERP与MES系统集成方案','关键设备故障降级与应急预案','序列号绑定的关键质量追溯','分项投资成本估算','28周阶段计划与里程碑','供应链设备质量风险评估','生产效率与安全分析','产线验收指标与验证计划','现场调试与培训方案','维护保障与备件配置','复核约束与交付完整性','编制项目实施建议书','汇总结果与最终交付'];
+const nodes=names.map((name,i)=>({nodeId:'n'+(i+1),nodeType:'step',name,display:{displayOrder:i}}));
+const pairs=[[1,2],[2,3],[2,4],[3,5],[4,5],[5,6],[6,7],[7,8],[8,9],[8,10],[9,11],[10,11],[11,12],[12,13],[12,14],[12,15],[14,16],[12,17],[13,18],[15,19],[16,20],[17,21],[18,21],[19,22],[20,23],[21,24],[22,24],[23,24],[24,25],[25,26],[24,21]];
+const graph={graphId:'readability-demo',graphVersion:1,nodes,edges:pairs.map(([a,b],i)=>({edgeId:'e'+i,sourceId:'n'+a,targetId:'n'+b,edgeType:'dependency'}))};
+const runtimeStore={nodes:Object.fromEntries(nodes.map((n,i)=>[n.nodeId,{phase:i<7?'COMPLETED':i===7?'STREAMING':'WAITING'}]))};
+createApp({render:()=>[h('div',{class:'preview-note'},[h('strong','执行链 · 第一版预览'),h('span','26 个任务的演示数据 · 实际 GraphEditor 组件')]),h(GraphEditor,{graph,graphNodes:[],selectedSemanticTaskKey:null,focusNodeId:null,runtimeStore})]}).mount('#app');
+</script></body></html>
