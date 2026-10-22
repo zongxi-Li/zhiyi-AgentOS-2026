@@ -23,6 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTOS = ROOT / "apps" / "agentOS"
 # Exact src/tests manifest at INT-1 entry Commit 09860f8c (C2A-3 frozen).
 DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "c2b-int1-entry.json"
+BASELINE_SHA256 = "54ccc02a3d0ba550fffff8dd23f259460977ae0a75f3d8eea4d7c1848ce1a591"
+BASELINE_AGGREGATE = "cb5809b8a2e29278d39d6ab70c6bd1567da7073148195201d013f1105f9a2c47"
+BASELINE_COMMIT = "09860f8c88c4b8d40cac2c80ca836f0bfa5a2c35"
 DEFAULT_BUDGET_SECONDS = 300
 SLOW_EXCLUSION = "not slow_benchmark and not slow_multiprocess and not slow_fault_injection"
 FAST_OR_CRITICAL = (
@@ -34,6 +37,7 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("scripts/freeze_gate.py", ("tests/storage/test_freeze_gate_integrity.py",)),
     ("src/support/stores/c2_schema_upgrade.py", ("tests/storage/test_c2_schema_upgrade.py", "tests/storage/test_c2_schema_integrity.py", "tests/storage/v2/test_schema.py")),
     ("scripts/upgrade_agentos_c2_schema.py", ("tests/storage/test_c2_schema_upgrade.py",)),
     ("src/components/resource/__init__.py", ("tests/components/resource/test_node_store.py", "tests/components/resource/test_resource_auth.py")),
@@ -116,11 +120,51 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
 )
 
-EXTERNAL_SOURCES = ("apps/agent/app/api/agentos_v2.py", "scripts/upgrade_agentos_c2_schema.py")
+# Accepted INT-1 entry content, never HEAD. API uses that Windows checkout's
+# raw CRLF digest; the gate used LF. CLI did not exist at the accepted entry.
+EXTERNAL_BASELINE = {
+    "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
+    "scripts/freeze_gate.py": "06816f400a6d5a6143ead0f9d32af1d70a2715202cbbcd7223e05df1469d0637",
+    "scripts/upgrade_agentos_c2_schema.py": None,
+}
+EXTERNAL_SOURCES = tuple(EXTERNAL_BASELINE)
 
 
-def external_snapshot() -> dict[str, str]:
-    return {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in EXTERNAL_SOURCES}
+def external_snapshot() -> dict[str, str | None]:
+    return {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+            if (ROOT / path).is_file() else None for path in EXTERNAL_SOURCES}
+
+
+def changed_external_paths(snapshot: dict[str, str | None]) -> list[str]:
+    return sorted(path for path in EXTERNAL_SOURCES if snapshot.get(path) != EXTERNAL_BASELINE[path])
+
+
+class BaselineIntegrityError(ValueError):
+    pass
+
+
+def load_baseline(path: Path) -> dict:
+    """Authenticate the accepted manifest before selecting any tests.
+
+    --baseline may locate a byte-identical copy, never silently establish a
+    different acceptance baseline. Missing/corrupt files cannot fall back to
+    HEAD, even in a clean checkout.
+    """
+    try:
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != BASELINE_SHA256:
+            raise ValueError("content SHA-256 differs from accepted INT-1 entry")
+        baseline = json.loads(raw)
+        files = baseline["files"]
+        if not isinstance(files, dict) or len(files) != 445:
+            raise ValueError("invalid file manifest")
+        manifest = "\n".join(f"{p} {d}" for p, d in sorted(files.items()))
+        aggregate = hashlib.sha256(manifest.encode("utf8")).hexdigest()
+        if baseline["aggregate"] != aggregate or aggregate != BASELINE_AGGREGATE:
+            raise ValueError("manifest aggregate differs from accepted INT-1 entry")
+        return baseline
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise BaselineIntegrityError(f"baseline integrity failure: {path}: {exc}") from exc
 
 
 def utc_now() -> str:
@@ -141,34 +185,12 @@ def source_snapshot() -> dict[str, object]:
 
 
 def changed_python_paths(current: dict[str, object], baseline_path: Path) -> tuple[list[str], str]:
-    if baseline_path.is_file():
-        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-        old_files = baseline.get("files")
-        if not isinstance(old_files, dict):
-            raise ValueError(f"baseline has no file manifest: {baseline_path}")
-        now_files = current["files"]
-        assert isinstance(now_files, dict)
-        changed = sorted(
-            path for path in set(old_files) | set(now_files)
-            if old_files.get(path) != now_files.get(path)
-        )
-        try:
-            baseline_name = str(baseline_path.relative_to(ROOT))
-        except ValueError:
-            baseline_name = str(baseline_path)
-        return changed, baseline_name
-
-    # A clean later checkout can use Git HEAD as the baseline. In a dirty tree,
-    # callers should provide the prior freeze manifest to avoid absorbing old work.
-    listed = subprocess.check_output(
-        ["git", "diff", "--name-only", "HEAD", "--", "apps/agentOS/src", "apps/agentOS/tests"],
-        cwd=ROOT, text=True, encoding="utf-8",
-    ).splitlines()
-    untracked = subprocess.check_output(
-        ["git", "ls-files", "--others", "--exclude-standard", "--", "apps/agentOS/src", "apps/agentOS/tests"],
-        cwd=ROOT, text=True, encoding="utf-8",
-    ).splitlines()
-    return sorted(set(listed + untracked)), "git HEAD"
+    old_files = load_baseline(baseline_path)["files"]
+    now_files = current["files"]
+    assert isinstance(now_files, dict)
+    changed = sorted(path for path in set(old_files) | set(now_files)
+                     if old_files.get(path) != now_files.get(path))
+    return changed, str(baseline_path)
 
 
 def resolve_tests(changed_paths: list[str]) -> tuple[list[str], list[str]]:
@@ -291,13 +313,14 @@ def main() -> int:
     wall_start = time.perf_counter()
     before = source_snapshot()
     external_before = external_snapshot()
-    changed, baseline_name = changed_python_paths(before, baseline_path)
-    external_changed = subprocess.check_output(
-        ["git", "diff", "--name-only", "HEAD", "--", *EXTERNAL_SOURCES], cwd=ROOT, text=True,
-    ).splitlines()
-    external_changed += subprocess.check_output(
-        ["git", "ls-files", "--others", "--exclude-standard", "--", *EXTERNAL_SOURCES], cwd=ROOT, text=True,
-    ).splitlines()
+    try:
+        changed, baseline_name = changed_python_paths(before, baseline_path)
+    except BaselineIntegrityError as exc:
+        return write_report({"started_utc": started, "budget_seconds": args.budget_seconds,
+            "status": "BLOCKED_BASELINE_INTEGRITY", "baseline": str(baseline_path),
+            "error": str(exc), "pytest_counts": None, "pytest_command": None,
+            "source_aggregate_sha256": before["aggregate"]}, wall_start, 2)
+    external_changed = changed_external_paths(external_before)
     changed = sorted(set(changed + external_changed))
     selected, uncovered = resolve_tests(changed)
     missing = [path for path in selected if not (AGENTOS / path.split("::", 1)[0]).is_file()]
@@ -308,6 +331,9 @@ def main() -> int:
         "finished_utc": None,
         "budget_seconds": args.budget_seconds,
         "baseline": baseline_name,
+        "baseline_commit": BASELINE_COMMIT,
+        "baseline_sha256": BASELINE_SHA256,
+        "external_baseline_sha256": EXTERNAL_BASELINE,
         "source_aggregate_sha256": before["aggregate"],
         "source_file_count": len(before["files"]),  # type: ignore[arg-type]
         "external_source_sha256": external_before,
@@ -315,6 +341,7 @@ def main() -> int:
         "selected_test_paths": selected,
         "uncovered_source_paths": uncovered,
         "missing_test_paths": missing,
+        "missing_external_source_paths": [p for p, digest in external_before.items() if digest is None],
         "git_diff_check_exit_code": check_code,
         "git_diff_check_output": check_output,
         "status": "NOT_STARTED",
@@ -328,8 +355,8 @@ def main() -> int:
         report["finished_utc"] = utc_now()
         report["elapsed_seconds"] = round(time.perf_counter() - wall_start, 3)
         print(json.dumps(report, indent=2, ensure_ascii=False))
-        return 0 if not uncovered and not missing and check_code == 0 else 2
-    if uncovered or missing or check_code != 0:
+        return 0 if not uncovered and not missing and not report["missing_external_source_paths"] and check_code == 0 else 2
+    if uncovered or missing or report["missing_external_source_paths"] or check_code != 0:
         report["status"] = "BLOCKED_BEFORE_TESTS"
         return write_report(report, wall_start, 2)
     if not changed:
@@ -411,6 +438,12 @@ def main() -> int:
     report["status"] = "INCOMPLETE_TIMEOUT" if timed_out else ("PASSED" if process and process.returncode == 0 else "FAILED")
     report["pytest_exit_code"] = process.returncode if process else None
     report["timed_out"] = timed_out
+    try:
+        load_baseline(baseline_path)
+    except BaselineIntegrityError as exc:
+        report["status"] = "INCOMPLETE_BASELINE_CHANGED"
+        report["error"] = str(exc)
+        return write_report(report, wall_start, 1, report_path)
     if source_snapshot()["aggregate"] != before["aggregate"] or external_snapshot() != external_before:
         report["status"] = "INCOMPLETE_SOURCE_CHANGED"
         return write_report(report, wall_start, 1, report_path)

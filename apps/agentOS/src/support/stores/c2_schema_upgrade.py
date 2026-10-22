@@ -17,7 +17,8 @@ from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
 from support.stores.planning_commit_store import content_fingerprint
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
-from support.stores.graph_activation_store import SQLiteGraphActivationStore
+from support.stores.graph_activation_store import SQLiteGraphActivationStore, validate_activation_run
+from contracts.workflow import RuntimeRunRecord
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore, SQLiteStagedGraphCheckpointStore
 from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 
@@ -211,6 +212,11 @@ def _inspect_evidence(paths, result):
 
     try:
         with _connect(paths["workflow"]) as conn:
+            # One read snapshot for Run, Permit, Handoff and formal Head. The
+            # existing validator is also used by ordinary Workflow writes; this
+            # preflight neither repairs evidence nor grants execution rights.
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if "graph_handoffs" not in tables and tables & {"graph_execution_permit_schema", "graph_execution_permits"}:
                 invalid("workflow", "graph_handoffs is required by the installed execution Permit schema")
@@ -219,14 +225,25 @@ def _inspect_evidence(paths, result):
             permit_ids = [r[0] for r in conn.execute("SELECT permit_id FROM graph_execution_permits")] if "graph_execution_permits" in tables else []
             # Only opted-in projections are relevant; unrelated legacy rows
             # are not reinterpreted or backfilled by this Schema operation.
-            projections = conn.execute("""SELECT run_id, json_extract(payload,
+            projections = conn.execute("""SELECT run_id, mission_id, payload, json_extract(payload,
                 '$.executionState.graphActivation.executionPermit.permitId') FROM runs
                 WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,
                 '$.executionState.graphActivation.executionPermit') END IS NOT NULL""").fetchall()
-        for run_id, permit_id in projections:
-            if permit_id not in permit_ids:
-                invalid("workflow", f"Run {run_id} references absent Permit {permit_id}")
-                return
+            for row in projections:
+                run_id, mission_id, payload, permit_id = row
+                if permit_id not in permit_ids:
+                    invalid("workflow", f"Run {run_id} references absent Permit {permit_id}")
+                    return
+                run = RuntimeRunRecord.model_validate_json(payload)
+                if run.run_id != run_id or run.mission_id != mission_id:
+                    invalid("workflow", f"Run {run_id} payload/index identity mismatch")
+                    return
+                try:
+                    if validate_activation_run(conn, run) is None:
+                        raise ValueError("Permit projection has no formal activation Head")
+                except ValueError as exc:
+                    invalid("workflow", f"Run {run_id} Permit {permit_id}: {exc}")
+                    return
         if not handoff_ids and not permit_ids:
             return  # Workflow installation may legitimately precede CP DDL.
         handoffs = SQLiteGraphHandoffStore(paths["workflow"])
@@ -245,6 +262,7 @@ def _inspect_evidence(paths, result):
                 if (handoff is None or handoff.status != "STATE_PREPARED"
                         or handoff.run_id != permit.run_id or handoff.activation_id != permit.activation_id
                         or handoff.source_kind != permit.source_kind or handoff.graph_version != permit.graph_version
+                        or handoff.identity_link.candidate_graph.graph_id != permit.graph_id
                         or handoff.candidate.checkpoint_id != permit.staged_checkpoint_id
                         or handoff.candidate.package_checksum != permit.package_checksum
                         or content_fingerprint(handoff) != permit.handoff_fingerprint
