@@ -21,8 +21,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTOS = ROOT / "apps" / "agentOS"
-# Exact C2A-2 ACCEPT manifest at the verified entry Commit 44663b0.
-DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "c2a2-accepted.json"
+# Exact src/tests manifest at INT-1 entry Commit 09860f8c (C2A-3 frozen).
+DEFAULT_BASELINE = ROOT / "scripts" / "freeze_gate_baselines" / "c2b-int1-entry.json"
 DEFAULT_BUDGET_SECONDS = 300
 SLOW_EXCLUSION = "not slow_benchmark and not slow_multiprocess and not slow_fault_injection"
 FAST_OR_CRITICAL = (
@@ -34,6 +34,8 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/support/stores/c2_schema_upgrade.py", ("tests/storage/test_c2_schema_upgrade.py", "tests/storage/v2/test_schema.py")),
+    ("scripts/upgrade_agentos_c2_schema.py", ("tests/storage/test_c2_schema_upgrade.py",)),
     ("src/runtime/initial_execution.py", ("tests/components/planner/test_initial_execution_permit.py",
         "tests/architecture/test_capability_upgrade_gates.py")),
     ("src/runtime/graph_handoff.py", ("tests/components/planner/test_initial_execution_permit.py",
@@ -102,7 +104,7 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
 )
 
-EXTERNAL_SOURCES = ("apps/agent/app/api/agentos_v2.py",)
+EXTERNAL_SOURCES = ("apps/agent/app/api/agentos_v2.py", "scripts/upgrade_agentos_c2_schema.py")
 
 
 def external_snapshot() -> dict[str, str]:
@@ -264,7 +266,7 @@ def check_diff_whitespace() -> tuple[int, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE,
-                        help="prior src/tests snapshot manifest (default: independently accepted C2A-2)")
+                        help="prior src/tests snapshot manifest (default: frozen C2A-3 at INT-1 entry)")
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
                         help="hard stage-freeze budget; values above 300 are rejected")
     parser.add_argument("--dry-run", action="store_true", help="show selected tests without executing pytest")
@@ -280,6 +282,9 @@ def main() -> int:
     changed, baseline_name = changed_python_paths(before, baseline_path)
     external_changed = subprocess.check_output(
         ["git", "diff", "--name-only", "HEAD", "--", *EXTERNAL_SOURCES], cwd=ROOT, text=True,
+    ).splitlines()
+    external_changed += subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "--", *EXTERNAL_SOURCES], cwd=ROOT, text=True,
     ).splitlines()
     changed = sorted(set(changed + external_changed))
     selected, uncovered = resolve_tests(changed)
