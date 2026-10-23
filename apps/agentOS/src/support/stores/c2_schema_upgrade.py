@@ -229,6 +229,7 @@ def _inspect_evidence(paths, result):
                 '$.executionState.graphActivation.executionPermit.permitId') FROM runs
                 WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,
                 '$.executionState.graphActivation.executionPermit') END IS NOT NULL""").fetchall()
+            validated_owners = {}
             for row in projections:
                 run_id, mission_id, payload, permit_id = row
                 if permit_id not in permit_ids:
@@ -244,6 +245,21 @@ def _inspect_evidence(paths, result):
                 except ValueError as exc:
                     invalid("workflow", f"Run {run_id} Permit {permit_id}: {exc}")
                     return
+                validated_owners.setdefault(permit_id, []).append(run_id)
+            # A missing/null Run projection must not hide an already ISSUED
+            # fact. Decode every journal row (including its indexed status) in
+            # this same read snapshot, then require exactly one owner whose
+            # complete chain passed the existing activation validator above.
+            # PREPARING is an incomplete Saga and does not require issuance's
+            # Run projection; its existing Handoff checks remain unchanged.
+            if "graph_execution_permits" in tables:
+                for row in conn.execute("SELECT * FROM graph_execution_permits"):
+                    permit = SQLiteExecutionPermitStore._decode(row)
+                    owners = validated_owners.get(permit.permit_id, [])
+                    if permit.status == "ISSUED" and owners != [permit.run_id]:
+                        invalid("workflow", f"ISSUED Permit {permit.permit_id} requires exactly one "
+                                f"validated Run {permit.run_id} projection; found {owners}")
+                        return
         if not handoff_ids and not permit_ids:
             return  # Workflow installation may legitimately precede CP DDL.
         handoffs = SQLiteGraphHandoffStore(paths["workflow"])

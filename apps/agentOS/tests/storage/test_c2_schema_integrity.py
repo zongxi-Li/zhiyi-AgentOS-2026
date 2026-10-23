@@ -57,7 +57,7 @@ def two_permits(initial_run):
     return rt, workflow, dbs, issued
 
 
-@pytest.mark.parametrize("damage", ["foreign_projection", "permit_mission", "permit_graph",
+@pytest.mark.parametrize("damage", ["foreign_projection", "permit_mission", "permit_graph", "permit_run",
                                     "projection_version", "projection_activation", "projection_handoff"])
 def test_run_permit_semantic_identity_is_checked_even_with_valid_checksums(two_permits, damage):
     from contracts.execution_permit import execution_permit_projection
@@ -66,10 +66,12 @@ def test_run_permit_semantic_identity_is_checked_even_with_valid_checksums(two_p
     other_run, other_permit = issued[1]
     assert run.mission_id != other_run.mission_id and run.run_id != other_run.run_id
     if damage.startswith("permit_"):
-        field, value = ("mission_id", other_permit.mission_id) if damage == "permit_mission" else ("graph_id", other_permit.graph_id)
+        field, value = {"permit_mission": ("mission_id", other_permit.mission_id),
+                        "permit_graph": ("graph_id", other_permit.graph_id),
+                        "permit_run": ("run_id", other_permit.run_id)}[damage]
         changed = permit.model_copy(update={field: value})
-        sql(dbs["workflow"], "UPDATE graph_execution_permits SET payload=?,checksum=? WHERE permit_id=?",
-            (changed.model_dump_json(by_alias=True), stable_checksum(changed), permit.permit_id))
+        sql(dbs["workflow"], "UPDATE graph_execution_permits SET run_id=?,payload=?,checksum=? WHERE permit_id=?",
+            (changed.run_id, changed.model_dump_json(by_alias=True), stable_checksum(changed), permit.permit_id))
         # The normal typed reader accepts the recomputed checksum. Rejection
         # must therefore come from semantic relationships, not corrupt bytes.
         assert rt.execution_permit_authority.store.get_permit(permit.permit_id) == changed
@@ -86,6 +88,34 @@ def test_run_permit_semantic_identity_is_checked_even_with_valid_checksums(two_p
     before = contents(dbs)
     inspection = ops.inspect_databases(**dbs)
     assert inspection["workflow"]["status"] == "INVALID", inspection
+    with pytest.raises(ops.SchemaUpgradeError, match="preflight rejected"):
+        ops.upgrade_databases(**dbs)
+    assert contents(dbs) == before
+
+
+@pytest.mark.parametrize("damage", ["missing", "null", "activation_missing", "duplicate"])
+def test_issued_permit_requires_exactly_one_owner_projection(two_permits, damage):
+    from contracts.execution_permit import execution_permit_projection
+    rt, _, dbs, issued = two_permits
+    run, permit = issued[0]
+    if damage == "missing":
+        del run.execution_state["graphActivation"]["executionPermit"]
+    elif damage == "null":
+        run.execution_state["graphActivation"]["executionPermit"] = None
+    elif damage == "activation_missing":
+        del run.execution_state["graphActivation"]
+    else:
+        run = issued[1][0]
+        run.execution_state["graphActivation"]["executionPermit"] = execution_permit_projection(permit)
+    sql(dbs["workflow"], "UPDATE runs SET payload=? WHERE run_id=?",
+        (run.model_dump_json(by_alias=True), run.run_id))
+    # All accepted Permit/Handoff bodies remain intact. The disappeared
+    # projection must not make an ISSUED fact invisible to the preflight.
+    assert rt.execution_permit_authority.store.get_permit(permit.permit_id) == permit
+    before = contents(dbs)
+    inspection = ops.inspect_databases(**dbs)
+    assert inspection["workflow"]["status"] == "INVALID", inspection
+    assert contents(dbs) == before
     with pytest.raises(ops.SchemaUpgradeError, match="preflight rejected"):
         ops.upgrade_databases(**dbs)
     assert contents(dbs) == before
