@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import asyncio
 import json
+import logging
 from datetime import timedelta
 from pathlib import Path
 from threading import Thread
@@ -60,6 +61,9 @@ from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from app.execution.instance_lock import acquire_workflow_instance_lock, release_workflow_instance_lock
 from app.execution.model_runtime import GatewayStructuredGenerationRuntime
 from app.tools import get_tool_runtime
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 _DEFAULT_DATABASES = {
@@ -313,6 +317,18 @@ def _sync_model_endpoints_from_registry(runtime: ExecutionRuntime) -> None:
         )
 
 
+class _AssemblyProgress:
+    """Track partially constructed resources so a failed composition cleans up."""
+
+    def __init__(self) -> None:
+        self.runtime: ExecutionRuntime | None = None
+        self.owned: list[Any] = []
+
+    def own(self, resource):
+        self.owned.append(resource)
+        return resource
+
+
 def build_default_runtime(
     *,
     environment: Mapping[str, str] | None = None,
@@ -329,16 +345,63 @@ def build_default_runtime(
         raise RuntimeError(
             "AGENTOS_RESOURCE_CREDENTIAL_KEY is required in production"
         )
+    semantic_enabled = str(
+        env.get("AGENTOS_MISSION_SEMANTIC_CONVERGENCE") or "false"
+    ).lower() == "true"
+    c2_execution_authorities = (
+        str(env.get("AGENTOS_C2_EXECUTION_AUTHORITIES") or "false").lower() == "true"
+    )
+    if c2_execution_authorities and not semantic_enabled:
+        # The C2 authorities validate against mission semantics and a trusted
+        # semantic principal; assembly without convergence has no valid contract.
+        # Refuse before taking the instance lock or constructing any resource.
+        raise RuntimeError(
+            "AGENTOS_C2_EXECUTION_AUTHORITIES requires AGENTOS_MISSION_SEMANTIC_CONVERGENCE"
+        )
     workflow_path = _workflow_db_path(env)
     acquire_workflow_instance_lock(str(workflow_path))
+    progress = _AssemblyProgress()
+    try:
+        return _assemble_default_runtime(
+            env=env,
+            workflow_path=workflow_path,
+            semantic_enabled=semantic_enabled,
+            c2_execution_authorities=c2_execution_authorities,
+            resource_credential_key=resource_credential_key,
+            intent_llm=intent_llm,
+            model_runtime=model_runtime,
+            tool_runtime=tool_runtime,
+            coordination_client=coordination_client,
+            progress=progress,
+        )
+    except BaseException:
+        # Close whatever the failed composition already created and free the
+        # instance lock, then let the original assembly error propagate.
+        _cleanup_failed_assembly(progress)
+        raise
 
+
+def _assemble_default_runtime(
+    *,
+    env: Mapping[str, str],
+    workflow_path: Path,
+    semantic_enabled: bool,
+    c2_execution_authorities: bool,
+    resource_credential_key: str | None,
+    intent_llm: object | None,
+    model_runtime: object | None,
+    tool_runtime: object | None,
+    coordination_client: object | None,
+    progress: _AssemblyProgress,
+) -> ExecutionRuntime:
+    resource_store = progress.own(SQLiteResourceStore(_database_path(env, "AGENTOS_RESOURCE_DB")))
+    node_store = progress.own(SQLiteNodeStore(_database_path(env, "AGENTOS_NODE_DB")))
+    health_store = progress.own(SQLiteResourceHealthStore(_database_path(env, "AGENTOS_RESOURCE_HEALTH_DB")))
     resource_plane = ResourcePlane(
-        store=SQLiteResourceStore(_database_path(env, "AGENTOS_RESOURCE_DB")),
-        node_store=SQLiteNodeStore(_database_path(env, "AGENTOS_NODE_DB")),
+        store=resource_store,
+        node_store=node_store,
         health_monitor=ResourceHealthMonitor(
-            store=SQLiteResourceHealthStore(
-                _database_path(env, "AGENTOS_RESOURCE_HEALTH_DB")
-            ),
+            store=health_store,
             heartbeat_timeout=timedelta(seconds=float(env.get("AGENTOS_RESOURCE_HEARTBEAT_TIMEOUT_SECONDS") or 60)),
         ),
         credential_key=resource_credential_key,
@@ -349,6 +412,7 @@ def build_default_runtime(
         coordinator = RedisLeaseCoordinator(
             coordination_client or _build_coordination_client(env)
         )
+        progress.owned.append(coordinator)
     resource_binder = ResourceBinder(resource_plane, coordinator=coordinator)
     identity_service = AcgIdentityLifecycleService.from_sqlite(
         Path(str(
@@ -356,12 +420,14 @@ def build_default_runtime(
             or workflow_path.with_name("identity_v2.sqlite3")
         ))
     )
+    progress.owned.append(identity_service)
     # The identity projection and the single ExecutionRuntime must observe the
     # same ContentManifest store.  Artifact is only a V2 identity projection of
     # sealed manifests; it is not a second content database.
     content_manifest_store = SQLiteContentManifestStore(
         _database_path(env, "AGENTOS_CONTENT_MANIFEST_DB")
     )
+    progress.owned.append(content_manifest_store)
     identity_adapter = IdentityProjectionBridge(
         identity_service,
         identity_service.repositories,
@@ -390,17 +456,8 @@ def build_default_runtime(
         limits=attachment_limits,
     )
     workflow_store = SQLiteWorkflowStore(workflow_path)
+    progress.owned.append(workflow_store)
     semantic_service = None
-    semantic_enabled = str(env.get("AGENTOS_MISSION_SEMANTIC_CONVERGENCE") or "false").lower() == "true"
-    c2_execution_authorities = (
-        str(env.get("AGENTOS_C2_EXECUTION_AUTHORITIES") or "false").lower() == "true"
-    )
-    if c2_execution_authorities and not semantic_enabled:
-        # The C2 authorities validate against mission semantics and a trusted
-        # semantic principal; assembly without convergence has no valid contract.
-        raise RuntimeError(
-            "AGENTOS_C2_EXECUTION_AUTHORITIES requires AGENTOS_MISSION_SEMANTIC_CONVERGENCE"
-        )
     if semantic_enabled:
         from components.mission_manager.semantic_service import MissionSemanticService
         # Activation never upgrades the business database. An operator must
@@ -424,6 +481,13 @@ def build_default_runtime(
 
         semantic_service = MissionSemanticService(store=workflow_store, authorize=authorize_semantics)
     from app.security.internal_auth import current_semantic_principal
+    checkpoint_store = progress.own(ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")))
+    execution_value_store = progress.own(SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")))
+    memory_store = progress.own(SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")))
+    evolution_store = progress.own(SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB")))
+    evolution_service = EvolutionService(store=evolution_store, proposal_threshold=1)
+    provenance_store = progress.own(SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")))
+    decision_store = progress.own(SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")))
     runtime = ExecutionRuntime(
         agent_registry=AgentRegistry(),
         workflow_registry=WorkflowRegistry(),
@@ -431,22 +495,21 @@ def build_default_runtime(
         mission_semantic_service=semantic_service,
         semantic_principal_provider=current_semantic_principal,
         allow_legacy_mission_intent=str(env.get("AGENTOS_ALLOW_LEGACY_MISSION_INTENT") or "false").lower() == "true",
-        checkpoint_store=ACGCheckpointStore(db_path=_database_path(env, "AGENTOS_LANGGRAPH_CHECKPOINT_DB")),
-        execution_value_store=SQLiteExecutionValueStore(db_path=_database_path(env, "AGENTOS_EXECUTION_VALUE_DB")),
+        checkpoint_store=checkpoint_store,
+        execution_value_store=execution_value_store,
         content_manifest_store=content_manifest_store,
-        memory_store=SQLiteMemoryStore(db_path=_database_path(env, "AGENTOS_EXECUTION_MEMORY_DB")),
+        memory_store=memory_store,
         resource_plane=resource_plane,
         resource_binder=resource_binder,
-        evolution_service=EvolutionService(
-            store=SQLiteEvolutionStore(db_path=_database_path(env, "AGENTOS_EVOLUTION_DB")),
-            proposal_threshold=1,
-        ),
-        provenance_store=SQLiteProvenanceStore(db_path=_database_path(env, "AGENTOS_PROVENANCE_DB")),
-        decision_store=SQLiteDecisionStore(db_path=_database_path(env, "AGENTOS_AUDIT_DB")),
+        evolution_service=evolution_service,
+        provenance_store=provenance_store,
+        decision_store=decision_store,
         tool_runtime=tool_runtime or get_tool_runtime(),
         identity_lifecycle=identity_adapter,
         require_planner_identity=True,
     )
+    progress.runtime = runtime
+    runtime._assembly_owned_resources = progress.owned
     runtime.attachment_service = attachment_service
     runtime.attachment_context_builder = attachment_service.context_builder
     if c2_execution_authorities:
@@ -509,6 +572,7 @@ def build_default_runtime(
             credential_provider=resource_plane,
             timeout_seconds=float(env.get("AGENTOS_LOCAL_RUNTIME_TIMEOUT_SECONDS") or 120),
         )
+        progress.own(local_runtime_transport)
         runtime.local_runtime_resource = registered_local_runtime
         runtime.local_runtime_transport = local_runtime_transport
         runtime.local_runtime_client = LocalRuntimeClient(local_runtime_transport)
@@ -535,10 +599,12 @@ def build_default_runtime(
     return configure_runtime(runtime, intent_llm=intent_llm, model_runtime=model_runtime)
 
 
-def close_runtime(runtime: ExecutionRuntime) -> None:
-    """Close resources created by this composition root without changing workflow state."""
+def _runtime_close_sequence(runtime: ExecutionRuntime) -> tuple[Any, ...]:
+    """Every resource owned by a composed Runtime, in close order."""
     resource_plane = getattr(runtime, "resource_plane", None)
     resources = (
+        *reversed(getattr(runtime, "_assembly_owned_resources", ())),
+        getattr(runtime, "local_runtime_transport", None),
         runtime.workflow_store,
         runtime.checkpoint_store,
         runtime.execution_value_store,
@@ -577,15 +643,78 @@ def close_runtime(runtime: ExecutionRuntime) -> None:
             else (authority.store,)
         )
     )
+    return resources
+
+
+def _close_resources(resources) -> list[Exception]:
+    errors = []
     seen: set[int] = set()
     for resource in resources:
         if resource is None or id(resource) in seen:
             continue
         seen.add(id(resource))
-        close = getattr(resource, "close", None)
-        if callable(close):
-            close()
-    release_workflow_instance_lock()
+        try:
+            aclose = getattr(resource, "aclose", None)
+            close = getattr(resource, "close", None)
+            if callable(aclose):
+                _run_coroutine_sync(aclose)
+            elif callable(close):
+                close()
+        except Exception as exc:
+            errors.append(exc)
+            LOGGER.warning("runtime cleanup failed for %r", resource, exc_info=True)
+    return errors
+
+
+def close_runtime(runtime: ExecutionRuntime) -> None:
+    """Synchronous shutdown; async hosts must await aclose_runtime instead."""
+    errors = _close_resources(_runtime_close_sequence(runtime))
+    try:
+        release_workflow_instance_lock()
+    except Exception as exc:
+        errors.append(exc)
+    if errors:
+        raise errors[0]
+
+
+async def aclose_runtime(runtime: ExecutionRuntime) -> None:
+    """Close async clients on the host loop, then release the process lock."""
+    errors = []
+    seen: set[int] = set()
+    for resource in _runtime_close_sequence(runtime):
+        if resource is None or id(resource) in seen:
+            continue
+        seen.add(id(resource))
+        aclose = getattr(resource, "aclose", None)
+        if callable(aclose):
+            try:
+                await aclose()
+            except Exception as exc:
+                errors.append(exc)
+                LOGGER.warning("async runtime cleanup failed for %r", resource, exc_info=True)
+        else:
+            errors.extend(_close_resources((resource,)))
+    try:
+        release_workflow_instance_lock()
+    except Exception as exc:
+        errors.append(exc)
+    if errors:
+        raise errors[0]
+
+
+def _cleanup_failed_assembly(progress: _AssemblyProgress) -> None:
+    """The construction ledger is authoritative even if Runtime.__init__ failed."""
+    resources = list(reversed(progress.owned))
+    if progress.runtime is not None:
+        try:
+            resources.extend(_runtime_close_sequence(progress.runtime))
+        except Exception:
+            LOGGER.warning("assembly cleanup: runtime enumeration failed", exc_info=True)
+    _close_resources(resources)
+    try:
+        release_workflow_instance_lock()
+    except Exception:
+        LOGGER.warning("assembly cleanup: instance lock release failed", exc_info=True)
 
 
 __all__ = [
@@ -595,6 +724,7 @@ __all__ = [
     "build_default_runtime",
     "build_model_setup",
     "close_runtime",
+    "aclose_runtime",
     "configure_runtime",
     "sync_agent_registry_to_ledger",
 ]

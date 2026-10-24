@@ -22,8 +22,8 @@ from app.execution import (
     bind_registered_planner_llm,
     build_default_runtime,
     build_model_setup,
-    close_runtime,
 )
+from app.execution.wiring import aclose_runtime
 from app.tools import configure_chat_tool_runtime, get_tool_runtime
 from app.config import settings
 from app.security.internal_auth import (
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
         await coordinator.startup()
     except Exception:
         await model_setup.close()
-        close_runtime(runtime)
+        await aclose_runtime(runtime)
         raise
     try:
         yield
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
             try:
                 await model_setup.close()
             finally:
-                close_runtime(runtime)
+                await aclose_runtime(runtime)
     
         # 关闭时执行 - 简化日志输出
         from app.llm.provider_conversation import close_configured_provider_conversation_store

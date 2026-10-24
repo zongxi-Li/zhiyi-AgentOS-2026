@@ -92,7 +92,9 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/runtime/initial_planning_sources.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py")),
     ("apps/agent/app/api/agentos_v2.py", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py")),
     ("apps/agent/app/execution/wiring.py", ("tests/components/planner/test_production_authority_assembly.py",
-        "tests/storage/test_c2_schema_upgrade.py")),
+        "tests/storage/test_runtime_assembly_failure_cleanup.py", "tests/storage/test_c2_schema_upgrade.py")),
+    ("apps/agent/app/main.py", ("tests/storage/test_runtime_assembly_failure_cleanup.py",)),
+    ("apps/agent/app/execution/instance_lock.py", ("tests/storage/test_runtime_assembly_failure_cleanup.py",)),
     ("src/examples/", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py", "tests/runtime/v2/test_workspace_projection.py")),
     ("src/runtime/planning_loop.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
     ("src/adapters/agent_invocation.py", ("tests/components/planner/test_permit_recovery.py",)),
@@ -125,10 +127,14 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 # Accepted INT-1 entry content, never HEAD. API uses that Windows checkout's
 # raw CRLF digest; the gate used LF. CLI did not exist at the accepted entry.
 EXTERNAL_BASELINE = {
+    "apps/agent/app/main.py": "118b1f5e38beb4f5f5937a115512bfba5f0b0a27d3b9a2abb8aaa6a1930fd4cc",
     "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
-    # Composition root as accepted at INT-2A-1; any change forces the assembly
-    # and schema-gate tests mapped above.
-    "apps/agent/app/execution/wiring.py": "f69c1cbc280a484c349eca24a7c0fbf34dad10ac2eacf3af32a66fb285e46be3",
+    # Composition root reviewed at INT-2A-1-FIX-REVIEW-FIX; any
+    # further change forces the assembly and schema-gate tests mapped above.
+    "apps/agent/app/execution/wiring.py": "2d4f8e7c3bd98550a613cb039c392bb1a96e4ed91a26ce5e1725a44defa924cf",
+    # Instance lock reviewed at INT-2A-1-FIX-REVIEW-FIX;
+    # drift forces the assembly failure-cleanup tests mapped above.
+    "apps/agent/app/execution/instance_lock.py": "b52efb5e1fd6c193ffb63734f3e10bf83597277dbe5992bce59deb7a1b7ff757",
     "scripts/freeze_gate.py": "06816f400a6d5a6143ead0f9d32af1d70a2715202cbbcd7223e05df1469d0637",
     "scripts/upgrade_agentos_c2_schema.py": None,
 }
