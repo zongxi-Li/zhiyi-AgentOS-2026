@@ -91,6 +91,8 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/runtime/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py", "tests/components/planner/test_graph_revision_commit.py")),
     ("src/runtime/initial_planning_sources.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py")),
     ("apps/agent/app/api/agentos_v2.py", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py")),
+    ("apps/agent/app/execution/wiring.py", ("tests/components/planner/test_production_authority_assembly.py",
+        "tests/storage/test_c2_schema_upgrade.py")),
     ("src/examples/", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py", "tests/runtime/v2/test_workspace_projection.py")),
     ("src/runtime/planning_loop.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
     ("src/adapters/agent_invocation.py", ("tests/components/planner/test_permit_recovery.py",)),
@@ -124,6 +126,9 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 # raw CRLF digest; the gate used LF. CLI did not exist at the accepted entry.
 EXTERNAL_BASELINE = {
     "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
+    # Composition root as accepted at INT-2A-1; any change forces the assembly
+    # and schema-gate tests mapped above.
+    "apps/agent/app/execution/wiring.py": "f69c1cbc280a484c349eca24a7c0fbf34dad10ac2eacf3af32a66fb285e46be3",
     "scripts/freeze_gate.py": "06816f400a6d5a6143ead0f9d32af1d70a2715202cbbcd7223e05df1469d0637",
     "scripts/upgrade_agentos_c2_schema.py": None,
 }

@@ -392,6 +392,15 @@ def build_default_runtime(
     workflow_store = SQLiteWorkflowStore(workflow_path)
     semantic_service = None
     semantic_enabled = str(env.get("AGENTOS_MISSION_SEMANTIC_CONVERGENCE") or "false").lower() == "true"
+    c2_execution_authorities = (
+        str(env.get("AGENTOS_C2_EXECUTION_AUTHORITIES") or "false").lower() == "true"
+    )
+    if c2_execution_authorities and not semantic_enabled:
+        # The C2 authorities validate against mission semantics and a trusted
+        # semantic principal; assembly without convergence has no valid contract.
+        raise RuntimeError(
+            "AGENTOS_C2_EXECUTION_AUTHORITIES requires AGENTOS_MISSION_SEMANTIC_CONVERGENCE"
+        )
     if semantic_enabled:
         from components.mission_manager.semantic_service import MissionSemanticService
         # Activation never upgrades the business database. An operator must
@@ -440,6 +449,34 @@ def build_default_runtime(
     )
     runtime.attachment_service = attachment_service
     runtime.attachment_context_builder = attachment_service.context_builder
+    if c2_execution_authorities:
+        # Explicit assembly over operator-upgraded ledgers, in the authorities'
+        # own construction order. Every store is verify-only: a missing marker
+        # table or a path mismatch aborts startup instead of degrading new
+        # Runs to legacy direct execution.
+        from support.stores.execution_permit_store import SQLiteExecutionPermitStore
+        from support.stores.graph_activation_store import SQLiteGraphActivationStore
+        from support.stores.graph_handoff_store import (
+            SQLiteGraphHandoffStore,
+            SQLiteStagedGraphCheckpointStore,
+        )
+        from support.stores.graph_materialization_store import (
+            SQLiteGraphMaterializationStore,
+        )
+        from support.stores.planning_commit_store import SQLitePlanningCommitStore
+
+        workflow_db_path = runtime.workflow_store.db_path
+        checkpoint_db_path = runtime.checkpoint_store.db_path
+        runtime.enable_planning_commit(SQLitePlanningCommitStore(workflow_db_path))
+        runtime.enable_graph_materialization(
+            SQLiteGraphMaterializationStore(workflow_db_path)
+        )
+        runtime.enable_graph_activation(SQLiteGraphActivationStore(workflow_db_path))
+        runtime.enable_graph_handoff(
+            SQLiteGraphHandoffStore(workflow_db_path),
+            SQLiteStagedGraphCheckpointStore(checkpoint_db_path),
+        )
+        runtime.enable_execution_permit(SQLiteExecutionPermitStore(workflow_db_path))
     reconciliation = IdentityProjectionReconciler(
         identity_adapter
     ).reconcile_workflow_store(runtime.workflow_store, audit_existing=False)
@@ -520,6 +557,25 @@ def close_runtime(runtime: ExecutionRuntime) -> None:
             "lifecycle_service",
             None,
         ),
+    )
+    # The C2 authority stores hold no persistent handles today (per-operation
+    # connections); walk them anyway so a future close() is never missed.
+    handoff_authority = runtime.graph_handoff_authority
+    resources += tuple(
+        store
+        for authority in (
+            runtime.planning_commit_authority,
+            runtime.graph_materialization_authority,
+            runtime.graph_activation_authority,
+            handoff_authority,
+            runtime.execution_permit_authority,
+        )
+        if authority is not None
+        for store in (
+            (authority.store, authority.staged_store)
+            if authority is handoff_authority
+            else (authority.store,)
+        )
     )
     seen: set[int] = set()
     for resource in resources:

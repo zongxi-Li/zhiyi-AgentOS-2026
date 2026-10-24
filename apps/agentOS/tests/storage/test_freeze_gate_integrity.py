@@ -50,6 +50,7 @@ def test_missing_default_baseline_blocks_before_test_discovery(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("source", ["scripts/freeze_gate.py", "apps/agent/app/api/agentos_v2.py",
+                                    "apps/agent/app/execution/wiring.py",
                                     "scripts/upgrade_agentos_c2_schema.py"])
 def test_committed_external_changes_use_fixed_reference_not_head(tmp_path, monkeypatch, source):
     gate = load()
@@ -92,10 +93,11 @@ def test_committed_external_changes_use_fixed_reference_not_head(tmp_path, monke
     ("src/components/scheduler/models.py", "tests/components/scheduler/test_binder.py"),
     ("src/support/stores/c2_schema_upgrade.py", "tests/storage/test_c2_schema_integrity.py"),
     ("scripts/upgrade_agentos_c2_schema.py", "tests/storage/test_c2_schema_upgrade.py"),
+    ("apps/agent/app/execution/wiring.py", "tests/components/planner/test_production_authority_assembly.py"),
 ])
 def test_relevant_source_resolves_real_related_tests(source, required):
     gate = load()
-    path = source if source.startswith("scripts/") else "apps/agentOS/" + source
+    path = source if source.startswith(("scripts/", "apps/agent/")) else "apps/agentOS/" + source
     selected, uncovered = gate["resolve_tests"]([path])
     assert not uncovered
     assert required in selected
@@ -111,6 +113,26 @@ def test_entire_original_baseline_delta_is_mapped_without_moving_baseline():
     assert not uncovered, uncovered
     assert selected and len(selected) == len(set(selected))
     assert all((gate["AGENTOS"] / item.split("::", 1)[0]).is_file() for item in selected)
+
+
+def test_production_composition_root_is_pinned_and_drift_forces_assembly_tests():
+    """The wiring.py external entry must protect the assembly, not just list it."""
+    gate = load()
+    source = "apps/agent/app/execution/wiring.py"
+    assert source in gate["EXTERNAL_SOURCES"]
+    current = hashlib.sha256((ROOT / source).read_bytes()).hexdigest()
+    assert gate["EXTERNAL_BASELINE"][source] == current
+    selected, uncovered = gate["resolve_tests"]([source])
+    assert uncovered == []
+    assert "tests/components/planner/test_production_authority_assembly.py" in selected
+    assert "tests/storage/test_c2_schema_upgrade.py" in selected
+    # Any content drift on the composition root is flagged and maps to the
+    # assembly tests: the baseline digest may only move together with them.
+    drifted = dict(gate["external_snapshot"]())
+    drifted[source] = "0" * 64
+    assert source in gate["changed_external_paths"](drifted)
+    selected, uncovered = gate["resolve_tests"](gate["changed_external_paths"](drifted))
+    assert uncovered == [] and "tests/components/planner/test_production_authority_assembly.py" in selected
 
 
 @pytest.mark.parametrize("fault,status", [("sources", "INCOMPLETE_SOURCE_CHANGED"),

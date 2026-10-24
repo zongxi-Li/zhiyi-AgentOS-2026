@@ -361,3 +361,113 @@ def test_default_application_construction_does_not_upgrade_c2(tmp_path, monkeypa
         assert not set(name for name, in sql(workflow, "SELECT name FROM sqlite_master")) & ops.C2_TABLES
     finally:
         close_runtime(runtime)
+
+
+ENV_KEYS = ("AGENTOS_WORKFLOW_DB_PATH", "AGENTOS_LANGGRAPH_CHECKPOINT_DB", "AGENTOS_EXECUTION_VALUE_DB",
+            "AGENTOS_CONTENT_MANIFEST_DB", "AGENTOS_EXECUTION_MEMORY_DB", "AGENTOS_PROVENANCE_DB",
+            "AGENTOS_AUDIT_DB", "AGENTOS_RESOURCE_DB", "AGENTOS_NODE_DB", "AGENTOS_AGENT_DB",
+            "AGENTOS_RESOURCE_HEALTH_DB", "AGENTOS_EVOLUTION_DB", "AGENTOS_IDENTITY_DB")
+
+
+class ScopedTools:
+    def scoped(self, allowed_tools):
+        return self
+
+
+def assembly_env(paths, *, semantic, c2):
+    env = {key: str(paths[key]) for key in ENV_KEYS}
+    env["AGENTOS_MISSION_SEMANTIC_CONVERGENCE"] = "true" if semantic else "false"
+    env["AGENTOS_C2_EXECUTION_AUTHORITIES"] = "true" if c2 else "false"
+    return env
+
+
+def role_paths(tmp_path):
+    return {
+        "AGENTOS_WORKFLOW_DB_PATH": tmp_path / "workflow.sqlite",
+        "AGENTOS_LANGGRAPH_CHECKPOINT_DB": tmp_path / "checkpoint.sqlite",
+        "AGENTOS_IDENTITY_DB": tmp_path / "identity.sqlite",
+        **{key: tmp_path / f"{key}.sqlite" for key in ENV_KEYS if not key.startswith(
+            ("AGENTOS_WORKFLOW", "AGENTOS_LANGGRAPH", "AGENTOS_IDENTITY"))},
+    }
+
+
+def test_c2_assembly_refuses_to_start_without_semantic_convergence(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "apps" / "agent"))
+    from app.execution.wiring import build_default_runtime
+    def denied(*args, **kwargs):
+        pytest.fail("implicit C2 upgrade during application composition")
+    for factory in (*ops.UPGRADERS, ops.SQLiteStagedGraphCheckpointStore):
+        monkeypatch.setattr(factory, "upgrade_schema", staticmethod(denied))
+    paths = role_paths(tmp_path)
+    env = assembly_env(paths, semantic=False, c2=True)
+    with pytest.raises(RuntimeError, match="AGENTOS_MISSION_SEMANTIC_CONVERGENCE"):
+        build_default_runtime(environment=env, tool_runtime=ScopedTools(),
+                              model_runtime=object(), intent_llm=object())
+    workflow, checkpoint = paths["AGENTOS_WORKFLOW_DB_PATH"], paths["AGENTOS_LANGGRAPH_CHECKPOINT_DB"]
+    assert not set(name for name, in sql(workflow, "SELECT name FROM sqlite_master")) & ops.C2_TABLES
+    assert sql(checkpoint, "SELECT name FROM sqlite_master WHERE name='staged_graph_checkpoints'") == []
+
+
+def test_c2_assembly_fails_closed_when_schema_is_missing(paths, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "apps" / "agent"))
+    from app.execution.wiring import build_default_runtime
+    def denied(*args, **kwargs):
+        pytest.fail("implicit C2 upgrade during application composition")
+    for factory in (*ops.UPGRADERS, ops.SQLiteStagedGraphCheckpointStore):
+        monkeypatch.setattr(factory, "upgrade_schema", staticmethod(denied))
+    monkeypatch.setattr(ops, "upgrade_databases", denied)
+    base(paths)  # Semantic (S00-01) tables installed; C2 ledgers deliberately absent.
+    rest = {key: tmp_path / f"{key}.sqlite" for key in ENV_KEYS if not key.startswith(
+        ("AGENTOS_WORKFLOW", "AGENTOS_LANGGRAPH", "AGENTOS_IDENTITY"))}
+    env = assembly_env({
+        "AGENTOS_WORKFLOW_DB_PATH": paths["workflow"],
+        "AGENTOS_LANGGRAPH_CHECKPOINT_DB": paths["checkpoint"],
+        "AGENTOS_IDENTITY_DB": paths["identity"], **rest}, semantic=True, c2=True)
+    # The verify-only planning store surfaces the missing marker table directly.
+    with pytest.raises((sqlite3.OperationalError, RuntimeError), match="no such table|explicit upgrade"):
+        build_default_runtime(environment=env, tool_runtime=ScopedTools(),
+                              model_runtime=object(), intent_llm=object())
+    assert not set(name for name, in sql(paths["workflow"], "SELECT name FROM sqlite_master")) & ops.C2_TABLES
+    assert sql(paths["checkpoint"], "SELECT name FROM sqlite_master WHERE name='staged_graph_checkpoints'") == []
+
+
+def test_c2_assembly_attaches_authorities_and_close_runtime_is_repeatable(paths, tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "apps" / "agent"))
+    from app.execution.wiring import build_default_runtime, close_runtime
+    from runtime.planning_commit import RuntimePlanningCommitAuthority
+    from runtime.graph_materialization import GraphMaterializationAuthority
+    from runtime.graph_activation import GraphActivationAuthority
+    from runtime.graph_handoff import GraphHandoffAuthority
+    from runtime.execution_permit import ExecutionPermitAuthority
+    base(paths)
+    assert ops.upgrade_databases(**paths)["status"] == "READY"
+    def denied(*args, **kwargs):
+        pytest.fail("implicit C2 upgrade during application composition")
+    for factory in (*ops.UPGRADERS, ops.SQLiteStagedGraphCheckpointStore):
+        monkeypatch.setattr(factory, "upgrade_schema", staticmethod(denied))
+    monkeypatch.setattr(ops, "upgrade_databases", denied)
+    rest = {key: tmp_path / f"{key}.sqlite" for key in ENV_KEYS if not key.startswith(
+        ("AGENTOS_WORKFLOW", "AGENTOS_LANGGRAPH", "AGENTOS_IDENTITY"))}
+    env = assembly_env({
+        "AGENTOS_WORKFLOW_DB_PATH": paths["workflow"],
+        "AGENTOS_LANGGRAPH_CHECKPOINT_DB": paths["checkpoint"],
+        "AGENTOS_IDENTITY_DB": paths["identity"], **rest}, semantic=True, c2=True)
+    runtime = build_default_runtime(environment=env, tool_runtime=ScopedTools(),
+                                    model_runtime=object(), intent_llm=object())
+    try:
+        assert isinstance(runtime.planning_commit_authority, RuntimePlanningCommitAuthority)
+        assert isinstance(runtime.graph_materialization_authority, GraphMaterializationAuthority)
+        assert isinstance(runtime.graph_activation_authority, GraphActivationAuthority)
+        assert isinstance(runtime.graph_handoff_authority, GraphHandoffAuthority)
+        assert isinstance(runtime.execution_permit_authority, ExecutionPermitAuthority)
+        workflow_db = paths["workflow"].resolve()
+        checkpoint_db = paths["checkpoint"].resolve()
+        for authority in (runtime.planning_commit_authority, runtime.graph_materialization_authority,
+                          runtime.graph_activation_authority, runtime.graph_handoff_authority,
+                          runtime.execution_permit_authority):
+            assert authority.store.db_path == workflow_db
+        assert runtime.graph_handoff_authority.staged_store.db_path == checkpoint_db
+        assert runtime.mission_semantic_service is not None
+    finally:
+        close_runtime(runtime)
+        close_runtime(runtime)  # Repeated shutdown stays safe and idempotent.
