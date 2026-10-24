@@ -65,11 +65,15 @@
           <button type="button" :class="{ active: !localScope }" :aria-pressed="!localScope" @click="setExecutionScope(false)">全部步骤</button>
         </div>
       </div>
-      <div class="graph-stage" :class="{ 'has-detail': selectedNode }">
-        <div ref="graphRef" class="graph-canvas" />
-        <p v-if="viewHint" class="view-hint">{{ viewHint }}</p>
-        <article v-if="umlCardVisible" ref="cardRef" class="uml-card" :style="umlCardStyle" aria-label="节点详情卡片">
+      <div class="graph-stage" :class="{ 'has-detail': detailAsideVisible }">
+        <div v-if="focusMainPath && visibleBlueprint" class="graph-canvas">
+          <AcgExecutionFlow ref="executionFlow" :blueprint="visibleBlueprint" :positions="executionPositions"
+            :selected-id="detailAsideOpen ? '' : selectedNodeId" :anchor-id="contextAnchorId" :statuses="flowStatuses"
+            @select="onFlowSelect" @double-click="emit('nodeDoubleClicked', $event)" @zoom="zoomPercent = $event">
+            <template #detail>
+        <article v-if="umlCardVisible" class="uml-card execution-detail" :data-node-id="selectedNodeId" aria-label="节点详情卡片">
           <header class="uml-card__head">
+            <strong class="uml-card__title">{{ selectedNode?.name || selectedNode?.nodeId }}</strong>
             <span class="uml-card__status" :data-status="selectedNodeStatus">{{ runtimeStatusLabel(selectedNodeStatus) }}</span>
             <button type="button" class="uml-card__close" title="收起详情" aria-label="收起节点详情" @click="clearSelection">
               <el-icon><Close /></el-icon>
@@ -133,7 +137,12 @@
             <button v-if="selectedStepState" type="button" class="uml-card__more" @click="detailAsideOpen = true">完整详情</button>
           </div>
         </article>
-        <aside v-if="selectedNode && (!focusMainPath || detailAsideOpen)" class="node-detail" aria-label="节点详情">
+            </template>
+          </AcgExecutionFlow>
+        </div>
+        <div v-else ref="graphRef" class="graph-canvas" />
+        <p v-if="viewHint" class="view-hint">{{ viewHint }}</p>
+        <aside v-if="detailAsideVisible" class="node-detail" aria-label="节点详情">
         <header>
           <div>
             <span>{{ nodeTypeLabel(selectedNode.nodeType) }}</span>
@@ -251,6 +260,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Aim, ArrowDownBold, Close, FullScreen, Minus, Plus, RefreshRight, Share } from '@element-plus/icons-vue'
+import AcgExecutionFlow from './AcgExecutionFlow.vue'
 import { DataSet } from 'vis-data'
 import { Network } from 'vis-network'
 import type { GraphProjection, AcgNode, AcgEdge, AcgStepState } from '@/services/api/agentos'
@@ -281,6 +291,7 @@ const emit = defineEmits<{
 
 const graphRef = ref<HTMLElement | null>(null)
 const sectionRef = ref<HTMLElement | null>(null)
+const executionFlow = ref<InstanceType<typeof AcgExecutionFlow> | null>(null)
 const selectedNodeId = ref('')
 type GraphViewMode = 'main' | 'full' | 'exceptions' | 'dataflow'
 const viewMode = ref<GraphViewMode>('main')
@@ -433,7 +444,13 @@ const contextAnchorId = computed(() => {
   return nodes.some(node => node.nodeId === requested) ? requested! : currentTaskId.value
 })
 // Use positions from the whole execution graph so stepping through adjacent tasks does not shuffle columns.
-const executionPositions = computed(() => executionLayout(executionBlueprint.value?.nodes || [], executionBlueprint.value?.edges || []))
+const executionPositions = computed(() => {
+  const parents = new Map<string, string>()
+  for (const state of props.stepStates || []) {
+    if (state.task?.parentTaskId) parents.set(state.stepId, state.task.parentTaskId)
+  }
+  return executionLayout(executionBlueprint.value?.nodes || [], executionBlueprint.value?.edges || [], parents)
+})
 
 const visibleBlueprint = computed<GraphProjection | null>(() => {
   const blueprint = renderableBlueprint.value
@@ -515,9 +532,7 @@ const outgoingConnections = computed(() =>
   (focusMainPath.value ? executionBlueprint.value : visibleBlueprint.value)?.edges.filter(edge => edge.sourceId === selectedNodeId.value) || []
 )
 
-// —— UML 式节点详情卡片（主执行链模式） ——
-// canvas 渲染的节点装不下富文本，展开详情以 DOM 卡片锚定在节点正下方，
-// 随画布缩放/平移同步位置与比例，视觉上等同节点多了一个可收起的 compartment。
+// Detail data is shared with the Vue Flow execution node.
 interface NodeTokenUsage {
   calls: number
   inputTokens: number
@@ -576,7 +591,8 @@ watch(() => props.runId, () => {
 const selectedTokenUsage = computed(() =>
   selectedNodeId.value ? tokenByStep.value.get(selectedNodeId.value) : undefined)
 const detailAsideOpen = ref(false)
-const umlCardVisible = computed(() => Boolean(focusMainPath.value && selectedNode.value))
+const detailAsideVisible = computed(() => Boolean(selectedNode.value && (!focusMainPath.value || detailAsideOpen.value)))
+const umlCardVisible = computed(() => Boolean(focusMainPath.value && selectedNode.value && !detailAsideOpen.value))
 const cardObjective = computed(() =>
   selectedStepState.value?.task?.objective || selectedNode.value?.goal || selectedNode.value?.description || '')
 const cardAgentLabel = computed(() => selectedStepState.value?.agentName || selectedNode.value?.agentName || '')
@@ -584,124 +600,15 @@ const peerNodeName = (nodeId: string) =>
   renderableBlueprint.value?.nodes.find(node => node.nodeId === nodeId)?.name || nodeId
 const formatTokenCount = (value: number) => value.toLocaleString('zh-CN')
 
-const cardAnchor = ref({ x: 0, y: 0, scale: 1 })
-let cardAnchorRaf = 0
-// 节点盒半高 + 间距，均按画布坐标计，随缩放同步
-const CARD_NODE_HALF_HEIGHT = 34
-const CARD_NODE_GAP = 12
-const syncCardAnchor = () => {
-  const id = selectedNodeId.value
-  if (!network || !id || typeof network.canvasToDOM !== 'function') return
-  const position = (network.getPositions([id]) as Record<string, { x: number; y: number }>)[id]
-  if (!position) return
-  const dom = network.canvasToDOM(position) as { x: number; y: number }
-  cardAnchor.value = {
-    x: dom.x,
-    y: dom.y + (CARD_NODE_HALF_HEIGHT + CARD_NODE_GAP) * (network.getScale() || 1),
-    scale: network.getScale() || 1
-  }
-}
-const stepCardAnchorLoop = () => {
-  cardAnchorRaf = 0
-  if (!selectedNodeId.value) return
-  syncCardAnchor()
-  cardAnchorRaf = requestAnimationFrame(stepCardAnchorLoop)
-}
-const umlCardStyle = computed(() => ({
-  left: `${cardAnchor.value.x}px`,
-  top: `${cardAnchor.value.y}px`,
-  transform: `translate(-50%, 0) scale(${cardAnchor.value.scale})`
-}))
-
-// 让位：卡片展开时把同列下方节点整体下移（收起后还原），避免压住邻节点
-const cardRef = ref<HTMLElement | null>(null)
-const cardPushDeltas = ref(new Map<string, number>())
-// render 的就地更新会剥掉坐标（保护用户拖拽），位移必须直接写进 DataSet
-const movePushedNodes = (deltas: Map<string, number>) => {
-  if (!nodesData) return
-  for (const [nodeId, delta] of deltas) {
-    const base = executionPositions.value.get(nodeId)
-    if (base) nodesData.update({ id: nodeId, x: base.x, y: base.y + delta })
-  }
-}
-const recomputeCardPush = () => {
-  const id = selectedNodeId.value
-  const result = new Map<string, number>()
-  const position = id ? executionPositions.value.get(id) : undefined
-  const baseHeight = cardRef.value?.offsetHeight || 0
-  if (umlCardVisible.value && position && baseHeight) {
-    const cardCanvasHeight = baseHeight / (network?.getScale() || 1)
-    const cardBottom = position.y + CARD_NODE_HALF_HEIGHT + CARD_NODE_GAP + cardCanvasHeight
-    let collidedTop: number | undefined
-    for (const [nodeId, other] of executionPositions.value) {
-      if (nodeId === id || Math.abs(other.x - position.x) > 1 || other.y <= position.y) continue
-      const otherTop = other.y - CARD_NODE_HALF_HEIGHT
-      if (otherTop >= cardBottom) continue
-      collidedTop = collidedTop === undefined ? otherTop : Math.min(collidedTop, otherTop)
-    }
-    if (collidedTop !== undefined) {
-      const shift = Math.ceil(cardBottom - collidedTop + CARD_NODE_GAP)
-      for (const [nodeId, other] of executionPositions.value) {
-        if (nodeId !== id && Math.abs(other.x - position.x) <= 1 && other.y > position.y) result.set(nodeId, shift)
-      }
-    }
-  }
-  const previous = cardPushDeltas.value
-  const changed = result.size !== previous.size || [...result].some(([nodeId, delta]) => previous.get(nodeId) !== delta)
-  cardPushDeltas.value = result
-  if (!changed) return
-  if (result.size) movePushedNodes(result)
-  else if (previous.size) movePushedNodes(new Map([...previous].map(([nodeId]) => [nodeId, 0])))
-  scheduleRender()
-}
-// 展开后若卡片下缘越出画布视野，向下平移视野补足
-const revealExpandedCard = () => {
-  const id = selectedNodeId.value
-  if (!network || !id || typeof network.getViewPosition !== 'function') return
-  const position = executionPositions.value.get(id)
-  const baseHeight = cardRef.value?.offsetHeight || 0
-  if (!position || !baseHeight) return
-  const scale = network.getScale() || 1
-  const view = network.getViewPosition() as { x: number; y: number }
-  const stageHeight = graphRef.value?.parentElement?.getBoundingClientRect().height || 600
-  const cardBottom = position.y + CARD_NODE_HALF_HEIGHT + CARD_NODE_GAP + baseHeight / scale
-  const visibleBottom = view.y + stageHeight / (2 * scale) - 24
-  if (cardBottom > visibleBottom) {
-    network.moveTo({
-      position: { x: view.x, y: view.y + (cardBottom - visibleBottom) },
-      animation: { duration: 220, easingFunction: 'easeInOutQuad' }
-    })
-  }
-}
-let cardResizeObserver: ResizeObserver | null = null
-watch(cardRef, (element, _, onCleanup) => {
-  cardResizeObserver?.disconnect()
-  cardResizeObserver = null
-  if (!element || typeof ResizeObserver === 'undefined') return
-  cardResizeObserver = new ResizeObserver(() => recomputeCardPush())
-  cardResizeObserver.observe(element)
-  onCleanup(() => cardResizeObserver?.disconnect())
-})
-watch(selectedNodeId, () => {
+const flowStatuses = computed(() => Object.fromEntries((executionBlueprint.value?.nodes || []).map(node => {
+  const status = nodeStatus(node.nodeId)
+  return [node.nodeId, { status, label: runtimeStatusLabel(status) }]
+})))
+const onFlowSelect = (id: string) => {
+  selectedNodeId.value = id
   detailAsideOpen.value = false
-  if (umlCardVisible.value) {
-    void nextTick(() => {
-      syncCardAnchor()
-      recomputeCardPush()
-      revealExpandedCard()
-    })
-    if (!cardAnchorRaf) cardAnchorRaf = requestAnimationFrame(stepCardAnchorLoop)
-  }
-})
-watch(umlCardVisible, visible => {
-  if (!visible) {
-    if (cardAnchorRaf) {
-      cancelAnimationFrame(cardAnchorRaf)
-      cardAnchorRaf = 0
-    }
-    if (cardPushDeltas.value.size) recomputeCardPush()
-  }
-})
+  if (id) emit('nodeSelected', id)
+}
 
 const stats = computed(() => {
   if (!renderableBlueprint.value || !visibleBlueprint.value) return ''
@@ -848,7 +755,7 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
     const executionTitle = executionNodeLabel(node.name || node.nodeId).replace(/[*`]/g, '')
     const executionStatus = `${statusText}${badges ? ` · ${badges}` : ''}`.replace(/[*`]/g, '')
     const label = focusMainPath.value
-      ? `*${executionTitle}*\n\`${executionStatus}\``
+      ? `*${Array.from(executionTitle.replace(/\n/g, '')).slice(0, 16).join('')}${Array.from(executionTitle.replace(/\n/g, '')).length > 16 ? '…' : ''}*  \`${executionStatus}\``
       : badges ? `${baseLabel}\n[${badges}]` : baseLabel
     const isStep = node.nodeType === 'step'
     const isEndpoint = isStart || isEnd
@@ -875,7 +782,7 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
       label,
       title: `${node.name || node.nodeId}\n${node.nodeId}\n${node.nodeType}${status ? `\n${status}` : ''}${badges ? `\n${badges}` : ''}`,
       shape: focusMainPath.value ? 'box' : isStart ? 'circle' : isEnd ? 'box' : style.shape,
-      shapeProperties: { borderRadius: 10 },
+      shapeProperties: { borderRadius: focusMainPath.value ? 22 : 10 },
       color: {
         background: endpointColor || style.background,
         border,
@@ -900,11 +807,8 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
       ...(isStart ? { x: 0, y: -440 } : isEnd ? { x: 0, y: 440 } : {}),
       ...(focusMainPath.value ? {
         ...executionPositions.value.get(node.nodeId),
-        ...(cardPushDeltas.value.has(node.nodeId)
-          ? { y: (executionPositions.value.get(node.nodeId)?.y || 0) + (cardPushDeltas.value.get(node.nodeId) || 0) }
-          : {}),
-        fixed: false, physics: false, widthConstraint: { minimum: 240, maximum: 240 },
-        heightConstraint: { minimum: 64 }, margin: 12,
+        fixed: false, physics: false, widthConstraint: { minimum: 160, maximum: 340 },
+        heightConstraint: { minimum: 24 }, margin: { top: 9, bottom: 9, left: 18, right: 18 },
         font: {
           multi: 'md', size: 14, face: 'sans-serif', color: isEndpoint ? '#ffffff' : textPrimary,
           bold: { size: 14, color: isEndpoint ? '#ffffff' : textPrimary, face: 'sans-serif' },
@@ -912,7 +816,8 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
           mono: { size: 11, color: isEndpoint ? '#ffffff' : (statusColor || textSecondary), face: 'sans-serif' }
         },
         shadow: nodeShadow, borderWidth: node.nodeId === contextAnchorId.value ? 2.4 : isSelected ? 2.6 : 1.4,
-      } : {})
+      } : {}),
+
     }
   })
 }
@@ -1006,6 +911,8 @@ const getStructureKey = (blueprint: GraphProjection) => JSON.stringify({
   mode: viewMode.value,
   context: focusMainPath.value && localScope.value ? contextAnchorId.value : '',
   nodes: blueprint.nodes.map(node => [node.nodeId, node.nodeType]),
+  executionLayout: focusMainPath.value
+    ? blueprint.nodes.map(node => [node.nodeId, executionPositions.value.get(node.nodeId)]) : undefined,
   edges: blueprint.edges.map(edge => [edge.edgeId, edge.sourceId, edge.targetId, edge.edgeType])
 })
 
@@ -1084,15 +991,16 @@ const finalizeGraphLayout = (animation = true) => {
   }
 }
 
-const render = async () => {
+const render = async (preserveCamera = false) => {
   const request = ++renderRequest
   await nextTick()
   if (request !== renderRequest) return
   const blueprint = visibleBlueprint.value
-  if (!graphRef.value || !hasData.value || !blueprint) return
+  if (!hasData.value || !blueprint) return
   if (selectedNodeId.value && !blueprint.nodes.some(node => node.nodeId === selectedNodeId.value)) {
     selectedNodeId.value = ''
   }
+  if (focusMainPath.value || !graphRef.value) return
   const completed = new Set(props.completedStepIds || [])
   const states = new Map<string, AcgStepState>((props.stepStates || []).map(item => [item.stepId, item]))
   const nodeRows = buildNodeRows(blueprint.nodes, completed, states)
@@ -1113,7 +1021,7 @@ const render = async () => {
     return
   }
 
-  pendingViewState = network && !focusMainPath.value
+  pendingViewState = network && (!focusMainPath.value || preserveCamera)
     ? { position: network.getViewPosition(), scale: network.getScale() }
     : null
   stopPhysics()
@@ -1133,7 +1041,6 @@ const render = async () => {
   } as any)
   network.on('zoom', () => {
     zoomPercent.value = Math.round((network?.getScale() || 1) * 100)
-    recomputeCardPush()
   })
   network.on('animationFinished', () => { zoomPercent.value = Math.round((network?.getScale() || 1) * 100) })
   ensureGraphResizeObserver()
@@ -1180,6 +1087,7 @@ const resetView = (animation = true) => {
 }
 
 const actualSize = (animation: boolean | MouseEvent = true) => {
+  if (focusMainPath.value) return executionFlow.value?.actualSize(selectedNodeId.value || contextAnchorId.value, animation === false ? 0 : 240)
   if (!network) return
   const id = selectedNodeId.value || contextAnchorId.value
   const position = focusMainPath.value && id ? network.getPositions([id])[id] : network.getViewPosition()
@@ -1192,12 +1100,13 @@ const setExecutionScope = async (local: boolean) => {
   selectedNodeId.value = ''
   network?.unselectAll()
   await render()
-  actualSize(false)
+  await actualSize(false)
 }
 
 const showOverview = async () => {
   if (focusMainPath.value) await setExecutionScope(false)
-  fitWithSafePadding()
+  if (focusMainPath.value) await executionFlow.value?.overview()
+  else fitWithSafePadding()
 }
 
 const locateCurrentTask = async () => {
@@ -1210,6 +1119,7 @@ const locateCurrentTask = async () => {
 }
 
 const zoomGraph = (factor: number) => {
+  if (focusMainPath.value) return executionFlow.value?.zoomBy(factor)
   if (!network) return
   const scale = Math.min(2.4, Math.max(0.18, network.getScale() * factor))
   network.moveTo({
@@ -1304,13 +1214,19 @@ const toggleFullscreen = async () => {
 }
 
 const handleFullscreenEscape = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && selectedNodeId.value) {
+    clearSelection()
+    return
+  }
   if (event.key === 'Escape' && document.fullscreenElement === sectionRef.value) {
     void document.exitFullscreen()
   }
 }
 
 const clearSelection = () => {
+  if (focusMainPath.value && !detailAsideOpen.value) { executionFlow.value?.close(); return }
   selectedNodeId.value = ''
+  detailAsideOpen.value = false
   network?.unselectAll()
   scheduleRender()
 }
@@ -1334,12 +1250,33 @@ const setViewMode = (mode: GraphViewMode) => {
 
 const focusNode = async (nodeId: string) => {
   if (!props.blueprint?.nodes.some(node => node.nodeId === nodeId)) return
+  // Selection is echoed back through the workspace props. It must not start a second camera animation.
+  if (selectedNodeId.value === nodeId) return
+  if (focusMainPath.value) {
+    contextNodeId.value = nodeId
+    selectedNodeId.value = nodeId
+    detailAsideOpen.value = false
+    await nextTick()
+    await executionFlow.value?.actualSize(nodeId)
+    emit('nodeSelected', nodeId)
+    return
+  }
   if (focusMainPath.value) contextNodeId.value = nodeId
-  await render()
+  await render(true)
   if (!network || !visibleBlueprint.value?.nodes.some(node => node.nodeId === nodeId)) return
   selectedNodeId.value = nodeId
   network.selectNodes([nodeId])
-  network.focus(nodeId, { scale: 1, animation: true })
+  // Wait for the card measurement, then position the node and card together.
+  // focus() locks onto the node and competes with the card's camera correction.
+  await nextTick()
+  if (!network || selectedNodeId.value !== nodeId) return
+  const position = network.getPositions([nodeId])[nodeId]
+  if (!position) return
+  network.moveTo({
+    position: { x: position.x, y: position.y },
+    scale: 1,
+    animation: { duration: 240, easingFunction: 'easeInOutQuad' }
+  })
   emit('nodeSelected', nodeId)
   scheduleRender()
 }
@@ -1382,8 +1319,6 @@ onBeforeUnmount(() => {
   if (document.fullscreenElement === sectionRef.value) {
     void document.exitFullscreen()
   }
-  if (cardAnchorRaf) cancelAnimationFrame(cardAnchorRaf)
-  cardAnchorRaf = 0
   tokenUsageGeneration += 1
   stopPhysics()
   cancelScheduledRender()
@@ -1705,7 +1640,7 @@ onBeforeUnmount(() => {
 .graph-fab {
   position: absolute; z-index: 6; right: 20px; bottom: 20px;
   display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
-  width: min(680px, calc(100% - 60px));
+  width: 40px;
   pointer-events: none;
 }
 .graph-fab__panel,
@@ -1808,18 +1743,18 @@ onBeforeUnmount(() => {
 .acg-topology:fullscreen .graph-fab,
 .acg-topology:fullscreen .panel-head { flex: 0 0 auto; }
 
-/* UML 式节点详情卡片：锚定在选中节点正下方，随画布缩放同步比例 */
+/* Shared detail content inside a Vue Flow execution node. */
 .uml-card {
   position: absolute;
   z-index: 6;
-  width: 240px;
+  box-sizing: border-box;
+  width: 340px;
   max-height: 420px;
   overflow: hidden auto;
   border: 1px solid var(--wb-border, var(--border-light));
-  border-radius: 10px;
+  border-radius: 16px;
   background: var(--wb-surface-1, rgba(255, 255, 255, 0.98));
   box-shadow: 0 6px 18px rgba(15, 35, 40, 0.12);
-  transform-origin: top center;
   color: var(--wb-text, var(--text-primary));
   scrollbar-width: thin;
 }
@@ -1831,11 +1766,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--wb-border, var(--border-light));
   background: var(--wb-surface-2, var(--bg-panel));
 }
-.uml-card__status { font-size: 11px; font-weight: 600; color: var(--wb-text-secondary, var(--text-secondary)); }
+.uml-card__title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+.uml-card__status { flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--wb-text-secondary, var(--text-secondary)); }
 .uml-card__status[data-status="running"] { color: var(--sem-running, #6EA8FE); }
 .uml-card__status[data-status="failed"] { color: var(--sem-failed, #E06C75); }
 .uml-card__status[data-status="completed"] { color: var(--sem-success, #8BCB78); }
@@ -1843,16 +1779,16 @@ onBeforeUnmount(() => {
 .uml-card__status[data-status="retrying"] { color: var(--sem-retry, #E69A62); }
 .uml-card__close {
   display: flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px;
+  flex-shrink: 0; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px;
   background: transparent; color: var(--wb-text-muted, var(--text-secondary)); cursor: pointer;
 }
 .uml-card__close:hover { background: var(--wb-hover, rgba(0, 0, 0, 0.05)); color: var(--wb-text, var(--text-primary)); }
-.uml-card__body { display: grid; gap: 9px; padding: 9px 10px 10px; }
+.uml-card__body { display: grid; gap: 14px; padding: 14px; }
 .uml-card__objective {
   margin: 0; padding: 7px 8px; border-radius: 7px;
   background: var(--wb-surface-inset, rgba(0, 0, 0, 0.03));
   color: var(--wb-text-secondary, var(--text-secondary));
-  font-size: 11px; line-height: 1.55;
+  font-size: 13px; line-height: 1.7; overflow-wrap: anywhere;
 }
 .uml-card__section h6 {
   display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
@@ -1869,7 +1805,7 @@ onBeforeUnmount(() => {
   background: var(--wb-surface-section, transparent);
 }
 .uml-card__tokens b { font: 600 11px/1.2 var(--font-mono, monospace); color: var(--wb-text, var(--text-primary)); }
-.uml-card__tokens span { color: var(--wb-text-muted, var(--text-secondary)); font-size: 9px; }
+.uml-card__tokens span { color: var(--wb-text-muted, var(--text-secondary)); font-size: 10px; white-space: nowrap; }
 .uml-card__models { margin: 5px 0 0; color: var(--wb-text-muted, var(--text-secondary)); font: 10px var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .uml-card__meta { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .uml-card__meta span { color: var(--wb-text-secondary, var(--text-secondary)); font: 10px var(--font-mono, monospace); }
@@ -1890,8 +1826,12 @@ onBeforeUnmount(() => {
 .uml-card__more:hover { border-color: var(--wb-accent, var(--primary-color)); color: var(--wb-accent, var(--primary-color)); }
 .acg-topology.is-workbench .uml-card { border-color: var(--wb-border); background: var(--wb-surface-1); box-shadow: var(--wb-shadow-section, 0 6px 18px rgba(15, 35, 40, 0.12)); }
 
+.acg-topology .uml-card.execution-detail {
+  position: relative; z-index: auto; width: 100%; max-height: 520px;
+  border: 0; border-radius: 0; box-shadow: none;
+}
+
 @media (max-width: 760px) {
-  .graph-fab { width: min(680px, calc(100% - 32px)); }
   .graph-stage.has-detail .graph-fab { right: 16px; }
   .graph-stage.has-detail { grid-template-columns: 1fr; }
   .node-detail { height: auto; max-height: 340px; border-left: 0; border-top: 1px solid var(--border-light); }

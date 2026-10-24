@@ -14,6 +14,8 @@ declare module 'vue' {
     AcgCopilotPanel: typeof import('./src/components/workbench/AcgCopilotPanel.vue')['default']
     AcgDeliverables: typeof import('./src/components/agentos/AcgDeliverables.vue')['default']
     AcgExecutionContractBar: typeof import('./src/components/agentos/AcgExecutionContractBar.vue')['default']
+    AcgExecutionFlow: typeof import('./src/components/agentos/AcgExecutionFlow.vue')['default']
+    AcgExecutionNode: typeof import('./src/components/agentos/AcgExecutionNode.vue')['default']
     AcgHistoryPanel: typeof import('./src/components/history/AcgHistoryPanel.vue')['default']
     AcgLowEntropyMetrics: typeof import('./src/components/agentos/AcgLowEntropyMetrics.vue')['default']
     AcgOperationalInspector: typeof import('./src/components/agentos/AcgOperationalInspector.vue')['default']
