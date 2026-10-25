@@ -19,6 +19,7 @@ import sqlite3
 from components.mission_manager.semantic_resolver import MissionSemanticResolver
 
 from app.execution.coordinator import RunExecutionCoordinator
+from app.api.agentos_c2 import create_c2_router, project_initial_control
 from app.security.internal_auth import current_trusted_user, current_semantic_principal
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RunRecordState, RuntimeRunRecord, StepStatus, WorkflowStatus
 from contracts.content import ContentKind
@@ -684,6 +685,7 @@ def create_router(
     coordinator: RunExecutionCoordinator,
 ) -> APIRouter:
     router = APIRouter(prefix="/agentos/v2")
+    router.include_router(create_c2_router(runtime))
     interaction = RuntimePlanningInteraction(runtime)
     identity_adapter = getattr(runtime, "identity_lifecycle", None)
     identity_repositories = getattr(identity_adapter, "repositories", None)
@@ -840,6 +842,11 @@ def create_router(
             raise HTTPException(status_code=403, detail="trusted semantic principal is required")
         if any(key in payload for key in ("missionIntentBasis", "missionIntentBasisRef", "semanticPrincipal", "inheritParentBasis")):
             raise HTTPException(status_code=422, detail="semantic control fields cannot be supplied as input")
+        if runtime.planning_commit_authority is not None and any(key in payload for key in (
+            "principal", "executionPermit", "executionPermitId", "graphActivation", "graphId", "graphVersion",
+            "executionReceipt", "executionState", "planningCommitRequired", "compiledACGPackage", "handoffId",
+        )):
+            raise HTTPException(status_code=422, detail="C2 control fields cannot be supplied as input")
         execution_input = _actor_input(payload)
         refs = list(dict.fromkeys([
             *(material_refs or []),
@@ -2453,7 +2460,11 @@ def create_router(
 
     @router.get("/runs/{run_id}")
     async def get_run(run_id: str):
-        return project(load_run(run_id, readonly=True))
+        run = load_run(run_id, readonly=True)
+        result = project(run)
+        if run.execution_state.get("planningCommitRequired"):
+            result["formalControl"] = project_initial_control(runtime, run)
+        return result
 
     @router.get("/runs/{run_id}/history-config")
     async def get_history_config(run_id: str):
