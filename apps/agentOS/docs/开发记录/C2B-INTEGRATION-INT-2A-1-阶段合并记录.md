@@ -1,3 +1,15 @@
+# C2B-INTEGRATION-INT-2A-1-阶段合并记录
+
+> 本文按阶段合并开发记录。来源文档内容原样保留，原文件继续留在本目录。
+
+## 原始记录目录
+
+- `C2B-INTEGRATION-INT-2A-1-生产Authority装配实施记录.md`
+
+---
+
+<!-- 原始记录：C2B-INTEGRATION-INT-2A-1-生产Authority装配实施记录.md -->
+
 # INT-2A-1：生产 Runtime 权威接线与装配级验证
 
 日期：2026-10-23。阶段状态：**SELF-TESTED**。等待独立架构验收；不自行宣布 ACCEPT，不自动进入 INT-2B。
