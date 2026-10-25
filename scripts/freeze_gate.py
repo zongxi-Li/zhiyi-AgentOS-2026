@@ -87,6 +87,8 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "tests/components/planner/test_graph_activation.py::test_old_thread_snapshot_cannot_regress_the_graph_version")),
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_initial_graph_materialization.py",)),
     ("src/runtime/workflow_runtime.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
+    ("src/runtime/workflow_runtime.py", ("tests/runtime/test_dispatch_admission.py",)),
+    ("src/support/stores/execution_dispatch_store.py", ("tests/runtime/test_dispatch_admission.py",)),
     ("src/contracts/initial_planning.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit_runtime.py")),
     ("src/contracts/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit.py", "tests/components/planner/test_planning_commit_runtime.py")),
     ("src/components/planner/planning_commit.py", ("tests/components/planner/test_initial_planning_sources.py", "tests/components/planner/test_planning_commit.py", "tests/components/planner/test_planning_commit_runtime.py")),
@@ -138,9 +140,9 @@ EXTERNAL_BASELINE = {
     # (cancellation safety); drift forces the lifespan cleanup tests.
     "apps/agent/app/lifespan.py": "1e4f5e7cabfd5df60ed8a7d3deb1ccd5e72b3f59499e6389ff01a422ced19b01",
     "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
-    # Composition root reviewed at INT-2A-2-FIX (async cancellation); any
-    # further change forces the assembly and schema-gate tests mapped above.
-    "apps/agent/app/execution/wiring.py": "f4bf4a611b5939a880bf7819b1665264ad3319d0b452f3ad2a1ef08e4b4f4d23",
+    # INT-2C closeout: explicit Dispatch mode is also enforced by Native claim.
+    # Preserve all assembly/schema mappings and drift-forces-tests assertions.
+    "apps/agent/app/execution/wiring.py": "29f9dd70a4803fb8d0329ef230eb854fdd4e190fda013473c270b7070375ecbf",
     # Instance lock reviewed at INT-2A-1-FIX-REVIEW-FIX;
     # drift forces the assembly failure-cleanup tests mapped above.
     "apps/agent/app/execution/instance_lock.py": "b52efb5e1fd6c193ffb63734f3e10bf83597277dbe5992bce59deb7a1b7ff757",

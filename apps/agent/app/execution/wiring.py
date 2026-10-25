@@ -543,7 +543,8 @@ def _assemble_default_runtime(
         )
         runtime.enable_execution_permit(SQLiteExecutionPermitStore(workflow_db_path))
     runtime.execution_dispatch_store = None
-    if str(env.get("AGENTOS_C2_EXECUTION_DISPATCH") or "false").lower() == "true":
+    runtime.execution_dispatch_enabled = str(env.get("AGENTOS_C2_EXECUTION_DISPATCH") or "false").lower() == "true"
+    if runtime.execution_dispatch_enabled:
         from support.stores.execution_dispatch_store import SQLiteExecutionDispatchStore
         runtime.execution_dispatch_store = SQLiteExecutionDispatchStore(runtime.workflow_store.db_path)
     reconciliation = IdentityProjectionReconciler(

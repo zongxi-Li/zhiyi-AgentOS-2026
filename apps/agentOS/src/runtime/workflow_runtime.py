@@ -459,6 +459,8 @@ class ExecutionRuntime(CollaboratorAccess):
         self.graph_activation_authority = None
         self.graph_handoff_authority = None
         self.execution_permit_authority = None
+        self.execution_dispatch_enabled = False
+        self.execution_dispatch_store = None
         if planning_commit_store is not None:
             self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
@@ -1161,6 +1163,12 @@ class ExecutionRuntime(CollaboratorAccess):
                         if self.execution_permit_authority is None:
                             raise ValueError("activated but paused; no execution permit authority is attached")
                         self.execution_permit_authority.assert_dispatchable(latest)
+                        if self.execution_dispatch_enabled:
+                            dispatch = self.execution_dispatch_store
+                            if dispatch is None or dispatch.db_path != self.workflow_store.db_path.resolve():
+                                raise ValueError("Dispatch admission store is unavailable or belongs to another ledger")
+                            principal = self.semantic_principal_provider() if self.semantic_principal_provider else None
+                            dispatch.assert_admitted(conn, latest, principal)
                         # Covers every execution entry, including legacy
                         # checkpoint resume and Review, before claiming a slot.
                         from runtime.permit_recovery import assert_settled_operations

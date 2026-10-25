@@ -92,6 +92,19 @@ class SQLiteExecutionDispatchStore:
             self.check_schema(conn)
             return self.decode(conn.execute("SELECT * FROM execution_dispatch_commands WHERE run_id=?", (run_id,)).fetchone())
 
+    def assert_admitted(self, conn, run, principal):
+        """Bind an accepted fact to the caller's fenced Workflow snapshot."""
+        self.check_schema(conn)
+        command = self.decode(conn.execute("SELECT * FROM execution_dispatch_commands WHERE run_id=?", (run.run_id,)).fetchone())
+        state = run.execution_state
+        if (command is None or principal is None or command.mission_id != run.mission_id
+                or command.permit_id != state.get("executionPermitId")
+                or command.graph_id != state.get("graphId") or command.graph_version != state.get("graphVersion")
+                or command.runtime_revision > run.runtime_revision
+                or command.actor_id != principal.actor_id or command.tenant_id != principal.tenant_id):
+            raise ValueError("Dispatch admission is missing or differs from the formal Run/Permit/Graph/principal")
+        return command
+
     def commands(self):
         with self.connection() as conn:
             self.check_schema(conn)
