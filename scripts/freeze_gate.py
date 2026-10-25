@@ -38,6 +38,7 @@ FAST_OR_CRITICAL = (
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("scripts/freeze_gate.py", ("tests/storage/test_freeze_gate_integrity.py",)),
+    ("scripts/freeze_gate_pytest_runner.py", ("tests/storage/test_freeze_gate_integrity.py",)),
     ("src/support/stores/c2_schema_upgrade.py", ("tests/storage/test_c2_schema_upgrade.py", "tests/storage/test_c2_schema_integrity.py", "tests/storage/v2/test_schema.py")),
     ("scripts/upgrade_agentos_c2_schema.py", ("tests/storage/test_c2_schema_upgrade.py",)),
     ("src/components/resource/__init__.py", ("tests/components/resource/test_node_store.py", "tests/components/resource/test_resource_auth.py")),
@@ -93,7 +94,9 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("apps/agent/app/api/agentos_v2.py", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py")),
     ("apps/agent/app/execution/wiring.py", ("tests/components/planner/test_production_authority_assembly.py",
         "tests/storage/test_runtime_assembly_failure_cleanup.py", "tests/storage/test_c2_schema_upgrade.py")),
-    ("apps/agent/app/main.py", ("tests/storage/test_runtime_assembly_failure_cleanup.py",)),
+    ("apps/agent/app/main.py", ("tests/storage/test_runtime_assembly_failure_cleanup.py",
+        "tests/runtime/test_app_lifespan.py")),
+    ("apps/agent/app/lifespan.py", ("tests/runtime/test_app_lifespan.py",)),
     ("apps/agent/app/execution/instance_lock.py", ("tests/storage/test_runtime_assembly_failure_cleanup.py",)),
     ("src/examples/", ("tests/runtime/test_kernel_vertical_slice.py", "tests/runtime/test_contract_review_delivery.py", "tests/runtime/v2/test_workspace_projection.py")),
     ("src/runtime/planning_loop.py", ("tests/runtime/test_kernel_vertical_slice.py",)),
@@ -127,7 +130,12 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 # Accepted INT-1 entry content, never HEAD. API uses that Windows checkout's
 # raw CRLF digest; the gate used LF. CLI did not exist at the accepted entry.
 EXTERNAL_BASELINE = {
-    "apps/agent/app/main.py": "118b1f5e38beb4f5f5937a115512bfba5f0b0a27d3b9a2abb8aaa6a1930fd4cc",
+    # Application entry reviewed at INT-2A-1-FIX-REVIEW-REMEDIATION (lifespan
+    # cleanup extracted to app.lifespan); drift forces the mapped tests.
+    "apps/agent/app/main.py": "f086ec71a00d5cb305fc6d68c34494bca011bc991b7d658caf4a400d4c56757d",
+    # Lifespan cleanup contract born at INT-2A-1-FIX-REVIEW-REMEDIATION;
+    # drift forces the lifespan cleanup tests.
+    "apps/agent/app/lifespan.py": "20b2d14eca2399c1892d8ca2e724dc90bc2b6f88220ff3e064da35b9934f5365",
     "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
     # Composition root reviewed at INT-2A-1-FIX-REVIEW-FIX; any
     # further change forces the assembly and schema-gate tests mapped above.
@@ -136,6 +144,9 @@ EXTERNAL_BASELINE = {
     # drift forces the assembly failure-cleanup tests mapped above.
     "apps/agent/app/execution/instance_lock.py": "b52efb5e1fd6c193ffb63734f3e10bf83597277dbe5992bce59deb7a1b7ff757",
     "scripts/freeze_gate.py": "06816f400a6d5a6143ead0f9d32af1d70a2715202cbbcd7223e05df1469d0637",
+    # Bounded pytest launcher born at INT-2A-1-FIX-REVIEW-REMEDIATION
+    # (WinError 206); drift forces the gate integrity tests.
+    "scripts/freeze_gate_pytest_runner.py": "68736bccd5b3cfaf0fbbd02a800ef23b12d03c269c471e4693a11ca77a8345ef",
     "scripts/upgrade_agentos_c2_schema.py": None,
 }
 EXTERNAL_SOURCES = tuple(EXTERNAL_BASELINE)
@@ -300,6 +311,27 @@ def collect_node_ids(paths: list[str], timeout: float) -> tuple[list[str], int, 
     return node_ids, completed.returncode, completed.stdout + completed.stderr
 
 
+PYTEST_RUNNER = ROOT / "scripts" / "freeze_gate_pytest_runner.py"
+
+
+def write_node_manifest(node_ids: list[str], path: Path) -> None:
+    """Persist the exact selection; the launch command stays length-bounded.
+
+    Windows caps CreateProcess command lines at 32767 characters.  Passing
+    every node ID as an argument crashed the gate with WinError 206 once the
+    selection grew past that bound, so the selection travels as data.
+    """
+    path.write_text("\n".join(node_ids) + "\n", encoding="utf-8", newline="\n")
+
+
+def build_pytest_command(manifest_path: Path) -> list[str]:
+    """Constant-length pytest launch; the node IDs travel in the manifest."""
+    return [
+        sys.executable, str(PYTEST_RUNNER), str(manifest_path),
+        "--tb=short", "--durations=0",
+    ]
+
+
 def check_diff_whitespace() -> tuple[int, str]:
     completed = subprocess.run(
         ["git", "diff", "--check", "HEAD"], cwd=ROOT,
@@ -409,16 +441,18 @@ def main() -> int:
         report["status"] = "INCOMPLETE_TIMEOUT_DURING_DISCOVERY"
         return write_report(report, wall_start, 1)
 
-    command = [
-        sys.executable, "-m", "pytest", "-q", *node_ids,
-        "--tb=short", "--durations=0",
-    ]
-    report["pytest_command"] = command
     output_dir = ROOT / "tmp" / "freeze_gate"
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = output_dir / f"{stamp}.log"
     report_path = output_dir / f"{stamp}.json"
+    manifest_path = output_dir / f"{stamp}.nodeids"
+    write_node_manifest(node_ids, manifest_path)
+    command = build_pytest_command(manifest_path)
+    report["pytest_command"] = command
+    report["node_manifest_path"] = str(manifest_path.relative_to(ROOT))
+    report["node_manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    report["node_manifest_count"] = len(node_ids)
     report["log_path"] = str(log_path.relative_to(ROOT))
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"

@@ -454,13 +454,27 @@ def test_adversarial_async_shutdown_closes_transport_in_owning_loop(tmp_path):
 
 
 def test_application_lifespan_awaits_runtime_shutdown_without_importing_application():
-    """Inspect lifecycle calls without importing main (which opens business DBs)."""
+    """Inspect lifecycle wiring without importing main (which opens business DBs)."""
     import ast
-    tree = ast.parse((ROOT / "apps/agent/app/main.py").read_text(encoding="utf8"))
-    lifecycle = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
-                     and node.name == "lifespan")
-    shutdowns = [node for node in ast.walk(lifecycle) if isinstance(node, ast.Call)
-                 and isinstance(node.func, ast.Name) and node.func.id == "aclose_runtime"]
-    awaited = [node.value for node in ast.walk(lifecycle) if isinstance(node, ast.Await)]
-    assert len(shutdowns) == 2
-    assert all(node in awaited for node in shutdowns)
+    main_tree = ast.parse((ROOT / "apps/agent/app/main.py").read_text(encoding="utf8"))
+    wiring_calls = [node for node in ast.walk(main_tree) if isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name) and node.func.id == "build_lifespan"]
+    assert len(wiring_calls) == 1
+    injected = {kw.arg for kw in wiring_calls[0].keywords}
+    assert {"runtime", "model_setup", "coordinator", "settings"} <= injected
+    assert not any(isinstance(node, ast.AsyncFunctionDef) and node.name == "lifespan"
+                   for node in ast.walk(main_tree)), "the cleanup contract lives in app.lifespan"
+
+    source = (ROOT / "apps/agent/app/lifespan.py").read_text(encoding="utf8")
+    tree = ast.parse(source)
+    # The default seam awaits the real asynchronous runtime closer.
+    assert "await aclose_runtime(target)" in source
+    # Both the failure paths and the shutdown path schedule the runtime close,
+    # exactly twice as before the extraction.
+    assert source.count("lambda: runtime_close(runtime)") == 2
+    # run_cleanups awaits every scheduled step even after earlier failures.
+    cleanups = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
+                    and node.name == "run_cleanups")
+    assert any(isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
+               and isinstance(node.value.func, ast.Name) and node.value.func.id == "step"
+               for node in ast.walk(cleanups))

@@ -3,7 +3,6 @@
 知弈 - 职业智能体操作系统
 提供AI能力：文本生成、语音识别、语音合成
 """
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -23,12 +22,11 @@ from app.execution import (
     build_default_runtime,
     build_model_setup,
 )
-from app.execution.wiring import aclose_runtime
+from app.lifespan import build_lifespan
 from app.tools import configure_chat_tool_runtime, get_tool_runtime
 from app.config import settings
 from app.security.internal_auth import (
     InternalServiceAuthMiddleware,
-    require_valid_internal_token_configuration,
 )
 from app.utils.logger import setup_logger
 from app.middleware.errorhandler import (
@@ -46,41 +44,15 @@ configure_chat_tool_runtime(runtime)
 model_setup = build_model_setup(runtime)
 coordinator = RunExecutionCoordinator(runtime)
 
-# 生命周期事件处理器
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    if settings.ENVIRONMENT.strip().lower() in {"prod", "production"}:
-        require_valid_internal_token_configuration(settings.AI_INTERNAL_TOKEN)
-    try:
-        warmup = await get_tool_runtime().warmup()
-        logger.info("Read-only tool runtime ready: %s", warmup)
-    except Exception as exc:
-        logger.warning("Read-only tool runtime warmup failed: %s", type(exc).__name__)
-    try:
-        await model_setup.start()
-        if bind_registered_planner_llm(runtime):
-            logger.info("Planner model streaming bound to the Runtime-owned model registry")
-        await coordinator.startup()
-    except Exception:
-        await model_setup.close()
-        await aclose_runtime(runtime)
-        raise
-    try:
-        yield
-    finally:
-        try:
-            await coordinator.shutdown()
-        finally:
-            try:
-                await model_setup.close()
-            finally:
-                await aclose_runtime(runtime)
-    
-        # 关闭时执行 - 简化日志输出
-        from app.llm.provider_conversation import close_configured_provider_conversation_store
-
-        await close_configured_provider_conversation_store()
+# 生命周期事件处理器：清理合同见 app.lifespan（失败路径关闭全部已构造层并保留原始异常）
+lifespan = build_lifespan(
+    runtime=runtime,
+    model_setup=model_setup,
+    coordinator=coordinator,
+    settings=settings,
+    tool_warmup=lambda: get_tool_runtime().warmup(),
+    bind_planner=bind_registered_planner_llm,
+)
 
 app = FastAPI(
     title="知弈 AI Service",

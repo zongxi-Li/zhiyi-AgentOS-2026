@@ -214,3 +214,46 @@ def test_wall_clock_over_budget_cannot_be_a_success(tmp_path, monkeypatch):
     report = {"status": "PASSED", "budget_seconds": 300}
     assert gate["write_report"](report, 0, 0, tmp_path / "report.json") == 1
     assert report["status"] == "INCOMPLETE_GATE_BUDGET_EXCEEDED"
+
+
+def test_pytest_launch_command_is_bounded_and_preserves_the_selection(tmp_path):
+    """Windows caps CreateProcess command lines at 32767 chars (WinError 206).
+
+    The selection travels as a manifest file: the launch command must stay
+    short for any selection size, and the manifest must round-trip the exact
+    node list without reordering, dropping, or degrading to whole files.
+    """
+    gate = load()
+    ids = [f"tests/storage/test_synthetic_{index:04d}.py::test_case_{index}[{index}-{'x' * 48}]"
+           for index in range(500)]
+    naive = subprocess.list2cmdline(
+        [sys.executable, "-m", "pytest", "-q", *ids, "--tb=short", "--durations=0"])
+    assert len(naive) > 32767  # per-node argv genuinely cannot start on Windows
+    manifest = tmp_path / "selected.nodeids"
+    gate["write_node_manifest"](ids, manifest)
+    command = gate["build_pytest_command"](manifest)
+    assert len(subprocess.list2cmdline(command)) < 4096
+    assert [line for line in manifest.read_text(encoding="utf-8").splitlines() if line] == ids
+
+
+def test_manifest_runner_executes_exactly_the_listed_nodes_and_propagates_exit_status(tmp_path):
+    """Short command + manifest drives the same pytest selection end to end."""
+    gate = load()
+    runner = gate["ROOT"] / "scripts" / "freeze_gate_pytest_runner.py"
+    assert runner.is_file(), "the bounded launcher script must exist"
+    good = tmp_path / "good.nodeids"
+    good.write_text(
+        "tests/storage/test_freeze_gate_integrity.py::test_missing_default_baseline_blocks_before_test_discovery\n",
+        encoding="utf-8")
+    done = subprocess.run([sys.executable, str(runner), str(good), "--tb=short"],
+                          cwd=gate["AGENTOS"], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=120)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "1 passed" in done.stdout
+    bad = tmp_path / "bad.nodeids"
+    bad.write_text("tests/storage/test_freeze_gate_integrity.py::definitely_not_a_test\n",
+                   encoding="utf-8")
+    failed = subprocess.run([sys.executable, str(runner), str(bad), "--tb=short"],
+                            cwd=gate["AGENTOS"], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=120)
+    assert failed.returncode != 0, failed.stdout + failed.stderr
