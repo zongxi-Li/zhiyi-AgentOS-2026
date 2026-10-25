@@ -14,9 +14,16 @@ Cleanup contract:
 * Normal shutdown awaits every step even when earlier steps fail, in reverse
   construction order, and surfaces the first cleanup failure only after all
   steps ran - and never replaces an in-flight exception from the served body.
+* asyncio.CancelledError is never swallowed: a cancellation observed inside a
+  cleanup step still lets the remaining steps run, then the CancelledError is
+  re-raised.  During a startup-failure unwind the original startup error
+  keeps propagating (the cancellation is logged and stays recorded on the
+  task); during normal shutdown the re-raised cancellation wins over mere
+  cleanup failures.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -26,15 +33,29 @@ logger = logging.getLogger(__name__)
 
 
 async def run_cleanups(steps: Sequence[tuple[str, Callable[[], Awaitable[None]]]]) -> list[BaseException]:
-    """Await every step even when earlier ones fail; collect, log, continue."""
+    """Await every step even when earlier ones fail or are cancelled.
+
+    Ordinary step failures are collected and logged so later steps still run.
+    A cancellation observed inside a step also runs the remaining steps; the
+    CancelledError is then re-raised so the cooperative cancel signal is
+    never swallowed.  Other BaseExceptions (KeyboardInterrupt, SystemExit)
+    propagate immediately.
+    """
     failures: list[BaseException] = []
+    cancelled: asyncio.CancelledError | None = None
     for name, step in steps:
         try:
             await step()
+        except asyncio.CancelledError as exc:
+            if cancelled is None:
+                cancelled = exc
+            logger.warning("lifespan cleanup step cancelled: %s", name, exc_info=True)
         except Exception as exc:
             logger.warning("lifespan cleanup step failed: %s (%s)",
                            name, type(exc).__name__, exc_info=True)
             failures.append(exc)
+    if cancelled is not None:
+        raise cancelled
     return failures
 
 
@@ -84,8 +105,14 @@ def build_lifespan(
         except BaseException:
             # Refused before any service started; the module-level assembly
             # still owns the instance lock and its stores.  Cleanup failures
-            # must not mask the original configuration error.
-            await close_assembly(first_step=None)
+            # must not mask the original configuration error; a cancellation
+            # observed during cleanup was logged and every step attempted,
+            # but the original refusal keeps propagating.
+            try:
+                await close_assembly(first_step=None)
+            except asyncio.CancelledError:
+                logger.warning("lifespan cleanup cancelled during startup refusal",
+                               exc_info=True)
             raise
         if tool_warmup is not None:
             try:
@@ -100,11 +127,19 @@ def build_lifespan(
                     "Planner model streaming bound to the Runtime-owned model registry")
             await coordinator.startup()
         except BaseException:
-            await close_assembly(first_step="coordinator.shutdown")
+            # Every cleanup step was attempted even under cancellation; the
+            # original startup error must keep propagating regardless.
+            try:
+                await close_assembly(first_step="coordinator.shutdown")
+            except asyncio.CancelledError:
+                logger.warning("lifespan cleanup cancelled during startup failure",
+                               exc_info=True)
             raise
         try:
             yield
         finally:
+            # A cancellation re-raised here has already run every step first;
+            # it must not be swallowed by the failure surfacing below.
             failures = await run_cleanups((
                 ("coordinator.shutdown", coordinator.shutdown),
                 ("model_setup.close", model_setup.close),

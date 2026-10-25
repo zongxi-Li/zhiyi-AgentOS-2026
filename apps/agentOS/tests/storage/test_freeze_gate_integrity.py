@@ -160,7 +160,8 @@ def test_instance_lock_is_pinned_and_drift_forces_cleanup_tests():
 
 @pytest.mark.parametrize("fault,status", [("sources", "INCOMPLETE_SOURCE_CHANGED"),
     ("schema_failure", "FAILED"), ("timeout", "INCOMPLETE_TIMEOUT"),
-    ("baseline", "INCOMPLETE_BASELINE_CHANGED")])
+    ("baseline", "INCOMPLETE_BASELINE_CHANGED"),
+    ("launch", "INCOMPLETE_PYTEST_LAUNCH")])
 def test_gate_never_reports_success_for_changed_sources_failed_preflight_or_timeout(tmp_path, monkeypatch, fault, status):
     gate = load()
     ns = gate["main"].__globals__
@@ -184,6 +185,10 @@ def test_gate_never_reports_success_for_changed_sources_failed_preflight_or_time
             return self.returncode
         def kill(self):
             pass
+
+    def launch_refused(command, **kwargs):
+        # Injectable stand-in for OS launch failures (WinError 206 et al.).
+        raise OSError("[WinError 206] 文件名或扩展名太长。")
     for key, value in {
         "ROOT": tmp_path, "AGENTOS": test_file.parents[1],
         "source_snapshot": lambda: {"aggregate": next(snapshots), "files": {"source": "hash"}},
@@ -193,7 +198,8 @@ def test_gate_never_reports_success_for_changed_sources_failed_preflight_or_time
         "collect_node_ids": lambda *a: (["tests/test_target.py::test_target"], 0, ""),
         "load_duration_history": lambda: {}, "update_duration_history": lambda *a: None,
         "os": SimpleNamespace(environ={}, name="posix"),
-        "subprocess": SimpleNamespace(check_output=lambda *a, **kw: "", Popen=Child,
+        "subprocess": SimpleNamespace(check_output=lambda *a, **kw: "",
+                                      Popen=launch_refused if fault == "launch" else Child,
                                       STDOUT=subprocess.STDOUT, TimeoutExpired=subprocess.TimeoutExpired),
     }.items():
         monkeypatch.setitem(ns, key, value)
@@ -205,6 +211,13 @@ def test_gate_never_reports_success_for_changed_sources_failed_preflight_or_time
     result = json.loads(reports[0].read_text(encoding="utf8"))
     assert result["status"] == status
     assert result["status"] != "PASSED"
+    if fault == "launch":
+        error = result["pytest_launch_error"]
+        assert error["type"] == "OSError"
+        assert "WinError 206" in error["message"]
+        assert result["node_manifest_count"] == 1, "the unexecuted selection stays identified"
+        assert result["pytest_counts"] is None, "a launch failure is not a test run"
+        assert result["source_aggregate_sha256"] == "initial"
 
 
 def test_wall_clock_over_budget_cannot_be_a_success(tmp_path, monkeypatch):

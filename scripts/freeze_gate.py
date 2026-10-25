@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,9 +134,9 @@ EXTERNAL_BASELINE = {
     # Application entry reviewed at INT-2A-1-FIX-REVIEW-REMEDIATION (lifespan
     # cleanup extracted to app.lifespan); drift forces the mapped tests.
     "apps/agent/app/main.py": "f086ec71a00d5cb305fc6d68c34494bca011bc991b7d658caf4a400d4c56757d",
-    # Lifespan cleanup contract born at INT-2A-1-FIX-REVIEW-REMEDIATION;
-    # drift forces the lifespan cleanup tests.
-    "apps/agent/app/lifespan.py": "20b2d14eca2399c1892d8ca2e724dc90bc2b6f88220ff3e064da35b9934f5365",
+    # Lifespan cleanup contract at INT-2A-1-FIX-REVIEW-REMEDIATION-2
+    # (cancellation safety); drift forces the lifespan cleanup tests.
+    "apps/agent/app/lifespan.py": "1e4f5e7cabfd5df60ed8a7d3deb1ccd5e72b3f59499e6389ff01a422ced19b01",
     "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
     # Composition root reviewed at INT-2A-1-FIX-REVIEW-FIX; any
     # further change forces the assembly and schema-gate tests mapped above.
@@ -457,23 +458,43 @@ def main() -> int:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     timed_out = False
+    launch_error: dict[str, object] | None = None
     remaining = max(0.0, args.budget_seconds - (time.perf_counter() - wall_start))
     with log_path.open("wb") as log:
         if remaining <= 0:
             process = None
             timed_out = True
         else:
-            process = subprocess.Popen(command, cwd=AGENTOS, stdout=log, stderr=subprocess.STDOUT, env=env)
             try:
-                process.wait(timeout=remaining)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                                   cwd=ROOT, capture_output=True, check=False)
-                else:
-                    process.kill()
-                process.wait()
+                process = subprocess.Popen(command, cwd=AGENTOS, stdout=log, stderr=subprocess.STDOUT, env=env)
+            except OSError as exc:
+                # The launcher itself could not start (e.g. Windows WinError
+                # 206 command-line overflow).  This is not a test run: report
+                # the refusal while the manifest recorded above still
+                # identifies the exact unexecuted selection.
+                process = None
+                launch_error = {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback_tail": traceback.format_exc().strip().splitlines()[-4:],
+                }
+            if process is not None:
+                try:
+                    process.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                       cwd=ROOT, capture_output=True, check=False)
+                    else:
+                        process.kill()
+                    process.wait()
+    if launch_error is not None:
+        report["pytest_launch_error"] = launch_error
+        report["pytest_exit_code"] = None
+        report["timed_out"] = False
+        report["status"] = "INCOMPLETE_PYTEST_LAUNCH"
+        return write_report(report, wall_start, 1, report_path)
     output = log_path.read_text(encoding="utf-8", errors="replace")
     report["pytest_counts"] = parse_pytest_counts(output)
     observed_durations = measured_test_durations(output)

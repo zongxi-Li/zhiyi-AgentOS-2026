@@ -202,3 +202,211 @@ def test_body_exception_is_never_replaced_by_cleanup_failures():
     with pytest.raises(RuntimeError, match="request loop crashed"):
         run(drive(lifespan, body))
     assert "runtime_close" in events
+
+
+# ---------------------------------------------------------------------------
+# Cancellation safety: a cancel landing on one cleanup step must not skip the
+# remaining steps, must not be swallowed, and must not mask the original
+# startup error.  Cancellation is injected as the step's own exception, which
+# is exactly what the event loop delivers at an await point.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cancelled_stage", ["coordinator", "model", "runtime", "provider"])
+def test_cancellation_in_shutdown_runs_remaining_steps_then_reraises(cancelled_stage):
+    events = []
+
+    async def runtime_close(runtime):
+        events.append("runtime_close")
+
+    async def provider_store_close():
+        events.append("provider_store_close")
+        if cancelled_stage == "provider":
+            raise asyncio.CancelledError()
+
+    coordinator = CoordinatorStub(shutdown_error=asyncio.CancelledError()
+                                  if cancelled_stage == "coordinator" else None)
+    model = ModelSetupStub(close_error=asyncio.CancelledError()
+                           if cancelled_stage == "model" else None)
+
+    async def failing_runtime_close(runtime):
+        events.append("runtime_close")
+        if cancelled_stage == "runtime":
+            raise asyncio.CancelledError()
+
+    from app.lifespan import build_lifespan
+    lifespan = build_lifespan(
+        runtime=object(), model_setup=model, coordinator=coordinator,
+        settings=production_settings(), token_check=lambda token: None,
+        tool_warmup=None, bind_planner=None,
+        runtime_close=failing_runtime_close if cancelled_stage == "runtime" else runtime_close,
+        provider_store_close=provider_store_close)
+    with pytest.raises(asyncio.CancelledError):
+        run(drive(lifespan))
+    assert events == ["runtime_close", "provider_store_close"], \
+        "every later step must still run after the cancelled one"
+
+
+def test_cancellation_during_startup_failure_cleanup_keeps_original_error():
+    """The startup error wins; the cancel is logged, never able to skip steps."""
+    events = []
+
+    async def runtime_close(runtime):
+        events.append("runtime_close")
+
+    from app.lifespan import build_lifespan
+    lifespan = build_lifespan(
+        runtime=object(),
+        model_setup=ModelSetupStub(start_error=RuntimeError("startup boom"),
+                                   close_error=asyncio.CancelledError()),
+        coordinator=CoordinatorStub(startup_error=RuntimeError("startup boom")),
+        settings=production_settings(), token_check=lambda token: None,
+        tool_warmup=None, bind_planner=None,
+        runtime_close=runtime_close, provider_store_close=None)
+    with pytest.raises(RuntimeError, match="startup boom"):
+        run(drive(lifespan))
+    assert "runtime_close" in events, "the cancelled model close must not skip the lock release"
+
+
+def test_cancellation_during_token_refusal_cleanup_keeps_original_error():
+    def refusing_token_check(token):
+        raise ValueError("AI_INTERNAL_TOKEN is not configured")
+
+    events = []
+
+    async def runtime_close(runtime):
+        events.append("runtime_close")
+
+    from app.lifespan import build_lifespan
+    lifespan = build_lifespan(
+        runtime=object(),
+        model_setup=ModelSetupStub(close_error=asyncio.CancelledError()),
+        coordinator=CoordinatorStub(),
+        settings=production_settings(), token_check=refusing_token_check,
+        tool_warmup=None, bind_planner=None,
+        runtime_close=runtime_close, provider_store_close=None)
+    with pytest.raises(ValueError, match="AI_INTERNAL_TOKEN"):
+        run(drive(lifespan))
+    assert "runtime_close" in events
+
+
+# ---------------------------------------------------------------------------
+# Default dependency behaviour: the lazy-imported production seams are
+# resolved at call time, so monkeypatching the owning module is observable.
+# ---------------------------------------------------------------------------
+
+
+def test_default_token_check_lazily_imports_and_runs_only_in_production(monkeypatch):
+    import app.security.internal_auth as internal_auth
+    import app.execution.wiring as wiring
+    import app.llm.provider_conversation as provider_conversation
+    order = []
+
+    def recording_check(token):
+        order.append(("token", token))
+
+    async def inert_aclose(runtime):
+        order.append("runtime_close")
+
+    async def inert_provider_close():
+        order.append("provider_store_close")
+
+    monkeypatch.setattr(internal_auth, "require_valid_internal_token_configuration", recording_check)
+    monkeypatch.setattr(wiring, "aclose_runtime", inert_aclose)
+    monkeypatch.setattr(provider_conversation, "close_configured_provider_conversation_store",
+                       inert_provider_close)
+    from app.lifespan import build_lifespan
+
+    production = production_settings()
+    lifespan = build_lifespan(runtime=object(), model_setup=ModelSetupStub(),
+                              coordinator=CoordinatorStub(), settings=production,
+                              tool_warmup=None, bind_planner=None)
+    run(drive(lifespan))
+    assert order == [("token", "token-value"), "runtime_close", "provider_store_close"]
+
+    order.clear()
+    development = SimpleNamespace(ENVIRONMENT="development", AI_INTERNAL_TOKEN="token-value")
+    lifespan = build_lifespan(runtime=object(), model_setup=ModelSetupStub(),
+                              coordinator=CoordinatorStub(), settings=development,
+                              tool_warmup=None, bind_planner=None)
+    run(drive(lifespan))
+    assert order == ["runtime_close", "provider_store_close"], "the token gate is production-only"
+
+
+def test_default_runtime_close_and_provider_close_import_and_run_in_order(monkeypatch):
+    import app.security.internal_auth as internal_auth
+    import app.execution.wiring as wiring
+    import app.llm.provider_conversation as provider_conversation
+    order = []
+
+    def inert_check(token):
+        order.append(("token", token))
+
+    async def recording_aclose(runtime):
+        order.append(("runtime_close", runtime))
+
+    async def recording_provider_close():
+        order.append("provider_store_close")
+
+    monkeypatch.setattr(internal_auth, "require_valid_internal_token_configuration", inert_check)
+    monkeypatch.setattr(wiring, "aclose_runtime", recording_aclose)
+    monkeypatch.setattr(provider_conversation, "close_configured_provider_conversation_store",
+                       recording_provider_close)
+    from app.lifespan import build_lifespan
+
+    runtime = object()
+    model, coordinator = ModelSetupStub(), CoordinatorStub()
+    lifespan = build_lifespan(runtime=runtime, model_setup=model, coordinator=coordinator,
+                              settings=production_settings(),
+                              tool_warmup=None, bind_planner=None)
+    run(drive(lifespan))
+    assert order == [("token", "token-value"), ("runtime_close", runtime), "provider_store_close"]
+    assert model.calls == ["model.start", "model.close"]
+    assert coordinator.calls == ["coordinator.startup", "coordinator.shutdown"]
+
+
+def test_default_runtime_close_runs_on_startup_failure(monkeypatch):
+    import app.execution.wiring as wiring
+    order = []
+
+    async def recording_aclose(runtime):
+        order.append("runtime_close")
+
+    monkeypatch.setattr(wiring, "aclose_runtime", recording_aclose)
+    from app.lifespan import build_lifespan
+
+    lifespan = build_lifespan(
+        runtime=object(),
+        model_setup=ModelSetupStub(),
+        coordinator=CoordinatorStub(startup_error=RuntimeError("startup boom")),
+        settings=production_settings(), token_check=lambda token: None,
+        tool_warmup=None, bind_planner=None)
+    with pytest.raises(RuntimeError, match="startup boom"):
+        run(drive(lifespan))
+    assert order == ["runtime_close"]
+
+
+def test_default_token_refusal_closes_assembly_through_default_seams(monkeypatch):
+    import app.security.internal_auth as internal_auth
+    import app.execution.wiring as wiring
+    order = []
+
+    def refusing_check(token):
+        order.append("token_check")
+        raise ValueError("AI_INTERNAL_TOKEN is not configured")
+
+    async def recording_aclose(runtime):
+        order.append("runtime_close")
+
+    monkeypatch.setattr(internal_auth, "require_valid_internal_token_configuration", refusing_check)
+    monkeypatch.setattr(wiring, "aclose_runtime", recording_aclose)
+    from app.lifespan import build_lifespan
+
+    model, coordinator = ModelSetupStub(), CoordinatorStub()
+    lifespan = build_lifespan(runtime=object(), model_setup=model, coordinator=coordinator,
+                              settings=production_settings(),
+                              tool_warmup=None, bind_planner=None)
+    with pytest.raises(ValueError, match="AI_INTERNAL_TOKEN"):
+        run(drive(lifespan))
+    assert order == ["token_check", "runtime_close"]
+    assert model.calls == ["model.close"]
