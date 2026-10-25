@@ -138,9 +138,9 @@ EXTERNAL_BASELINE = {
     # (cancellation safety); drift forces the lifespan cleanup tests.
     "apps/agent/app/lifespan.py": "1e4f5e7cabfd5df60ed8a7d3deb1ccd5e72b3f59499e6389ff01a422ced19b01",
     "apps/agent/app/api/agentos_v2.py": "b78ffdd8d0b1c004f9befdd63c7372070cf9a733c244f86591328897791ccc21",
-    # Composition root reviewed at INT-2A-1-FIX-REVIEW-FIX; any
+    # Composition root reviewed at INT-2A-2-FIX (async cancellation); any
     # further change forces the assembly and schema-gate tests mapped above.
-    "apps/agent/app/execution/wiring.py": "2d4f8e7c3bd98550a613cb039c392bb1a96e4ed91a26ce5e1725a44defa924cf",
+    "apps/agent/app/execution/wiring.py": "f4bf4a611b5939a880bf7819b1665264ad3319d0b452f3ad2a1ef08e4b4f4d23",
     # Instance lock reviewed at INT-2A-1-FIX-REVIEW-FIX;
     # drift forces the assembly failure-cleanup tests mapped above.
     "apps/agent/app/execution/instance_lock.py": "b52efb5e1fd6c193ffb63734f3e10bf83597277dbe5992bce59deb7a1b7ff757",
