@@ -50,6 +50,15 @@ class PermitRequest(BaseModel):
     expected_graph_version: int = Field(alias="expectedGraphVersion", strict=True, ge=1)
 
 
+class DispatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    operation_id: str = Field(alias="operationId", min_length=1, max_length=200)
+    expected_permit_id: str = Field(alias="expectedPermitId", min_length=1, max_length=300)
+    expected_graph_id: str = Field(alias="expectedGraphId", min_length=1, max_length=300)
+    expected_graph_version: int = Field(alias="expectedGraphVersion", strict=True, ge=1)
+    expected_runtime_revision: int = Field(alias="expectedRuntimeRevision", strict=True, ge=0)
+
+
 @contextmanager
 def control_errors():
     try:
@@ -189,7 +198,8 @@ def project_initial_control(runtime, run):
                     assert_settled_operations(runtime, current)
                     if runtime.workflow_store.get_run(current.run_id) == current:
                         with runtime._execution_slot_guard:
-                            result["dispatchEligible"] = current.run_id not in runtime._active_execution_slots
+                            result["dispatchEligible"] = (current.run_id not in runtime._active_execution_slots
+                                                          and current.status.value != "waiting_review")
             except (ValueError, KeyError, RuntimeError, sqlite3.Error, TypeError, PermissionError):
                 pass  # Unproven eligibility remains false; historical issuance survives.
         result["executionAuthorized"] = result["dispatchEligible"]
@@ -210,8 +220,30 @@ def require_execution_sources(runtime, mission_id, run_id, request, activation_i
     return run
 
 
-def create_c2_router(runtime):
+def create_c2_router(runtime, coordinator=None):
     router = APIRouter()
+
+    @router.post("/missions/{mission_id}/runs/{run_id}/execution/dispatches", status_code=202)
+    async def dispatch(mission_id: str, run_id: str, request: DispatchRequest):
+        from support.stores.execution_dispatch_store import DispatchCommand, DispatchConflict
+        with control_errors():
+            run = require_c2(runtime, mission_id, run_id, write=True)
+            if coordinator is None or getattr(runtime, "execution_dispatch_store", None) is None:
+                raise HTTPException(409, "Dispatch control is not enabled")
+            principal = current_semantic_principal()
+            key = operation_key("dispatch", run, request.operation_id)
+            command = DispatchCommand(dispatch_id="dispatch_" + stable_checksum(key)[:40], operation_key=key,
+                request_fingerprint=stable_checksum(request.model_dump(by_alias=True)),
+                mission_id=mission_id, run_id=run_id, permit_id=request.expected_permit_id,
+                graph_id=request.expected_graph_id, graph_version=request.expected_graph_version,
+                runtime_revision=request.expected_runtime_revision, actor_id=principal.actor_id, tenant_id=principal.tenant_id)
+            try:
+                accepted, replay = await coordinator.submit_permitted(command)
+            except (DispatchConflict, ValueError) as exc:
+                raise HTTPException(409, "Dispatch is not eligible or operation conflicts") from exc
+            current = runtime.get_status(run_id)
+            return {"operationId": request.operation_id, **accepted.public(replay), "runStatus": current.status.value,
+                    "errorCode": current.error.get("code") if isinstance(current.error, dict) else None}
 
     @router.post("/missions/{mission_id}/runs/{run_id}/graph/materializations")
     def materialize(mission_id: str, run_id: str, request: MaterializeInitialRequest):

@@ -685,7 +685,7 @@ def create_router(
     coordinator: RunExecutionCoordinator,
 ) -> APIRouter:
     router = APIRouter(prefix="/agentos/v2")
-    router.include_router(create_c2_router(runtime))
+    router.include_router(create_c2_router(runtime, coordinator))
     interaction = RuntimePlanningInteraction(runtime)
     identity_adapter = getattr(runtime, "identity_lifecycle", None)
     identity_repositories = getattr(identity_adapter, "repositories", None)

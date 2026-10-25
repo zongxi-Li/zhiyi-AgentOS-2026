@@ -358,6 +358,8 @@ def build_default_runtime(
         raise RuntimeError(
             "AGENTOS_C2_EXECUTION_AUTHORITIES requires AGENTOS_MISSION_SEMANTIC_CONVERGENCE"
         )
+    if str(env.get("AGENTOS_C2_EXECUTION_DISPATCH") or "false").lower() == "true" and not c2_execution_authorities:
+        raise RuntimeError("AGENTOS_C2_EXECUTION_DISPATCH requires C2 execution authorities")
     workflow_path = _workflow_db_path(env)
     acquire_workflow_instance_lock(str(workflow_path))
     progress = _AssemblyProgress()
@@ -540,6 +542,10 @@ def _assemble_default_runtime(
             SQLiteStagedGraphCheckpointStore(checkpoint_db_path),
         )
         runtime.enable_execution_permit(SQLiteExecutionPermitStore(workflow_db_path))
+    runtime.execution_dispatch_store = None
+    if str(env.get("AGENTOS_C2_EXECUTION_DISPATCH") or "false").lower() == "true":
+        from support.stores.execution_dispatch_store import SQLiteExecutionDispatchStore
+        runtime.execution_dispatch_store = SQLiteExecutionDispatchStore(runtime.workflow_store.db_path)
     reconciliation = IdentityProjectionReconciler(
         identity_adapter
     ).reconcile_workflow_store(runtime.workflow_store, audit_existing=False)

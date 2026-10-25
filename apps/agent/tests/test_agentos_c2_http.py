@@ -42,7 +42,7 @@ def prepare(folder):
 
 
 @contextmanager
-def server(folder, *, semantic=True, c2=True, legacy=False):
+def server(folder, *, semantic=True, c2=True, legacy=False, dispatch=False, agent_factory=None, setup=None):
     keys = ("EXECUTION_VALUE", "CONTENT_MANIFEST", "EXECUTION_MEMORY", "PROVENANCE", "AUDIT",
             "RESOURCE", "NODE", "AGENT", "RESOURCE_HEALTH", "EVOLUTION")
     env = {f"AGENTOS_{key}_DB": str(folder / f"{key}.sqlite") for key in keys}
@@ -51,6 +51,7 @@ def server(folder, *, semantic=True, c2=True, legacy=False):
                AGENTOS_IDENTITY_DB=str(folder / "identity.sqlite"),
                AGENTOS_MISSION_SEMANTIC_CONVERGENCE=str(semantic).lower(),
                AGENTOS_C2_EXECUTION_AUTHORITIES=str(c2).lower(),
+               AGENTOS_C2_EXECUTION_DISPATCH=str(dispatch).lower(),
                AGENTOS_ALLOW_LEGACY_MISSION_INTENT=str(legacy).lower())
     state = {}
 
@@ -60,15 +61,18 @@ def server(folder, *, semantic=True, c2=True, legacy=False):
         # execution live on the same server thread, not the TestClient caller.
         runtime = build_default_runtime(environment=env, tool_runtime=ScopedTools(),
                                         model_runtime=object(), intent_llm=NoModel())
-        agent = ContractReviewAgent()
+        agent = agent_factory() if agent_factory else ContractReviewAgent()
         runtime.agent_registry.register(agent)
         runtime.workflow_registry.register(workflow())
         from examples.contract_review import BoundaryPlanner
         runtime.runtime_planning_coordinator.planner_for_run = lambda run: BoundaryPlanner()
         coordinator = RunExecutionCoordinator(runtime)
+        runtime._test_coordinator = coordinator
         app.include_router(create_router(runtime, coordinator))
         state.update(runtime=runtime, agent=agent)
         try:
+            if setup:
+                setup(runtime, coordinator)
             await coordinator.startup()
             yield
         finally:

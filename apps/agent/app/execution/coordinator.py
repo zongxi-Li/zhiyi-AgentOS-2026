@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
+from contextlib import contextmanager
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -41,11 +43,102 @@ class RunExecutionCoordinator:
             is_in_place_retry = run_status == "retrying"
             if not (is_new_run or is_in_place_retry):
                 return False
+            dispatch_store = getattr(self.runtime, "execution_dispatch_store", None)
+            if dispatch_store is not None and "graphActivation" in getattr(run, "execution_state", {}):
+                command = dispatch_store.get(run_id)
+                return await self._schedule_permitted(command, recover=True) if command else False
             task = asyncio.create_task(self._run_managed(run_id), name=f"workflow-run:{run_id}")
             self._tasks[run_id] = task
             self._ensure_wait_monitor()
         logger.info("run_submitted", extra={"runId": run_id})
         return True
+
+    @contextmanager
+    def _dispatch_identity(self, command):
+        # Only an accepted server-owned command can restore this context.
+        # Current semantic authorization and Permit gates are still rechecked.
+        from app.security.internal_auth import TrustedUserContext, _trusted_user_context
+        token = _trusted_user_context.set(TrustedUserContext(
+            command.actor_id, "dispatch:" + command.dispatch_id, "dispatch_recovery", command.tenant_id))
+        try:
+            yield
+        finally:
+            _trusted_user_context.reset(token)
+
+    def _validate_permitted(self, run, command, *, initial=False):
+        from runtime.permit_recovery import assert_settled_operations
+        from support.stores.execution_dispatch_store import DispatchConflict
+        if (run is None or run.run_id != command.run_id or run.mission_id != command.mission_id
+                or run.record_state.value != "active" or run.status.value not in {"pending", "planning", "running", "retrying"}
+                or run.execution_state.get("executionPermitId") != command.permit_id
+                or run.execution_state.get("graphId") != command.graph_id
+                or run.execution_state.get("graphVersion") != command.graph_version
+                or initial and run.runtime_revision != command.runtime_revision):
+            raise DispatchConflict("Dispatch source or lifecycle changed")
+        principal = self.runtime.semantic_principal_provider()
+        self.runtime.mission_semantic_service.require_write_access(principal, run.mission_id)
+        authority = self.runtime.execution_permit_authority
+        if authority is None:
+            raise DispatchConflict("Permit authority unavailable")
+        authority.assert_dispatchable(run)
+        assert_settled_operations(self.runtime, run)
+        with self.runtime._execution_slot_guard:
+            if run.run_id in self.runtime._active_execution_slots:
+                raise DispatchConflict("Run already owns an execution slot")
+
+    async def submit_permitted(self, command):
+        """Durably accept a command, then own its Task; never manufacture a Permit."""
+        from support.run_execution_fence import acquire_run_fence
+        store = getattr(self.runtime, "execution_dispatch_store", None)
+        if store is None:
+            raise ValueError("Dispatch control is not enabled")
+        async with self._lock:
+            if not self._accepting:
+                raise RuntimeError("workflow execution coordinator is shutting down")
+            old = store.get(command.run_id)
+            if old is not None:
+                from support.stores.execution_dispatch_store import DispatchConflict
+                if old.operation_key != command.operation_key or old.request_fingerprint != command.request_fingerprint:
+                    raise DispatchConflict("Run already has another Dispatch command")
+                accepted, replay = old, True
+            else:
+                with self.runtime.run_lock_manager.lock_for(command.run_id), acquire_run_fence(store.db_path, command.run_id):
+                    accepted, replay = store.accept(command, lambda run: self._validate_permitted(run, command, initial=True))
+            task = self._tasks.get(command.run_id)
+            if task is None or task.done():
+                await self._schedule_permitted(accepted, recover=replay)
+            return accepted, replay
+
+    def _create_permitted_task(self, command):
+        self._tasks[command.run_id] = asyncio.create_task(
+            self._run_managed(command.run_id, permitted=True), name=f"workflow-dispatch:{command.dispatch_id}")
+
+    async def _schedule_permitted(self, command, *, recover):
+        """Caller owns coordinator lock. Recovery remains the Runtime's decision."""
+        from support.run_execution_fence import acquire_run_fence
+        task = self._tasks.get(command.run_id)
+        if task is not None and not task.done():
+            return False
+        run = self.runtime.workflow_store.get_run(command.run_id)
+        if run.status.value in {"waiting_review", "completed", "failed", "cancelled", "superseded"}:
+            return False
+        with self._dispatch_identity(command):
+            try:
+                if recover:
+                    self.runtime.reconcile_execution_checkpoint(command.run_id)
+                with self.runtime.run_lock_manager.lock_for(command.run_id), acquire_run_fence(
+                        self.runtime.workflow_store.db_path, command.run_id):
+                    self._validate_permitted(self.runtime.workflow_store.get_run(command.run_id), command)
+            except (ValueError, KeyError, RuntimeError, PermissionError, sqlite3.Error) as exc:
+                # Existing lifecycle authority records a durable, explicit block;
+                # no failed execution receipt or external-effect proof is invented.
+                await self.runtime.fail_run_safely(command.run_id, error_code="dispatch_recovery_blocked",
+                    error_message="Dispatch recovery could not prove safe execution; operator review required")
+                logger.warning("dispatch_recovery_blocked", extra={"runId": command.run_id, "errorType": type(exc).__name__})
+                return False
+            self._create_permitted_task(command)
+            self._ensure_wait_monitor()
+            return True
 
     def is_active(self, run_id: str) -> bool:
         task = self._tasks.get(run_id)
@@ -78,8 +171,15 @@ class RunExecutionCoordinator:
                 logger.exception("identity outbox startup reconciliation crashed")
         store = getattr(self.runtime, "workflow_store", None)
         for run in store.list_non_terminal_runs(limit=orphan_limit) if store is not None else ():
+            if "graphActivation" in getattr(run, "execution_state", {}):
+                continue  # Permit without an accepted Dispatch is never startup work.
             if run.status.value == "retrying" and (run.execution_state.get("planningLoop") or {}).get("restartPending"):
                 await self.submit(run.run_id)
+        dispatch_store = getattr(self.runtime, "execution_dispatch_store", None)
+        if dispatch_store is not None:
+            async with self._lock:
+                for command in dispatch_store.commands():
+                    await self._schedule_permitted(command, recover=True)
         self._ensure_wait_monitor()
         await self.reconcile_waits()
         return closed
@@ -128,7 +228,7 @@ class RunExecutionCoordinator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run_managed(self, run_id: str) -> None:
+    async def _run_managed(self, run_id: str, *, permitted: bool = False) -> None:
         started = monotonic()
         try:
             # Yield once so the async Mission response can be sent before
@@ -143,6 +243,10 @@ class RunExecutionCoordinator:
                     return
             except Exception:
                 pass
+            if permitted:
+                # Shutdown is not a user cancellation or proof of invocation
+                # failure. Keep WAL/checkpoints for existing recovery to verify.
+                raise
             try:
                 await self.runtime.fail_run_safely(
                     run_id,
