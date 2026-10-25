@@ -5,9 +5,11 @@ temporary databases. No implicit C2 schema DDL, no fake lock release, and
 the original assembly error always survives the cleanup.
 """
 from contextlib import closing
+import asyncio
 import os
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -478,3 +480,174 @@ def test_application_lifespan_awaits_runtime_shutdown_without_importing_applicat
     assert any(isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
                and isinstance(node.value.func, ast.Name) and node.value.func.id == "step"
                for node in ast.walk(cleanups))
+
+
+def c2_runtime_with_transport(folder, *, credential_key=None):
+    trio = initialize_trio(folder)
+    assert ops.upgrade_databases(**trio)["status"] == "READY"
+    env = assembly_env(folder, semantic=True, c2=True, trio=trio)
+    env["AGENTOS_LOCAL_RUNTIME_ENDPOINT"] = "http://127.0.0.1:12345/v1/executions"
+    if credential_key is not None:
+        env["AGENTOS_RESOURCE_CREDENTIAL_KEY"] = credential_key
+    return build(env)
+
+
+@pytest.mark.freeze_gate
+@pytest.mark.parametrize("startup_failure", [False, True])
+def test_real_lifespan_cancelled_runtime_close_releases_resources(tmp_path, startup_failure, caplog):
+    """P1-01: actual Task.cancel at the default closer's transport await."""
+    from app.execution import wiring, instance_lock
+    from app.lifespan import build_lifespan
+
+    async def exercise():
+        runtime = c2_runtime_with_transport(tmp_path)
+        transport = runtime.local_runtime_transport
+        original_close = transport.aclose
+        old_handle = instance_lock._LOCK_HANDLE
+        entered = asyncio.Event()
+        original_error = RuntimeError("original startup failure")
+
+        async def blocked_close():
+            entered.set()
+            await asyncio.Event().wait()
+
+        async def start():
+            if startup_failure:
+                raise original_error
+
+        async def noop(*args):
+            pass
+
+        transport.aclose = blocked_close
+        lifespan = build_lifespan(runtime=runtime,
+            model_setup=SimpleNamespace(start=start, close=noop),
+            coordinator=SimpleNamespace(startup=noop, shutdown=noop),
+            settings=SimpleNamespace(ENVIRONMENT="development"),
+            tool_warmup=None, bind_planner=None, provider_store_close=noop)
+
+        async def drive():
+            async with lifespan(None):
+                pass
+
+        task = asyncio.create_task(drive())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel()
+            with pytest.raises(RuntimeError if startup_failure else asyncio.CancelledError) as caught:
+                await asyncio.wait_for(task, 5)
+            if startup_failure:
+                assert caught.value is original_error
+            assert not lock_held() and not instance_lock._LOCK_VALID
+            assert old_handle.closed
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                runtime.checkpoint_store._connection.execute("SELECT 1")
+            # Interrupted clients remain incomplete: no silent retry or false success.
+            assert not transport._client.is_closed
+            assert "resource may remain open" in caplog.text
+            fresh = instance_lock.acquire_workflow_instance_lock(str(role_paths(tmp_path)["workflow"]))
+            assert fresh is not old_handle
+            instance_lock.release_workflow_instance_lock()
+        finally:
+            transport.aclose = original_close
+            await wiring.aclose_runtime(runtime)  # Explicit retry closes the interrupted client.
+        assert transport._client.is_closed
+    asyncio.run(exercise())
+
+
+@pytest.mark.freeze_gate
+@pytest.mark.parametrize("release_failure", [False, True])
+def test_repeated_runtime_close_cancellation_with_errors_is_fail_closed(tmp_path, monkeypatch, release_failure, caplog):
+    from app.execution import wiring, instance_lock
+
+    async def exercise():
+        runtime = c2_runtime_with_transport(tmp_path)
+        transport = runtime.local_runtime_transport
+        entered = [asyncio.Event(), asyncio.Event()]
+        failures = []
+        with monkeypatch.context() as patch:
+            async def first_close():
+                entered[0].set()
+                await asyncio.Event().wait()
+
+            async def second_close():
+                entered[1].set()
+                await asyncio.Event().wait()
+
+            def failed_close(name):
+                def close():
+                    failures.append(name)
+                    raise RuntimeError(name)
+                return close
+
+            patch.setattr(transport, "aclose", first_close)
+            patch.setattr(runtime.memory_store, "aclose", second_close, raising=False)
+            patch.setattr(runtime.decision_store, "close", failed_close("decision close failed"))
+            patch.setattr(runtime.provenance_store, "close", failed_close("provenance close failed"))
+            if release_failure:
+                def bad_drop(handle):
+                    raise OSError("lock close failed")
+                patch.setattr(instance_lock, "_drop_handle", bad_drop)
+            task = asyncio.create_task(wiring.aclose_runtime(runtime))
+            try:
+                for event in entered:
+                    await asyncio.wait_for(event.wait(), 5)
+                    task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+                assert task.cancelled() and task.cancelling() == 2
+                assert set(failures) == {"decision close failed", "provenance close failed"}
+                assert "decision close failed" in caplog.text and "provenance close failed" in caplog.text
+                assert not instance_lock._LOCK_VALID
+                with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                    runtime.checkpoint_store._connection.execute("SELECT 1")
+                assert not transport._client.is_closed
+                if release_failure:
+                    assert lock_held()
+                    assert "lock close failed" in caplog.text
+                    with pytest.raises(RuntimeError, match="uncertain|invalid"):
+                        build(assembly_env(tmp_path, semantic=True, c2=True, trio=role_paths(tmp_path)))
+                else:
+                    assert not lock_held()
+            finally:
+                # Restore failing closers before the explicit cleanup retry.
+                patch.undo()
+                await wiring.aclose_runtime(runtime)
+        assert not lock_held() and transport._client.is_closed
+    asyncio.run(exercise())
+
+
+def test_async_close_errors_continue_and_normal_close_rebuilds(tmp_path, monkeypatch):
+    from app.execution import wiring
+    from cryptography.fernet import Fernet
+
+    async def exercise():
+        # A persisted local-runtime credential must use the same key on reopen.
+        credential_key = Fernet.generate_key().decode("ascii")
+        runtime = c2_runtime_with_transport(tmp_path, credential_key=credential_key)
+        closed = []
+        with monkeypatch.context() as patch:
+            async def fail_transport():
+                raise RuntimeError("async close failed")
+
+            original = runtime.decision_store.close
+            def close_then_fail():
+                original()
+                closed.append(True)
+                raise RuntimeError("sync close failed")
+
+            patch.setattr(runtime.local_runtime_transport, "aclose", fail_transport)
+            patch.setattr(runtime.decision_store, "close", close_then_fail)
+            try:
+                with pytest.raises(RuntimeError, match="async close failed"):
+                    await wiring.aclose_runtime(runtime)
+                assert closed == [True] and not lock_held()
+                with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                    runtime.checkpoint_store._connection.execute("SELECT 1")
+            finally:
+                patch.undo()
+                await wiring.aclose_runtime(runtime)
+        await wiring.aclose_runtime(runtime)  # Repeat normal async shutdown.
+        rebuilt = c2_runtime_with_transport(tmp_path, credential_key=credential_key)
+        await wiring.aclose_runtime(rebuilt)
+        assert rebuilt.local_runtime_transport._client.is_closed and not lock_held()
+    asyncio.run(exercise())

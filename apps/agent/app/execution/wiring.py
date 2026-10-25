@@ -678,26 +678,47 @@ def close_runtime(runtime: ExecutionRuntime) -> None:
 
 
 async def aclose_runtime(runtime: ExecutionRuntime) -> None:
-    """Close async clients on the host loop, then release the process lock."""
+    """Attempt every close and release the lock before propagating cancellation.
+
+    An interrupted client may remain open. Keep its owned reference for an
+    explicit shutdown retry; do not silently retry or shield an unbounded close.
+    Cancellation wins over ordinary cleanup failures, which remain logged.
+    """
     errors = []
+    cancelled: asyncio.CancelledError | None = None
     seen: set[int] = set()
-    for resource in _runtime_close_sequence(runtime):
-        if resource is None or id(resource) in seen:
-            continue
-        seen.add(id(resource))
-        aclose = getattr(resource, "aclose", None)
-        if callable(aclose):
+    try:
+        for resource in _runtime_close_sequence(runtime):
+            if resource is None or id(resource) in seen:
+                continue
+            seen.add(id(resource))
             try:
-                await aclose()
+                aclose = getattr(resource, "aclose", None)
+                if callable(aclose):
+                    await aclose()
+                else:
+                    errors.extend(_close_resources((resource,)))
+            except asyncio.CancelledError as exc:
+                if cancelled is None:
+                    cancelled = exc
+                LOGGER.warning(
+                    "runtime close cancelled for %r; resource may remain open; "
+                    "retry shutdown explicitly", resource, exc_info=True,
+                )
             except Exception as exc:
                 errors.append(exc)
                 LOGGER.warning("async runtime cleanup failed for %r", resource, exc_info=True)
-        else:
-            errors.extend(_close_resources((resource,)))
-    try:
-        release_workflow_instance_lock()
-    except Exception as exc:
-        errors.append(exc)
+    finally:
+        try:
+            # The lock helper invalidates its state before attempting OS release.
+            release_workflow_instance_lock()
+        except Exception as exc:
+            errors.append(exc)
+            LOGGER.warning("runtime instance lock release failed", exc_info=True)
+    if cancelled is not None:
+        if errors:
+            cancelled.add_note(f"{len(errors)} other runtime cleanup error(s); see cleanup logs")
+        raise cancelled
     if errors:
         raise errors[0]
 
