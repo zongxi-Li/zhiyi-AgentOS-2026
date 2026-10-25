@@ -6,6 +6,7 @@ import { createArtifactsApi } from './api/artifacts'
 import { createRuntimeApi } from './api/runtime'
 import { createAcgApi } from './api/acg'
 import { createCopilotApi } from './api/copilot'
+import { createC2Api } from './api/c2'
 
 const missionApi = createMissionApi()
 const runtimeApi = createRuntimeApi()
@@ -16,6 +17,7 @@ type AgentosApi = ReturnType<typeof createMissionApi>
   & ReturnType<typeof createRuntimeApi>
   & ReturnType<typeof createAcgApi>
   & ReturnType<typeof createCopilotApi>
+  & ReturnType<typeof createC2Api>
 let api: AgentosApi
 const getApi = () => api
 
@@ -26,7 +28,8 @@ api = {
   ...createArtifactsApi(getApi),
   ...runtimeApi,
   ...createAcgApi(getApi),
-  ...createCopilotApi()
+  ...createCopilotApi(),
+  ...createC2Api()
 }
 
 export const agentosApi = api

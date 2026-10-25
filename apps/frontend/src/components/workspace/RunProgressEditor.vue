@@ -223,6 +223,8 @@ const runStatus = computed(() => (
 
 const TERMINAL_OK = new Set(['completed', 'succeeded'])
 const TERMINAL_BAD = new Set(['failed', 'cancelled'])
+const formalControl = computed(() => props.runtimeObservation?.run?.runId === resolvedRunId.value
+  ? props.runtimeObservation.run.formalControl : null)
 const runState = computed<'idle' | 'unknown' | 'running' | 'completed' | 'failed' | 'paused'>(() => {
   if (!resolvedRunId.value) return 'idle'
   const status = runStatus.value
@@ -230,6 +232,7 @@ const runState = computed<'idle' | 'unknown' | 'running' | 'completed' | 'failed
   if (TERMINAL_OK.has(status)) return 'completed'
   if (TERMINAL_BAD.has(status)) return 'failed'
   if (status === 'waiting_review') return 'paused'
+  if (formalControl.value && ['pending', 'planning'].includes(status)) return 'paused'
   if (['queued', 'starting', 'running', 'executing', 'planning', 'pending', 'retrying'].includes(status)) return 'running'
   return 'unknown'
 })
@@ -243,6 +246,11 @@ const STATE_LABELS: Record<string, string> = {
   unknown: '状态未知'
 }
 const stateLabel = computed(() => {
+  const formal = formalControl.value
+  if (formal && ['pending', 'planning'].includes(runStatus.value || '')) {
+    return formal.dispatch ? `Dispatch ${formal.dispatch.status}` : formal.permitStatus === 'ISSUED' ? 'Permit ISSUED'
+      : formal.handoffStatus === 'STATE_PREPARED' ? 'STATE_PREPARED' : formal.status
+  }
   const planningStatus = props.runtimeStore?.planning.status
   return planningStatus && ['STARTING', 'RUNNING'].includes(planningStatus)
     ? 'PLANNING'

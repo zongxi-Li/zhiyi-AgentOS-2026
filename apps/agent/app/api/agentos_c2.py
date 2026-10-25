@@ -182,6 +182,22 @@ def project_initial_control(runtime, run):
                     "graphId": head.graph_id if head else mat.graph_id if mat else None,
                     "graphVersion": head.active_graph_version if head else mat.candidate_graph_version if mat else None,
                 }
+                # Discover an immutable public receipt; never reconcile/start work in GET.
+                from support.stores.execution_dispatch_store import SQLiteExecutionDispatchStore
+                enabled = bool(getattr(runtime, "execution_dispatch_enabled", False))
+                command = None
+                if enabled or conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_dispatch_commands'").fetchone():
+                    SQLiteExecutionDispatchStore.check_schema(conn)
+                    command = SQLiteExecutionDispatchStore.decode(conn.execute(
+                        "SELECT * FROM execution_dispatch_commands WHERE run_id=?", (current.run_id,)).fetchone())
+                    if command and (command.mission_id != current.mission_id
+                            or command.permit_id != current.execution_state.get("executionPermitId")
+                            or command.graph_id != current.execution_state.get("graphId")
+                            or command.graph_version != current.execution_state.get("graphVersion")
+                            or command.runtime_revision > current.runtime_revision):
+                        raise ValueError("Dispatch source mismatch")
+                result["dispatchEnabled"] = enabled
+                result["dispatch"] = command.public() if command else None
                 # A separately issued durable Permit must not be shown as paused.
                 if issued:
                     result["status"] = "ACTIVATED"
@@ -202,7 +218,7 @@ def project_initial_control(runtime, run):
                                                           and current.status.value != "waiting_review")
             except (ValueError, KeyError, RuntimeError, sqlite3.Error, TypeError, PermissionError):
                 pass  # Unproven eligibility remains false; historical issuance survives.
-        result["executionAuthorized"] = result["dispatchEligible"]
+        result["executionAuthorized"] = result["dispatchEligible"] and (not enabled or command is not None)
         return result
 
 

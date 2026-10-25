@@ -34,7 +34,18 @@ public final class RunProjectionMapper {
                         text(review, "reasonCode"), smallInt(review, "iteration"), smallInt(review, "approvals"), smallInt(review, "quorum"),
                         bool(review, "accepted"), text(review, "strategy")), lineage(state), outputs,
                 text(state, "planningDiversity"), integer(state, "planningSeed"), text(state, "plannerAlgorithmVersion"),
-                smallInt(state, "planningCandidateCount"), text(state, "selectedPlanningVariantId"));
+                smallInt(state, "planningCandidateCount"), text(state, "selectedPlanningVariantId"),
+                s.get("formalControl") == null ? null : formalControl(object(s.get("formalControl"))),
+                text(optionalObject(s.get("error")), "code"));
+    }
+    public static FormalControlQuery formalControl(Map<?, ?> c) {
+        Map<?, ?> d = optionalObject(c.get("dispatch"));
+        return new FormalControlQuery(requiredText(c, "status"), bool(c, "executionAuthorized"), bool(c, "permitIssued"),
+                bool(c, "dispatchEligible"), bool(c, "dispatchEnabled"), text(c, "commitId"), integer(c, "commitmentRevision"),
+                text(c, "materializationId"), text(c, "activationId"), text(c, "graphId"), smallInt(c, "graphVersion"),
+                text(c, "handoffId"), text(c, "handoffStatus"), text(c, "permitId"), text(c, "permitStatus"),
+                d.isEmpty() ? null : new FormalControlQuery.DispatchReceipt(requiredText(d, "dispatchId"), requiredText(d, "runId"),
+                        requiredText(d, "permitId"), requiredInt(d, "graphVersion"), requiredText(d, "status")));
     }
     public static RunPageQuery page(Map<?, ?> s) {
         return new RunPageQuery(items(s.get("items"), RunProjectionMapper::run), integer(s, "total"), smallInt(s, "page"), smallInt(s, "pageSize"));

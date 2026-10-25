@@ -100,7 +100,7 @@
               <div class="config-line__label"><strong>Execution Control</strong><small>控制高风险步骤是否进入审核节点。</small></div>
               <div class="execution-control-choice">
                 <div class="config-options" role="radiogroup" aria-label="执行控制">
-                  <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'auto' }" type="button" role="radio" :aria-checked="draft.reviewMode === 'auto'" @click="draft.reviewMode = 'auto'">自动执行</button>
+                  <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'auto' }" type="button" role="radio" :aria-checked="draft.reviewMode === 'auto'" @click="draft.reviewMode = 'auto'">自动处理审核</button>
                   <button class="config-option" :class="{ 'is-selected': draft.reviewMode === 'human_in_loop' }" type="button" role="radio" :aria-checked="draft.reviewMode === 'human_in_loop'" @click="draft.reviewMode = 'human_in_loop'">人工审核</button>
                 </div>
                 <p class="planning-choice__hint"><strong>{{ executionControlLabel }}</strong><span>{{ executionControlDescription }}</span></p>
@@ -175,7 +175,7 @@
           <span class="launch-bar__eyebrow">LAUNCH PREVIEW</span>
           <strong>{{ planningModeSummary }} · {{ capabilitySummary }} · {{ contextSummary }} · {{ executionControlSummary }}</strong>
           <span v-if="runSummaryIssues.length" class="launch-bar__notice" role="status">{{ runSummaryIssues.join(' · ') }}</span>
-          <span v-else class="launch-bar__ready">Ready to run</span>
+          <span v-else class="launch-bar__ready">Ready to plan</span>
           <p v-if="errorMessage" class="create-mission__error" role="alert">{{ errorMessage }}</p>
         </div>
         <div class="launch-bar__actions">
@@ -308,10 +308,10 @@ const advancedSettingsSummary = computed(() => [
 const plugins = computed(() => pluginUiExtensions.all())
 const draftExtensions = computed(() => pluginUiExtensions.resolve(draft.value.enabledPluginIds))
 const planningModeSummary = computed(() => draft.value.planningMode === 'dynamic' ? 'Dynamic' : 'Template preferred')
-const executionControlLabel = computed(() => draft.value.reviewMode === 'auto' ? '自动执行' : '人工审核')
-const executionControlSummary = computed(() => draft.value.reviewMode === 'auto' ? 'Auto Execute' : 'Human Review')
+const executionControlLabel = computed(() => draft.value.reviewMode === 'auto' ? '自动处理审核' : '人工审核')
+const executionControlSummary = computed(() => draft.value.reviewMode === 'auto' ? 'Auto Review' : 'Human Review')
 const executionControlDescription = computed(() => draft.value.reviewMode === 'auto'
-  ? '运行过程中继续自动处理，不要求人工审核。'
+  ? '正式任务先接受规划；签发许可后仍需明确点击执行。运行中自动处理审核。'
   : '高风险步骤完成后暂停，等待人工审核。')
 const capabilitySummary = computed(() => {
   const selected = draft.value.enabledPluginIds

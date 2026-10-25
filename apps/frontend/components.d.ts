@@ -86,6 +86,7 @@ declare module 'vue' {
     FileHistoryList: typeof import('./src/components/FileHistoryList.vue')['default']
     FileManager: typeof import('./src/components/FileManager.vue')['default']
     FileUpload: typeof import('./src/components/FileUpload.vue')['default']
+    FormalExecutionControls: typeof import('./src/components/workspace/FormalExecutionControls.vue')['default']
     GlassConstellation: typeof import('./src/components/landing/GlassConstellation.vue')['default']
     GraphDemo: typeof import('./src/components/landing/GraphDemo.vue')['default']
     GraphEditor: typeof import('./src/components/workspace/GraphEditor.vue')['default']

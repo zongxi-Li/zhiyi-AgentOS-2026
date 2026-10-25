@@ -76,6 +76,11 @@
       </template>
 
       <template #right="rightState">
+        <div class="workspace-inspector-column">
+        <FormalExecutionControls :key="selectedRunId || ''" :run="runtimeObservation?.run || null"
+          :run-id="selectedRunId" :mission-id="missionId" :historical="isHistorical"
+          :can-cancel="canCancelActiveRun" :cancel-pending="cancelPending"
+          @refresh="loadWorkspace(selectedRunId || undefined)" @cancel="cancelActiveRun" />
         <WorkbenchAuxiliarySidebar
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
@@ -95,7 +100,7 @@
           :run-id="projection?.activeRun?.runId || selectedRunId || null"
           :mission-id="missionId"
           :graph="projection?.activeGraph || null"
-          :run-status="projection?.activeRun?.status || null"
+          :run-status="runtimeObservation?.run?.status || projection?.activeRun?.status || null"
           :historical="isHistorical"
           :runtime-store="runtimeStore"
           :registry="registry"
@@ -106,6 +111,7 @@
           @toggle-fullscreen="rightState.toggleRightPaneMaximized"
           @close="rightState.toggleRightPane"
         />
+        </div>
       </template>
 
       <template #bottom="{ setCollapsed }">
@@ -197,6 +203,7 @@ import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
 import { missionDocumentContent } from '@/components/workspace/missionSemanticDisplay'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
+import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue'
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
@@ -1015,6 +1022,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.workspace-inspector-column { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+.workspace-inspector-column > :deep(.runtime-inspector), .workspace-inspector-column > :deep(.workbench-auxiliary-sidebar) { flex: 1; min-height: 0; }
 .mission-workspace-view { --editor-rail-height: 32px; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-app); }
 .mission-workspace-view :deep(.workbench-pane--left),
 .mission-workspace-view :deep(.workbench-pane--right) { box-sizing: border-box; }

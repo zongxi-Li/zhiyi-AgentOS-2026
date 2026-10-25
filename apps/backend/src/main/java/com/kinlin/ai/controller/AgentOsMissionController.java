@@ -86,6 +86,38 @@ public class AgentOsMissionController {
         return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.mission(missionId) + "/runs/" + AgentOsPaths.segment(runId) + "/revision/" + AgentOsPaths.segment(operationId) + "/apply", Map.of()));
     }
 
+    // Transport only: the existing Python schemas reject executable state/identity
+    // fields and the Authorities enforce access, source versions and idempotency.
+    @PostMapping("/missions/{missionId}/runs/{runId}/graph/materializations")
+    public ResponseEntity<Map<String, Object>> materializeGraph(@PathVariable String missionId, @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return control(missionId, runId, "graph/materializations", body);
+    }
+
+    @PostMapping("/missions/{missionId}/runs/{runId}/graph/activation")
+    public ResponseEntity<Map<String, Object>> activateGraph(@PathVariable String missionId, @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return control(missionId, runId, "graph/activation", body);
+    }
+
+    @PostMapping("/missions/{missionId}/runs/{runId}/graph/handoffs")
+    public ResponseEntity<Map<String, Object>> prepareHandoff(@PathVariable String missionId, @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return control(missionId, runId, "graph/handoffs", body);
+    }
+
+    @PostMapping("/missions/{missionId}/runs/{runId}/graph/permits")
+    public ResponseEntity<Map<String, Object>> issuePermit(@PathVariable String missionId, @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return control(missionId, runId, "graph/permits", body);
+    }
+
+    @PostMapping("/missions/{missionId}/runs/{runId}/execution/dispatches")
+    public ResponseEntity<Map<String, Object>> dispatchRun(@PathVariable String missionId, @PathVariable String runId, @RequestBody Map<String, Object> body) {
+        return control(missionId, runId, "execution/dispatches", body);
+    }
+
+    private ResponseEntity<Map<String, Object>> control(String missionId, String runId, String suffix, Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.missionRuns(missionId)
+                + "/" + AgentOsPaths.segment(runId) + "/" + suffix, body));
+    }
+
     @GetMapping("/missions")
     public ResponseEntity<QueryResponse> listMissions(
             @RequestParam(required = false) String status,

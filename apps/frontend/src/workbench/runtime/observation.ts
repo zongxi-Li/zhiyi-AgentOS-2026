@@ -109,6 +109,7 @@ export interface RuntimeSelection {
 }
 
 export interface RuntimeObservation {
+  run?: WorkflowRun | null
   runId: string
   runStatus: string | null
   traces: RuntimeTraceObservation[]
@@ -712,6 +713,7 @@ export const readRuntimeObservation = async (
   const scheduleTrace = traces.filter(event => event.eventType.includes('schedule') || event.eventType.includes('superstep'))
   return {
     runId,
+    run,
     runStatus: run?.status || trace?.status || null,
     traces,
     events: normalizeEvents(traces),

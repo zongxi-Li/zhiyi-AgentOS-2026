@@ -113,6 +113,22 @@ const runtimeEvent = (sequence: number, eventType: string) => ({
 })
 
 describe('RunProgressEditor', () => {
+  it('shows formal pause/permit/dispatch facts instead of RUNNING before node execution', async () => {
+    const value = observation([], 'planning')
+    value.run = { runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow', domain: 'test', status: 'planning', steps: [],
+      formalControl: { status: 'ACTIVATED_PAUSED', executionAuthorized: false, permitIssued: false, dispatchEligible: false,
+        dispatchEnabled: true, commitId: 'c', commitmentRevision: 1, materializationId: 'm', activationId: 'a', graphId: 'g',
+        graphVersion: 1, handoffId: null, handoffStatus: null, permitId: null, permitStatus: null, dispatch: null } }
+    const wrapper = mountEditor({ runtimeObservation: value })
+    expect(wrapper.get('.run-progress__status').text()).toBe('ACTIVATED_PAUSED')
+    const control = value.run.formalControl!
+    await wrapper.setProps({ runtimeObservation: { ...value, run: { ...value.run, formalControl: { ...control, permitStatus: 'ISSUED' } } } })
+    expect(wrapper.get('.run-progress__status').text()).toBe('Permit ISSUED')
+    await wrapper.setProps({ runtimeObservation: { ...value, run: { ...value.run, formalControl: { ...control,
+      dispatch: { dispatchId: 'd', runId: 'run_1', permitId: 'p', graphVersion: 1, status: 'ACCEPTED' } } } } })
+    expect(wrapper.get('.run-progress__status').text()).toBe('Dispatch ACCEPTED')
+    wrapper.unmount()
+  })
   it('uses selected Run history instead of the current Mission goal', () => {
     const value = projection({ missionDisplay: { objective: 'current goal', sourceType: 'SEMANTIC' },
       selectedRunBasisStatus: 'BOUND', selectedRunBasis: {

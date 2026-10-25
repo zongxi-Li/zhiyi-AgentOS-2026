@@ -39,6 +39,29 @@ class AgentOsRunControllerTest {
     }
 
     @Test
+    void formalControlProjectionPreservesPublicFactsWithoutPrivateLedgerFields() throws Exception {
+        Map<String, Object> control = new LinkedHashMap<>();
+        control.put("status", "ACTIVATED"); control.put("permitStatus", "ISSUED");
+        control.put("dispatchEnabled", true); control.put("dispatchEligible", false);
+        control.put("dispatch", Map.of("dispatchId", "d1", "runId", "run_1", "permitId", "p1", "graphVersion", 1,
+                "status", "ACCEPTED", "actor_id", "private-owner", "signature", "private-signature"));
+        control.put("checkpointPayload", Map.of("secret", "private-checkpoint"));
+        gateway.getResponses.put("/ai/agentos/v2/runs/run_1", RecordingAgentOsGateway.response(200, Map.of(
+                "runId", "run_1", "status", "pending", "formalControl", control,
+                "error", Map.of("code", "DISPATCH_RECOVERY_BLOCKED", "signature", "private-audit"))));
+        mockMvc.perform(get("/api/agentos/v2/runs/run_1")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.formalControl.dispatch.dispatchId").value("d1"))
+                .andExpect(jsonPath("$.formalControl.dispatch.status").value("ACCEPTED"))
+                .andExpect(jsonPath("$.formalControl.dispatch.actor_id").doesNotExist())
+                .andExpect(jsonPath("$.formalControl.dispatch.signature").doesNotExist())
+                .andExpect(jsonPath("$.formalControl.checkpointPayload").doesNotExist())
+                .andExpect(jsonPath("$.failureCode").value("DISPATCH_RECOVERY_BLOCKED"))
+                .andExpect(jsonPath("$.error").doesNotExist());
+        control.put("dispatchEnabled", "not-a-boolean");
+        mockMvc.perform(get("/api/agentos/v2/runs/run_1")).andExpect(status().isBadGateway());
+    }
+
+    @Test
     void createMissionRunPostsTheExactContractAndPreservesUpstreamStatus() throws Exception {
         String upstream = "/ai/agentos/v2/missions/mission%20001/runs";
         gateway.postResponses.put(upstream, RecordingAgentOsGateway.response(202, Map.of(

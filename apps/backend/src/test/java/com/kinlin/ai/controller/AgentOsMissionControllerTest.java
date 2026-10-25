@@ -44,6 +44,21 @@ class AgentOsMissionControllerTest {
     }
 
     @Test
+    void formalControlsOnlyForwardExistingRoutesAndPreserveAcknowledgement() throws Exception {
+        for (String suffix : List.of("graph/materializations", "graph/activation", "graph/handoffs", "graph/permits", "execution/dispatches")) {
+            String upstream = "/ai/agentos/v2/missions/mission%20001/runs/run%20001/" + suffix;
+            int code = suffix.equals("execution/dispatches") ? 202 : 200;
+            gateway.postResponses.put(upstream, RecordingAgentOsGateway.response(code, Map.of("status", "ACCEPTED", "operationId", "stable-op")));
+            mockMvc.perform(post("/api/agentos/v2/missions/{missionId}/runs/{runId}/" + suffix, "mission 001", "run 001")
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"operationId\":\"stable-op\",\"expectedGraphVersion\":1}"))
+                    .andExpect(status().is(code)).andExpect(jsonPath("$.operationId").value("stable-op"))
+                    .andExpect(jsonPath("$._httpStatus").doesNotExist());
+            assertEquals(upstream, gateway.lastPostPath);
+            assertEquals(Map.of("operationId", "stable-op", "expectedGraphVersion", 1), gateway.lastPostBody);
+        }
+    }
+
+    @Test
     void createMissionForwardsOnlyTheV2ContractAndPreservesAccepted() throws Exception {
         gateway.postResponses.put("/ai/agentos/v2/missions", RecordingAgentOsGateway.response(202, Map.of(
                 "runId", "run_001", "status", "pending", "executionState", Map.of("outputRefs", Map.of())

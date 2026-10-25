@@ -166,6 +166,10 @@ export interface TraceEvent {
   createdAt?: string
 }
 export interface WorkflowRun {
+  formalControl?: FormalControl | null
+  error?: { code?: string } | null
+  failureCode?: string | null
+  executionState?: { reviewPayload?: WorkflowRun['review']; planningCommitRequired?: boolean }
   runId: string
   missionId: string
   title?: string | null
@@ -197,6 +201,25 @@ export interface WorkflowRun {
   plannerAlgorithmVersion?: string | null
   planningCandidateCount?: number
   selectedPlanningVariantId?: string | null
+}
+/** Read-only projection of server facts; never an executable snapshot. */
+export interface FormalControl {
+  status: string
+  executionAuthorized: boolean
+  permitIssued: boolean
+  dispatchEligible: boolean
+  dispatchEnabled: boolean
+  commitId: string | null
+  commitmentRevision: number | null
+  materializationId: string | null
+  activationId: string | null
+  graphId: string | null
+  graphVersion: number | null
+  handoffId: string | null
+  handoffStatus: string | null
+  permitId: string | null
+  permitStatus: string | null
+  dispatch: { dispatchId: string; runId: string; permitId: string; graphVersion: number; status: string } | null
 }
 export interface WorkflowTraceExport {
   runId: string
