@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
-from app.execution.wiring import build_default_runtime, close_runtime
+from app.execution.wiring import build_default_runtime, aclose_runtime
 from app.security.internal_auth import InternalServiceAuthMiddleware
 from examples.contract_review import CONTRACT, WORKFLOW_ID, ContractReviewAgent, workflow
 from support.stores import c2_schema_upgrade as ops
@@ -73,7 +73,7 @@ def server(folder, *, semantic=True, c2=True, legacy=False):
             yield
         finally:
             await coordinator.shutdown()
-            close_runtime(runtime)
+            await aclose_runtime(runtime)
 
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(InternalServiceAuthMiddleware, token=TOKEN)

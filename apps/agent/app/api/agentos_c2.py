@@ -11,8 +11,11 @@ from app.security.internal_auth import current_semantic_principal
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeRunRecord
 from contracts.planning_commit import PlanningCommitRecord
 from contracts.graph_materialization import GraphMaterializationRecord
+from contracts.graph_handoff import GraphHandoffRecord, GraphHandoffReceipt
 from contracts.initial_planning import InitialPlanningSourceProvenance
 from contracts import stable_checksum
+from runtime.execution_permit import ExecutionPermitError
+from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 from support.stores.graph_activation_store import SQLiteGraphActivationStore, validate_activation_run
 
 
@@ -31,12 +34,31 @@ class ActivateInitialRequest(BaseModel):
     expected_graph_version: int = Field(alias="expectedGraphVersion", strict=True, ge=1)
 
 
+class HandoffRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    operation_id: str = Field(alias="operationId", min_length=1, max_length=200)
+    activation_id: str = Field(alias="activationId", min_length=1, max_length=300)
+    expected_graph_id: str = Field(alias="expectedGraphId", min_length=1, max_length=300)
+    expected_graph_version: int = Field(alias="expectedGraphVersion", strict=True, ge=1)
+
+
+class PermitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    operation_id: str = Field(alias="operationId", min_length=1, max_length=200)
+    handoff_id: str = Field(alias="handoffId", min_length=1, max_length=300)
+    expected_graph_id: str = Field(alias="expectedGraphId", min_length=1, max_length=300)
+    expected_graph_version: int = Field(alias="expectedGraphVersion", strict=True, ge=1)
+
+
 @contextmanager
 def control_errors():
     try:
         yield
     except PermissionError as exc:
         raise HTTPException(403, "semantic access denied") from exc
+    except ExecutionPermitError as exc:
+        code = str(getattr(exc.code, "value", exc.code))
+        raise HTTPException(403 if code == "AUTHORITY_DENIED" else 409, {"code": code}) from exc
     except KeyError as exc:
         raise HTTPException(404, "C2 source not found") from exc
     except (RuntimeError, sqlite3.Error, ValueError, TypeError) as exc:
@@ -81,13 +103,13 @@ def operation_key(action, run, operation_id):
 
 def receipt_response(receipt, operation_id):
     if receipt.status == "REJECTED":
-        code = receipt.code.value
+        code = str(getattr(receipt.code, "value", receipt.code))
         status = 403 if code == "AUTHORITY_DENIED" else 503 if code == "STORAGE_UNAVAILABLE" else 409
         raise HTTPException(status, {"status": "REJECTED", "code": code, "operationId": operation_id})
     # Explicit public allowlist; the durable record is never serialized here.
     body = receipt.model_dump(by_alias=True, mode="json", exclude_none=True)
     return {"operationId": operation_id, **{k: v for k, v in body.items() if k in {
-        "status", "materializationId", "activationId", "activeGraphVersion",
+        "status", "materializationId", "activationId", "activeGraphVersion", "handoffId", "permitId", "runId", "graphVersion",
     }}}
 
 
@@ -124,10 +146,26 @@ def project_initial_control(runtime, run):
                 row = conn.execute("SELECT * FROM graph_activations WHERE materialization_id=?",
                                    (mat.materialization_id,)).fetchone() if mat else None
                 prepared = SQLiteGraphActivationStore._decode_activation(row) if row else None
+                handoff_row = conn.execute("SELECT * FROM graph_handoffs WHERE activation_id=?",
+                                          (head.activation_id,)).fetchone() if head else None
+                handoff = GraphHandoffRecord.model_validate_json(handoff_row["payload"]) if handoff_row else None
+                if handoff and (stable_checksum(handoff) != handoff_row["checksum"]
+                        or handoff.activation_id != head.activation_id or handoff.run_id != current.run_id):
+                    raise ValueError("handoff evidence mismatch")
+                permit_row = conn.execute("SELECT * FROM graph_execution_permits WHERE activation_id=?",
+                                         (head.activation_id,)).fetchone() if head else None
+                permit = SQLiteExecutionPermitStore._decode(permit_row) if permit_row else None
+                issued = permit is not None and permit.status in {"ISSUED", "REVOKED"}
                 result = {
                     "status": "ACTIVATED_PAUSED" if head else "ACTIVATION_PREPARED" if prepared else
                               "MATERIALIZED_INACTIVE" if mat else "PLANNING_ACCEPTED" if commit else "AWAITING_PLANNING",
                     "executionAuthorized": False,
+                    "permitIssued": issued,
+                    "dispatchEligible": False,
+                    "handoffId": handoff.handoff_id if handoff else None,
+                    "handoffStatus": handoff.status if handoff else None,
+                    "permitId": permit.permit_id if permit else None,
+                    "permitStatus": permit.status if permit else None,
                     "commitId": commit.commit_id if commit else None,
                     "commitmentRevision": commit.commitment_revision if commit else None,
                     "materializationId": mat.materialization_id if mat else None,
@@ -136,12 +174,40 @@ def project_initial_control(runtime, run):
                     "graphVersion": head.active_graph_version if head else mat.candidate_graph_version if mat else None,
                 }
                 # A separately issued durable Permit must not be shown as paused.
-                if (current.execution_state.get("graphActivation") or {}).get("executionPermit") is not None:
+                if issued:
                     result["status"] = "ACTIVATED"
-                    result["executionAuthorized"] = True
-                return result
             finally:
                 conn.rollback()
+        # No mutation or reconciliation in a query. Reuse the live authority's
+        # complete dispatch gate (Mission, principal, Identity and checkpoint).
+        authority = runtime.execution_permit_authority
+        if issued and authority is not None:
+            try:
+                with runtime.run_lock_manager.lock_for(current.run_id):
+                    authority.assert_dispatchable(current)
+                    from runtime.permit_recovery import assert_settled_operations
+                    assert_settled_operations(runtime, current)
+                    if runtime.workflow_store.get_run(current.run_id) == current:
+                        with runtime._execution_slot_guard:
+                            result["dispatchEligible"] = current.run_id not in runtime._active_execution_slots
+            except (ValueError, KeyError, RuntimeError, sqlite3.Error, TypeError, PermissionError):
+                pass  # Unproven eligibility remains false; historical issuance survives.
+        result["executionAuthorized"] = result["dispatchEligible"]
+        return result
+
+
+def require_execution_sources(runtime, mission_id, run_id, request, activation_id):
+    run = require_c2(runtime, mission_id, run_id, write=True)
+    if runtime.graph_handoff_authority is None or runtime.execution_permit_authority is None:
+        raise HTTPException(409, "C2 execution control is not enabled")
+    store = runtime.graph_activation_authority.store
+    activation = store.get_activation(activation_id)
+    head = store.head(run_id)
+    if (activation is None or activation.run_id != run_id or activation.mission_id != mission_id
+            or activation.status != "ACTIVATED_PAUSED" or head is None or head.activation_id != activation_id
+            or head.graph_id != request.expected_graph_id or head.active_graph_version != request.expected_graph_version):
+        raise HTTPException(409, "Activation Head does not match this Mission/Run/Graph")
+    return run
 
 
 def create_c2_router(runtime):
@@ -175,5 +241,43 @@ def create_c2_router(runtime):
             key = operation_key("activate", run, request.operation_id)
             receipt_response(runtime.prepare_graph_activation(mat.materialization_id, idempotency_key=key), request.operation_id)
             return receipt_response(runtime.commit_graph_activation(mat.materialization_id, idempotency_key=key), request.operation_id)
+
+    @router.post("/missions/{mission_id}/runs/{run_id}/graph/handoffs")
+    async def handoff(mission_id: str, run_id: str, request: HandoffRequest):
+        with control_errors():
+            run = require_execution_sources(runtime, mission_id, run_id, request, request.activation_id)
+            key = operation_key("handoff", run, request.operation_id)
+            issued = runtime.execution_permit_authority.store.permit_for_activation(request.activation_id)
+            if issued is not None and issued.status == "ISSUED":
+                # The Handoff builder requires a pristine pre-Permit Run. Once
+                # the saga legitimately advances it, replay only the immutable
+                # confirmed receipt, under the complete current Permit gate.
+                runtime.execution_permit_authority.assert_dispatchable(run)
+                old = runtime.graph_handoff_authority.store.handoff_by_key(key)
+                if old is None or old.handoff_id != issued.handoff_id or old.activation_id != request.activation_id:
+                    raise HTTPException(409, {"code": "DUPLICATE_CONFLICT"})
+                return {**receipt_response(GraphHandoffReceipt(status="IDEMPOTENT_REPLAY", handoffId=old.handoff_id),
+                                          request.operation_id), "graphVersion": old.graph_version}
+            return {**receipt_response(runtime.prepare_graph_handoff(request.activation_id,
+                idempotency_key=key), request.operation_id), "graphVersion": request.expected_graph_version}
+
+    @router.post("/missions/{mission_id}/runs/{run_id}/graph/permits")
+    async def permit(mission_id: str, run_id: str, request: PermitRequest):
+        with control_errors():
+            # Authorization precedes reading a caller-selected durable reference.
+            run = require_c2(runtime, mission_id, run_id, write=True)
+            if runtime.graph_handoff_authority is None or runtime.execution_permit_authority is None:
+                raise HTTPException(409, "C2 execution control is not enabled")
+            source = runtime.graph_handoff_authority.store.get_handoff(request.handoff_id)
+            if source is None or source.run_id != run_id or source.status != "STATE_PREPARED":
+                raise HTTPException(409, "STATE_PREPARED Handoff of this Run is required")
+            require_execution_sources(runtime, mission_id, run_id, request, source.activation_id)
+            # Historical ISSUED replay does not itself revalidate dispatch in the
+            # core saga. At HTTP, reject a stale grant before exposing a replay.
+            existing = runtime.execution_permit_authority.store.permit_for_handoff(source.handoff_id)
+            if existing is not None and existing.status == "ISSUED":
+                runtime.execution_permit_authority.assert_dispatchable(run)
+            return receipt_response(runtime.issue_execution_permit(source.handoff_id,
+                idempotency_key=operation_key("permit", run, request.operation_id)), request.operation_id)
 
     return router
