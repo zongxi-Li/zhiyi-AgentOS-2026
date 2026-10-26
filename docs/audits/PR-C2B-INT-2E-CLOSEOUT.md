@@ -1,6 +1,6 @@
 # PR-C2B-INT-2E-CLOSEOUT：人工审核策略修复与 V1 最终冻结收束
 
-日期：2026-10-26。裁决：**BLOCKED**（三項原始阻断全部关闭、功能闭环全链路真实验证通过；唯一剩余阻断为正式冻结门禁的结构性预算冲突，属需用户裁决的策略决定。详见 §7；不推送、不部署、不改 Gitee）。
+日期：2026-10-26。裁决：**BLOCKED**（人工审核与 Java 组合修复受限通过；正式冻结门禁仍未通过。估算器完整剖面缺口另按 INT-2E-ESTIMATOR-FIX 修正，不能把定向修复等同于正式门禁通过。详见 §7；不推送、不部署、不改 Gitee）。
 
 ## 0. 入场核验
 
@@ -33,7 +33,7 @@
 
 ### 1.4 永久回归
 
-- HTTP（`test_agentos_c2_human_review.py`，6 项）：人工审核屏障红→绿、auto 不强制暂停、拒绝/取消不触发重执行、旧 Permit 不重解释、策略冲突在接受前 fail-closed、写权限撤销在持久副作用前拒绝。覆盖服务重建、逐步批准、原 operationId 重试、Dispatch replay、批准前 final 不可读（`human-six.log`、`human-final-pre.log` 7 项、`human-lifecycle-green.log` 4 项）。
+- HTTP（`test_agentos_c2_human_review.py`，7 项）：人工审核屏障红→绿、auto 不强制暂停、拒绝/取消不触发重执行、旧 Permit 不重解释、策略冲突在接受前 fail-closed、写权限撤销在持久副作用前拒绝。覆盖服务重建、逐步批准、原 operationId 重试、Dispatch replay、批准前 final 不可读（`human-six.log`、`human-final-pre.log` 7 项、`human-lifecycle-green.log` 4 项）。
 - 策略内核（`test_human_review_policy.py`，2 项，`@freeze_gate`）：模型约束不能取消用户策略；初始策略冻结且 mode 漂移不被重解释。
 - 组合内（`initial_planning_sources`/`planning_commit_runtime`/`graph_revision_commit`/`workspace_projection`/`contract_review_delivery` 等，见 §5 L2）。
 
@@ -83,13 +83,13 @@
 
 系统性偏差实锤：同一选择真实墙钟 155–279s，而每通过一轮，混合不同运行（多含负载期）的逐测试最大值之和就把下一轮预检顶过预算——门禁自我砖化，10-25 曾以清空缓存恢复（当时定性=新克隆等价；本轮任务明确禁止清空）。预检剩余预算 289.94s < 估算 315.82s，pytest 无法启动。
 
-### 4.2 限定修复（不削弱合同）
+### 4.2 历史改动及独立复验修正
 
-`scripts/freeze_gate.py`：历史文件保留每测试 `max`（永久观察史，不清空、不降格）并新增 `last`（最近一次实测）；预检改用**最近一次完整观测剖面**求和；`max` 和仅作透明报告（`historical_max_duration_sum_seconds`）。legacy 平铺缓存按 max 迁移、`last` 诚实置未知——等价于新克隆（无缓存即启动），但零数据损失。墙钟 300s 硬执行、固定 manifest、安全测试选择、摘要完整性全部不变；最近实测确实超预算时仍 fail-closed（`BLOCKED_KNOWN_DURATION_OVER_BUDGET`）。
+`4886c518` 中的估算器保存了逐测试 `max/last`，但没有同一次完整运行的身份或提交边界。该历史实现不能称为“最近完整运行剖面”：不同运行的 last 可以拼接；实际超时报告 durations 为空，缓存 last_count=0，不能推导超时必然阻断下次启动。原 42 项测试及 300.79 秒超时结果保留为历史证据，不作为新合同的通过证明。
 
-新增完整性回归（`test_freeze_gate_integrity.py`，42/42 绿）：maxima 永久保留且 legacy 不被重解释为 last；陈旧 maxima 单独不得阻断启动（新克隆等价）；最近实测超预算必须在启动前阻断（fail-closed 方向不变）。
+后续 [INT-2E-ESTIMATOR-FIX](INT-2E-ESTIMATOR-FIX.md) 采用同一源码摘要、同一 node manifest 的最近完整剖面：结构化记录真实 collection 和全部节点三阶段耗时，完整成功、无超时/源码漂移时才原子发布；任何缺失/不匹配明确为 UNKNOWN，不能把未知当零。旧 max/last 仅保留为历史，不拼接估算。估算器修复和正式冻结门禁通过是两件事。
 
-正式最终门禁结果见 §5 L5。定向诊断补充（选择集暴涨根因）：本轮为接审核策略修改了 `initial_planning_sources.py`、`planning_commit.py`、`initial_graph_compilation.py` 等核心源码，按既有 SOURCE_TEST_RULES 合法拉入其完整契约测试文件，选择集由上一轮接受时的 302 节点增至 498（+196：initial_planning_sources 34、compiled_acg 30、graph_revision_commit 30、initial_graph_materialization 29、planning_commit_runtime 27、capability_upgrade_gates 15、workspace_projection 14 等）。线性外推全程约 430s（上一轮 302 节点真实 274s ≈ 0.88s/节点）。300s 预算为脚本内冻结合同（CLI 拒绝 >300），基线演进=替换固定 manifest、裁剪映射或放宽预算均被任务书禁止。**门禁在 300.79s 墙钟处如实 INCOMPLETE_TIMEOUT（exit 1），不重试碰运气。**估算器修复本身经正式运行验证工作正常：预检按 last 基准放行（历史 max 315.82 仅作报告）、pytest 真实启动、墙钟硬执行 fail-closed。该冲突属策略层裁决（预算再基线 / 选择策略 / 分层门禁），留给用户与后续轮次，本轮不改合同。
+历史正式门禁仍为 **INCOMPLETE_TIMEOUT，498 节点、300.79 秒、exit 1**。498 节点和约 430 秒线性外推不能证明 300 秒预算必然不可满足，只能确认这次在该环境下超时。后续可限定诊断测试装配/运行开销，或另行裁决门禁策略；本次不改 300 秒预算、固定 manifest 或测试映射，不重跑完整门禁。
 
 ## 5. D：最终分层重验（同一最终源码快照）
 
@@ -100,7 +100,7 @@
 | L1 HTTP/审核/Dispatch/交付 | pytest apps/agent 10 文件 | 仓库根 | 66 passed | 0 | 339.62s | 无 |
 | L2 Runtime/规划/门禁内核 | pytest agentOS 18 文件 | apps/agentOS | 303 passed | 0 | 399.67s | 无 |
 | L3 Java 组合 | mvn -Dtest=9 类 test（surefire 53/0/0/0） | apps/backend | 53 passed | 0 | 58.59s | 无 |
-| L4a 前端核心 | vitest 12 spec（maxWorkers=2） | apps/frontend | 155 passed（11 文件） | 0 | 119.33s | 无 |
+| L4a 前端核心 | vitest 11 spec（maxWorkers=2） | apps/frontend | 155 passed（11 文件） | 0 | 119.33s | 无 |
 | L4b Web 构建 | npm run build:web（vue-tsc+vite） | apps/frontend | — | 0 | 50.56s | 无 |
 | L4c Desktop 构建 | npm run build:desktop（vue-tsc+vite） | apps/frontend | — | 0 | 26.14s | 无 |
 | L5 正式冻结门禁 | python scripts/freeze_gate.py | 仓库根 | 收集 498 节点，约 375 项已过即到墙钟 | 1（INCOMPLETE_TIMEOUT） | 300.79s | 门禁自检零漂移 |
@@ -147,21 +147,21 @@
 | 裁决项 | 结论 | 依据 |
 | --- | --- | --- |
 | 功能闭环（创建→规划→许可→Dispatch→审核→canonical final） | **通过** | §1、§5 L1/L2、§5.1 真实浏览器+真实 DeepSeek 全链路 |
-| 架构与重构冻结（无遗留 P0/P1，正式门禁完整通过） | **未通过**（P0/P1=0；正式门禁 INCOMPLETE_TIMEOUT：498 节点 vs 300s 结构性冲突，§4） | §5 L5 |
+| 架构与重构冻结（无遗留 P0/P1，正式门禁完整通过） | **未通过**（P0/P1=0；正式门禁 INCOMPLETE_TIMEOUT；不能仅由节点数量证明预算必然不可满足，§4） | §5 L5 |
 | 生产就绪 | 未验收（§5.2 边界），不因功能闭环通过而宣称 READY | §5.2 |
-| 允许 V1（内核）最终冻结 | 否——门禁未完整通过；V1 内核功能基线可作候选记录，正式冻结待门禁策略裁决 | §4、§5 L5 |
-| 允许进入独立部署验收 | 暂不允许完整入场；三项原始阻断已关闭，功能面可先做只读预演，完整验收以门禁通过为前提 | §4、§5 |
+| 允许 V1（内核）最终冻结 | 否——门禁未完整通过；V1 内核功能基线可作候选记录，正式冻结待门禁完整通过及独立复验 | §4、§5 L5 |
+| 允许进入独立部署验收 | 暂不允许完整入场；审核与 Java 修复受限通过，功能面可先做只读预演，完整验收以正式门禁通过为前提 | §4、§5 |
 | 推送 GitHub | 否（BLOCKED 分支规则：只保留本地已核验提交；不动 Gitee、不强推、不部署） | §6 |
 
-三项原始阻断关闭情况：P1 human_in_loop 未形成正式审核要求——已修复并全链路验证（§1、§5.1）；P2 Java 组合计时失败——53/0/0/0（§3、§5 L3）；P2 冻结门禁历史预算预检假阻断——假阻断根因（max-only 棘轮）已修复并有完整性回归钉死（§4.2），修复后的正式运行暴露真实结构性超预算并如实 BLOCKED（§4.3、§5 L5）。
+历史阻断与当前状态：P1 human_in_loop 未形成正式审核要求——已修复并全链路验证（§1、§5.1）；P2 Java 组合计时失败——53/0/0/0（§3、§5 L3）；P2 冻结门禁仍未通过；原 last 估算器存在完整剖面缺口，后续定向修复见 INT-2E-ESTIMATOR-FIX，不据此改判正式门禁。
 
 剩余 P2/P3：
 
-- P2（唯一冻结阻断）：正式冻结门禁选择集 498 节点 vs 300s 预算的结构性冲突；需用户在「预算再基线 / 映射选择策略 / 分层门禁」间裁决，本轮无权改合同。
+- P2：正式冻结门禁未完整通过；当前环境超时证据不等于结构性不可满足的证明，后续另作性能诊断或合同裁决。
 - P2：下载装配 `SpooledTemporaryFile` 1MB 阈值后磁盘路径未做容量/延迟验收（保留既有定性）。
 - P2：真实多租户、服务端会话撤销演练、Provider 线上故障切换、完整灾备、原生 Windows 宿主（生产就绪边界）。
 - P3：真实 Provider 规划非确定性（首条任务被规划为不支持的控制图并正确 fail-closed；可改进规划引导，非缺陷）。
 - P3：SSE 瞬态流无跨纪元持久回放（V1 固有限制，保留）。
-- P3：时长历史 last 基准在真实超时后会阻断后续启动（fail-closed 设计方向，恢复需先确认环境，属预期行为）。
+- 估算语义修正：超时不得更新完整剖面。下次仅当已有匹配的有效完整剖面且估计超出剩余预算时才在预检阻断；不存在匹配剖面则显式 UNKNOWN，不保证超时后必然阻断。
 
 最终裁决：**BLOCKED**
