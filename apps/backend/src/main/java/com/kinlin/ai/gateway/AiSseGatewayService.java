@@ -15,6 +15,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.Map;
@@ -105,9 +107,20 @@ public class AiSseGatewayService {
             Flux<ServerSentEvent<String>> body = upstream.getBody() == null
                     ? Flux.empty()
                     : upstream.getBody();
-            Flux<ServerSentEvent<String>> stream = body
-                    .timeout(idleTimeout, Flux.error(new SseIdleTimeoutException()))
-                    .takeUntilOther(Mono.delay(maximumDuration)
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_EVENT_STREAM)
+                    .header("Cache-Control", "no-cache, no-transform")
+                    .header("X-Accel-Buffering", "no")
+                    .body(instrument(withTimeouts(body, Schedulers.parallel())));
+        });
+    }
+
+    // Both clocks share an explicit scheduler. Production retains Reactor's
+    // parallel clock; tests can advance time without loopback/CPU jitter.
+    Flux<ServerSentEvent<String>> withTimeouts(Flux<ServerSentEvent<String>> body, Scheduler clock) {
+        return body
+                    .timeout(idleTimeout, Flux.error(new SseIdleTimeoutException()), clock)
+                    .takeUntilOther(Mono.delay(maximumDuration, clock)
                             .flatMap(ignored -> Mono.<Void>error(new SseMaximumDurationException())))
                     .onErrorResume(SseIdleTimeoutException.class,
                             ignored -> Flux.just(terminalErrorEvent("SSE_IDLE_TIMEOUT",
@@ -122,12 +135,6 @@ public class AiSseGatewayService {
                     })
                     .doOnCancel(() -> log.info("SSE downstream cancelled; upstream subscription cancelled"));
 
-            return ResponseEntity.ok()
-                    .contentType(MediaType.TEXT_EVENT_STREAM)
-                    .header("Cache-Control", "no-cache, no-transform")
-                    .header("X-Accel-Buffering", "no")
-                    .body(instrument(stream));
-        });
     }
 
     private Flux<ServerSentEvent<String>> instrument(Flux<ServerSentEvent<String>> stream) {

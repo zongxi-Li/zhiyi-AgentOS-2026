@@ -12,6 +12,8 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import com.kinlin.ai.security.AuthenticatedUserContext;
 import reactor.core.publisher.Flux;
+import reactor.test.StepVerifier;
+import reactor.test.scheduler.VirtualTimeScheduler;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -19,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,6 +31,7 @@ class AiSseGatewayServiceTest {
 
     private HttpServer server;
     private String baseUrl;
+    private ExecutorService serverExecutor;
 
     @BeforeEach
     void startServer() throws IOException {
@@ -39,7 +43,8 @@ class AiSseGatewayServiceTest {
                 )
         );
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.setExecutor(Executors.newCachedThreadPool());
+        serverExecutor = Executors.newCachedThreadPool();
+        server.setExecutor(serverExecutor);
         server.createContext("/ai/events", exchange -> stream(exchange, List.of(
                 ": heartbeat\n\n",
                 "data: {\"delta\":\"hello\"}\n\n",
@@ -71,6 +76,7 @@ class AiSseGatewayServiceTest {
     @AfterEach
     void stopServer() {
         server.stop(0);
+        serverExecutor.shutdownNow();
         SecurityContextHolder.clearContext();
     }
 
@@ -88,19 +94,40 @@ class AiSseGatewayServiceTest {
 
     @Test
     void idleTimeoutResetsOnEventsAndIsDistinctFromMaximumDuration() {
-        ResponseEntity<Flux<ServerSentEvent<String>>> idle = service(40, 1_000)
-                .openPost("/ai/idle", java.util.Map.of()).block(Duration.ofSeconds(1));
-        List<ServerSentEvent<String>> idleEvents = idle.getBody().collectList().block(Duration.ofSeconds(1));
-
-        ResponseEntity<Flux<ServerSentEvent<String>>> maximum = service(80, 70)
-                .openPost("/ai/long", java.util.Map.of()).block(Duration.ofSeconds(1));
-        List<ServerSentEvent<String>> maximumEvents = maximum.getBody().collectList().block(Duration.ofSeconds(1));
-
-        assertTrue(idleEvents.stream().anyMatch(event -> event.data() != null
-                && event.data().contains("SSE_IDLE_TIMEOUT")));
-        assertTrue(maximumEvents.stream().anyMatch(event -> event.data() != null
-                && event.data().contains("SSE_MAX_DURATION")));
-        assertTrue(maximumEvents.stream().filter(event -> "heartbeat".equals(event.comment())).count() >= 2);
+        VirtualTimeScheduler idleClock = VirtualTimeScheduler.create();
+        try {
+            VirtualTimeScheduler clock = idleClock;
+            StepVerifier.withVirtualTime(() -> service(40, 1_000).withTimeouts(Flux.never(), clock),
+                            () -> clock, Long.MAX_VALUE)
+                    .expectSubscription().expectNoEvent(Duration.ofMillis(39))
+                    .thenAwait(Duration.ofMillis(1))
+                    .expectNextMatches(e -> e.data().contains("SSE_IDLE_TIMEOUT"))
+                    .verifyComplete();
+        } finally {
+            idleClock.dispose();
+        }
+        // Keep the original 25ms heartbeat / 80ms idle / 70ms maximum case,
+        // then strengthen it: 40ms idle must refresh at 25 and 50ms, while
+        // absolute maximum still terminates at 70ms, not 120ms.
+        for (long idleMs : new long[]{80, 40}) {
+            VirtualTimeScheduler clock = VirtualTimeScheduler.create();
+            try {
+                StepVerifier.withVirtualTime(() -> service(idleMs, 70).withTimeouts(
+                                Flux.interval(Duration.ofMillis(25), clock)
+                                        .map(i -> ServerSentEvent.<String>builder().comment("heartbeat").build()), clock),
+                                () -> clock, Long.MAX_VALUE)
+                        .expectSubscription().expectNoEvent(Duration.ofMillis(24))
+                        .thenAwait(Duration.ofMillis(1))
+                        .expectNextMatches(e -> "heartbeat".equals(e.comment()))
+                        .expectNoEvent(Duration.ofMillis(24)).thenAwait(Duration.ofMillis(1))
+                        .expectNextMatches(e -> "heartbeat".equals(e.comment()))
+                        .expectNoEvent(Duration.ofMillis(19)).thenAwait(Duration.ofMillis(1))
+                        .expectNextMatches(e -> e.data().contains("SSE_MAX_DURATION"))
+                        .verifyComplete();
+            } finally {
+                clock.dispose();
+            }
+        }
     }
 
     @Test
