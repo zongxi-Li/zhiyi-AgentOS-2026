@@ -7,6 +7,51 @@ const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a
 })
 
 describe('RunRuntimeStore streaming projection', () => {
+  it('accepts the authenticated terminal snapshot with sequence zero', () => {
+    const store = new RunRuntimeStore('run')
+    store.apply(event(0, 'run.completed'))
+    expect(store.terminal).toBe(true)
+  })
+  it('starts a fresh transient-stream cursor after reconnect while rejecting duplicates in that stream', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    const store = new RunRuntimeStore('run')
+    store.apply(event(100, 'node.started'))
+    const client = new RuntimeEventClient(store)
+    try {
+      client.connect()
+      store.apply(event(1, 'model.first_token'))
+      store.apply(event(2, 'node.completed'))
+      store.apply(event(1, 'node.started'))
+      expect(store.nodes.A.status).toBe('COMPLETED')
+      expect(store.lastSequence).toBe(2)
+    } finally { client.disconnect(); vi.unstubAllGlobals() }
+  })
+  it.each([401, 403])('does not retry an unauthorized stream (%s)', async status => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new RuntimeEventClient(new RunRuntimeStore('run'))
+    try {
+      client.connect(); await vi.advanceTimersByTimeAsync(5000)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { client.disconnect(); vi.useRealTimers(); vi.unstubAllGlobals() }
+  })
+  it('reconnects a nonterminal clean EOF and cancels its retry on disconnect', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read: async () => ({ done: true }) }) } })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new RuntimeEventClient(new RunRuntimeStore('run'))
+    try {
+      client.connect()
+      await vi.advanceTimersByTimeAsync(1001)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      client.disconnect()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { client.disconnect(); vi.useRealTimers(); vi.unstubAllGlobals() }
+  })
   it('accumulates deltas and deduplicates sequence', async () => {
     const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { cb(0); return 1 })
     const store = new RunRuntimeStore('run')

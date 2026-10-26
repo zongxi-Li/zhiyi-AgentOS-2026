@@ -113,7 +113,7 @@ const numberOrNull = (value: unknown) => {
 export class RunRuntimeStore {
   readonly runId: string
   terminal = false
-  lastSequence = 0
+  lastSequence = -1
   readonly nodes = reactive<Record<string, NodeRuntimeState>>({})
   readonly planning = reactive<PlanningRuntimeState>(createPlanningState())
   private pending = new Map<string, string>()
@@ -312,12 +312,18 @@ export class RunRuntimeStore {
 export class RuntimeEventClient {
   private controller: AbortController | null = null
   private generation = 0
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly store: RunRuntimeStore) {}
 
   connect() {
     this.disconnect()
     if (typeof fetch === 'undefined' || typeof AbortController === 'undefined') return
+    if (this.store.terminal) return
+    // This is a transient, non-replaying stream. The broker can restart its
+    // sequence after losing its last subscriber or after a process restart.
+    // Dedupe/order checks apply within this new connection, not across epochs.
+    this.store.lastSequence = -1
     const controller = new AbortController()
     const generation = ++this.generation
     this.controller = controller
@@ -326,6 +332,8 @@ export class RuntimeEventClient {
 
   disconnect() {
     this.generation += 1
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
     this.controller?.abort()
     this.controller = null
   }
@@ -341,6 +349,10 @@ export class RuntimeEventClient {
         cache: 'no-store',
         signal: controller.signal
       })
+      if (response.status === 401 || response.status === 403) {
+        this.disconnect() // A new authenticated session must explicitly reconnect.
+        return
+      }
       if (!response.ok) throw new Error(`Runtime event stream failed with HTTP ${response.status}`)
       if (!response.body) throw new Error('Runtime event stream has no response body')
 
@@ -357,8 +369,11 @@ export class RuntimeEventClient {
       }
     } catch (error) {
       if ((error as { name?: string })?.name === 'AbortError') return
-      if (generation === this.generation && !this.store.terminal) {
-        window.setTimeout(() => {
+    } finally {
+      // A proxy timeout/clean EOF can end a still-active Run as well as throw.
+      // Reconnect observes events only; it never resubmits execution commands.
+      if (generation === this.generation && !controller.signal.aborted && !this.store.terminal) {
+        this.reconnectTimer = setTimeout(() => {
           if (generation === this.generation && !this.store.terminal) this.connect()
         }, 1000)
       }

@@ -23,6 +23,18 @@ class _StartupRuntime:
 
 
 @pytest.mark.asyncio
+async def test_shutdown_removes_task_cancelled_before_coroutine_first_runs():
+    calls = []
+    async def execute(run_id):
+        calls.append(run_id)
+    coordinator = RunExecutionCoordinator(SimpleNamespace(execute_prepared_run=execute))
+    coordinator._create_permitted_task(SimpleNamespace(run_id='not-started', dispatch_id='accepted-command'))
+    await coordinator.shutdown()  # No yield: cancellation precedes the coroutine's try/finally.
+    assert not calls
+    assert not coordinator._tasks
+
+
+@pytest.mark.asyncio
 async def test_startup_flushes_identity_outbox_after_closing_orphans() -> None:
     runtime = _StartupRuntime()
 

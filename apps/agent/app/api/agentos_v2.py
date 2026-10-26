@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from tempfile import SpooledTemporaryFile
 from sqlite3 import Error as SQLiteError
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -2726,6 +2727,12 @@ def create_router(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        # Page readers must reject corrupt bytes as well as complete downloads.
+        if not manifest.get("sealed") or any(
+            hashlib.sha256(payload).hexdigest() != ref.checksum or len(payload) != ref.byte_length
+            for ref, payload in page
+        ):
+            raise HTTPException(status_code=503, detail="Artifact content integrity unavailable")
         return {
             "manifest": manifest,
             "items": [
@@ -2848,12 +2855,36 @@ def create_router(
     @router.get("/runs/{run_id}/artifacts/{manifest_id}/download")
     async def download_artifact(run_id: str, manifest_id: str):
         from fastapi.responses import StreamingResponse
+        from starlette.background import BackgroundTask
 
         manifest = await get_artifact(run_id, manifest_id)
+        # The store validates the aggregate checksum at the END of assembly.
+        # Verify a bounded-memory snapshot before sending HTTP 200/any bytes;
+        # otherwise a late generator failure already exposed corrupt content.
+        verified = SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+        try:
+            for chunk in runtime.content_manifest_store.stream_assembly(manifest["manifestId"]):
+                verified.write(chunk)
+            if verified.tell() != manifest["byteLength"]:
+                raise ValueError("artifact length mismatch")
+            verified.seek(0)
+        except (KeyError, ValueError, TypeError, OSError, SQLiteError) as exc:
+            verified.close()
+            raise HTTPException(status_code=503, detail="Artifact content integrity unavailable") from exc
+
+        def verified_chunks():
+            try:
+                while chunk := verified.read(64 * 1024):
+                    yield chunk
+            finally:
+                verified.close()
+
         return StreamingResponse(
-            runtime.content_manifest_store.stream_assembly(manifest["manifestId"]),
+            verified_chunks(),
             media_type=manifest["mediaType"],
-            headers={"Content-Disposition": f'attachment; filename="{manifest_id}.md"'},
+            headers={"Content-Disposition": f'attachment; filename="{manifest_id}.md"',
+                     "Content-Length": str(manifest["byteLength"])},
+            background=BackgroundTask(verified.close),
         )
 
     @router.get("/runs/{run_id}/legacy-outputs")

@@ -227,6 +227,13 @@ class RunExecutionCoordinator:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        # A Task cancelled before its coroutine first runs never enters that
+        # coroutine's finally block. Prune only settled tasks owned above;
+        # _accepting=False prevents a new submission during this shutdown.
+        async with self._lock:
+            for run_id, task in list(self._tasks.items()):
+                if task in tasks and task.done():
+                    self._tasks.pop(run_id, None)
 
     async def _run_managed(self, run_id: str, *, permitted: bool = False) -> None:
         started = monotonic()
