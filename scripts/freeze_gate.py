@@ -38,6 +38,9 @@ FAST_OR_CRITICAL = (
 # counterexamples in those modules carry @pytest.mark.freeze_gate. New rules
 # should be added alongside the implementation that introduces the module.
 SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("src/runtime/human_review_policy.py", ("tests/components/planner/test_human_review_policy.py",)),
+    ("src/runtime/v2/queries.py", ("tests/runtime/v2/test_artifact_identity.py", "tests/runtime/v2/test_workspace_projection.py")),
+    ("src/runtime/v2/workspace.py", ("tests/runtime/v2/test_artifact_identity.py", "tests/runtime/v2/test_workspace_projection.py")),
     ("scripts/freeze_gate.py", ("tests/storage/test_freeze_gate_integrity.py",)),
     ("scripts/freeze_gate_pytest_runner.py", ("tests/storage/test_freeze_gate_integrity.py",)),
     ("src/support/stores/c2_schema_upgrade.py", ("tests/storage/test_c2_schema_upgrade.py", "tests/storage/test_c2_schema_integrity.py", "tests/storage/v2/test_schema.py")),
@@ -267,32 +270,57 @@ def measured_test_durations(output: str) -> dict[str, float]:
     return durations
 
 
-def update_duration_history(durations: dict[str, float]) -> dict[str, float]:
+def _normalize_history(payload: object) -> dict[str, dict[str, float]]:
+    """Accept both the legacy max-only file and the {max, last} record file.
+
+    Legacy flat entries are maxima from older gate runs; their last observation
+    is genuinely unknown and stays unknown instead of being guessed.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    history: dict[str, dict[str, float]] = {}
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            maximum = value.get("max")
+            last = value.get("last")
+            record = {"max": float(maximum)} if isinstance(maximum, (int, float)) else {}
+            if isinstance(last, (int, float)):
+                record["last"] = float(last)
+            if record:
+                history[str(key)] = record
+        elif isinstance(value, (int, float)):
+            history[str(key)] = {"max": float(value)}
+    return history
+
+
+def update_duration_history(durations: dict[str, float]) -> dict[str, dict[str, float]]:
     path = ROOT / "tmp" / "freeze_gate" / "test_durations.json"
-    history: dict[str, float] = {}
+    history: dict[str, dict[str, float]] = {}
     if path.is_file():
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                history = {str(key): float(value) for key, value in payload.items()}
+            history = _normalize_history(json.loads(path.read_text(encoding="utf-8")))
         except (ValueError, TypeError):
             history = {}
-    # Keep the maximum measured duration per test. It is an observation, not a
-    # worst-case guarantee; missing entries stay unknown instead of guessed.
+    # Maxima are retained forever as observation history. The budget precheck
+    # deliberately does NOT sum them: per-test maxima come from different runs
+    # (often under transient host load), so their sum ratchets past the budget
+    # after ordinary passing runs and blocks launch forever (fresh clones have
+    # no such file). The hard wall-clock budget below remains the authority.
     for node_id, seconds in durations.items():
-        history[node_id] = max(history.get(node_id, 0.0), seconds)
+        record = history.setdefault(node_id, {})
+        record["max"] = max(record.get("max", 0.0), seconds)
+        record["last"] = seconds
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return history
 
 
-def load_duration_history() -> dict[str, float]:
+def load_duration_history() -> dict[str, dict[str, float]]:
     path = ROOT / "tmp" / "freeze_gate" / "test_durations.json"
     if not path.is_file():
         return {}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return {str(key): float(value) for key, value in payload.items()} if isinstance(payload, dict) else {}
+        return _normalize_history(json.loads(path.read_text(encoding="utf-8")))
     except (ValueError, TypeError):
         return {}
 
@@ -429,12 +457,20 @@ def main() -> int:
         return write_report(report, wall_start, 2)
 
     duration_history = load_duration_history()
-    known = {node_id: duration_history[node_id] for node_id in node_ids if node_id in duration_history}
-    unknown = [node_id for node_id in node_ids if node_id not in duration_history]
-    measured_sum = sum(known.values())
+    # Estimate from the most recent COMPLETE observation profile only. Summing
+    # per-test historical maxima mixed load spikes from different runs into one
+    # fictional worst-case run and permanently blocked launch after ordinary
+    # passing rounds (e.g. real 273.989s pass followed by a 315.82s estimate).
+    known_last = {node_id: duration_history[node_id]["last"] for node_id in node_ids
+                  if "last" in duration_history.get(node_id, {})}
+    max_sum = sum(duration_history[node_id].get("max", 0.0) for node_id in node_ids
+                  if node_id in duration_history)
+    unknown = [node_id for node_id in node_ids if node_id not in known_last]
+    measured_sum = sum(known_last.values())
     remaining = max(0.0, args.budget_seconds - (time.perf_counter() - wall_start))
-    report["historical_duration_seconds"] = known
-    report["historical_duration_sum_seconds"] = round(measured_sum, 3)
+    report["historical_last_duration_seconds"] = known_last
+    report["historical_last_duration_sum_seconds"] = round(measured_sum, 3)
+    report["historical_max_duration_sum_seconds"] = round(max_sum, 3)
     report["duration_unknown_test_node_ids"] = unknown
     if measured_sum > remaining:
         report["status"] = "BLOCKED_KNOWN_DURATION_OVER_BUDGET"

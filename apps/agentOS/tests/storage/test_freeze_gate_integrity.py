@@ -270,3 +270,88 @@ def test_manifest_runner_executes_exactly_the_listed_nodes_and_propagates_exit_s
                             cwd=gate["AGENTOS"], capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=120)
     assert failed.returncode != 0, failed.stdout + failed.stderr
+
+
+def test_duration_history_preserves_maxima_and_records_last_observation(tmp_path, monkeypatch):
+    """The estimate basis is the latest complete observation, not a fictional
+    sum of per-test maxima from different (often overloaded) runs. Maxima stay
+    on file forever; legacy flat entries keep their maximum and an unknown
+    last observation instead of being silently reinterpreted or erased."""
+    gate = load()
+    ns = gate["update_duration_history"].__globals__
+    monkeypatch.setitem(ns, "ROOT", tmp_path)
+    history_path = tmp_path / "tmp/freeze_gate/test_durations.json"
+    history_path.parent.mkdir(parents=True)
+    history_path.write_text(json.dumps({"tests/a.py::x": 5.0, "tests/b.py::y": 7.0}),
+                            encoding="utf-8")
+    gate["update_duration_history"]({"tests/a.py::x": 3.0, "tests/c.py::z": 2.0})
+    stored = json.loads(history_path.read_text(encoding="utf-8"))
+    assert stored["tests/a.py::x"] == {"max": 5.0, "last": 3.0}
+    assert stored["tests/b.py::y"] == {"max": 7.0}, "untouched history is never erased"
+    assert "last" not in stored["tests/b.py::y"], "legacy maxima are not reinterpreted as last"
+    assert stored["tests/c.py::z"] == {"max": 2.0, "last": 2.0}
+    loaded = gate["load_duration_history"]()
+    assert loaded["tests/b.py::y"] == {"max": 7.0}
+
+
+def _gate_harness(tmp_path, monkeypatch, gate, history, popen):
+    ns = gate["main"].__globals__
+    test_file = tmp_path / "agentOS/tests/test_target.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_target(): pass\n", encoding="utf-8")
+    baseline = tmp_path / "accepted.json"
+    baseline.write_bytes(gate["DEFAULT_BASELINE"].read_bytes())
+
+    class Child:
+        def __init__(self, command, **kwargs):
+            kwargs["stdout"].write(b"1 passed in 0.01s\n")
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    for key, value in {
+        "ROOT": tmp_path, "AGENTOS": test_file.parents[1],
+        "source_snapshot": lambda: {"aggregate": "initial", "files": {"source": "hash"}},
+        "external_snapshot": lambda: {}, "check_diff_whitespace": lambda: (0, ""),
+        "changed_python_paths": lambda *a: (["source"], "fixed original baseline"),
+        "resolve_tests": lambda *a: (["tests/test_target.py"], []),
+        "collect_node_ids": lambda *a: (["tests/test_target.py::test_target"], 0, ""),
+        "load_duration_history": lambda: history,
+        "update_duration_history": lambda *a: None,
+        "os": SimpleNamespace(environ={}, name="posix"),
+        "subprocess": SimpleNamespace(Popen=popen or Child, STDOUT=subprocess.STDOUT),
+    }.items():
+        monkeypatch.setitem(ns, key, value)
+    monkeypatch.setattr(sys, "argv", ["freeze_gate.py", "--baseline", str(baseline)])
+
+
+def test_stale_maxima_alone_do_not_block_launch(tmp_path, monkeypatch):
+    """A fresh clone has no history and launches; a host whose maxima ratcheted
+    past the budget from mixed runs must stay equivalent to that fresh clone."""
+    gate = load()
+    _gate_harness(tmp_path, monkeypatch, gate,
+                  history={"tests/test_target.py::test_target": {"max": 999.0}}, popen=None)
+    assert gate["main"]() == 0
+    result = json.loads(sorted((tmp_path / "tmp/freeze_gate").glob("*.json"))[-1].read_text("utf-8"))
+    assert result["status"] == "PASSED"
+    assert result["historical_max_duration_sum_seconds"] == 999.0
+    assert result["historical_last_duration_sum_seconds"] == 0
+
+
+def test_recent_over_budget_last_observations_block_before_launch(tmp_path, monkeypatch):
+    """Fail-closed direction is unchanged: when the latest complete profile
+    already exceeds the remaining budget, pytest is never started."""
+
+    def refuse(*args, **kwargs):
+        pytest.fail("pytest launched although the recent profile exceeded the budget")
+
+    gate = load()
+    _gate_harness(tmp_path, monkeypatch, gate,
+                  history={"tests/test_target.py::test_target": {"max": 400.0, "last": 300.5}},
+                  popen=refuse)
+    assert gate["main"]() != 0
+    result = json.loads(sorted((tmp_path / "tmp/freeze_gate").glob("*.json"))[-1].read_text("utf-8"))
+    assert result["status"] == "BLOCKED_KNOWN_DURATION_OVER_BUDGET"
+    assert result["historical_last_duration_sum_seconds"] == 300.5
+    assert "pytest_exit_code" not in result and result["pytest_command"] is None
