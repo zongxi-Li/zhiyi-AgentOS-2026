@@ -18,6 +18,7 @@ from components.planner.service import PlanningEngine
 from service.agents import AgentRegistry
 from service.agents.base import AgentProfile
 from support.acg.capabilities import CapabilityCatalog
+from runtime.human_review_policy import review_lowering_input
 
 
 INITIAL_MATERIALIZATION_POLICY = "initial-materialization-v1"
@@ -27,7 +28,8 @@ def initial_recipe_fingerprint():
     """Identify this stage's derivation/projection in addition to sealed C2A-1 compilers."""
     root = Path(__file__).resolve().parents[1]
     paths = ("runtime/initial_graph_compilation.py", "runtime/graph_materialization.py",
-             "runtime/graph_activation.py", "runtime/workflow_runtime.py", "components/planner/service.py")
+             "runtime/graph_activation.py", "runtime/workflow_runtime.py", "components/planner/service.py",
+             "runtime/human_review_policy.py")
     return stable_checksum({path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in paths})
 
 
@@ -51,6 +53,7 @@ def compile_initial_content(record, *, timestamp=None):
         raise ValueError("initial control graph materialization is unsupported")
     if origin.semantic_profile is None:
         lowering = build_template_lowering_input(workflow=origin.workflow, task_plan=plan)
+        lowering = review_lowering_input(lowering, origin.lowering_options.get('reviewPolicy'))
         blueprint = ACGLowerer().lower(lowering)
     else:
         agents = AgentRegistry()
@@ -72,6 +75,7 @@ def compile_initial_content(record, *, timestamp=None):
                 continue
             lowering = build_acg_lowering_input(mission_id=record.mission_id, profile=profile,
                 network=variant.network, task_plan=plan, capability_catalog=catalog, variant_id=variant.variant_id)
+            lowering = review_lowering_input(lowering, origin.lowering_options.get('reviewPolicy'))
             candidate = ACGLowerer().lower(lowering)
             candidates.append((PlanningEngine._score_candidate(plan, candidate), candidate, lowering))
         if not candidates:

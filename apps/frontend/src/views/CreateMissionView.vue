@@ -312,7 +312,7 @@ const executionControlLabel = computed(() => draft.value.reviewMode === 'auto' ?
 const executionControlSummary = computed(() => draft.value.reviewMode === 'auto' ? 'Auto Review' : 'Human Review')
 const executionControlDescription = computed(() => draft.value.reviewMode === 'auto'
   ? '正式任务先接受规划；签发许可后仍需明确点击执行。运行中自动处理审核。'
-  : '高风险步骤完成后暂停，等待人工审核。')
+  : '每个执行步骤完成后暂停，等待人工审核；最终交付须经批准。')
 const capabilitySummary = computed(() => {
   const selected = draft.value.enabledPluginIds
     .map(pluginId => plugins.value.find(plugin => plugin.pluginId === pluginId)?.displayName)

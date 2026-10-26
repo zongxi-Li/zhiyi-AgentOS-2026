@@ -2321,6 +2321,15 @@ class ExecutionRuntime(CollaboratorAccess):
             # facade 持锁派发 ReviewService；批准路径交还恢复输入后由本层
             # 调用 ACGExecutionService 续跑（Review → Execution 的唯一接缝）。
             async with self.run_lock_manager.lock_for(decision.run_id):
+                current = self.workflow_store.get_run(decision.run_id)
+                if current.execution_state.get('planningCommitRequired'):
+                    principal = self.semantic_principal_provider() if self.semantic_principal_provider else None
+                    if principal is None or self.mission_semantic_service is None:
+                        raise PermissionError('formal review requires trusted write authority')
+                    # Check before ReviewService writes audit/deferred memory,
+                    # including idempotent replay. Native claim checks again.
+                    self.mission_semantic_service.require_write_access(principal, current.mission_id)
+                    decision = decision.model_copy(update={'reviewer': principal.actor_id})
                 outcome = self.review_service.apply_acg(decision)
             if outcome.resume_state is None:
                 # Rejection is a durable lifecycle boundary too. Publish it

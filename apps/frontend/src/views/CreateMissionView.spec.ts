@@ -75,6 +75,8 @@ describe('CreateMissionView', () => {
     expect(wrapper.find('.create-mission__back').text()).toContain('返回项目')
     expect(wrapper.find('.create-mission__workspace').exists()).toBe(true)
     expect(wrapper.find('.launch-bar').exists()).toBe(true)
+    await wrapper.findAll('button').find(button => button.text() === '人工审核')!.trigger('click')
+    expect(wrapper.text()).toContain('每个执行步骤完成后暂停，等待人工审核；最终交付须经批准。')
     wrapper.unmount()
   })
 

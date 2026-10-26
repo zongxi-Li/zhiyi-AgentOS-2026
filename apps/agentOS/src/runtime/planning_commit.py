@@ -153,6 +153,8 @@ class RuntimePlanningCommitProvider:
                         (catalog_snapshot if catalog_snapshot is not None else self.runtime.capability_catalog).available()],
             "identityPlan": latest.model_dump(mode="json") if latest is not None else None,
         }
+        if run.review_mode != 'auto':
+            context['reviewMode'] = run.review_mode
         return FrozenPlanningSources(missionId=run.mission_id, missionRevision=row[0],
             sourceKind="initial" if self.initial else "runtime",
             observationId=None if self.initial else current.get("observationId"),
@@ -194,6 +196,9 @@ class RuntimePlanningCommitProvider:
             return PlanningCommitRejection(code=code, reason=reason)
         run = self.run()
         basis = run_intent_basis(run)
+        if not self.initial and run.review_mode == 'human_in_loop':
+            return reject(Code.CONTROL_BARRIER_BLOCKED,
+                          'human review policy revisions require a fresh explicitly accepted Run')
         if not run.execution_state.get("planningCommitRequired"):
             return reject(Code.INVALID_PROPOSAL, "Run requires an explicit durable acceptance fence")
         if run.execution_scope is None:
@@ -305,6 +310,11 @@ class RuntimePlanningCommitProvider:
             metadata=next_plan.metadata) if self.initial else next_plan
         if set(request.requested_scope) != {n.key for n in validated.nodes}:
             return reject(Code.DEPENDENCY_NOT_CLOSED, "this phase accepts complete semantic candidates only")
+        from runtime.human_review_policy import validate_review_policy
+        try:
+            validate_review_policy(validated, run.review_mode)
+        except ValueError as exc:
+            return reject(Code.INVALID_PROPOSAL, str(exc))
         if validated.metadata.get("missionIntentBasisRef") != basis.reference():
             return reject(Code.INVALID_PROPOSAL, "candidate changed frozen basis reference")
         for node in validated.nodes:
@@ -493,6 +503,8 @@ class RuntimePlanningCommitAuthority:
               if not any(x.get("constraintId") == c.constraint_id for x in n.constraints)]]}) for n in plan.nodes)
         plan = plan.model_copy(deep=True, update={"nodes": nodes,
             "metadata": {**plan.metadata, "missionIntentBasisRef": basis.reference()}})
+        from runtime.human_review_policy import bind_review_policy
+        plan = bind_review_policy(plan, run.review_mode)
         resolve = getattr(self.runtime.identity_lifecycle, "resolve_task_plan_snapshot", None)
         if callable(resolve):
             plan = resolve(plan)

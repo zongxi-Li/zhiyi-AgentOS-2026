@@ -33,6 +33,17 @@ from domain.models import (
 from domain.repository import EntityNotFoundError, IdentityConflictError, RepositorySet
 
 
+def artifact_is_public(run, artifact):
+    """Canonical final stays internal evidence until successful Run completion.
+
+    Read only the existing terminal Identity fact. This is a
+    publication projection, not a new execution or review state machine.
+    """
+    if not is_run_deliverable_identity(artifact.model_dump(by_alias=True)):
+        return True
+    return run.status is RunStatus.SUCCEEDED
+
+
 class WorkspaceEntryKind(str, Enum):
     FOLDER = "folder"
     GRAPH = "graph"
@@ -605,6 +616,8 @@ class MissionWorkspaceProjector:
         )
         for detail in ordered_details:
             artifact = detail.artifact
+            if not artifact_is_public(run, artifact):
+                continue
             task = task_by_id.get(artifact.task_id)
             task_key = artifact.semantic_task_key
             plan_node = plan_by_key.get(task_key)

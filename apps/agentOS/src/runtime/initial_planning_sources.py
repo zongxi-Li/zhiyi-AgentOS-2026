@@ -63,6 +63,8 @@ def capture_initial_sources(provider, runtime_fingerprint):
     profiles = [AgentProfile.model_validate(a.profile.model_dump(mode="json", by_alias=True))
                 for a in runtime.plugin_scope_resolver.scoped_agents(scope).all()]
     catalog = runtime.plugin_scope_resolver.scoped_catalog(scope)
+    from runtime.human_review_policy import review_policy
+    review = review_policy(run.review_mode)
     repositories = getattr(runtime.identity_lifecycle, "repositories", None)
     if repositories is None:
         raise ValueError("trusted Identity repository required for initial capture")
@@ -79,7 +81,8 @@ def capture_initial_sources(provider, runtime_fingerprint):
         materialRefs=run.input.get("materialRefs") or (), inputFingerprint=digest(run.input),
         runtimeFingerprint=runtime_fingerprint,
         loweringOptions={"planningSeed": run.planning_seed, "planningDiversity": run.planning_diversity,
-                         "capabilityProfile": run.execution_state.get("requestedCapabilityProfile")},
+                         "capabilityProfile": run.execution_state.get("requestedCapabilityProfile"),
+                         **({'reviewPolicy': review} if review else {})},
         policy=compilation_policy(), staticFingerprint="0" * 64)
     # Compute over the canonical typed representation, then validate the seal.
     # model_construct is never returned and never crosses the service boundary.

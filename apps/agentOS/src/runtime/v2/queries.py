@@ -23,7 +23,7 @@ from .query_models import (
 from domain.identity_graph import IdentityResolver
 from domain.models import Artifact, Mission, MissionStatus
 from domain.repository import EntityNotFoundError, RepositorySet
-from .workspace import MissionWorkspaceProjection, MissionWorkspaceProjector
+from .workspace import MissionWorkspaceProjection, MissionWorkspaceProjector, artifact_is_public
 
 
 class IdentityQueryService:
@@ -183,7 +183,8 @@ class IdentityQueryService:
 
     def artifacts_for_run(self, run_id: str) -> list[RunArtifactDetail]:
         """Return logical Run slots joined to immutable Artifact identities."""
-        if self.repositories.runs.get(run_id) is None:
+        run = self.repositories.runs.get(run_id)
+        if run is None:
             raise EntityNotFoundError(f"WorkflowRun not found: {run_id}")
         details: list[RunArtifactDetail] = []
         for binding in self.repositories.run_artifact_bindings.list_for_run(run_id):
@@ -192,7 +193,8 @@ class IdentityQueryService:
                 raise EntityNotFoundError(
                     f"Artifact not found for binding: {binding.binding_id}"
                 )
-            details.append(RunArtifactDetail(binding=binding, artifact=artifact))
+            if artifact_is_public(run, artifact):
+                details.append(RunArtifactDetail(binding=binding, artifact=artifact))
         return details
 
     def get_artifact(self, artifact_id: str) -> Artifact:

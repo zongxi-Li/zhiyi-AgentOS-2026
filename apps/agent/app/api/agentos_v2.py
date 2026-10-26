@@ -79,7 +79,7 @@ class MissionCreateRequest(BaseModel):
     domain: str = "general"
     intent: str = "general"
     workflow_id: str | None = Field(default=None, alias="workflowId")
-    review_mode: str = Field(default="auto", alias="reviewMode")
+    review_mode: Literal['auto', 'human_in_loop'] = Field(default="auto", alias="reviewMode")
     input: dict[str, Any] = Field(default_factory=dict)
     security_level: str = Field(default="internal", alias="securityLevel")
     priority: str = "normal"
@@ -96,7 +96,7 @@ class MissionRunCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     workflow_id: str | None = Field(default=None, alias="workflowId")
-    review_mode: str = Field(default="auto", alias="reviewMode")
+    review_mode: Literal['auto', 'human_in_loop'] = Field(default="auto", alias="reviewMode")
     input: dict[str, Any] = Field(default_factory=dict)
     enabled_plugin_ids: list[str] | None = Field(default=None, alias="enabledPluginIds")
     material_refs: list[str] | None = Field(default=None, alias="materialRefs")
@@ -802,7 +802,23 @@ def create_router(
         if manifest.owner_type == "user" and actor is not None and manifest.owner_id != actor.user_id:
             raise HTTPException(status_code=404, detail="content manifest not found")
         if manifest.owner_type == "run":
-            load_content_run(manifest.owner_id)
+            run = load_content_run(manifest.owner_id)
+            if identity_repositories is not None:
+                identity_run = identity_repositories.runs.get(run.run_id)
+                if identity_run is not None:
+                    from runtime.v2.workspace import artifact_is_public
+                    for binding in identity_repositories.run_artifact_bindings.list_for_run(run.run_id):
+                        artifact = identity_repositories.artifacts.get(binding.artifact_id)
+                        if artifact is not None and artifact.content_ref == manifest_id:
+                            if not artifact_is_public(identity_run, artifact):
+                                raise HTTPException(status_code=404, detail="content manifest not found")
+                            return manifest
+            # The content store can seal bytes before the Identity outbox is
+            # projected. A formal manual-review Run cannot use that raw-content
+            # fallback to publish an unapproved final during the projection gap.
+            if (run.review_mode == 'human_in_loop' and run.execution_state.get('planningCommitRequired')
+                    and run.status is not WorkflowStatus.COMPLETED):
+                raise HTTPException(status_code=404, detail="content manifest not found")
         return manifest
 
     def project_identity_artifact(detail: Any) -> dict[str, Any]:
@@ -2681,12 +2697,13 @@ def create_router(
 
     @router.get("/runs/{run_id}/artifacts")
     async def list_artifacts(run_id: str):
-        load_content_run(run_id)
+        content_run = load_content_run(run_id)
         if identity_repositories is not None:
             identity_run = identity_repositories.runs.get(run_id)
             if identity_run is not None:
                 details = identity_queries.artifacts_for_run(run_id)
-                if details:
+                if (details or identity_repositories.run_artifact_bindings.list_for_run(run_id)
+                        or (content_run.review_mode == 'human_in_loop' and content_run.execution_state.get('planningCommitRequired'))):
                     items = [project_identity_artifact(item) for item in details]
                     return {"runId": run_id, "items": items, "total": len(items)}
         items = runtime.content_manifest_store.list_manifests(
