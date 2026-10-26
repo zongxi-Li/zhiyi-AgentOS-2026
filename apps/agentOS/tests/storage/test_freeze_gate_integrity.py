@@ -167,7 +167,7 @@ def test_gate_never_reports_success_for_changed_sources_failed_preflight_or_time
     gate = load()
     ns = gate["main"].__globals__
     test_file = tmp_path / "agentOS/tests/test_target.py"
-    test_file.parent.mkdir(parents=True)
+    test_file.parent.mkdir(parents=True, exist_ok=True)
     test_file.write_text("def test_target(): pass\n", encoding="utf8")
     baseline = tmp_path / "accepted.json"
     baseline.write_bytes(gate["DEFAULT_BASELINE"].read_bytes())
@@ -198,7 +198,7 @@ def test_gate_never_reports_success_for_changed_sources_failed_preflight_or_time
         "resolve_tests": lambda *a: (["tests/test_target.py"], []),
         "collect_node_ids": lambda *a: (["tests/test_target.py::test_target"], 0, ""),
         "load_duration_history": lambda: {}, "update_duration_history": lambda *a: None,
-        "os": SimpleNamespace(environ={}, name="posix"),
+        "os": SimpleNamespace(environ={}, name="posix", fsync=os.fsync, replace=os.replace),
         "subprocess": SimpleNamespace(check_output=lambda *a, **kw: "",
                                       Popen=launch_refused if fault == "launch" else Child,
                                       STDOUT=subprocess.STDOUT, TimeoutExpired=subprocess.TimeoutExpired),
@@ -308,7 +308,7 @@ def test_duration_history_preserves_maxima_and_records_last_observation(tmp_path
 def _gate_harness(tmp_path, monkeypatch, gate, history, popen):
     ns = gate["main"].__globals__
     test_file = tmp_path / "agentOS/tests/test_target.py"
-    test_file.parent.mkdir(parents=True)
+    test_file.parent.mkdir(parents=True, exist_ok=True)
     test_file.write_text("def test_target(): pass\n", encoding="utf-8")
     baseline = tmp_path / "accepted.json"
     baseline.write_bytes(gate["DEFAULT_BASELINE"].read_bytes())
@@ -582,3 +582,111 @@ def test_expired_publication_deadline_keeps_previous_complete_profile(tmp_path, 
         gate['atomic_json'](path, {'new': 'profile'}, deadline=300)
     assert path.read_bytes() == b'previous'
     assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize('stage', ['history', 'profile_before', 'profile_after', 'report_before', 'report_after'])
+@pytest.mark.parametrize('existing', [False, True])
+def test_budget_expiry_during_persistence_never_commits_success(tmp_path, monkeypatch, stage, existing):
+    gate = load()
+    _gate_harness(tmp_path, monkeypatch, gate, history={}, popen=None)
+    ns = gate['main'].__globals__
+    clock = [0.0]
+    ns['time'] = SimpleNamespace(perf_counter=lambda: clock[0])
+    ids = ['tests/test_target.py::test_target']
+    source = gate['profile_source_sha256']({'aggregate': 'initial'}, {})
+    path = gate['profile_path'](source, ids)
+    if existing:
+        gate['atomic_json'](path, make_profile(gate, source, ids, seconds=2))
+    previous = path.read_bytes() if existing else None
+    real = ns['atomic_json']
+    if stage == 'history':
+        ns['update_duration_history'] = lambda *a: clock.__setitem__(0, 301.0)
+
+    def injected(target, value, **kwargs):
+        profile = target == path
+        report = target.parent == tmp_path / 'tmp/freeze_gate' and target.suffix == '.json'
+        trigger = (profile and stage.startswith('profile')) or (report and stage.startswith('report'))
+        if trigger and stage.endswith('before'):
+            clock[0] = 301.0
+        result = real(target, value, **kwargs)
+        if trigger and stage.endswith('after'):
+            clock[0] = 301.0
+        return result
+    ns['atomic_json'] = injected
+    assert gate['main']() == 1
+    result = last_report(tmp_path)
+    assert result['status'] == 'INCOMPLETE_GATE_BUDGET_EXCEEDED'
+    assert result['elapsed_seconds'] == 301.0
+    assert result['finished_utc']
+    assert result['complete_profile_published'] is None
+    assert (path.read_bytes() if path.exists() else None) == previous
+    assert gate['load_complete_estimate'](source, ids)['status'] == ('KNOWN' if existing else 'UNKNOWN')
+
+
+def test_same_second_concurrent_runs_isolate_every_execution_artifact(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    import datetime
+    barrier = Barrier(2)
+    gates = [load(), load()]
+    class FrozenDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 26, tzinfo=datetime.timezone.utc)
+    for gate in gates:
+        _gate_harness(tmp_path, monkeypatch, gate, history={}, popen=None)
+        ns = gate['main'].__globals__
+        ns['dt'] = SimpleNamespace(datetime=FrozenDateTime, timezone=datetime.timezone)
+        collect = ns['collect_node_ids']
+        def synchronized(*args, collect=collect):
+            barrier.wait(timeout=10)
+            return collect(*args)
+        ns['collect_node_ids'] = synchronized
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = list(pool.map(lambda g: g['main'](), gates))
+    assert all(code in (0, 1) for code in codes)  # publisher contention may fail closed
+    folder = tmp_path / 'tmp/freeze_gate'
+    reports = [json.loads(p.read_text()) for p in folder.glob('2026*.json')
+               if not p.name.endswith('.observation.json')]
+    assert len(reports) == 2
+    assert len({r['invocation_id'] for r in reports}) == 2
+    assert len({r['artifact_id'] for r in reports}) == 2
+    for suffix in ('.log', '.json', '.nodeids', '.observation.json'):
+        paths = [folder / (r['artifact_id'] + suffix) for r in reports]
+        assert len(set(paths)) == 2 and all(p.is_file() for p in paths)
+    for r in reports:
+        data = json.loads((tmp_path / r['observation_path']).read_text())
+        assert data['invocationId'] == r['invocation_id']
+        assert (tmp_path / r['node_manifest_path']).read_text().splitlines() == r['collected_test_node_ids']
+        assert '1 passed' in (tmp_path / r['log_path']).read_text()
+        other = next(x for x in reports if x is not r)
+        with pytest.raises(ValueError, match='INVALID_EXECUTION_OBSERVATION'):
+            gates[0]['complete_profile'](r['profile_source_sha256'], r['collected_test_node_ids'], data,
+                invocation_id=other['invocation_id'], exit_code=0, timed_out=False, process_seconds=1)
+
+
+def test_success_timestamps_include_cache_finalization(tmp_path, monkeypatch):
+    gate = load()
+    _gate_harness(tmp_path, monkeypatch, gate, history={}, popen=None)
+    ns = gate['main'].__globals__
+    clock = [0.0]
+    ns['time'] = SimpleNamespace(perf_counter=lambda: clock[0])
+    ns['utc_now'] = lambda: 'clock-' + str(clock[0])
+    ns['update_duration_history'] = lambda *a: clock.__setitem__(0, 12.5)
+    assert gate['main']() == 0
+    result = last_report(tmp_path)
+    assert result['status'] == 'PASSED'
+    assert result['finished_utc'] == 'clock-12.5'
+    assert result['elapsed_seconds'] == 12.5
+    assert result['complete_profile_published']
+
+
+def test_profile_reader_never_observes_unconfirmed_publication(tmp_path, monkeypatch):
+    gate = load()
+    monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
+    ids = ['tests/a.py::a']
+    gate['atomic_json'](gate['profile_path']('a' * 64, ids), make_profile(gate, 'a' * 64, ids))
+    with gate['duration_cache_lock']():
+        estimate = gate['load_complete_estimate']('a' * 64, ids)
+        assert estimate == dict(status='UNKNOWN', reason='PROFILE_READ_LOCK_UNAVAILABLE', seconds=None)
+    assert gate['load_complete_estimate']('a' * 64, ids)['status'] == 'KNOWN'

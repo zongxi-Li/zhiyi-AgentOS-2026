@@ -442,6 +442,14 @@ def profile_path(source_sha, node_ids):
 
 
 def load_complete_estimate(source_sha, node_ids):
+    try:
+        with duration_cache_lock():
+            return _load_complete_estimate(source_sha, node_ids)
+    except OSError:
+        return dict(status="UNKNOWN", reason="PROFILE_READ_LOCK_UNAVAILABLE", seconds=None)
+
+
+def _load_complete_estimate(source_sha, node_ids):
     unknown = dict(status='UNKNOWN', reason='NO_MATCHING_COMPLETE_PROFILE', seconds=None)
     try:
         stored = json.loads(profile_path(source_sha, node_ids).read_text(encoding='utf-8'))
@@ -517,6 +525,8 @@ def main() -> int:
         parser.error("--budget-seconds must be between 1 and 300")
 
     baseline_path = args.baseline if args.baseline.is_absolute() else ROOT / args.baseline
+    invocation_id = uuid.uuid4().hex
+    artifact_id = new_artifact_id(invocation_id)
     started = utc_now()
     wall_start = time.perf_counter()
     before = source_snapshot()
@@ -524,7 +534,7 @@ def main() -> int:
     try:
         changed, baseline_name = changed_python_paths(before, baseline_path)
     except BaselineIntegrityError as exc:
-        return write_report({"started_utc": started, "budget_seconds": args.budget_seconds,
+        return write_report({"artifact_id": artifact_id, "invocation_id": invocation_id, "started_utc": started, "budget_seconds": args.budget_seconds,
             "status": "BLOCKED_BASELINE_INTEGRITY", "baseline": str(baseline_path),
             "error": str(exc), "pytest_counts": None, "pytest_command": None,
             "source_aggregate_sha256": before["aggregate"]}, wall_start, 2)
@@ -535,6 +545,8 @@ def main() -> int:
     check_code, check_output = check_diff_whitespace()
 
     report: dict[str, object] = {
+        "artifact_id": artifact_id,
+        "invocation_id": invocation_id,
         "started_utc": started,
         "finished_utc": None,
         "budget_seconds": args.budget_seconds,
@@ -613,7 +625,7 @@ def main() -> int:
 
     output_dir = ROOT / "tmp" / "freeze_gate"
     output_dir.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = artifact_id
     log_path = output_dir / f"{stamp}.log"
     report_path = output_dir / f"{stamp}.json"
     manifest_path = output_dir / f"{stamp}.nodeids"
@@ -627,7 +639,6 @@ def main() -> int:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     observation_path = output_dir / (stamp + '.observation.json')
-    invocation_id = uuid.uuid4().hex
     env['FREEZE_GATE_OBSERVATION_PATH'] = str(observation_path)
     env['FREEZE_GATE_INVOCATION_ID'] = invocation_id
     report['invocation_id'] = invocation_id
@@ -707,41 +718,93 @@ def main() -> int:
                         report_path, pending_profile=pending)
 
 
+def new_artifact_id(invocation_id):
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + '-' + invocation_id
+
+
+def restore_profile(path, previous):
+    """Called under the publisher lock; never leave an uncommitted profile."""
+    if previous is None:
+        path.unlink(missing_ok=True)
+    else:
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False, prefix='.undo-') as stream:
+                temporary = Path(stream.name)
+                stream.write(previous)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
 def write_report(report: dict[str, object], wall_start: float, exit_code: int, report_path: Path | None = None,
                  *, pending_profile=None) -> int:
-    report["finished_utc"] = utc_now()
-    report["elapsed_seconds"] = round(time.perf_counter() - wall_start, 3)
-    if (report.get("status") in {"PASSED", "FAILED"}
-            and report["elapsed_seconds"] > report.get("budget_seconds", DEFAULT_BUDGET_SECONDS)):
-        report["status"] = "INCOMPLETE_GATE_BUDGET_EXCEEDED"
-        exit_code = 1
-    if report.get('status') == 'PASSED' and exit_code == 0 and pending_profile is not None:
-        try:
-            with duration_cache_lock():
-                if profile_source_sha256(source_snapshot(), external_snapshot()) != pending_profile['sourceSha256']:
-                    report['status'] = 'INCOMPLETE_SOURCE_CHANGED'
-                    return write_report(report, wall_start, 1, report_path)
-                manifest = ROOT / report['node_manifest_path']
-                if hashlib.sha256(manifest.read_bytes()).hexdigest() != pending_profile['manifestSha256']:
-                    report['status'] = 'INCOMPLETE_MANIFEST_CHANGED'
-                    return write_report(report, wall_start, 1, report_path)
-                update_duration_history(pending_profile['nodeDurationsSeconds'])
-                path = complete_profile_path(pending_profile['sourceSha256'], pending_profile['manifestSha256'])
-                atomic_json(path, pending_profile, deadline=wall_start + report['budget_seconds'])
-            report['complete_profile_published'] = str(path.relative_to(ROOT))
-        except TimeoutError:
-            report['status'] = 'INCOMPLETE_GATE_BUDGET_EXCEEDED'
-            exit_code = 1
-        except (OSError, ValueError, TypeError) as exc:
-            report['status'] = 'INCOMPLETE_PROFILE_STORAGE'
-            report['profile_rejection'] = str(exc)
-            exit_code = 1
+    # Success completes only after the final atomic report replacement returns
+    # within budget. stdout is diagnostic and outside this persistence boundary.
+    deadline = wall_start + report.get('budget_seconds', DEFAULT_BUDGET_SECONDS)
+    report.setdefault('invocation_id', uuid.uuid4().hex)
+    report.setdefault('artifact_id', new_artifact_id(report['invocation_id']))
     if report_path is None:
-        output_dir = ROOT / "tmp" / "freeze_gate"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        report_path = output_dir / f"{stamp}.json"
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        report_path = ROOT / 'tmp/freeze_gate' / (report['artifact_id'] + '.json')
+    report['budget_completion_boundary'] = 'FINAL_REPORT_ATOMIC_REPLACE_RETURNED'
+
+    def stamp():
+        report['elapsed_seconds'] = round(time.perf_counter() - wall_start, 6)
+        report['finished_utc'] = utc_now()
+
+    def check_deadline():
+        if time.perf_counter() > deadline:
+            raise TimeoutError('gate persistence exceeded budget')
+
+    def publish_report():
+        stamp()
+        atomic_json(report_path, report, deadline=deadline)
+        check_deadline()  # replace/fsync can itself consume the remaining budget
+
+    path = None
+    previous = None
+    try:
+        with duration_cache_lock():
+            try:
+                check_deadline()
+                if report.get('status') == 'PASSED' and exit_code == 0 and pending_profile is not None:
+                    if profile_source_sha256(source_snapshot(), external_snapshot()) != pending_profile['sourceSha256']:
+                        report['status'] = 'INCOMPLETE_SOURCE_CHANGED'
+                        exit_code = 1
+                    elif hashlib.sha256((ROOT / report['node_manifest_path']).read_bytes()).hexdigest() != pending_profile['manifestSha256']:
+                        report['status'] = 'INCOMPLETE_MANIFEST_CHANGED'
+                        exit_code = 1
+                    else:
+                        update_duration_history(pending_profile['nodeDurationsSeconds'])
+                        check_deadline()
+                        candidate = complete_profile_path(pending_profile['sourceSha256'], pending_profile['manifestSha256'])
+                        previous = candidate.read_bytes() if candidate.exists() else None
+                        path = candidate
+                        atomic_json(path, pending_profile, deadline=deadline)
+                        check_deadline()
+                        report['complete_profile_published'] = str(path.relative_to(ROOT))
+                publish_report()
+            except (OSError, ValueError, TypeError) as exc:
+                if path is not None:
+                    restore_profile(path, previous)
+                report['complete_profile_published'] = None
+                report['status'] = ('INCOMPLETE_GATE_BUDGET_EXCEEDED' if isinstance(exc, TimeoutError)
+                                    else 'INCOMPLETE_PROFILE_STORAGE')
+                report['profile_rejection'] = str(exc)
+                exit_code = 1
+                stamp()
+                # Failure evidence is allowed after deadline; never a PASS.
+                atomic_json(report_path, report)
+    except OSError as exc:
+        report['status'] = 'INCOMPLETE_PROFILE_STORAGE'
+        report['profile_rejection'] = str(exc)
+        report['complete_profile_published'] = None
+        exit_code = 1
+        stamp()
+        atomic_json(report_path, report)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return exit_code
 
