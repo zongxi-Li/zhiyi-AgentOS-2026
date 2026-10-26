@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -18,6 +19,9 @@ import subprocess
 import sys
 import time
 import traceback
+import tempfile
+import uuid
+from contextlib import contextmanager
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -293,25 +297,27 @@ def _normalize_history(payload: object) -> dict[str, dict[str, float]]:
     return history
 
 
-def update_duration_history(durations: dict[str, float]) -> dict[str, dict[str, float]]:
+def update_duration_history(durations: dict[str, float]) -> dict[str, object]:
     path = ROOT / "tmp" / "freeze_gate" / "test_durations.json"
-    history: dict[str, dict[str, float]] = {}
+    history: dict[str, object] = {}
     if path.is_file():
         try:
-            history = _normalize_history(json.loads(path.read_text(encoding="utf-8")))
-        except (ValueError, TypeError):
-            history = {}
-    # Maxima are retained forever as observation history. The budget precheck
-    # deliberately does NOT sum them: per-test maxima come from different runs
-    # (often under transient host load), so their sum ratchets past the budget
-    # after ordinary passing runs and blocks launch forever (fresh clones have
-    # no such file). The hard wall-clock budget below remains the authority.
+            history = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(history, dict):
+                raise ValueError('invalid duration history')
+        except (ValueError, TypeError) as exc:
+            raise ValueError('refusing to overwrite invalid duration history') from exc
+    # Preserve legacy flat values, old last fields, and unknown metadata. No
+    # migration/reinterpretation into a complete profile takes place here.
     for node_id, seconds in durations.items():
-        record = history.setdefault(node_id, {})
-        record["max"] = max(record.get("max", 0.0), seconds)
-        record["last"] = seconds
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(history, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        prior = history.get(node_id, 0.0)
+        if isinstance(prior, dict):
+            history[node_id] = {**prior, 'max': max(prior.get('max', 0.0), seconds)}
+        elif isinstance(prior, (int, float)):
+            history[node_id] = max(prior, seconds)
+        else:
+            raise ValueError('refusing to discard an unknown history record')
+    atomic_json(path, history)
     return history
 
 
@@ -325,6 +331,134 @@ def load_duration_history() -> dict[str, dict[str, float]]:
         return {}
 
 
+def atomic_json(path: Path, value, *, deadline=None):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                        delete=False, prefix='.gate-', suffix='.tmp') as stream:
+            temporary = Path(stream.name)
+            json.dump(value, stream, sort_keys=True, ensure_ascii=False, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if deadline is not None and time.perf_counter() > deadline:
+            raise TimeoutError('profile publication exceeded gate budget')
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def duration_cache_lock():
+    """Nonblocking OS lock: concurrent publishers cannot lose historical max.
+
+    The lock file is not a recovery marker; the OS releases it on process exit.
+    """
+    path = ROOT / 'tmp/freeze_gate/duration-cache.lock'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a+b') as stream:
+        if stream.tell() == 0:
+            stream.write(b'\0')
+            stream.flush()
+        stream.seek(0)
+        if sys.platform == 'win32':
+            import msvcrt
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            if sys.platform == 'win32':
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def manifest_sha256(node_ids):
+    return hashlib.sha256(('\n'.join(node_ids) + '\n').encode('utf-8')).hexdigest()
+
+
+def profile_source_sha256(snapshot, external):
+    # Include the launcher and external sources, not just the AgentOS subtree.
+    return hashlib.sha256(json.dumps(dict(agentos=snapshot['aggregate'], external=external),
+        sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def complete_profile(source_sha, node_ids, observation, *, invocation_id, exit_code,
+                     timed_out, process_seconds):
+    """Only exit 0 with every selected node fully passed is eligible (v1)."""
+    def number(value):
+        return type(value) in (int, float) and math.isfinite(value) and value >= 0
+    if timed_out or exit_code != 0:
+        raise ValueError('PROCESS_INCOMPLETE_OR_UNSUCCESSFUL')
+    if (not node_ids or len(set(node_ids)) != len(node_ids) or not number(process_seconds)
+            or not isinstance(observation, dict) or type(observation.get('version')) is not int
+            or observation.get('version') != 1
+            or not invocation_id or observation.get('invocationId') != invocation_id
+            or observation.get('manifestSha256') != manifest_sha256(node_ids)
+            or type(observation.get('sessionExitCode')) is not int or observation.get('sessionExitCode') != 0
+            or type(observation.get('processExitCode')) is not int or observation.get('processExitCode') != 0):
+        raise ValueError('INVALID_EXECUTION_OBSERVATION')
+    collected = observation.get('collectedNodeIds')
+    if not isinstance(collected, list) or sorted(collected) != sorted(node_ids):
+        raise ValueError('COLLECTION_MANIFEST_MISMATCH')
+    phases = {node: {} for node in node_ids}
+    reports = observation.get('reports')
+    if not isinstance(reports, list):
+        raise ValueError('MISSING_EXECUTION_REPORTS')
+    for report in reports:
+        if not isinstance(report, dict):
+            raise ValueError('INVALID_PHASE_REPORT')
+        node, phase = report.get('nodeId'), report.get('phase')
+        if (node not in phases or phase not in {'setup', 'call', 'teardown'}
+                or phase in phases[node] or report.get('outcome') != 'passed'
+                or report.get('expectedFailure') is not False or not number(report.get('durationSeconds'))):
+            raise ValueError('INVALID_OR_DUPLICATE_PHASE')
+        phases[node][phase] = report['durationSeconds']
+    if any(set(value) != {'setup', 'call', 'teardown'} for value in phases.values()):
+        raise ValueError('PARTIAL_NODE_EXECUTION')
+    durations = {node: math.fsum(value.values()) for node, value in phases.items()}
+    total = math.fsum(durations.values())
+    if not math.isfinite(total):
+        raise ValueError('INVALID_DURATION_TOTAL')
+    return dict(version=1, sourceSha256=source_sha, manifestSha256=manifest_sha256(node_ids),
+        nodeCount=len(node_ids), collectedCount=len(collected), executedCount=len(phases),
+        nodeDurationsSeconds=durations, testDurationSumSeconds=total,
+        processElapsedSeconds=process_seconds, estimateSeconds=max(total, process_seconds),
+        observation=observation)
+
+
+def complete_profile_path(source_sha, manifest_sha):
+    # A bounded name also works inside Windows pytest temporary directories.
+    key = hashlib.sha256((source_sha + ':' + manifest_sha).encode('ascii')).hexdigest()
+    return ROOT / 'tmp/freeze_gate/complete_profiles' / (key + '.json')
+
+
+def profile_path(source_sha, node_ids):
+    return complete_profile_path(source_sha, manifest_sha256(node_ids))
+
+
+def load_complete_estimate(source_sha, node_ids):
+    unknown = dict(status='UNKNOWN', reason='NO_MATCHING_COMPLETE_PROFILE', seconds=None)
+    try:
+        stored = json.loads(profile_path(source_sha, node_ids).read_text(encoding='utf-8'))
+        if stored.get('sourceSha256') != source_sha or stored.get('manifestSha256') != manifest_sha256(node_ids):
+            return {**unknown, 'reason': 'PROFILE_IDENTITY_MISMATCH'}
+        observation = stored['observation']
+        rebuilt = complete_profile(source_sha, node_ids, observation,
+            invocation_id=observation['invocationId'], exit_code=0, timed_out=False,
+            process_seconds=stored['processElapsedSeconds'])
+        if rebuilt != stored:
+            return {**unknown, 'reason': 'PROFILE_CONTENT_MISMATCH'}
+        return dict(status='KNOWN', reason='MATCHING_COMPLETE_PROFILE', seconds=rebuilt['estimateSeconds'],
+                    testDurationSumSeconds=rebuilt['testDurationSumSeconds'])
+    except FileNotFoundError:
+        return unknown
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {**unknown, 'reason': 'INVALID_OR_UNREADABLE_PROFILE'}
 def collect_node_ids(paths: list[str], timeout: float) -> tuple[list[str], int, str]:
     command = [
         sys.executable, "-m", "pytest", "--collect-only", "-q", *paths,
@@ -423,6 +557,7 @@ def main() -> int:
         "pytest_counts": None,
         "elapsed_seconds": 0.0,
         "log_path": None,
+        "complete_profile_published": None,
     }
     if args.dry_run:
         report["status"] = "DRY_RUN"
@@ -457,22 +592,18 @@ def main() -> int:
         return write_report(report, wall_start, 2)
 
     duration_history = load_duration_history()
-    # Estimate from the most recent COMPLETE observation profile only. Summing
-    # per-test historical maxima mixed load spikes from different runs into one
-    # fictional worst-case run and permanently blocked launch after ordinary
-    # passing rounds (e.g. real 273.989s pass followed by a 315.82s estimate).
-    known_last = {node_id: duration_history[node_id]["last"] for node_id in node_ids
-                  if "last" in duration_history.get(node_id, {})}
+    source_sha = profile_source_sha256(before, external_before)
+    estimate = load_complete_estimate(source_sha, node_ids)
     max_sum = sum(duration_history[node_id].get("max", 0.0) for node_id in node_ids
                   if node_id in duration_history)
-    unknown = [node_id for node_id in node_ids if node_id not in known_last]
-    measured_sum = sum(known_last.values())
     remaining = max(0.0, args.budget_seconds - (time.perf_counter() - wall_start))
-    report["historical_last_duration_seconds"] = known_last
-    report["historical_last_duration_sum_seconds"] = round(measured_sum, 3)
+    report['profile_source_sha256'] = source_sha
+    report['node_manifest_sha256'] = manifest_sha256(node_ids)
+    report['node_manifest_count'] = len(node_ids)
+    report['duration_estimate'] = estimate
     report["historical_max_duration_sum_seconds"] = round(max_sum, 3)
-    report["duration_unknown_test_node_ids"] = unknown
-    if measured_sum > remaining:
+    report["duration_unknown_test_node_ids"] = node_ids if estimate['status'] == 'UNKNOWN' else []
+    if estimate['status'] == 'KNOWN' and estimate['seconds'] > remaining:
         report["status"] = "BLOCKED_KNOWN_DURATION_OVER_BUDGET"
         report["remaining_budget_before_tests_seconds"] = round(remaining, 3)
         return write_report(report, wall_start, 1)
@@ -495,9 +626,16 @@ def main() -> int:
     report["log_path"] = str(log_path.relative_to(ROOT))
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
+    observation_path = output_dir / (stamp + '.observation.json')
+    invocation_id = uuid.uuid4().hex
+    env['FREEZE_GATE_OBSERVATION_PATH'] = str(observation_path)
+    env['FREEZE_GATE_INVOCATION_ID'] = invocation_id
+    report['invocation_id'] = invocation_id
+    report['observation_path'] = str(observation_path.relative_to(ROOT))
     timed_out = False
     launch_error: dict[str, object] | None = None
     remaining = max(0.0, args.budget_seconds - (time.perf_counter() - wall_start))
+    process_started = time.perf_counter()
     with log_path.open("wb") as log:
         if remaining <= 0:
             process = None
@@ -527,6 +665,7 @@ def main() -> int:
                     else:
                         process.kill()
                     process.wait()
+    process_seconds = time.perf_counter() - process_started
     if launch_error is not None:
         report["pytest_launch_error"] = launch_error
         report["pytest_exit_code"] = None
@@ -538,7 +677,6 @@ def main() -> int:
     observed_durations = measured_test_durations(output)
     report["measured_test_durations_seconds"] = observed_durations
     report["duration_history_file"] = "tmp/freeze_gate/test_durations.json"
-    update_duration_history(observed_durations)
     report["status"] = "INCOMPLETE_TIMEOUT" if timed_out else ("PASSED" if process and process.returncode == 0 else "FAILED")
     report["pytest_exit_code"] = process.returncode if process else None
     report["timed_out"] = timed_out
@@ -551,16 +689,53 @@ def main() -> int:
     if source_snapshot()["aggregate"] != before["aggregate"] or external_snapshot() != external_before:
         report["status"] = "INCOMPLETE_SOURCE_CHANGED"
         return write_report(report, wall_start, 1, report_path)
-    return write_report(report, wall_start, 0 if process and process.returncode == 0 and not timed_out else 1, report_path)
+    pending = None
+    if report['status'] == 'PASSED':
+        try:
+            observation = json.loads(observation_path.read_text(encoding='utf-8'))
+            pending = complete_profile(source_sha, node_ids, observation, invocation_id=invocation_id,
+                exit_code=process.returncode, timed_out=timed_out,
+                process_seconds=process_seconds)
+            counts = report['pytest_counts']
+            if counts['collected'] is not None and counts['collected'] != len(node_ids):
+                raise ValueError('TERMINAL_COLLECTION_COUNT_MISMATCH')
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            report['status'] = 'INCOMPLETE_EXECUTION_EVIDENCE'
+            report['profile_rejection'] = str(exc)
+            pending = None
+    return write_report(report, wall_start, 0 if report['status'] == 'PASSED' else 1,
+                        report_path, pending_profile=pending)
 
 
-def write_report(report: dict[str, object], wall_start: float, exit_code: int, report_path: Path | None = None) -> int:
+def write_report(report: dict[str, object], wall_start: float, exit_code: int, report_path: Path | None = None,
+                 *, pending_profile=None) -> int:
     report["finished_utc"] = utc_now()
     report["elapsed_seconds"] = round(time.perf_counter() - wall_start, 3)
     if (report.get("status") in {"PASSED", "FAILED"}
             and report["elapsed_seconds"] > report.get("budget_seconds", DEFAULT_BUDGET_SECONDS)):
         report["status"] = "INCOMPLETE_GATE_BUDGET_EXCEEDED"
         exit_code = 1
+    if report.get('status') == 'PASSED' and exit_code == 0 and pending_profile is not None:
+        try:
+            with duration_cache_lock():
+                if profile_source_sha256(source_snapshot(), external_snapshot()) != pending_profile['sourceSha256']:
+                    report['status'] = 'INCOMPLETE_SOURCE_CHANGED'
+                    return write_report(report, wall_start, 1, report_path)
+                manifest = ROOT / report['node_manifest_path']
+                if hashlib.sha256(manifest.read_bytes()).hexdigest() != pending_profile['manifestSha256']:
+                    report['status'] = 'INCOMPLETE_MANIFEST_CHANGED'
+                    return write_report(report, wall_start, 1, report_path)
+                update_duration_history(pending_profile['nodeDurationsSeconds'])
+                path = complete_profile_path(pending_profile['sourceSha256'], pending_profile['manifestSha256'])
+                atomic_json(path, pending_profile, deadline=wall_start + report['budget_seconds'])
+            report['complete_profile_published'] = str(path.relative_to(ROOT))
+        except TimeoutError:
+            report['status'] = 'INCOMPLETE_GATE_BUDGET_EXCEEDED'
+            exit_code = 1
+        except (OSError, ValueError, TypeError) as exc:
+            report['status'] = 'INCOMPLETE_PROFILE_STORAGE'
+            report['profile_rejection'] = str(exc)
+            exit_code = 1
     if report_path is None:
         output_dir = ROOT / "tmp" / "freeze_gate"
         output_dir.mkdir(parents=True, exist_ok=True)

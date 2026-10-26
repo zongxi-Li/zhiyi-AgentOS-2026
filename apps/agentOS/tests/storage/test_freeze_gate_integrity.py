@@ -1,6 +1,7 @@
 """Mapping and fail-closed reporting, without a real 300-second timeout."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -255,14 +256,22 @@ def test_manifest_runner_executes_exactly_the_listed_nodes_and_propagates_exit_s
     runner = gate["ROOT"] / "scripts" / "freeze_gate_pytest_runner.py"
     assert runner.is_file(), "the bounded launcher script must exist"
     good = tmp_path / "good.nodeids"
-    good.write_text(
-        "tests/storage/test_freeze_gate_integrity.py::test_missing_default_baseline_blocks_before_test_discovery\n",
-        encoding="utf-8")
+    gate['write_node_manifest']([
+        'tests/storage/test_freeze_gate_integrity.py::test_missing_default_baseline_blocks_before_test_discovery'], good)
+    observed = tmp_path / 'observation.json'
+    env = {**os.environ, 'FREEZE_GATE_OBSERVATION_PATH': str(observed),
+           'FREEZE_GATE_INVOCATION_ID': 'real-one-node'}
     done = subprocess.run([sys.executable, str(runner), str(good), "--tb=short"],
                           cwd=gate["AGENTOS"], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=120)
+                          encoding="utf-8", errors="replace", timeout=120, env=env)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "1 passed" in done.stdout
+    nodes = good.read_text().splitlines()
+    evidence = json.loads(observed.read_text())
+    profile = gate['complete_profile']('a' * 64, nodes, evidence,
+        invocation_id='real-one-node', exit_code=done.returncode, timed_out=False, process_seconds=1.0)
+    assert profile['nodeCount'] == profile['executedCount'] == profile['collectedCount'] == 1
+    assert set(evidence['reports'][0]) >= {'nodeId', 'phase', 'durationSeconds', 'outcome'}
     bad = tmp_path / "bad.nodeids"
     bad.write_text("tests/storage/test_freeze_gate_integrity.py::definitely_not_a_test\n",
                    encoding="utf-8")
@@ -273,23 +282,25 @@ def test_manifest_runner_executes_exactly_the_listed_nodes_and_propagates_exit_s
 
 
 def test_duration_history_preserves_maxima_and_records_last_observation(tmp_path, monkeypatch):
-    """The estimate basis is the latest complete observation, not a fictional
-    sum of per-test maxima from different (often overloaded) runs. Maxima stay
-    on file forever; legacy flat entries keep their maximum and an unknown
-    last observation instead of being silently reinterpreted or erased."""
+    """Legacy last stays archived, never refreshed or used as a profile."""
     gate = load()
     ns = gate["update_duration_history"].__globals__
     monkeypatch.setitem(ns, "ROOT", tmp_path)
     history_path = tmp_path / "tmp/freeze_gate/test_durations.json"
     history_path.parent.mkdir(parents=True)
-    history_path.write_text(json.dumps({"tests/a.py::x": 5.0, "tests/b.py::y": 7.0}),
+    history_path.write_text(json.dumps({"tests/a.py::x": 5.0, "tests/b.py::y": 7.0,
+        'legacy': {'max': 9.0, 'last': 8.0, 'note': 'retain'}}),
                             encoding="utf-8")
     gate["update_duration_history"]({"tests/a.py::x": 3.0, "tests/c.py::z": 2.0})
     stored = json.loads(history_path.read_text(encoding="utf-8"))
-    assert stored["tests/a.py::x"] == {"max": 5.0, "last": 3.0}
-    assert stored["tests/b.py::y"] == {"max": 7.0}, "untouched history is never erased"
-    assert "last" not in stored["tests/b.py::y"], "legacy maxima are not reinterpreted as last"
-    assert stored["tests/c.py::z"] == {"max": 2.0, "last": 2.0}
+    assert stored["tests/a.py::x"] == 5.0
+    assert stored["tests/b.py::y"] == 7.0, "untouched history is never erased"
+    assert stored['legacy'] == {'max': 9.0, 'last': 8.0, 'note': 'retain'}
+    assert stored["tests/c.py::z"] == 2.0
+    gate['update_duration_history']({'tests/a.py::x': 8.0, 'legacy': 10.0})
+    stored = json.loads(history_path.read_text())
+    assert stored['tests/a.py::x'] == 8.0
+    assert stored['legacy'] == {'max': 10.0, 'last': 8.0, 'note': 'retain'}
     loaded = gate["load_duration_history"]()
     assert loaded["tests/b.py::y"] == {"max": 7.0}
 
@@ -306,6 +317,9 @@ def _gate_harness(tmp_path, monkeypatch, gate, history, popen):
         def __init__(self, command, **kwargs):
             kwargs["stdout"].write(b"1 passed in 0.01s\n")
             self.returncode = 0
+            ids = Path(command[2]).read_text().splitlines()
+            evidence = observation(gate, ids, invocation=kwargs['env']['FREEZE_GATE_INVOCATION_ID'])
+            Path(kwargs['env']['FREEZE_GATE_OBSERVATION_PATH']).write_text(json.dumps(evidence))
 
         def wait(self, timeout=None):
             return 0
@@ -319,7 +333,7 @@ def _gate_harness(tmp_path, monkeypatch, gate, history, popen):
         "collect_node_ids": lambda *a: (["tests/test_target.py::test_target"], 0, ""),
         "load_duration_history": lambda: history,
         "update_duration_history": lambda *a: None,
-        "os": SimpleNamespace(environ={}, name="posix"),
+        "os": SimpleNamespace(environ={}, name="posix", fsync=os.fsync, replace=os.replace),
         "subprocess": SimpleNamespace(Popen=popen or Child, STDOUT=subprocess.STDOUT),
     }.items():
         monkeypatch.setitem(ns, key, value)
@@ -333,10 +347,12 @@ def test_stale_maxima_alone_do_not_block_launch(tmp_path, monkeypatch):
     _gate_harness(tmp_path, monkeypatch, gate,
                   history={"tests/test_target.py::test_target": {"max": 999.0}}, popen=None)
     assert gate["main"]() == 0
-    result = json.loads(sorted((tmp_path / "tmp/freeze_gate").glob("*.json"))[-1].read_text("utf-8"))
+    result = last_report(tmp_path)
     assert result["status"] == "PASSED"
     assert result["historical_max_duration_sum_seconds"] == 999.0
-    assert result["historical_last_duration_sum_seconds"] == 0
+    assert result['duration_estimate']['status'] == 'UNKNOWN'
+    assert result['duration_estimate']['seconds'] is None
+    assert result['complete_profile_published']
 
 
 def test_recent_over_budget_last_observations_block_before_launch(tmp_path, monkeypatch):
@@ -350,8 +366,219 @@ def test_recent_over_budget_last_observations_block_before_launch(tmp_path, monk
     _gate_harness(tmp_path, monkeypatch, gate,
                   history={"tests/test_target.py::test_target": {"max": 400.0, "last": 300.5}},
                   popen=refuse)
+    ids = ['tests/test_target.py::test_target']
+    source = gate['profile_source_sha256']({'aggregate': 'initial'}, {})
+    profile = make_profile(gate, source, ids, seconds=300.5)
+    gate['atomic_json'](gate['profile_path'](source, ids), profile)
     assert gate["main"]() != 0
-    result = json.loads(sorted((tmp_path / "tmp/freeze_gate").glob("*.json"))[-1].read_text("utf-8"))
+    result = last_report(tmp_path)
     assert result["status"] == "BLOCKED_KNOWN_DURATION_OVER_BUDGET"
-    assert result["historical_last_duration_sum_seconds"] == 300.5
+    assert result['duration_estimate']['seconds'] == 300.5
     assert "pytest_exit_code" not in result and result["pytest_command"] is None
+
+
+def observation(gate, ids, *, invocation='observation', seconds=1.0):
+    return dict(version=1, invocationId=invocation, manifestSha256=gate['manifest_sha256'](ids),
+        collectedNodeIds=ids, sessionExitCode=0, processExitCode=0,
+        reports=[dict(nodeId=node, phase=phase, outcome='passed', expectedFailure=False,
+                      durationSeconds=seconds if phase == 'call' else 0.0)
+                 for node in ids for phase in ('setup', 'call', 'teardown')])
+
+
+def last_report(tmp_path):
+    paths = [p for p in (tmp_path / 'tmp/freeze_gate').glob('20*.json')
+             if not p.name.endswith('.observation.json')]
+    return json.loads(sorted(paths)[-1].read_text(encoding='utf-8'))
+
+
+def make_profile(gate, source, ids, *, seconds=1.0):
+    return gate['complete_profile'](source, ids, observation(gate, ids, seconds=seconds),
+        invocation_id='observation', exit_code=0, timed_out=False, process_seconds=seconds)
+
+
+def test_profiles_never_splice_last_values_from_different_runs(tmp_path, monkeypatch):
+    gate = load()
+    monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
+    history = tmp_path / 'tmp/freeze_gate/test_durations.json'
+    history.parent.mkdir(parents=True)
+    ids = ['tests/a.py::a', 'tests/b.py::b']
+    history.write_text(json.dumps({ids[0]: {'max': 200, 'last': 1},
+                                   ids[1]: {'max': 200, 'last': 200}}))
+    before = history.read_bytes()
+    estimate = gate['load_complete_estimate']('a' * 64, ids)
+    assert estimate['status'] == 'UNKNOWN' and estimate['seconds'] is None
+    assert history.read_bytes() == before
+    # An exact whole observation, rather than the fictional 1+200 mixture.
+    profile = make_profile(gate, 'a' * 64, ids, seconds=2.0)
+    gate['atomic_json'](gate['profile_path']('a' * 64, ids), profile)
+    assert gate['load_complete_estimate']('a' * 64, ids)['seconds'] == 4.0
+
+
+@pytest.mark.parametrize('damage', ['partial', 'missing_phase', 'collection', 'duplicate',
+                                   'foreign', 'nan', 'negative', 'skip', 'invocation', 'exit'])
+def test_incomplete_observations_cannot_form_profiles(damage):
+    gate = load()
+    ids = ['tests/a.py::a', 'tests/b.py::b']
+    data = observation(gate, ids)
+    if damage == 'partial':
+        data['reports'] = data['reports'][:3]
+    elif damage == 'missing_phase':
+        data['reports'].pop()
+    elif damage == 'collection':
+        data['collectedNodeIds'] = ids[:1]
+    elif damage == 'duplicate':
+        data['reports'].append(dict(data['reports'][0]))
+    elif damage == 'foreign':
+        data['reports'][0]['nodeId'] = 'tests/other.py::x'
+    elif damage == 'nan':
+        data['reports'][0]['durationSeconds'] = float('nan')
+    elif damage == 'negative':
+        data['reports'][0]['durationSeconds'] = -1.0
+    elif damage == 'skip':
+        data['reports'][0]['outcome'] = 'skipped'
+    elif damage == 'invocation':
+        data['invocationId'] = 'previous-process'
+    else:
+        data['sessionExitCode'] = 1
+    with pytest.raises(ValueError):
+        gate['complete_profile']('a' * 64, ids, data, invocation_id='observation',
+            exit_code=0, timed_out=False, process_seconds=1.0)
+
+
+@pytest.mark.parametrize('change', ['source', 'manifest', 'count', 'mapping'])
+def test_profile_mismatch_is_explicitly_unknown(tmp_path, monkeypatch, change):
+    gate = load()
+    monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
+    ids, source = ['tests/a.py::a'], 'a' * 64
+    profile = make_profile(gate, source, ids)
+    gate['atomic_json'](gate['profile_path'](source, ids), profile)
+    if change == 'source':
+        estimate = gate['load_complete_estimate']('b' * 64, ids)
+    elif change == 'manifest':
+        estimate = gate['load_complete_estimate'](source, ['tests/b.py::b'])
+    else:
+        if change == 'count':
+            profile['nodeCount'] = 2
+        else:
+            profile['nodeDurationsSeconds'] = {}
+        gate['atomic_json'](gate['profile_path'](source, ids), profile)
+        estimate = gate['load_complete_estimate'](source, ids)
+    assert estimate['status'] == 'UNKNOWN' and estimate['seconds'] is None
+
+
+@pytest.mark.parametrize('fault', ['timeout', 'launch', 'failed', 'partial', 'source', 'late_source', 'manifest', 'budget'])
+def test_failed_or_incomplete_run_preserves_existing_complete_profile(tmp_path, monkeypatch, fault):
+    gate = load()
+    ids = ['tests/test_target.py::test_target']
+    source = gate['profile_source_sha256']({'aggregate': 'initial'}, {})
+
+    class Child:
+        returncode = 1 if fault == 'failed' else 0
+        def __init__(self, command, **kwargs):
+            kwargs['stdout'].write(b'1 passed in 0.01s\n')
+            data = observation(gate, ids, invocation=kwargs['env']['FREEZE_GATE_INVOCATION_ID'])
+            if fault == 'partial':
+                data['reports'].pop()
+            Path(kwargs['env']['FREEZE_GATE_OBSERVATION_PATH']).write_text(json.dumps(data))
+            if fault == 'manifest':
+                Path(command[2]).write_text('tests/other.py::changed\n')
+        def wait(self, timeout=None):
+            if timeout is not None and fault == 'timeout':
+                raise subprocess.TimeoutExpired('pytest', timeout)
+            return self.returncode
+        def kill(self):
+            pass
+
+    def launch(command, **kwargs):
+        if fault == 'launch':
+            raise OSError('injected startup refusal')
+        return Child(command, **kwargs)
+
+    _gate_harness(tmp_path, monkeypatch, gate, history={}, popen=launch)
+    monkeypatch.setitem(gate['main'].__globals__['subprocess'].__dict__, 'TimeoutExpired', subprocess.TimeoutExpired)
+    if fault in {'source', 'late_source'}:
+        captures = iter(('initial', 'drifted') if fault == 'source' else ('initial', 'initial', 'drifted'))
+        monkeypatch.setitem(gate['main'].__globals__, 'source_snapshot',
+            lambda: {'aggregate': next(captures), 'files': {}})
+    profile = make_profile(gate, source, ids)
+    path = gate['profile_path'](source, ids)
+    gate['atomic_json'](path, profile)
+    previous = path.read_bytes()
+    if fault == 'budget':
+        # The process can finish, yet the overall gate budget can expire before
+        # publication; write_report must refuse to refresh its complete profile.
+        ns = gate['main'].__globals__
+        real = ns['write_report']
+        def expired(report, started, code, target=None, **kwargs):
+            return real(report, started - 301, code, target, **kwargs)
+        monkeypatch.setitem(ns, 'write_report', expired)
+    assert gate['main']() != 0
+    assert path.read_bytes() == previous
+
+
+def test_atomic_publication_failure_keeps_previous_profile(tmp_path, monkeypatch):
+    gate = load()
+    path = tmp_path / 'profile.json'
+    path.write_bytes(b'original-complete-profile')
+    monkeypatch.setattr(os, 'replace', lambda *a: (_ for _ in ()).throw(OSError('disk failure')))
+    with pytest.raises(OSError):
+        gate['atomic_json'](path, {'new': 'profile'})
+    assert path.read_bytes() == b'original-complete-profile'
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_full_profile_sums_all_phases_and_accounts_for_process_overhead():
+    gate = load()
+    ids = ['tests/a.py::a', 'tests/b.py::b']
+    data = observation(gate, ids)
+    for report, seconds in zip(data['reports'], [.1, 1.2, .3, .4, .5, .6]):
+        report['durationSeconds'] = seconds
+    profile = gate['complete_profile']('a' * 64, ids, data, invocation_id='observation',
+        exit_code=0, timed_out=False, process_seconds=4.5)
+    assert profile['nodeDurationsSeconds'][ids[0]] == pytest.approx(1.6)
+    assert profile['nodeDurationsSeconds'][ids[1]] == pytest.approx(1.5)
+    assert profile['testDurationSumSeconds'] == pytest.approx(3.1)
+    assert profile['estimateSeconds'] == 4.5
+
+
+def test_real_one_node_gate_publishes_and_reuses_matching_complete_profile(tmp_path, monkeypatch):
+    gate = load()
+    _gate_harness(tmp_path, monkeypatch, gate, history={}, popen=subprocess.Popen)
+    ns = gate['main'].__globals__
+    ns['os'].environ = dict(os.environ)
+    ns['subprocess'].TimeoutExpired = subprocess.TimeoutExpired
+    assert gate['main']() == 0
+    ids = ['tests/test_target.py::test_target']
+    source = gate['profile_source_sha256']({'aggregate': 'initial'}, {})
+    profile = json.loads(gate['profile_path'](source, ids).read_text())
+    assert profile['collectedCount'] == profile['executedCount'] == profile['nodeCount'] == 1
+    assert gate['load_complete_estimate'](source, ids)['status'] == 'KNOWN'
+    # Re-running this isolated fixture, not the real gate selection, consumes
+    # the same matching complete profile and replaces it as one whole record.
+    assert gate['main']() == 0
+    report = last_report(tmp_path)
+    assert report['duration_estimate']['status'] == 'KNOWN'
+
+
+def test_cache_lock_refuses_concurrent_writer_and_releases_on_exception(tmp_path, monkeypatch):
+    gate = load()
+    monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
+    with pytest.raises(RuntimeError, match='injected'):
+        with gate['duration_cache_lock']():
+            with pytest.raises(OSError):
+                with gate['duration_cache_lock']():
+                    pytest.fail('concurrent writer acquired the cache lock')
+            raise RuntimeError('injected')
+    with gate['duration_cache_lock']():
+        pass
+
+
+def test_expired_publication_deadline_keeps_previous_complete_profile(tmp_path, monkeypatch):
+    gate = load()
+    path = tmp_path / 'profile.json'
+    path.write_bytes(b'previous')
+    monkeypatch.setitem(gate['atomic_json'].__globals__, 'time', SimpleNamespace(perf_counter=lambda: 301))
+    with pytest.raises(TimeoutError):
+        gate['atomic_json'](path, {'new': 'profile'}, deadline=300)
+    assert path.read_bytes() == b'previous'
+    assert list(tmp_path.iterdir()) == [path]
