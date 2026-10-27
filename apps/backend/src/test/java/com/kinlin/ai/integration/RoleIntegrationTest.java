@@ -3,6 +3,7 @@ package com.kinlin.ai.integration;
 import com.kinlin.ai.dto.RoleCreateRequest;
 import com.kinlin.ai.entity.Role;
 import com.kinlin.ai.repository.RoleRepository;
+import com.kinlin.ai.service.LoginSessionService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
@@ -41,6 +43,9 @@ class RoleIntegrationTest {
     @MockBean
     private JwtUtil jwtUtil;
 
+    @MockBean
+    private LoginSessionService loginSessionService;
+
     private String baseUrl;
     private UUID userId;
     private String token;
@@ -52,7 +57,10 @@ class RoleIntegrationTest {
         token = "test-token";
         when(jwtUtil.getUsernameFromToken(token)).thenReturn("test-user");
         when(jwtUtil.getUserIdFromToken(token)).thenReturn(userId);
+        when(jwtUtil.getRoleFromToken(token)).thenReturn("USER");
+        when(jwtUtil.getSidFromToken(token)).thenReturn(UUID.randomUUID());
         when(jwtUtil.validateToken(token, "test-user")).thenReturn(true);
+        when(loginSessionService.isSessionActive(any(), any())).thenReturn(true);
     }
 
     @Test

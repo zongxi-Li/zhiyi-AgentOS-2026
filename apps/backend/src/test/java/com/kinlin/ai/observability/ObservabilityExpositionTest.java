@@ -56,8 +56,19 @@ class ObservabilityExpositionTest {
         // 先打一笔真实 controller 请求，http_server_requests/api.requests 才会物化
         mockMvc.perform(get("/health")).andExpect(status().isOk());
 
+        // prometheus 受保护（INT-2F-4A 起还校验持久会话）：注册真实用户拿含 sid 的 Token
+        String registerBody = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/auth/register")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"metrics_" + UUID.randomUUID().toString().substring(0, 8)
+                                + "\",\"password\":\"pass-123456\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String token = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(registerBody).get("token").asText();
+
         MvcResult result = mockMvc.perform(get("/actuator/prometheus")
-                        .header("Authorization", "Bearer " + jwtUtil.generateToken(UUID.randomUUID(), "metrics-probe")))
+                        .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andReturn();
         String body = result.getResponse().getContentAsString();

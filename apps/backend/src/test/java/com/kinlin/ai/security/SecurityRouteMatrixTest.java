@@ -47,5 +47,7 @@ class SecurityRouteMatrixTest {
         mockMvc.perform(get("/conversations")).andExpect(status().isUnauthorized());
         mockMvc.perform(post("/chat/text")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/agentos/v2/missions")).andExpect(status().isUnauthorized());
+        // INT-2F-4A：/auth 不再整体放行，logout 必须经过真实认证
+        mockMvc.perform(post("/auth/logout")).andExpect(status().isUnauthorized());
     }
 }

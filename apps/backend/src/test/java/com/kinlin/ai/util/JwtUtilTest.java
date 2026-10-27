@@ -36,11 +36,13 @@ class JwtUtilTest {
     void validTokenIsAcceptedAndCarriesControlledClaims() {
         JwtUtil jwtUtil = new JwtUtil(properties(SECRET_64_BYTES, 60_000));
         UUID userId = UUID.randomUUID();
-        String token = jwtUtil.generateToken(userId, "alice");
+        UUID sid = UUID.randomUUID();
+        String token = jwtUtil.generateToken(userId, "alice", sid);
 
         assertEquals("alice", jwtUtil.getUsernameFromToken(token));
         assertEquals(userId, jwtUtil.getUserIdFromToken(token));
         assertEquals("USER", jwtUtil.getRoleFromToken(token));
+        assertEquals(sid, jwtUtil.getSidFromToken(token));
 
         Claims claims = jwtUtil.getClaimFromToken(token, c -> c);
         assertEquals("alice", claims.getSubject());
@@ -50,7 +52,7 @@ class JwtUtilTest {
     @Test
     void expiredTokenIsRejected() {
         JwtUtil jwtUtil = new JwtUtil(properties(SECRET_64_BYTES, -1));
-        String token = jwtUtil.generateToken(UUID.randomUUID(), "alice");
+        String token = jwtUtil.generateToken(UUID.randomUUID(), "alice", UUID.randomUUID());
 
         assertThrows(ExpiredJwtException.class, () -> jwtUtil.validateToken(token, "alice"));
     }
@@ -58,7 +60,7 @@ class JwtUtilTest {
     @Test
     void tamperedTokenIsRejected() {
         JwtUtil jwtUtil = new JwtUtil(properties(SECRET_64_BYTES, 60_000));
-        String token = jwtUtil.generateToken(UUID.randomUUID(), "alice");
+        String token = jwtUtil.generateToken(UUID.randomUUID(), "alice", UUID.randomUUID());
 
         // 篡改 payload 中段一个字符，签名校验必须失败
         String[] parts = token.split("\\.");
@@ -74,7 +76,7 @@ class JwtUtilTest {
         JwtUtil signer = new JwtUtil(properties(SECRET_64_BYTES, 60_000));
         JwtUtil verifier = new JwtUtil(properties(
                 "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 60_000));
-        String token = signer.generateToken(UUID.randomUUID(), "alice");
+        String token = signer.generateToken(UUID.randomUUID(), "alice", UUID.randomUUID());
 
         assertThrows(SignatureException.class, () -> verifier.getUsernameFromToken(token));
     }
@@ -83,7 +85,7 @@ class JwtUtilTest {
     void expirationValueControlsTokenLifetime() {
         long expirationMs = 5_000L;
         JwtUtil jwtUtil = new JwtUtil(properties(SECRET_64_BYTES, expirationMs));
-        String token = jwtUtil.generateToken(UUID.randomUUID(), "alice");
+        String token = jwtUtil.generateToken(UUID.randomUUID(), "alice", UUID.randomUUID());
         java.util.Date expiration = jwtUtil.getExpirationDateFromToken(token);
 
         long lifetime = expiration.getTime() - jwtUtil.getClaimFromToken(token, Claims::getIssuedAt).getTime();

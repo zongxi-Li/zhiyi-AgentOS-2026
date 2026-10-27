@@ -5,6 +5,7 @@ import com.kinlin.ai.dto.RecommendationContextRequest;
 import com.kinlin.ai.dto.RecommendationItem;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
 import com.kinlin.ai.service.RecommendationService;
+import com.kinlin.ai.service.LoginSessionService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,9 @@ class RecommendationControllerTest {
 
     @MockBean
     private JwtUtil jwtUtil;
+
+    @MockBean
+    private LoginSessionService loginSessionService;
 
     @MockBean
     private JpaMetamodelMappingContext jpaMetamodelMappingContext;

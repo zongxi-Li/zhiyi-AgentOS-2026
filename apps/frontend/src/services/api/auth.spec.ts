@@ -4,6 +4,76 @@ import { authApi } from './auth'
 
 vi.mock('@/utils/request', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 
+describe('logout with server-side revocation', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetAllMocks()
+  })
+
+  it('revokes the session on the server and clears local credentials', async () => {
+    localStorage.setItem('token', 'session-a')
+    localStorage.setItem('userId', 'u1')
+    localStorage.setItem('userInfo', '{}')
+    vi.mocked(request.post).mockResolvedValue({ status: 204 })
+
+    const result = await authApi.logout()
+
+    expect(request.post).toHaveBeenCalledWith(
+      '/auth/logout',
+      undefined,
+      expect.objectContaining({ timeout: 8000 })
+    )
+    expect(result).toEqual({ success: true, message: '退出登录成功', serverRevoked: true })
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(localStorage.getItem('userId')).toBeNull()
+    expect(localStorage.getItem('userInfo')).toBeNull()
+  })
+
+  it('still logs out locally on network failure but never claims the server revoked the session', async () => {
+    localStorage.setItem('token', 'session-a')
+    vi.mocked(request.post).mockRejectedValue(new Error('Network Error'))
+
+    const result = await authApi.logout()
+
+    expect(result.success).toBe(true)
+    expect(result.serverRevoked).toBe(false)
+    expect(result.message).toBe('本机已退出，服务端撤销未确认')
+    expect(localStorage.getItem('token')).toBeNull()
+  })
+
+  it('treats a 401 during logout as an already-invalid credential and finishes locally', async () => {
+    localStorage.setItem('token', 'session-a')
+    vi.mocked(request.post).mockRejectedValue({ response: { status: 401 } })
+
+    const result = await authApi.logout()
+
+    expect(result.serverRevoked).toBe(true)
+    expect(result.message).toBe('登录凭证已失效，本机已退出')
+    expect(localStorage.getItem('token')).toBeNull()
+  })
+
+  it('skips the server call when there is no local token', async () => {
+    const result = await authApi.logout()
+
+    expect(request.post).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(result.serverRevoked).toBe(false)
+  })
+
+  it('clears the verification cache so a stale token cannot be verified after logout', async () => {
+    localStorage.setItem('token', 'session-a')
+    vi.mocked(request.post).mockResolvedValue({ status: 204 })
+    vi.mocked(request.get).mockResolvedValue({ data: { valid: true } })
+    await authApi.verifyToken()
+
+    await authApi.logout()
+    localStorage.setItem('token', 'session-a')
+
+    await authApi.verifyToken()
+    expect(request.get).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('token verification', () => {
   beforeEach(async () => {
     localStorage.clear()

@@ -79,7 +79,8 @@ class OperationalProjectionTest {
                 new com.kinlin.ai.controller.AlertController(alerts),
                 new com.kinlin.ai.controller.FileController(files),
                 new com.kinlin.ai.controller.AuthController(mock(com.kinlin.ai.service.UserService.class),
-                        mock(com.kinlin.ai.util.JwtUtil.class)),
+                        mock(com.kinlin.ai.util.JwtUtil.class),
+                        mock(com.kinlin.ai.service.LoginSessionService.class)),
                 new com.kinlin.ai.controller.MetricsController(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()))
                 .build();
         mvc.perform(get("/api/kylin-os/security")).andExpect(status().isOk())

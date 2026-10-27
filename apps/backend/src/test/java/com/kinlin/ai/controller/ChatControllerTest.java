@@ -5,6 +5,7 @@ import com.kinlin.ai.dto.ChatRequest;
 import com.kinlin.ai.dto.ChatResponse;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
 import com.kinlin.ai.service.ChatService;
+import com.kinlin.ai.service.LoginSessionService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,9 @@ class ChatControllerTest {
 
     @MockBean
     private JwtUtil jwtUtil;
+
+    @MockBean
+    private LoginSessionService loginSessionService;
 
     @MockBean
     private JpaMetamodelMappingContext jpaMetamodelMappingContext;

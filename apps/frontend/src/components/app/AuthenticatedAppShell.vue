@@ -1147,7 +1147,12 @@ const handleLogout = async () => {
     const result = await authApi.logout()
     if (result.success) {
       userStore.setCurrentUser(null)
-      ElMessage.success(result.message || '退出登录成功')
+      // 服务端撤销未确认时不得用成功样式显示"已退出"
+      if (result.serverRevoked) {
+        ElMessage.success(result.message || '退出登录成功')
+      } else {
+        ElMessage.warning(result.message || '本机已退出，服务端撤销未确认')
+      }
       await router.replace(isDesktop() ? { path: '/login' } : { path: '/', query: { auth: '1', redirect: '/chat' } })
     } else {
       ElMessage.error(result.message || '退出登录失败')

@@ -2,6 +2,7 @@ package com.kinlin.ai.controller;
 
 import com.kinlin.ai.gateway.AiSseGatewayService;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
+import com.kinlin.ai.service.LoginSessionService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,9 @@ class AgentOsEventControllerTest {
 
     @MockBean
     private JwtUtil jwtUtil;
+
+    @MockBean
+    private LoginSessionService loginSessionService;
 
     @MockBean
     private JpaMetamodelMappingContext jpaMetamodelMappingContext;

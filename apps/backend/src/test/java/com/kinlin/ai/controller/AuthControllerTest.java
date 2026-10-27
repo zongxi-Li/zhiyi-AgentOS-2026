@@ -2,9 +2,10 @@ package com.kinlin.ai.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kinlin.ai.dto.LoginRequest;
-import com.kinlin.ai.dto.LoginResponse;
+import com.kinlin.ai.entity.LoginSession;
 import com.kinlin.ai.entity.User;
 import com.kinlin.ai.interceptor.RateLimitInterceptor;
+import com.kinlin.ai.service.LoginSessionService;
 import com.kinlin.ai.service.UserService;
 import com.kinlin.ai.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -44,6 +46,9 @@ class AuthControllerTest {
     private JwtUtil jwtUtil;
 
     @MockBean
+    private LoginSessionService loginSessionService;
+
+    @MockBean
     private RateLimitInterceptor rateLimitInterceptor;
 
     @MockBean
@@ -54,6 +59,7 @@ class AuthControllerTest {
 
     private User testUser;
     private UUID userId;
+    private UUID sid;
     private String username;
     private String password;
     private String token;
@@ -61,6 +67,7 @@ class AuthControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         userId = UUID.randomUUID();
+        sid = UUID.randomUUID();
         username = "testuser";
         password = "testpassword123";
         token = "test-jwt-token";
@@ -72,6 +79,13 @@ class AuthControllerTest {
         when(rateLimitInterceptor.preHandle(any(), any(), any())).thenReturn(true);
     }
 
+    private LoginSession sessionOf(UUID sid, UUID userId) {
+        LoginSession session = new LoginSession();
+        session.setSid(sid);
+        session.setUserId(userId);
+        return session;
+    }
+
     @Test
     void testLogin_Success() throws Exception {
         // Given
@@ -81,7 +95,8 @@ class AuthControllerTest {
 
         when(userService.validateUser(username, password))
                 .thenReturn(Optional.of(testUser));
-        when(jwtUtil.generateToken(userId, username)).thenReturn(token);
+        when(loginSessionService.createSession(testUser)).thenReturn(sessionOf(sid, userId));
+        when(jwtUtil.generateToken(userId, username, sid)).thenReturn(token);
 
         // When & Then
         mockMvc.perform(post("/auth/login")
@@ -92,6 +107,27 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.userId").value(userId.toString()))
                 .andExpect(jsonPath("$.username").value(username))
                 .andExpect(jsonPath("$.message").value("登录成功"));
+    }
+
+    @Test
+    void testLogin_SessionCreationFailureReturns503WithoutToken() throws Exception {
+        // Given
+        LoginRequest request = new LoginRequest();
+        request.setUsername(username);
+        request.setPassword(password);
+
+        when(userService.validateUser(username, password))
+                .thenReturn(Optional.of(testUser));
+        when(loginSessionService.createSession(testUser))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+
+        // When & Then：会话创建失败不得返回有效 Token
+        mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.token").doesNotExist())
+                .andExpect(jsonPath("$.message").value("登录服务暂不可用，请稍后重试"));
     }
 
     @Test
@@ -137,7 +173,8 @@ class AuthControllerTest {
                 .thenReturn(Optional.empty());
         when(userService.createUser(username, password, "test@example.com"))
                 .thenReturn(testUser);
-        when(jwtUtil.generateToken(userId, username)).thenReturn(token);
+        when(loginSessionService.createSession(testUser)).thenReturn(sessionOf(sid, userId));
+        when(jwtUtil.generateToken(userId, username, sid)).thenReturn(token);
 
         // When & Then
         mockMvc.perform(post("/auth/register")
@@ -148,6 +185,28 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.userId").value(userId.toString()))
                 .andExpect(jsonPath("$.username").value(username))
                 .andExpect(jsonPath("$.message").value("注册成功"));
+    }
+
+    @Test
+    void testRegister_SessionCreationFailureReturns503WithoutToken() throws Exception {
+        // Given
+        LoginRequest request = new LoginRequest();
+        request.setUsername(username);
+        request.setPassword(password);
+
+        when(userService.getUserByUsername(username))
+                .thenReturn(Optional.empty());
+        when(userService.createUser(username, password, null))
+                .thenReturn(testUser);
+        when(loginSessionService.createSession(testUser))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+
+        // When & Then
+        mockMvc.perform(post("/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.token").doesNotExist());
     }
 
     @Test
@@ -216,11 +275,55 @@ class AuthControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("邮箱已被使用"));
     }
+
+    @Test
+    void testLogout_WithoutSessionContextIsRejected() throws Exception {
+        // addFilters=false 且无 SecurityContext：无会话上下文必须拒绝
+        mockMvc.perform(post("/auth/logout"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void testLogout_RevocationFailureReturns503() throws Exception {
+        // 注入过滤器产生的完整会话上下文
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        new com.kinlin.ai.security.AuthenticatedUserContext(userId, username, "USER", sid, null, null),
+                        null, java.util.List.of()));
+        when(loginSessionService.revokeBySid(sid))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+
+        try {
+            mockMvc.perform(post("/auth/logout"))
+                    .andExpect(status().isServiceUnavailable());
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    void testLogout_SuccessReturnsNoContent() throws Exception {
+        org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        new com.kinlin.ai.security.AuthenticatedUserContext(userId, username, "USER", sid, null, null),
+                        null, java.util.List.of()));
+        when(loginSessionService.revokeBySid(sid)).thenReturn(true);
+
+        try {
+            mockMvc.perform(post("/auth/logout"))
+                    .andExpect(status().isNoContent());
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
     @Test
     void testVerifyToken_Success() throws Exception {
         when(jwtUtil.getUsernameFromToken(token)).thenReturn(username);
         when(jwtUtil.getUserIdFromToken(token)).thenReturn(userId);
+        when(jwtUtil.getSidFromToken(token)).thenReturn(sid);
         when(jwtUtil.validateToken(token, username)).thenReturn(true);
+        when(loginSessionService.isSessionActive(sid, userId)).thenReturn(true);
 
         mockMvc.perform(get("/auth/verify")
                         .header("Authorization", "Bearer " + token))
@@ -231,10 +334,54 @@ class AuthControllerTest {
     }
 
     @Test
+    void testVerifyToken_RevokedSessionIsInvalid() throws Exception {
+        when(jwtUtil.getUsernameFromToken(token)).thenReturn(username);
+        when(jwtUtil.getUserIdFromToken(token)).thenReturn(userId);
+        when(jwtUtil.getSidFromToken(token)).thenReturn(sid);
+        when(jwtUtil.validateToken(token, username)).thenReturn(true);
+        when(loginSessionService.isSessionActive(sid, userId)).thenReturn(false);
+
+        mockMvc.perform(get("/auth/verify")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.message").value("会话已撤销或过期"));
+    }
+
+    @Test
+    void testVerifyToken_LegacyTokenWithoutSidIsInvalid() throws Exception {
+        when(jwtUtil.getUsernameFromToken(token)).thenReturn(username);
+        when(jwtUtil.getUserIdFromToken(token)).thenReturn(userId);
+        when(jwtUtil.getSidFromToken(token)).thenReturn(null);
+        when(jwtUtil.validateToken(token, username)).thenReturn(true);
+
+        mockMvc.perform(get("/auth/verify")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.message").value("Token无效或已过期"));
+    }
+
+    @Test
     void testVerifyToken_MissingAuthorization() throws Exception {
         mockMvc.perform(get("/auth/verify"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.valid").value(false));
     }
-}
 
+    @Test
+    void testVerifyToken_SessionStateUnavailableReturns503() throws Exception {
+        when(jwtUtil.getUsernameFromToken(token)).thenReturn(username);
+        when(jwtUtil.getUserIdFromToken(token)).thenReturn(userId);
+        when(jwtUtil.getSidFromToken(token)).thenReturn(sid);
+        when(jwtUtil.validateToken(token, username)).thenReturn(true);
+        when(loginSessionService.isSessionActive(sid, userId))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+
+        mockMvc.perform(get("/auth/verify")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.message").value("认证服务暂不可用，请稍后重试"));
+    }
+}

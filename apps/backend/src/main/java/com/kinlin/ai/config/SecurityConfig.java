@@ -37,14 +37,17 @@ public class SecurityConfig {
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 // 允许OPTIONS预检请求（CORS预检）
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                // 公开接口
+                // 公开接口（INT-2F-4A：/auth 仅精确放行 login/register/verify，
+                // logout 等其余 /auth 路径必须经过真实认证）
                 .requestMatchers(
                     "/health",
                     "/health/**",
                     "/actuator/health/**",
                     "/swagger-ui/**",
                     "/v3/api-docs/**",
-                    "/auth/**"
+                    "/auth/login",
+                    "/auth/register",
+                    "/auth/verify"
                 ).permitAll()
                 // 其他接口需要认证
                 .anyRequest().authenticated()

@@ -74,23 +74,32 @@ export const authApi = {
     return promise
   },
 
-  // 退出登录
-  async logout(): Promise<{ success: boolean; message?: string }> {
+  // 退出登录：先请求服务端撤销当前会话，再清理本地凭证与登录状态。
+  // 网络失败仍允许本地退出，但绝不显示服务端撤销已成功。
+  async logout(): Promise<{ success: boolean; message?: string; serverRevoked: boolean }> {
     clearVerification()
-    try {
-      // 清除本地存储的token
-      localStorage.removeItem('token')
-      localStorage.removeItem('userId')
-      localStorage.removeItem('userInfo')
-      
-      // 可以调用后端接口进行token失效（如果有的话）
-      // 目前后端没有logout接口，所以只在前端清除
-      
-      return { success: true, message: '退出登录成功' }
-    } catch (error: any) {
-      console.error('退出登录失败:', error)
-      return { success: false, message: error.message || '退出登录失败' }
+    const token = localStorage.getItem('token')
+    let serverRevoked = false
+    let message = '退出登录成功'
+    if (token) {
+      try {
+        await request.post('/auth/logout', undefined, { timeout: 8000 })
+        serverRevoked = true
+      } catch (error: any) {
+        if (error?.response?.status === 401) {
+          // 服务端已拒绝该凭证（过期或已被撤销）：本地清理即等效退出
+          serverRevoked = true
+          message = '登录凭证已失效，本机已退出'
+        } else {
+          // 网络失败或服务不可用：撤销结果未知，不得声称已撤销
+          message = '本机已退出，服务端撤销未确认'
+        }
+      }
     }
+    localStorage.removeItem('token')
+    localStorage.removeItem('userId')
+    localStorage.removeItem('userInfo')
+    return { success: true, message, serverRevoked }
   }
 }
 

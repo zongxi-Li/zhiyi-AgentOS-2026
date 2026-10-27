@@ -24,7 +24,7 @@ const isPublicAuthRequest = (requestUrl: string) =>
   requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register')
 
 const isAuthOperation = (requestUrl: string) =>
-  isPublicAuthRequest(requestUrl) || requestUrl.includes('/auth/verify')
+  isPublicAuthRequest(requestUrl) || requestUrl.includes('/auth/verify') || requestUrl.includes('/auth/logout')
 
 export const attachAuthToken = (config: InternalAxiosRequestConfig) => {
   const requestUrl = config.url || ''

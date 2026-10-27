@@ -37,13 +37,14 @@ public class JwtUtil {
     }
 
     /**
-     * 生成Token
+     * 生成Token（INT-2F-4A 起绑定登录会话 sid；无 sid 的旧 Token 被强切换拒绝）
      */
-    public String generateToken(UUID userId, String username) {
+    public String generateToken(UUID userId, String username, UUID sid) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId.toString());
         claims.put("username", username);
         claims.put("role", "USER");
+        claims.put("sid", sid.toString());
         return createToken(claims, username);
     }
 
@@ -78,6 +79,14 @@ public class JwtUtil {
     public String getRoleFromToken(String token) {
         String role = getClaimFromToken(token, claims -> claims.get("role", String.class));
         return role == null || role.isBlank() ? "USER" : role;
+    }
+
+    /**
+     * 从Token中获取登录会话ID；旧式 Token 无 sid 返回 null，由认证层拒绝。
+     */
+    public UUID getSidFromToken(String token) {
+        String sid = getClaimFromToken(token, claims -> claims.get("sid", String.class));
+        return sid != null ? UUID.fromString(sid) : null;
     }
 
     /**
