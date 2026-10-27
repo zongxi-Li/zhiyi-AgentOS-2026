@@ -23,6 +23,60 @@ class _StartupRuntime:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('permitted', [False, True])
+@pytest.mark.parametrize('started', [False, True])
+async def test_explicit_cancel_releases_owned_task_without_waiting_for_shutdown(permitted, started):
+    calls = []
+    run = SimpleNamespace(status=SimpleNamespace(value='pending'), started_at=None)
+    async def execute(run_id):
+        calls.append(run_id)
+    runtime = SimpleNamespace(workflow_store=SimpleNamespace(get_run=lambda _: run),
+                              execute_prepared_run=execute)
+    coordinator = RunExecutionCoordinator(runtime)
+    if permitted:
+        coordinator._create_permitted_task(SimpleNamespace(run_id='cancelled-run', dispatch_id='accepted'))
+    else:
+        assert await coordinator.submit('cancelled-run')
+    task = coordinator._tasks['cancelled-run']
+    if started:
+        await asyncio.sleep(0)
+    run.status.value = 'cancelled'
+    assert await coordinator.cancel('cancelled-run')
+    await asyncio.gather(task, return_exceptions=True)
+    assert task.done()
+    assert task.cancelled() is (not started)
+    assert not calls
+    assert not coordinator.is_active('cancelled-run')
+    assert 'cancelled-run' not in coordinator._tasks
+    assert not await coordinator.cancel('cancelled-run')
+    await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_task_completion_cannot_remove_a_newer_owner():
+    calls = []
+    release = asyncio.Event()
+    async def execute(run_id):
+        calls.append(run_id)
+        await release.wait()
+    coordinator = RunExecutionCoordinator(SimpleNamespace(execute_prepared_run=execute))
+    command = SimpleNamespace(run_id='same-run', dispatch_id='accepted')
+    coordinator._create_permitted_task(command)
+    previous = coordinator._tasks['same-run']
+    assert await coordinator.cancel('same-run')
+    coordinator._create_permitted_task(command)
+    replacement = coordinator._tasks['same-run']
+    await asyncio.gather(previous, return_exceptions=True)
+    assert coordinator._tasks.get('same-run') is replacement
+    assert coordinator.is_active('same-run')
+    release.set()
+    await asyncio.gather(replacement)
+    assert calls == ['same-run']
+    assert not coordinator._tasks
+    await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_removes_task_cancelled_before_coroutine_first_runs():
     calls = []
     async def execute(run_id):

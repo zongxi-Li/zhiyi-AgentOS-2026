@@ -48,7 +48,7 @@ class RunExecutionCoordinator:
                 command = dispatch_store.get(run_id)
                 return await self._schedule_permitted(command, recover=True) if command else False
             task = asyncio.create_task(self._run_managed(run_id), name=f"workflow-run:{run_id}")
-            self._tasks[run_id] = task
+            self._track_task(run_id, task)
             self._ensure_wait_monitor()
         logger.info("run_submitted", extra={"runId": run_id})
         return True
@@ -109,9 +109,18 @@ class RunExecutionCoordinator:
                 await self._schedule_permitted(accepted, recover=replay)
             return accepted, replay
 
+    def _track_task(self, run_id: str, task: asyncio.Task[None]) -> None:
+        self._tasks[run_id] = task
+        task.add_done_callback(lambda settled: self._forget_finished_task(run_id, settled))
+
+    def _forget_finished_task(self, run_id: str, task: asyncio.Task[None]) -> None:
+        if task.done() and self._tasks.get(run_id) is task:
+            self._tasks.pop(run_id, None)
+
     def _create_permitted_task(self, command):
-        self._tasks[command.run_id] = asyncio.create_task(
+        task = asyncio.create_task(
             self._run_managed(command.run_id, permitted=True), name=f"workflow-dispatch:{command.dispatch_id}")
+        self._track_task(command.run_id, task)
 
     async def _schedule_permitted(self, command, *, recover):
         """Caller owns coordinator lock. Recovery remains the Runtime's decision."""

@@ -292,6 +292,50 @@ raise RuntimeError("requested crash cut not reached")
         assert (folder / "effects.txt").read_text(encoding="utf-8").splitlines() == ["A"]
 
 
+def test_cancel_before_first_task_step_cleans_owner_and_survives_replay_restart(tmp_path, monkeypatch):
+    database(tmp_path)
+    with server(tmp_path, dispatch=True) as (client, runtime, agent):
+        created, request = permitted(client)
+        trusted_call(client, ready_resource, runtime, created['runId'])
+        coordinator = runtime._test_coordinator
+        with monkeypatch.context() as patch:
+            def lose_ack(command):
+                raise RuntimeError('cut before Task creation')
+            patch.setattr(coordinator, '_create_permitted_task', lose_ack)
+            assert client.post(endpoint(created), json=request).status_code == 503
+        command = runtime.execution_dispatch_store.get(created['runId'])
+        assert command is not None and not agent.calls
+        before = snapshot(runtime)
+        assert client.post(PREFIX + '/runs/' + created['runId'] + '/cancel',
+                           headers={'X-Authenticated-User-Id': 'intruder'}).status_code == 404
+        assert snapshot(runtime) == before
+
+        async def accept_then_cancel_without_yield():
+            accepted, replay = await coordinator.submit_permitted(command)
+            assert replay and accepted == command
+            task = coordinator._tasks[created['runId']]
+            runtime.cancel(created['runId'])
+            assert await coordinator.cancel(created['runId'])
+            await asyncio.gather(task, return_exceptions=True)
+            assert task.cancelled()
+            assert created['runId'] not in coordinator._tasks
+            assert not runtime._active_execution_slots
+        trusted_call(client, accept_then_cancel_without_yield)
+        assert runtime.get_status(created['runId']).status == WorkflowStatus.CANCELLED
+        assert not agent.calls
+        before = snapshot(runtime)
+        replay = client.post(endpoint(created), json=request)
+        assert replay.status_code == 202 and replay.json()['status'] == 'IDEMPOTENT_REPLAY'
+        assert snapshot(runtime) == before
+        assert not coordinator._tasks and not agent.calls
+
+    with server(tmp_path, dispatch=True) as (client, runtime, agent):
+        assert runtime.get_status(created['runId']).status == WorkflowStatus.CANCELLED
+        assert client.post(endpoint(created), json=request).status_code == 202
+        assert not agent.calls and not runtime._active_execution_slots
+        assert not runtime._test_coordinator._tasks
+
+
 def test_cancel_after_native_slot_claim_does_not_invoke_agent(tmp_path, monkeypatch):
     database(tmp_path)
     with server(tmp_path, dispatch=True) as (client, runtime, agent):
