@@ -99,6 +99,8 @@ export const authApi = {
     localStorage.removeItem('token')
     localStorage.removeItem('userId')
     localStorage.removeItem('userInfo')
+    // 广播登出：运行时 SSE/重连等订阅方据此立即停流，不等服务端断开
+    window.dispatchEvent(new CustomEvent('kinlin:auth-logout'))
     return { success: true, message, serverRevoked }
   }
 }

@@ -4,6 +4,7 @@ import com.kinlin.ai.config.JwtProperties;
 import com.kinlin.ai.entity.LoginSession;
 import com.kinlin.ai.entity.User;
 import com.kinlin.ai.repository.LoginSessionRepository;
+import com.kinlin.ai.security.SessionActivityProbe;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,12 +18,13 @@ import java.util.UUID;
  *
  * <p>会话时长与 JWT exp 同源于 {@link JwtProperties#getExpiration()}，
  * 登录时同一时刻创建，保证两者到期一致。查询失败以 DataAccessException
- * 向上抛出，由调用方 fail-closed，不得默认有效。</p>
+ * 向上抛出，由调用方 fail-closed，不得默认有效。实现
+ * {@link SessionActivityProbe} 供 SSE 网关与 HTTP 认证共用同一权威。</p>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class LoginSessionService {
+public class LoginSessionService implements SessionActivityProbe {
 
     private final LoginSessionRepository loginSessionRepository;
     private final JwtProperties jwtProperties;
@@ -59,9 +61,11 @@ public class LoginSessionService {
     /**
      * 会话是否仍可认证：存在、归属匹配、未撤销且未到期。
      * 数据库无法确认时抛 DataAccessException，绝不默认有效。
+     * 点查带语句级 1s 超时（INT-2F-4B）。
      */
+    @Override
     public boolean isSessionActive(UUID sid, UUID userId) {
-        return loginSessionRepository.findById(sid)
+        return loginSessionRepository.findBySid(sid)
                 .filter(session -> userId.equals(session.getUserId()))
                 .filter(session -> session.getRevokedAt() == null)
                 .filter(session -> session.getExpiresAt().isAfter(LocalDateTime.now()))

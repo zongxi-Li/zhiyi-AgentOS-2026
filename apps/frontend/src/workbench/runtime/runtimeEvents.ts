@@ -381,6 +381,11 @@ export class RuntimeEventClient {
   }
 
   private consumeFrame(frame: string) {
+    // 服务端会话撤销终止事件（INT-2F-4B）：立即停流且不自动重连，须重新登录建立新会话
+    if (/^event:\s*auth\.invalidated\s*$/m.test(frame)) {
+      this.disconnect()
+      return
+    }
     const data = frame.split('\n')
       .filter(line => line.startsWith('data:'))
       .map(line => line.slice(5).trimStart())
@@ -430,4 +435,12 @@ export const releaseRunRuntimeStore = (runId: string | null, store?: RuntimeEven
     item.client.disconnect()
     shared.delete(runId)
   }
+}
+
+// INT-2F-4B：主动登出时中止全部运行时事件流（fetch 中止 + 重连定时器清除），
+// 不等服务端逐流撤销传播，避免凭证清理后继续消耗连接资源
+if (typeof window !== 'undefined') {
+  window.addEventListener('kinlin:auth-logout', () => {
+    for (const item of shared.values()) item.client.disconnect()
+  })
 }

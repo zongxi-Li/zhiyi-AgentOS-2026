@@ -90,7 +90,7 @@ class SessionStateUnavailableTest {
         String token = registerAndGetToken(uniqueUsername());
         UUID sid = jwtUtil.getSidFromToken(token);
 
-        when(loginSessionRepository.findById(sid)).thenThrow(DB_DOWN);
+        when(loginSessionRepository.findBySid(sid)).thenThrow(DB_DOWN);
 
         mockMvc.perform(get("/users/" + UUID.randomUUID())
                         .header("Authorization", "Bearer " + token))
@@ -126,7 +126,7 @@ class SessionStateUnavailableTest {
         UUID sid = jwtUtil.getSidFromToken(token);
         UUID userId = jwtUtil.getUserIdFromToken(token);
 
-        when(loginSessionRepository.findById(sid)).thenReturn(Optional.of(activeSession(sid, userId)));
+        when(loginSessionRepository.findBySid(sid)).thenReturn(Optional.of(activeSession(sid, userId)));
         when(loginSessionRepository.revokeBySid(any(), any())).thenThrow(DB_DOWN);
 
         mockMvc.perform(post("/auth/logout")

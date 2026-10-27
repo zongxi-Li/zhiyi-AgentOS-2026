@@ -33,15 +33,22 @@ class AiSseGatewayServiceTest {
     private String baseUrl;
     private ExecutorService serverExecutor;
 
+    private final com.kinlin.ai.service.LoginSessionService loginSessionService =
+            org.mockito.Mockito.mock(com.kinlin.ai.service.LoginSessionService.class);
+
     @BeforeEach
     void startServer() throws IOException {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(
-                        new AuthenticatedUserContext(UUID.randomUUID(), "sse-test", "USER", null, null),
+                        new AuthenticatedUserContext(UUID.randomUUID(), "sse-test", "USER",
+                                UUID.randomUUID(), null, null),
                         null,
                         java.util.List.of()
                 )
         );
+        org.mockito.Mockito.when(loginSessionService.isSessionActive(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         serverExecutor = Executors.newCachedThreadPool();
         server.setExecutor(serverExecutor);
@@ -168,8 +175,9 @@ class AiSseGatewayServiceTest {
 
     private AiSseGatewayService service(long idleMs, long maximumMs,
                                         io.micrometer.core.instrument.MeterRegistry registry) {
+        // 会话复核参数取合同默认值：周期远长于本类各用例时长，不干扰既有超时断言
         return new AiSseGatewayService(WebClient.builder().baseUrl(baseUrl).build(), idleMs, maximumMs,
-                new TrustedUserContextForwarder(), registry);
+                3000, 1000, 5000, new TrustedUserContextForwarder(), loginSessionService, registry);
     }
 
     private static double counter(io.micrometer.core.instrument.MeterRegistry registry, String name) {

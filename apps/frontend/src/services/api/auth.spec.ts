@@ -60,6 +60,20 @@ describe('logout with server-side revocation', () => {
     expect(result.serverRevoked).toBe(false)
   })
 
+  it('broadcasts the logout so live stream clients stop immediately', async () => {
+    localStorage.setItem('token', 'session-a')
+    vi.mocked(request.post).mockResolvedValue({ status: 204 })
+    const listener = vi.fn()
+    window.addEventListener('kinlin:auth-logout', listener)
+
+    try {
+      await authApi.logout()
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('kinlin:auth-logout', listener)
+    }
+  })
+
   it('clears the verification cache so a stale token cannot be verified after logout', async () => {
     localStorage.setItem('token', 'session-a')
     vi.mocked(request.post).mockResolvedValue({ status: 204 })
