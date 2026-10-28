@@ -46,6 +46,7 @@ RUN apt-get update \
 COPY --from=build /opt/kinlin-venv /opt/kinlin-venv
 COPY apps/agent ./agent
 COPY apps/agentOS ./agentOS
+COPY scripts/prepare_agentos_runtime.py ./scripts/prepare_agentos_runtime.py
 COPY apps/backend/src ./workspace/backend/src
 COPY apps/frontend/src ./workspace/frontend/src
 COPY apps/agent/app ./workspace/agent/app

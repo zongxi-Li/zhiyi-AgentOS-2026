@@ -51,6 +51,8 @@ foreach ($name in @("db_admin_password", "db_password", "redis_password", "jwt_s
 if (-not $modelProviderConfigured) { Write-Warning "No model provider API Key is configured; local services can start, but real model requests will be unavailable" }
 
 $model = $rendered | ConvertFrom-Json
+$formal = Get-KinlinFormalExecutionConfiguration $model
+Write-Host "AgentOS formal configuration: semantics=$($formal.Semantics), authorities=$($formal.Authorities), dispatch=$($formal.Dispatch), legacy=$($formal.Legacy)"
 $frontendNetworks = @($model.services.frontend.networks.PSObject.Properties.Name)
 if ($frontendNetworks -notcontains "web-network" -or $frontendNetworks -notcontains "windows-ingress-network") { throw "Frontend network merge is invalid" }
 foreach ($service in @("backend", "ai-service", "postgres", "redis")) {

@@ -183,6 +183,14 @@ py -3 -m ops.scripts.infra.init_secrets .secrets/kinlin-win-dev-001
 .\ops\scripts\infra\windows\down.ps1              # 停止（保留数据卷）
 ```
 
+现有开发库启用正式执行链时，在 `.env.windows` 设置
+`AGENTOS_MISSION_SEMANTIC_CONVERGENCE=true`、`AGENTOS_C2_EXECUTION_AUTHORITIES=true`、
+`AGENTOS_C2_EXECUTION_DISPATCH=true`，并保持 `AGENTOS_ALLOW_LEGACY_MISSION_INTENT=false`。
+首次执行 `up.ps1 -Build -ApplyAgentOSSchema`：停止 AI、取得单实例锁、按 C2 → Dispatch
+顺序显式升级现有数据卷，检查通过才启动。以后 `up.ps1` 仅检查，不自动升级。
+缺失/空库不会默认初始化；需要另行显式运行维护入口的 `--apply --initialize-empty`。
+任何不兼容或损坏会停止启动，不删除或重建数据库。实际访问地址以所选环境文件输出为准。
+
 ### 前端热更新开发
 
 ```powershell

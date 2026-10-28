@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 
 from components.recovery.checkpoint import ACGCheckpointStore
 from storage.v2.sqlite import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
+from storage.v2.schema import SCHEMA_SQL
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
 from support.stores.planning_commit_store import content_fingerprint
@@ -63,18 +64,18 @@ def _connect(path, *, readonly=True):
     return closing(sqlite3.connect(path.as_uri() + ("?mode=ro" if readonly else "?mode=rw"), uri=True))
 
 
+class _AdministrativeWorkflowStore(SQLiteWorkflowStore):
+    @contextmanager
+    def _connect(self):
+        # Close maintenance connections deterministically, including Windows.
+        with closing(super()._connect()) as conn, conn:
+            yield conn
+
+
 def _initialize(role, path):
     """Only for an explicitly declared, completely empty database."""
     if role == "workflow":
-        class AdministrativeWorkflowStore(SQLiteWorkflowStore):
-            @contextmanager
-            def _connect(self):
-                # The legacy initializer manages transactions but relies on GC
-                # to close connections. Administrative temp files must close
-                # deterministically, especially on Windows.
-                with closing(super()._connect()) as conn, conn:
-                    yield conn
-        AdministrativeWorkflowStore(path, enable_mission_semantics=True)
+        _AdministrativeWorkflowStore(path, enable_mission_semantics=True)
     elif role == "checkpoint":
         store = ACGCheckpointStore(db_path=path)
         store.close()
@@ -103,6 +104,18 @@ def _reference():
         for role, path in paths.items():
             with _connect(path) as conn:
                 result[role] = _objects(conn)
+        # SQLite's official ADD COLUMN migration places semantic_key last.
+        # Accept exactly that migration-produced table, not arbitrary reordered
+        # SQL or relaxed constraints. Only disposable reference files are opened
+        # by the Identity constructor; existing Identity remains verify-only.
+        legacy_path = Path(folder) / "identity_alter.sqlite"
+        table = re.search(r"CREATE TABLE IF NOT EXISTS semantic_tasks \(.*?\n\);", SCHEMA_SQL, re.S).group()
+        with closing(sqlite3.connect(legacy_path)) as conn:
+            conn.execute(table.replace("    semantic_key TEXT,\n", "", 1))
+        with SQLiteV2Storage(legacy_path):
+            pass
+        with _connect(legacy_path) as conn:
+            result["identity_alter_semantic_tasks"] = _objects(conn)["semantic_tasks"]
         result["workflow_base"] = base
     return result
 
@@ -161,10 +174,21 @@ def _inspect_one(role, path, reference, initialize_empty):
         required = (_reference()["workflow_base"] if role == "workflow" else
                     {"acg_execution_checkpoints"} if role == "checkpoint" else set(reference))
         missing_required = set(required) - current.keys()
+        legacy_revision = (role == "workflow"
+                           and missing_required == {"mission_revision_decisions"}
+                           and not (C2_TABLES & current.keys()))
+        if legacy_revision:
+            # Supported pre-C2 base: the original semantic initializer adds
+            # this empty journal. Once any C2 component is installed, a missing
+            # prerequisite remains damage and is never recreated.
+            missing_required = set()
         if missing_required:
             raise SchemaUpgradeError(f"{role}: missing prerequisite objects: {sorted(missing_required)}")
         for name in current.keys() & reference.keys():
             if current[name] != reference[name]:
+                if (role == "identity" and name == "semantic_tasks"
+                        and current[name] == _reference()["identity_alter_semantic_tasks"]):
+                    continue
                 raise SchemaUpgradeError(f"{role}: incompatible definition: {name}; no destructive repair")
         if role == "workflow":
             if [r[0] for r in conn.execute("SELECT version FROM mission_semantic_schema")] != [1]:
@@ -339,6 +363,8 @@ def upgrade_databases(workflow, checkpoint, identity, *, initialize_empty=False)
         if state["status"] == "EMPTY_REQUIRES_INITIALIZATION":
             _initialize(role, path)
         if role == "workflow":
+            if "mission_revision_decisions" in state["missing"]:
+                _AdministrativeWorkflowStore(path, enable_mission_semantics=True)
             for factory in UPGRADERS:
                 _inspect_one(role, path, _reference()[role], False)
                 factory.upgrade_schema(path)

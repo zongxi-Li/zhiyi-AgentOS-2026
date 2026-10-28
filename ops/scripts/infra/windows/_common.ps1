@@ -98,6 +98,24 @@ function Invoke-KinlinCompose {
     }
 }
 
+function Get-KinlinFormalExecutionConfiguration {
+    param($Model)
+    $aiEnvironment = $Model.services.'ai-service'.environment
+    $flags = @{}
+    foreach ($name in @("AGENTOS_MISSION_SEMANTIC_CONVERGENCE", "AGENTOS_C2_EXECUTION_AUTHORITIES", "AGENTOS_C2_EXECUTION_DISPATCH", "AGENTOS_ALLOW_LEGACY_MISSION_INTENT")) {
+        $property = $aiEnvironment.PSObject.Properties[$name]
+        $value = if ($null -eq $property) { "false" } else { ([string]$property.Value).ToLowerInvariant() }
+        if ($value -notin @("true", "false")) { throw "Invalid boolean for $name" }
+        $flags[$name] = $value -eq "true"
+    }
+    $semantics = $flags["AGENTOS_MISSION_SEMANTIC_CONVERGENCE"]
+    $authorities = $flags["AGENTOS_C2_EXECUTION_AUTHORITIES"]
+    $dispatch = $flags["AGENTOS_C2_EXECUTION_DISPATCH"]
+    if ($authorities -and -not $semantics) { throw "C2 authorities require Mission semantic convergence" }
+    if ($dispatch -and -not $authorities) { throw "C2 Dispatch requires execution authorities" }
+    return [PSCustomObject]@{ Semantics=$semantics; Authorities=$authorities; Dispatch=$dispatch; Legacy=$flags["AGENTOS_ALLOW_LEGACY_MISSION_INTENT"] }
+}
+
 function Invoke-KinlinComposeOutput {
     param(
         $Context,

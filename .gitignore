@@ -159,6 +159,7 @@ build_agentos_innovation_doc.py
 
 # 浏览器视觉验收产物
 output/playwright/
+output/runtime-acceptance-*/
 
 # 额外的资源
 apps/agentOS/references

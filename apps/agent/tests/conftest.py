@@ -40,20 +40,8 @@ AGENT_APP_ROOT = PROJECT_ROOT / "apps" / "agent"
 TEST_TEMP_ROOT = PROJECT_ROOT / ".tmp-tests"
 TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
-# Sweep leftovers from crashed sessions. Entries newer than a day may belong
-# to a concurrently running pytest session and must not be touched.
-_STALE_TEST_TEMP_SECONDS = 24 * 3600
-_now = time.time()
-for _entry in TEST_TEMP_ROOT.iterdir():
-    try:
-        if _now - _entry.stat().st_mtime < _STALE_TEST_TEMP_SECONDS:
-            continue
-        if _entry.is_dir():
-            shutil.rmtree(_entry, ignore_errors=True)
-        else:
-            _entry.unlink(missing_ok=True)
-    except OSError:
-        continue
+# This directory also contains retained audit evidence and other sessions' work.
+# Cleanup below is limited to directories created by this test invocation.
 
 # AgentOS creates its global Chroma client while test modules are imported.
 # Isolate that client before collection so tests never open the tracked database.
@@ -80,6 +68,8 @@ os.environ["AGENTOS_PROVENANCE_DB"] = str(
 os.environ["AGENTOS_AUDIT_DB"] = str(
     _TEST_WORKFLOW_DIR / "audit_decisions.sqlite3"
 )
+for _database_key in ("CONTENT_MANIFEST", "RESOURCE", "NODE", "RESOURCE_HEALTH", "EVOLUTION", "IDENTITY"):
+    os.environ[f"AGENTOS_{_database_key}_DB"] = str(_TEST_WORKFLOW_DIR / f"{_database_key.lower()}.sqlite3")
 
 for path in (PROJECT_ROOT, AGENT_APP_ROOT, AGENTOS_ROOT, AGENTOS_SRC):
     value = str(path)
