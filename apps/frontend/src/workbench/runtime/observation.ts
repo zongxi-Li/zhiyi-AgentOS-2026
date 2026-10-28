@@ -742,11 +742,12 @@ export class RuntimeObservationAdapter {
   private generation = 0
   private controller: AbortController | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
+  private unavailableSettled = false
 
   start(runId: string, options: RuntimeObservationAdapterOptions): void {
     // Projection refreshes update diagnostics/callbacks without cancelling the
     // independent observation request or fetching a terminal Run again.
-    if (this.runId === runId && this.options?.historical === options.historical) {
+    if (this.runId === runId && this.options?.historical === options.historical && !this.unavailableSettled) {
       this.options = options
       return
     }
@@ -763,6 +764,10 @@ export class RuntimeObservationAdapter {
       try {
         const observation = await readRuntimeObservation(runId, this.options?.diagnostics || [], { signal: controller.signal })
         if (generation !== this.generation || controller.signal.aborted) return
+        // A transient gateway outage can leave no lifecycle status, which ends
+        // polling. Allow a later same-Run refresh to recover that settled read;
+        // preserve the existing in-flight and confirmed terminal behavior.
+        this.unavailableSettled = !observation.run && !ACTIVE_RUN_STATUSES.has(observation.runStatus || '')
         this.options?.onUpdate(observation)
         if (!this.options?.historical && ACTIVE_RUN_STATUSES.has(observation.runStatus || '')) {
           this.timer = setTimeout(() => { void refresh() }, interval)
@@ -775,6 +780,7 @@ export class RuntimeObservationAdapter {
   }
 
   stop(): void {
+    this.unavailableSettled = false
     this.runId = null
     this.options = null
     this.generation += 1

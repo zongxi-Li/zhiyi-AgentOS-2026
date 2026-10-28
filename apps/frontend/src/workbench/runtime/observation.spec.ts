@@ -320,6 +320,28 @@ describe('RuntimeObservationAdapter', () => {
     adapter.stop()
   })
 
+  it('retries an unavailable settled observation on a same-Run refresh', async () => {
+    const request = vi.spyOn(agentosApi, 'getWorkflowRun')
+      .mockRejectedValueOnce(new Error('temporary gateway failure'))
+      .mockResolvedValue(run('run_1') as any)
+    vi.spyOn(agentosApi, 'getWorkflowTrace')
+      .mockRejectedValueOnce(new Error('temporary gateway failure'))
+      .mockResolvedValue(trace('run_1') as any)
+    vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue(provenance('run_1') as any)
+    vi.spyOn(agentosApi, 'listResources').mockResolvedValue(resourceResponse as any)
+    vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
+    const update = vi.fn()
+    const adapter = new RuntimeObservationAdapter()
+    adapter.start('run_1', { onUpdate: update })
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][0].run).toBeNull()
+    adapter.start('run_1', { onUpdate: update })
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls[1][0].run.runId).toBe('run_1')
+    expect(request).toHaveBeenCalledTimes(2)
+    adapter.stop()
+  })
+
   it('keeps an in-flight observation across a same-Run projection refresh', async () => {
     const pending = deferred<ReturnType<typeof trace>>()
     vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run('run_1') as any)
