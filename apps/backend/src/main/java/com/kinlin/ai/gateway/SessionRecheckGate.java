@@ -7,6 +7,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Scheduler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -27,6 +29,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 天然无权延长租期或复活已终止流。</p>
  */
 final class SessionRecheckGate {
+    private static final Logger log = LoggerFactory.getLogger(SessionRecheckGate.class);
 
     /** 交付门拒绝（租期耗尽或已观测到撤销），由流层转换为终止事件。 */
     static final class SessionRevokedException extends RuntimeException { }
@@ -78,6 +81,9 @@ final class SessionRecheckGate {
     Mono<ServerSentEvent<String>> admit(ServerSentEvent<String> event) {
         if (!revoked.get() && System.currentTimeMillis() < leaseDeadline.get()) {
             return Mono.just(event);
+        }
+        if (!revoked.get()) {
+            log.warn("SSE session observation lease expired before event delivery");
         }
         revoke();
         return Mono.error(new SessionRevokedException());
@@ -136,6 +142,7 @@ final class SessionRecheckGate {
                                     // 租期从查询开始时刻 t0 起算，不从返回时刻重新计时
                                     leaseDeadline.set(t0 + leaseMillis);
                                 } else {
+                                    log.info("SSE session check rejected an inactive session");
                                     revoke();
                                 }
                             }
@@ -143,6 +150,7 @@ final class SessionRecheckGate {
                         error -> {
                             // 查询失败/超时 = 无法确认有效：fail-closed 立即终止
                             if (inFlight.compareAndSet(true, false) && !revoked.get() && !closed.get()) {
+                                log.warn("SSE session check failed; type={}", error.getClass().getSimpleName());
                                 revoke();
                             }
                         });
