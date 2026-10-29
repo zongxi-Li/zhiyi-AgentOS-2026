@@ -9,6 +9,7 @@ import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import AcgRunInspector from '@/components/agentos/AcgRunInspector.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
 import ChatView from './ChatView.vue'
+import NativeWorkspacePicker from '@/components/platform/NativeWorkspacePicker.vue'
 
 let chatStoreMock: ReturnType<typeof createChatStoreMock>
 
@@ -211,17 +212,20 @@ describe('ChatView ACG progress integration', () => {
     chatStoreMock.messages.push({ id: 'message_1', role: 'user', content: '开始任务' })
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.get('.chat-panel').classes()).not.toContain('hero-mode')
+    expect(wrapper.find('.chat-panel').classes()).not.toContain('hero-mode')
     expect(wrapper.find('.context-panel').exists()).toBe(true)
     expect(wrapper.find('.workflow-acg-panel').exists()).toBe(true)
+    expect(wrapper.get('.composer-missions').classes()).toContain('is-conversation')
+    expect(wrapper.findComponent(NativeWorkspacePicker).exists()).toBe(true)
   })
 
   it('shows distinct generic interfaces for Agent and Chat', async () => {
     const { wrapper, router } = await mountPage('?workspace=agent')
 
     expect(wrapper.find('.hero-greeting').exists()).toBe(true)
-    expect(wrapper.find('.mission-chip').exists()).toBe(true)
-    expect(wrapper.find('.mission-chip').text()).toContain('运行记录')
+    expect(wrapper.get('.composer-missions').classes()).not.toContain('is-conversation')
+    expect(wrapper.find('.mission-chip').exists()).toBe(false)
+    expect(wrapper.findComponent(NativeWorkspacePicker).exists()).toBe(true)
     expect(wrapper.get('.composer-agent-mode').text()).toContain('请求批准')
     expect(wrapper.get('.composer-agent-mode').classes()).toContain('composer-agent-mode--permission')
     expect(wrapper.get('.composer-agent-mode').element.tagName).toBe('BUTTON')

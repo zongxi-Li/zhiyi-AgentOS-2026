@@ -36,6 +36,7 @@ interface ServiceMainConfig {
   host?: string
   port?: number
   confinement?: 'none' | 'acl'
+  dynamicWorkspaces?: boolean
   faults?: { afterClaim?: boolean; afterStarted?: boolean }
 }
 
@@ -69,6 +70,7 @@ const service = new HandsService({
   credentials: { file: absolutize(parsed.credentialsFile) },
   grants: { file: absolutize(parsed.grantsFile) },
   dataDir: absolutize(parsed.dataDir),
+  dynamicWorkspaces: parsed.dynamicWorkspaces === true,
   ...(parsed.host === undefined ? {} : { host: parsed.host }),
   ...(parsed.port === undefined ? {} : { port: parsed.port }),
   ...(parsed.confinement === undefined ? {} : { confinement: parsed.confinement }),

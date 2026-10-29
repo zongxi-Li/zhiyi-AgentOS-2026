@@ -337,56 +337,8 @@
             </div>
           </div>
 
-          <div v-if="showHeroMode" class="composer-missions">
-            <div ref="missionAnchorRef" class="mission-anchor">
-              <button
-                class="mission-chip"
-                type="button"
-                :aria-expanded="missionMenuOpen"
-                aria-haspopup="listbox"
-                title="选择对话记录进入 Mission"
-                @click="toggleMissionMenu"
-              >
-                <el-icon><Clock /></el-icon>
-                <span>{{ isAgentMode ? '运行记录' : '对话记录' }}</span>
-                <el-icon class="mission-chip__chevron"><ArrowDownBold /></el-icon>
-              </button>
-              <Transition name="mission-pop">
-                <div v-if="missionMenuOpen" class="mission-menu" role="listbox" aria-label="选择对话记录进入 Mission">
-                  <div v-if="missionRecordsLoading" class="mission-menu-hint">正在加载…</div>
-                  <template v-else-if="isAgentMode">
-                    <button
-                      v-for="run in missionRecentRuns"
-                      :key="run.runId"
-                      class="mission-option"
-                      type="button"
-                      role="option"
-                      :title="resolveAcgTaskTitle(run)"
-                      @click="openMissionRecord(run, null)"
-                    >
-                      <strong>{{ resolveAcgTaskTitle(run) }}</strong>
-                      <span>{{ missionRunState(run) }}</span>
-                    </button>
-                    <div v-if="!missionRecentRuns.length" class="mission-menu-hint">暂无运行记录</div>
-                  </template>
-                  <template v-else>
-                    <button
-                      v-for="conversation in missionRecentConversations"
-                      :key="conversation.id"
-                      class="mission-option"
-                      type="button"
-                      role="option"
-                      :title="conversation.title || '未命名对话'"
-                      @click="openMissionRecord(null, conversation)"
-                    >
-                      <strong>{{ conversation.title || '未命名对话' }}</strong>
-                      <span>{{ formatMissionTime(conversation.updatedAt || conversation.createdAt) }}</span>
-                    </button>
-                    <div v-if="!missionRecentConversations.length" class="mission-menu-hint">暂无历史对话</div>
-                  </template>
-                </div>
-              </Transition>
-            </div>
+          <div class="composer-missions" :class="{ 'is-conversation': !showHeroMode }">
+            <NativeWorkspacePicker class="composer-missions__workspace" />
           </div>
 
           <div class="composer-card">
@@ -745,6 +697,7 @@ import {
 import { ElMessage } from 'element-plus'
 import MessageBubble from '@/components/MessageBubble.vue'
 import ModelRuntimeControls from '@/components/ModelRuntimeControls.vue'
+import NativeWorkspacePicker from '@/components/platform/NativeWorkspacePicker.vue'
 import PermissionSelector from '@/components/PermissionSelector.vue'
 const FileManager = defineAsyncComponent(() => import('@/components/FileManager.vue').then(module => module.default))
 const AcgTopologyGraph = defineAsyncComponent(() => import('@/components/agentos/AcgTopologyGraph.vue'))
@@ -760,15 +713,13 @@ import {
   type WorkflowRun
 } from '@/services/api/agentos'
 import type { WorkflowProgress } from '@/services/api/workflow'
-import { workflowApi, type WorkflowRunSummary } from '@/services/api/workflow'
+import { workflowApi } from '@/services/api/workflow'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { useChatStore, type ChatWorkflowBinding, type Message } from '@/stores/chat'
 import { useChatWorkflowPresentation } from '@/composables/useChatWorkflowPresentation'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
-import { resolveAcgTaskTitle } from '@/utils/acgTaskTitle'
-import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
 import { plainMissionTitle } from '@/utils/missionTitle'
 import { loadModelSettings } from '@/config/modelSettings'
 
@@ -1627,46 +1578,8 @@ const handleNewAgentTask = () => {
   void resetWorkspace()
 }
 
-const missionAnchorRef = ref<HTMLElement | null>(null)
-const missionMenuOpen = ref(false)
 const composerToolsAnchorRef = ref<HTMLElement | null>(null)
 const composerToolsOpen = ref(false)
-const missionRecordsLoading = ref(false)
-const missionRecordsLoaded = ref(false)
-const missionRecentRuns = ref<WorkflowRunSummary[]>([])
-const missionRecentConversations = ref<Conversation[]>([])
-
-const loadMissionRecords = async () => {
-  if (missionRecordsLoaded.value || missionRecordsLoading.value) return
-  missionRecordsLoading.value = true
-  try {
-    if (isAgentMode.value) {
-      const page = await workflowApi.listRuns({
-        sources: ACG_HISTORY_SOURCES,
-        summary: true,
-        page: 1,
-        pageSize: 8
-      })
-      missionRecentRuns.value = page.items || []
-    } else {
-      const userId = localStorage.getItem('userId') || undefined
-      const conversations = await conversationApi.getUserConversations(userId, 'chat')
-      missionRecentConversations.value = [...conversations]
-        .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime())
-        .slice(0, 8)
-    }
-    missionRecordsLoaded.value = true
-  } catch {
-    // 加载失败保持空态提示，不打断输入
-  } finally {
-    missionRecordsLoading.value = false
-  }
-}
-
-const toggleMissionMenu = () => {
-  missionMenuOpen.value = !missionMenuOpen.value
-  if (missionMenuOpen.value) void loadMissionRecords()
-}
 
 const toggleComposerTools = () => {
   composerToolsOpen.value = !composerToolsOpen.value
@@ -1684,42 +1597,8 @@ const autoSegment = () => {
   ElMessage.success(t('chat.autoSegment'))
 }
 
-const missionRunState = (run: WorkflowRunSummary) => {
-  if (run.status === 'completed' || run.phase === 'completed') return '已完成'
-  if (run.status === 'failed' || run.phase === 'failed') return '执行失败'
-  if (run.status === 'cancelled' || run.phase === 'cancelled') return '已取消'
-  if (run.status === 'waiting_review' || run.phase === 'review') return '等待审核'
-  return '运行中'
-}
-
-const formatMissionTime = (value?: string) => {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-}
-
-const openMissionRecord = async (run: WorkflowRunSummary | null, conversation: Conversation | null) => {
-  missionMenuOpen.value = false
-  if (run) {
-    chatStore.clearMessages()
-    await router.push({
-      path: `/agentos/missions/${encodeURIComponent(run.missionId)}/workspace`,
-      query: { runId: run.runId }
-    })
-    return
-  }
-  if (conversation) {
-    const contextId = conversation.contextId || conversation.id
-    await router.push({ path: '/chat', query: { contextId, workspace: 'chat' } })
-  }
-}
-
-const handleMissionOutsideClick = (event: MouseEvent) => {
+const handleComposerOutsideClick = (event: MouseEvent) => {
   const target = event.target as Node
-  if (missionMenuOpen.value && !missionAnchorRef.value?.contains(target)) {
-    missionMenuOpen.value = false
-  }
   if (composerToolsOpen.value && !composerToolsAnchorRef.value?.contains(target)) {
     composerToolsOpen.value = false
   }
@@ -2338,7 +2217,7 @@ onMounted(async () => {
   window.addEventListener('agent-new-task', handleNewAgentTask)
   window.addEventListener('resize', handleWorkflowPanelViewportResize)
   window.addEventListener('resize', handleChatInfoViewportResize)
-  window.addEventListener('pointerdown', handleMissionOutsideClick)
+  window.addEventListener('pointerdown', handleComposerOutsideClick)
   if (showHeroMode.value) {
     setContextPanelOpen(false)
     setWorkflowPanelOpen(false)
@@ -2375,7 +2254,7 @@ onUnmounted(() => {
   window.removeEventListener('agent-new-task', handleNewAgentTask)
   window.removeEventListener('resize', handleWorkflowPanelViewportResize)
   window.removeEventListener('resize', handleChatInfoViewportResize)
-  window.removeEventListener('pointerdown', handleMissionOutsideClick)
+  window.removeEventListener('pointerdown', handleComposerOutsideClick)
   stopChatInfoResize()
   chatInfoResizeObserver?.disconnect()
   chatInfoResizeObserver = null
@@ -3996,10 +3875,27 @@ const handleHeroLogoPointerUp = () => {
   width: calc(60% - 32px);
   margin: 0 auto;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   padding: 10px 12px 28px;
   border: 1px solid var(--border-light);
   border-radius: 14px;
   background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-card));
+}
+
+.composer-missions__workspace {
+  min-width: 0;
+}
+
+/* Conversation state: the same shelf becomes a transparent status strip above the input. */
+.composer-missions.is-conversation {
+  width: min(100%, 780px);
+  margin: 0 auto 6px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .chat-panel.hero-mode .composer-card {
@@ -4011,115 +3907,6 @@ const handleHeroLogoPointerUp = () => {
     0 4px 16px color-mix(in srgb, var(--primary-color) 9%, transparent),
     -28px 10px 46px color-mix(in srgb, var(--bg-app) 58%, transparent),
     28px 10px 46px color-mix(in srgb, var(--bg-app) 58%, transparent);
-}
-
-.mission-anchor {
-  position: relative;
-}
-
-.mission-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.16s ease, color 0.16s ease;
-}
-
-.mission-chip > .el-icon {
-  font-size: 12px;
-  color: var(--primary-color);
-}
-
-.mission-chip__chevron {
-  color: var(--text-disabled) !important;
-  font-size: 9px !important;
-}
-
-.mission-chip:hover {
-  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
-  color: var(--text-primary);
-}
-
-.mission-chip:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--primary-color) 58%, transparent);
-  outline-offset: 2px;
-}
-
-.mission-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  z-index: 40;
-  width: 300px;
-  max-height: 340px;
-  overflow-y: auto;
-  padding: 5px;
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  background: var(--bg-card);
-  box-shadow: var(--shadow-md);
-  scrollbar-width: thin;
-}
-
-.mission-menu-hint {
-  padding: 12px 8px;
-  color: var(--text-disabled);
-  font-size: 11.5px;
-  text-align: center;
-}
-
-.mission-option {
-  width: 100%;
-  display: grid;
-  gap: 1px;
-  padding: 7px 9px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.14s ease;
-}
-
-.mission-option strong {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 12.5px;
-  font-weight: 550;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mission-option span {
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.mission-option:hover {
-  background: var(--bg-panel);
-}
-
-.mission-pop-enter-active,
-.mission-pop-leave-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.mission-pop-enter-from,
-.mission-pop-leave-to {
-  opacity: 0;
-  transform: translateY(6px);
 }
 
 
@@ -4690,18 +4477,6 @@ const handleHeroLogoPointerUp = () => {
 
 
 
-
-.mission-chip {
-  height: 28px;
-  color: var(--text-muted);
-}
-
-.mission-chip:hover,
-.mission-chip:focus-visible {
-  background: var(--bg-card);
-  color: var(--text-primary);
-  outline: none;
-}
 
 .composer-icon-action:hover,
 .composer-icon-action.active {

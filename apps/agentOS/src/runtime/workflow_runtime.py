@@ -682,6 +682,14 @@ class ExecutionRuntime(CollaboratorAccess):
         run_input = dict(task.input)
         if input_override is not None:
             run_input.update(input_override)
+        workspace_authority = getattr(self, 'workspace_authority', None)
+        if workspace_authority is not None:
+            if parent_run_id:
+                parent_workspace_run = self.workflow_store.get_run(parent_run_id)
+                workspace_authority.resolve(parent_workspace_run)
+                run_input['workspaceBinding'] = deepcopy(parent_workspace_run.input['workspaceBinding'])
+            else:
+                workspace_authority.freeze(run_input)
         basis = None
         if inherit_parent_basis:
             if not parent_run_id:

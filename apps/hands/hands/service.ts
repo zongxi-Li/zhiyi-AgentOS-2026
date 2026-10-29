@@ -22,7 +22,8 @@ import { HANDS_CAPABILITIES } from './protocol.ts'
  */
 
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, lstatSync, realpathSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { HandsAuthError, ResourceAuthenticator } from './auth.ts'
 import { createStandaloneHands, type StandaloneHands } from './index.ts'
@@ -50,6 +51,8 @@ export interface HandsServiceOptions {
   /** Bind port (0 = ephemeral). */
   port?: number
   confinement?: 'none' | 'acl'
+  /** Operator-only: select Worlds from trusted grant roots, never request input. */
+  dynamicWorkspaces?: boolean
   clockSkewMs?: number
   now?: () => number
   /**
@@ -74,6 +77,7 @@ export class HandsService {
   readonly #faults: HandsServiceOptions['faults']
   readonly #workspaceRoot: string
   readonly #tasks = new Set<Promise<void>>()
+  readonly #workspaceWorlds = new Map<string, Promise<StandaloneHands>>()
   #server: Server | undefined
   #logBuffer: string[] = []
 
@@ -143,6 +147,7 @@ export class HandsService {
     await Promise.allSettled([...this.#tasks])
     this.#ledger.close()
     await (await this.#pendingHands).dispose()
+    for (const pending of this.#workspaceWorlds.values()) await (await pending).dispose()
   }
 
   async #serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -252,12 +257,15 @@ export class HandsService {
       return error(400, 'PROTOCOL_MISMATCH', 'idempotency key does not match request envelope')
     }
     // Trusted admission — never client-asserted.
+    const trusted = this.#grants.get(request.authorization.grantId)
+    const root = this.options.dynamicWorkspaces === true && trusted ? trusted.canonicalRoot : this.#workspaceRoot
+    validateWorkspaceRoot(root)
     const admitted = this.#grants.authorize({
       grantId: request.authorization.grantId,
       workspaceId: request.authorization.workspaceId,
       capabilityId: request.capabilityId,
       callerId,
-      serviceWorkspaceRoot: this.#workspaceRoot,
+      serviceWorkspaceRoot: root,
       now: new Date(),
     })
     const requestDigest = createHash('sha256').update(body).digest('hex')
@@ -295,7 +303,19 @@ export class HandsService {
   }
 
   async #dispatch(record: ExecutionRecord, request: HandsExecutionRequest, admitted: import('./grant-store.ts').TrustedGrantRecord): Promise<void> {
-    const hands = await this.#pendingHands
+    const root = this.options.dynamicWorkspaces === true ? admitted.canonicalRoot : this.#workspaceRoot
+    let pending = this.#pendingHands
+    if (root !== this.#workspaceRoot) {
+      const key = admitted.workspaceId + ':' + admitted.grantId
+      let workspace = this.#workspaceWorlds.get(key)
+      if (!workspace) {
+        workspace = createStandaloneHands({ workspaceRoot: root,
+          ...(this.options.confinement === undefined ? {} : { confinement: this.options.confinement }) })
+        this.#workspaceWorlds.set(key, workspace)
+      }
+      pending = workspace
+    }
+    const hands = await pending
     // Mirror the admission-time grant into the engine's in-process registry
     // (defense-in-depth re-check inside execute()). The id comes from the
     // trusted server-side store; a revocation DURING execution does not
@@ -310,6 +330,9 @@ export class HandsService {
       ...(admitted.expiresAt !== undefined ? { expiresAt: admitted.expiresAt } : {}),
     })
     try {
+      validateWorkspaceRoot(root)
+      this.#grants.authorize({ grantId: admitted.grantId, workspaceId: admitted.workspaceId,
+        capabilityId: request.capabilityId, callerId: record.callerId, serviceWorkspaceRoot: root })
       this.#ledger.setState(record.executionId, 'AUTHORIZED')
       // A cancel that raced dispatch creation (before the controller existed)
       // is honored HERE: no side effects have happened yet.
@@ -417,6 +440,24 @@ export class HandsService {
     const controller = this.#controllers.get(executionId)
     controller?.abort()
     return json(200, { executionId, cancelRequested: true, state: this.#ledger.get(executionId)!.state })
+  }
+}
+
+function validateWorkspaceRoot(root: string): void {
+  const absolute = resolve(root)
+  let current = absolute
+  while (true) {
+    const info = lstatSync(current)
+    // Node exposes Windows junctions as symbolic links. Comparing realpath also
+    // rejects aliases that the filesystem resolves differently.
+    if (info.isSymbolicLink()) throw new HandsAdmissionError('PATH_REPARSE_POINT', 'workspace root contains a link')
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  const normalize = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p
+  if (!lstatSync(absolute).isDirectory() || normalize(realpathSync.native(absolute)) !== normalize(absolute)) {
+    throw new HandsAdmissionError('PATH_REPARSE_POINT', 'workspace root is not canonical')
   }
 }
 

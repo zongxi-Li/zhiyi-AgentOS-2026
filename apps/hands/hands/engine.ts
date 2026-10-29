@@ -134,6 +134,18 @@ export class HandsEngine {
           message: 'execution cancelled by the caller',
         })
       }
+      // Generic shell.exec preserves the historical receipt contract (the
+      // process ran and its exit code is evidence). Formal managed test calls
+      // carry a trusted executable/argv descriptor and must settle as failed
+      // when the project test command fails.
+      if (request.capabilityId === 'shell.exec' && typeof input.executable === 'string' &&
+          (output.timedOut === true || output.exitCode !== 0)) {
+        // formal command failure is classified below
+        return this.#seal(base, startedAt, 'failed', output, {
+          code: output.timedOut === true ? 'COMMAND_TIMEOUT' : 'COMMAND_EXIT_NONZERO',
+          retryable: false, message: 'Project command did not succeed',
+        })
+      }
       return this.#seal(base, startedAt, 'completed', output)
     } catch (error) {
       if (controller.signal.aborted && !isFsAborted(error)) {
@@ -226,6 +238,9 @@ export class HandsEngine {
       : await this.#world.process.run(spec)
     const identity = this.#world.process.identity
     return {
+      command,
+      workdir: resolvedWorkdir,
+      ...(typeof input.executable === 'string' ? { executable: input.executable, argv: input.argv } : {}),
       exitCode: result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,

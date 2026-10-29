@@ -16,7 +16,7 @@ from app.tools.permissions import get_chat_permission_service, normalize_relativ
 
 TOOLS = {'read_file':'fs.read','list_files':'fs.list','write_file':'fs.write','patch_file':'fs.patch','run_tests':'shell.exec'}
 FIELDS = {'read_file':{'path'},'list_files':{'path'},'write_file':{'path','content'},
-          'patch_file':{'path','oldText','newText'},'run_tests':{'path'}}
+          'patch_file':{'path','oldText','newText'},'run_tests':{'path','runner'}}
 
 
 class FormalWorkspaceTools:
@@ -70,6 +70,8 @@ class FormalWorkspaceTools:
         context,rt = self.context,self.runtime
         if context is None or self.guard is None or not operation_key: raise PermissionError('Formal NodeRunner authority required')
         self.guard()
+        authority = getattr(rt, 'workspace_authority', None)
+        authorization = authority.resolve(context.run) if authority else rt.local_runtime_authorization
         if set(arguments)-FIELDS[name]: raise PermissionError('Tool input cannot declare host authority')
         path = normalize_relative_path(arguments.get('path','.') if name=='run_tests' else arguments.get('path'))
         if path is None: raise PermissionError('Workspace relative path required')
@@ -79,9 +81,23 @@ class FormalWorkspaceTools:
         if name == 'run_tests':
             # Managed test command, not a model-supplied security profile or executable.
             if any(c in path for c in "'\"`\n\r") or path.startswith('-'): raise PermissionError('Invalid test path')
-            python = os.environ['AGENTOS_WORKSPACE_TEST_PYTHON']
-            command = "& '"+python.replace("'","''")+"' -m pytest -q '"+path.replace("'","''")+"'"
-            data = {'command':command,'workdir':'.'}
+            runner = arguments.get('runner', 'pytest')
+            if runner == 'pytest':
+                executable = os.environ['AGENTOS_WORKSPACE_TEST_PYTHON']
+                argv = ['-m', 'pytest', '-q', path]
+            elif runner == 'node':
+                executable = os.environ['AGENTOS_WORKSPACE_TEST_NODE']
+                argv = ['--test'] + ([] if path == '.' else [path])
+            elif runner == 'npm-test':
+                if path != '.': raise PermissionError('npm-test runs only the authorized project test script')
+                executable = os.environ['AGENTOS_WORKSPACE_TEST_NPM']
+                argv = ['test']
+            else: raise PermissionError('Unconfigured test runner')
+            if not os.path.isabs(executable) or not os.path.isfile(executable):
+                raise PermissionError('Trusted test executable unavailable')
+            quote = lambda value: "'" + value.replace("'", "''") + "'"
+            command = '& ' + ' '.join(quote(v) for v in [executable, *argv])
+            data = {'command':command,'workdir':'.', 'executable': executable, 'argv': argv}
             approval_name,approval_data = 'run_command',{'command':command,'cwd':'.'}
         elif name == 'patch_file':
             approval_data = {'path':path}
@@ -97,8 +113,9 @@ class FormalWorkspaceTools:
             await runtime_event_broker.publish(run_id,RuntimeEvent(eventType='tool.'+kind,runId=run_id,
                 nodeId=step_id,attemptId=context.attempt_id,sequence=0,payload=payload))
         await self.permissions.authorize(tool_name=approval_name,arguments=approval_data,call_id=operation_key,
-            session_id=run_id,workspace_id=rt.local_runtime_authorization.workspace_id,emit=emit)
+            session_id=run_id,workspace_id=authorization.workspace_id,emit=emit)
         self.guard()  # Human approval may have yielded while a permit was revoked.
+        if authority: authorization = authority.resolve(context.run)
         healthy = await rt.local_runtime_health_projector.refresh(rt.local_runtime_transport)
         if not healthy: raise RuntimeError('Execution resource is not healthy')
         scheduled = rt.resource_binder.bind_ready(run_id=run_id,step_id=step_id,attempt_id=context.attempt_id,
@@ -108,7 +125,7 @@ class FormalWorkspaceTools:
         keepalive = LeaseKeepAlive(rt.resource_binder.coordinator,scheduled.lease)
         keepalive.start()
         request = LocalRuntimeExecutionRequest(protocolVersion='1',requestId=operation_key,invocationId=operation_key,
-            resourceId=scheduled.binding.resource_id,capabilityId=TOOLS[name],authorization=rt.local_runtime_authorization,
+            resourceId=scheduled.binding.resource_id,capabilityId=TOOLS[name],authorization=authorization,
             input=data,limits=LocalRuntimeExecutionLimits(timeoutSeconds=90,maxStdoutBytes=64000,maxStderrBytes=32000),
             idempotencyKey=operation_key)
         key = operation_key+':request'
@@ -116,6 +133,7 @@ class FormalWorkspaceTools:
             payload={'request':request.model_dump(by_alias=True,mode='json'),'identity':identity})
         try:
             self.guard()
+            if authority: authority.resolve(context.run)
             await emit('execution_started',{'tool':name,'bindingId':scheduled.binding.binding_id,**identity})
             result = await rt.local_runtime_transport.execute_with_identity(request,identity,
                 event_sink=lambda event: emit('hands_event',event))
@@ -126,6 +144,8 @@ class FormalWorkspaceTools:
             record = {'tool':name,'status':result.status,'executionId':result.output['executionId'],
                 'receiptChecksum':receipt['checksum'],'receiptRef':ref,'resourceId':scheduled.binding.resource_id,
                 'bindingId':scheduled.binding.binding_id,**identity}
+            record['workspaceId'] = authorization.workspace_id
+            record['grantId'] = authorization.grant_id
             await emit('execution_completed',record)
             data = dict(result.output, status=result.status)
             if result.error: data['error'] = result.error.model_dump(mode='json')
