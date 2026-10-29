@@ -152,66 +152,54 @@
 
 ### 前置条件
 
-- **Windows 11** + Docker Desktop (Linux containers)
-- 或 **Linux / macOS** + Docker
-- Python 3.14（本地回归） · JDK 17（后端构建） · Node.js 18+（前端开发）
+- **Windows 11**（当前唯一支持的本地原生持久运行形态；不再需要 Docker Desktop / WSL 容器）
+- JDK 21（N03 运行时；后端编译目标 Java 17）、Maven、Node.js 18+、Python 3.14
 - Git
 
-### Windows 一键部署
+PostgreSQL 15.19、Memurai 4.1.2 与 Python 3.14 venv 由
+[`prepare_persistent_dependencies.py`](ops/scripts/infra/windows/native/prepare_persistent_dependencies.py)
+准备到 `%LOCALAPPDATA%\ZhiyiNative\`，不安装 Windows 服务、不修改系统 PATH。
+运行形态、数据布局与故障恢复见 [N03 运行说明](ops/scripts/infra/windows/native/README-N03.md)。
+
+### Windows 原生启动（N03）
 
 ```powershell
-# 1. 配置环境
-Copy-Item .config/env/windows.example .env.windows
-py -3 -m ops.scripts.infra.init_secrets .secrets/kinlin-win-dev-001
+# 1. 首次：Python 依赖与本地 PostgreSQL/Memurai 依赖包
+python -m venv "$env:LOCALAPPDATA\ZhiyiNative\python"
+$py = "$env:LOCALAPPDATA\ZhiyiNative\python\Scripts\python.exe"
+& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.native-tools.lock
+& $py ops/scripts/infra/windows/native/prepare_persistent_dependencies.py
 
-# 2. 配置模型 API Key（至少配置一个）
-# 将 DeepSeek API Key 写入 .secrets/kinlin-win-dev-001/deepseek_api_key
-# 或将 DashScope API Key 写入 .secrets/kinlin-win-dev-001/dashscope_api_key
+# 2. 构建后端 jar
+Push-Location apps/backend
+mvn -DskipTests package
+Pop-Location
 
-# 3. 启动全栈服务
-.\ops\scripts\infra\windows\up.ps1 -Build
+# 3. 首次：初始化独立 home（模型 Key 由 DPAPI 保存；路径仅首次可指定）
+$entry = '.\ops\scripts\infra\windows\native\persistent.ps1'
+$homeDir = "$env:LOCALAPPDATA\ZhiyiNative\default"
+& $entry init -HomeDir $homeDir -Python $py -ProviderKeyFile 'C:\私有路径\deepseek_api_key'
+
+# 4. 日常启停（含 Electron 桌面）
+& $entry up -HomeDir $homeDir -Python $py -Desktop
+& $entry status -HomeDir $homeDir -Python $py
+& $entry down -HomeDir $homeDir -Python $py
 ```
 
-打开 **http://127.0.0.1:8080**，首次使用自行注册账号。
+默认 loopback 端口：PostgreSQL 15432、Memurai 16379、Python 18761、知行 Host 18765、
+Java 18080、Vite 15200；`-Desktop` 额外使用 Chromium CDP 19222。
+首次通过桌面注册/登录；后续 `up` 复用同一 home、同一身份与全部数据，不重建数据库。
 
-常用运维命令：
+### 桌面热更新开发
+
+N03 栈运行时（无需 `-Desktop`）：
 
 ```powershell
-.\ops\scripts\infra\windows\status.ps1            # 服务健康状态
-.\ops\scripts\infra\windows\logs.ps1              # 聚合日志
-.\ops\scripts\infra\windows\preflight.ps1 -Full   # 发布前全量预检
-.\ops\scripts\infra\windows\down.ps1              # 停止（保留数据卷）
+& $entry up -HomeDir $homeDir -Python $py
+.\ops\scripts\start-desktop-hot.ps1
 ```
 
-现有开发库启用正式执行链时，在 `.env.windows` 设置
-`AGENTOS_MISSION_SEMANTIC_CONVERGENCE=true`、`AGENTOS_C2_EXECUTION_AUTHORITIES=true`、
-`AGENTOS_C2_EXECUTION_DISPATCH=true`，并保持 `AGENTOS_ALLOW_LEGACY_MISSION_INTENT=false`。
-首次执行 `up.ps1 -Build -ApplyAgentOSSchema`：停止 AI、取得单实例锁、按 C2 → Dispatch
-顺序显式升级现有数据卷，检查通过才启动。以后 `up.ps1` 仅检查，不自动升级。
-缺失/空库不会默认初始化；需要另行显式运行维护入口的 `--apply --initialize-empty`。
-任何不兼容或损坏会停止启动，不删除或重建数据库。实际访问地址以所选环境文件输出为准。
-
-### 前端热更新开发
-
-```powershell
-.\ops\scripts\infra\windows\up.ps1 -DebugPorts
-Set-Location apps/frontend
-npm ci
-$env:DEV_BACKEND_PROXY_TARGET = "http://127.0.0.1:18080"
-npm run dev
-```
-
-前端开发服务位于 **http://localhost:3000**，通过代理调用容器中的完整后端能力。
-
-### Linux / macOS
-
-```bash
-cp .env.example .env
-python3 -m ops.scripts.infra.init_secrets .secrets/kinlin-dev-local
-export KINLIN_DEPLOYMENT_ID=kinlin-dev-local
-export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
-./ops/scripts/dev.sh up
-```
+热更新链固定 Vite 15100，代理默认直连 N03 Java 18080；关闭桌面窗口即结束本次开发运行。
 
 ---
 
@@ -219,11 +207,12 @@ export KINLIN_SECRETS_DIR="$PWD/.secrets/kinlin-dev-local"
 
 ```powershell
 Set-Location apps/agentOS
-py -3.14 -m pytest tests -q
+python -m pytest tests -q
 
 Set-Location ../agent
-py -3.14 -m pytest tests -q
+python -m pytest tests -q
 
+# Spring 后端的真实 PostgreSQL/Redis 契约测试由测试 JVM 自管临时实例，不需要 Docker
 Set-Location ../backend
 mvn -B -ntp test
 
@@ -238,7 +227,7 @@ npm run test
 | :-------------------------- | ---------------------------: | :-------------------------------------------------------------------- |
 | AgentOS Kernel              |         **1730 cases** | ACG 节点/边模型、图执行、通信、记忆、恢复、规划提交、图修订、资源调度 |
 | Agent Runtime / API / Packs |      见 `apps/agent/tests` | 规划器、通信器、执行器、领域 Packs、SSE 流式事件                      |
-| Spring Gateway              | 见 `apps/backend/src/test` | 鉴权、安全契约、可观测性契约、架构守卫                                |
+| Spring Gateway              | 见 `apps/backend/src/test` | 鉴权、安全契约、可观测性契约、架构守卫、自管 PG/Redis 集成测试       |
 | Milan Frontend              |     见 `apps/frontend/src` | 视图、组件、状态与交互回归                                            |
 
 ### 最近一次完整收束基线（2026-08-19）
@@ -249,7 +238,7 @@ npm run test
 | Python Application / Packs / AgentOS v2 API |                                 **102 passed**, 1 skipped |
 | Spring Gateway                              |                                            **132 passed** |
 | Milan Frontend                              |                            **24 files, 115 tests passed** |
-| 五服务健康检查                              | frontend / backend / ai-service / postgres / redis 全部 healthy |
+| N03 原生栈健康检查                          | PostgreSQL / Memurai / AI / Host / Java / Vite 全部 UP          |
 
 > 内核套件已从 187 项增长到 1730 项。代码变更后必须重新执行，历史数字不代表当前结果。
 
@@ -269,16 +258,18 @@ npm run test
 │   ├── agent/                  # FastAPI 运行时
 │   │   ├── app/                #   Composition Root · API · 适配器
 │   │   └── packs/              #   领域 Agent Pack (法律/教育/编程/写作/工业)
-│   ├── backend/                # Spring Boot 业务与安全网关
+│   ├── backend/                # Spring Boot 业务与安全边界
 │   ├── frontend/               # Vue 3 · Milan 工作台 + ACG 可视化
 │   └── desktop/                # Electron 桌面壳
 ├── contracts/                  # AgentOS v2 接口契约
 ├── benchmark/                  # 基准与冒烟脚本
 ├── tools/                      # 端-边-云演示 / 终端调试界面
-├── ops/                        # Docker · 离线部署 · 预检与发布脚本
-├── .config/                    # Compose 覆盖与环境模板
-├── compose.yaml                # 唯一根目录 Compose 基线
+├── ops/                        # Windows 原生运行/检查脚本（N01A/N03）
 └── docs/                       # 架构、开发记录与交付材料
+```
+
+本机运行数据不在仓库内，固定位于 `%LOCALAPPDATA%\ZhiyiNative\default\`（PostgreSQL cluster、
+Memurai RDB/AOF、SQLite Store、uploads、workspace、Electron 用户数据与 DPAPI 凭据）。
 ```
 
 ---
@@ -292,11 +283,11 @@ npm run test
 | [核心代码层次](docs/架构设计/02-知弈AgentOS-Core代码层次架构图.md)                                       | 代码架构与模块边界                 |
 | [ACG 引擎技术设计](docs/架构设计/05-ACG动态群体智能引擎技术设计.md)                                      | ACG 引擎深度设计                   |
 | [律师 AgentOS 设计](docs/架构设计/06-知弈律师AgentOS技术设计文档.md)                                     | 合同审查验证场景                   |
-| [Docker 基础设施 RFC](docs/架构设计/07-Docker基础设施重构RFC-v1.1.md)                                    | 单机部署底座的冻结设计基线         |
+| [N03 原生运行说明](ops/scripts/infra/windows/native/README-N03.md)                                       | 依赖、启停、数据布局与冷备份       |
+| [N03 实施与验收报告](docs/开发记录/PR-N03-Windows-Persistent-Native-实施与验收.md)                        | 零 Docker 原生运行形态的验收证据   |
 | [Prompt Runtime 改造记录](<docs/开发记录/Prompt%20Runtime%20提示词权威与审计改造实施记录-2026-09-18.md>) | 提示词权威、信任封装与审计身份     |
 | [WKN-C4-Milan 稳定集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md) | 三线收束证据                       |
-| [部署说明](ops/deploy/DEPLOYMENT.md)                                                                     | 离线安装、升级、回滚与恢复         |
-| [Secret 初始化](ops/deploy/secrets/README.md)                                                            | 外置 Secret 格式与轮换边界         |
+| [Docker 基础设施 RFC（历史，已废弃）](docs/架构设计/07-Docker基础设施重构RFC-v1.1.md)                     | 旧容器部署底座的冻结设计，仅作历史 |
 
 ---
 
@@ -304,7 +295,7 @@ npm run test
 
 |        状态        | 能力域                                                                                                                                                                                                                                                             |
 | :-----------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ **已实现** | 单一 `ExecutionRuntime` 与执行真源、ACG 动态拓扑与并行超步、低熵通信与 Provenance、六类 Store 与 `outputRef` 引用式状态、Checkpoint/恢复/契约修复/GraphPatch、S01–S03 规划提交与图修订协议、Milan 可视化工作台、Legal 黄金纵切、Windows Docker 开发与部署收口 |
+| ✅ **已实现** | 单一 `ExecutionRuntime` 与执行真源、ACG 动态拓扑与并行超步、低熵通信与 Provenance、六类 Store 与 `outputRef` 引用式状态、Checkpoint/恢复/契约修复/GraphPatch、S01–S03 规划提交与图修订协议、Milan 可视化工作台、Legal 黄金纵切、Windows 原生持久栈（N03）与 Electron 桌面收口 |
 | 🚧 **进行中** | 第二个高完成度跨领域长任务、数千步长程稳定性与 Token/耗时基准、浏览器级 `WAITING_REVIEW → approve → resume` 与真实模型/工具验收                                                                                                                                |
 | 📋 **规划中** | 真实端-边-云多设备调度演示、模型层切分、生产级密钥轮换与资源凭据生命周期、核心算法伪代码与对照实验归档、演示视频与提交包校验                                                                                                                                       |
 

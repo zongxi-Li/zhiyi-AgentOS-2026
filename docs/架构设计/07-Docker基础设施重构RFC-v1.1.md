@@ -1,5 +1,10 @@
 # 知弈 AgentOS Docker 基础设施重构 RFC v1.1
 
+> **已废弃（2026-10-29）**：本文是 Docker 时代的容器部署设计基线。仓库内 Compose、Dockerfile、
+> nginx、部署/发布脚本与相关测试已全部删除；当前运行形态见
+> [N03 Windows 原生持久环境](../../ops/scripts/infra/windows/native/README-N03.md)。
+> 本文仅作历史追溯，请勿按其中命令操作当前环境。
+
 # Zhiyi AgentOS Docker Infrastructure Refactoring RFC v1.1
 
 状态：冻结实施基线。当前实施范围仅为 P0/P1，不再扩展架构。

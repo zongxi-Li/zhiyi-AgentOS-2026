@@ -1,5 +1,9 @@
 # PR-N02 知弈 Windows 原生桌面主链路实施与验收
 
+> **已废弃（2026-10-29）**：N02 的 Docker relay 桌面开发入口已退役（`desktop.ps1` 与
+> `README-N02.md` 已删除），`desktop_runtime.py` 收敛为共享窗口助手。当前桌面运行形态见
+> [N03 Windows 原生持久环境](../../ops/scripts/infra/windows/native/README-N03.md)。
+
 日期：2026-10-28。实施基线：`master`，HEAD `8b792fa0c2c422ed7548330ae3f1ea5bbf50883d`。
 
 ## 结论及范围
