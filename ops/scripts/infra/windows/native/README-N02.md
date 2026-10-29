@@ -56,4 +56,16 @@ SQLite 独占句柄、OS 锁释放并删除 DPAPI 临时凭据。日志和测试
 不会 DROP DATABASE、删除角色、FLUSH Redis 或删除原环境数据。留存的测试数据库/角色
 需另行明确授权后清理；不要对旧业务库使用清理命令。
 
+## 桌面壳选择（默认 Tauri，可切 Electron）
+
+`desktop_runtime` 经 `desktop_shell.py` 抽象桌面壳，默认仍是 Tauri（回归与故障回退入口不变）。
+`& $entry up ... -Desktop -Shell electron`（或环境变量 `KINLIN_DESKTOP_SHELL=electron`）切换后：
+
+- 前端 Vite 以 `--mode electron` 启动（同一 15200 端口、代理与就绪等待不变）；
+- 桌面进程改为 `apps/desktop/electron`（需先在该目录 `npm install`），经
+  `--remote-debugging-port=19222` 暴露同款 Chromium CDP，就绪探测仍为 `/json/version`；
+- 窗口识别类名换为 `Chrome_WidgetWin_1`，`show/close` 仍只作用于本次生命周期的进程树；
+- 状态文件新增 `shell` 字段；旧状态无该字段按 tauri 处理（向后兼容，不迁移数据）；
+- 进程身份校验、端口检查、资源释放与停止语义均不变。
+
 验收与已知限制见 [N02 实施报告](../../../../../docs/开发记录/PR-N02-Windows-Native-Desktop-实施与验收.md)。

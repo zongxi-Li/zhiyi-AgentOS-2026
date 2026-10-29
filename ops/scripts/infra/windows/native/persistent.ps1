@@ -7,6 +7,7 @@ param(
     [string]$ProviderKeyFile,
     [string]$Workspace,
     [string]$Snapshot,
+    [ValidateSet('tauri','electron')][string]$Shell = 'tauri',
     [switch]$Desktop
 )
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,7 @@ if ($Action -eq 'init') {
     if ($Workspace) { $nativeArgs += @('--workspace',$Workspace) }
 }
 if ($Desktop) { $nativeArgs += '--desktop' }
+if ($Desktop -and $Shell) { $env:KINLIN_DESKTOP_SHELL = $Shell }
 if ($Snapshot) { $nativeArgs += @('--snapshot',$Snapshot) }
 & $Python @nativeArgs
 exit $LASTEXITCODE
