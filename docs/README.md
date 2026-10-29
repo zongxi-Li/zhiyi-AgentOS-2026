@@ -23,6 +23,7 @@ Docker 时代的 RFC、实施与验收文档作为历史证据保留，不再代
 | 3 | [N01A Windows 原生执行基线](开发记录/PR-N01A-Windows-Native-Runtime-实施与验收.md) | 阶段证据 | 原生执行器、隔离与依赖准备的早期基线 |
 | 4 | [Electron 桌面宿主迁移报告](开发记录/PR-EL-01-Electron桌面宿主迁移报告.md) | **当前基线** | Electron 单壳边界、打包与桌面交互合同 |
 | 5 | [Electron 全栈验收报告](开发记录/PR-EL-01-ACCEPTANCE-Electron桌面验收报告.md) | 阶段证据 | 真实全栈下的桌面验收与已知限制（含安装包未实测） |
+| 6 | [完全放弃 Docker：迁移与清除实施/验收](开发记录/PR-DOCKER-REMOVAL-完全放弃Docker-实施与验收.md) | **当前结论** | 数据迁移、仓库清零、测试底座与本机容器清理的证据与残余风险 |
 
 ## Docker 时代文档（历史，已废弃）
 
