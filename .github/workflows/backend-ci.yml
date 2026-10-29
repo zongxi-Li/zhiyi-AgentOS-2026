@@ -1,7 +1,7 @@
 name: backend-ci
 
 # J1.4D：Backend Architecture Freeze Gate 的唯一 CI 权威。
-# 不做 path 过滤：根级 pom / compose / .env 样例都能影响 backend 行为，
+# 不做 path 过滤：根级 pom / 运行配置都能影响 backend 行为，
 # 过滤省下的时间不值得漏跑风险。性能基准（@Tag("performance")）被 surefire
 # excludedGroups 默认排除，不属于本 required gate（J1.4D §八）。
 

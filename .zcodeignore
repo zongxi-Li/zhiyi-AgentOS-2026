@@ -36,12 +36,6 @@ logs/
 .env
 .env.local
 .env.*.local
-.env.windows
-.env.windows.*
-!.config/env/*.example
-
-# Local-only bootstrap/deployment files
-!.env.example
 
 # 数据库
 *.db
@@ -121,10 +115,6 @@ Recommend/agent/models/
 
 # Isolated agent worktrees
 .worktrees/
-
-# Docker build rules are part of the deployment contract
-!.dockerignore
-!**/.dockerignore
 
 # Local infrastructure secrets, backups, reports and generated evidence
 .secrets/

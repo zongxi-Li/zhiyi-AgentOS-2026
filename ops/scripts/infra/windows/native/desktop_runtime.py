@@ -1,12 +1,12 @@
 """Shared desktop-window lifecycle helpers for the native Windows runtimes.
 
-N02（Docker relay 桌面开发入口）已退役：Docker 转发、isolated database
-provisioning 与 N02 自身的 up/status/down 入口全部删除，桌面运行形态只剩
+N02（旧桌面开发入口）已退役：数据库转发、isolated database provisioning 与
+N02 自身的 up/status/down 入口全部删除，桌面运行形态只剩
 N03（`persistent_runtime.py`）与桌面热更新链（`ops/scripts/start-desktop-hot.ps1`）。
 
 本模块只保留两条链共用的「拉起桌面壳 / 给窗口焦点 / 关闭窗口 / 等就绪」
 助手；进程身份校验、端口检查、数据库与凭据仍由各自 runtime 与
-`native_runtime.py` 负责，这里不引入任何 Docker、数据库或 relay 逻辑。
+`native_runtime.py` 负责，这里不引入任何数据库、转发或容器逻辑。
 """
 import subprocess
 import time

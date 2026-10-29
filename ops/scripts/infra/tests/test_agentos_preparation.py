@@ -164,19 +164,3 @@ def test_pre_c2_revision_table_upgrade_is_additive_but_missing_installed_table_i
     before = dump(paths)
     assert receipt(paths, capsys, '--apply')[0] == 1
     assert dump(paths) == before
-
-
-@pytest.mark.parametrize('semantics,authorities,dispatch,allowed', [
-    (False, False, False, True), (True, True, True, True),
-    (False, True, False, False), (True, False, True, False),
-])
-def test_powershell_effective_configuration_dependencies(semantics, authorities, dispatch, allowed):
-    env = {'AGENTOS_MISSION_SEMANTIC_CONVERGENCE': str(semantics).lower(),
-           'AGENTOS_C2_EXECUTION_AUTHORITIES': str(authorities).lower(),
-           'AGENTOS_C2_EXECUTION_DISPATCH': str(dispatch).lower()}
-    model = json.dumps({'services': {'ai-service': {'environment': env}}})
-    common = str(ROOT / 'ops/scripts/infra/windows/_common.ps1').replace("'", "''")
-    script = (f". '{common}'; try {{ $m='{model}'|ConvertFrom-Json; "
-              "Get-KinlinFormalExecutionConfiguration $m | ConvertTo-Json -Compress; exit 0 } catch { exit 1 }")
-    result = subprocess.run(['pwsh', '-NoProfile', '-Command', script], capture_output=True, text=True)
-    assert (result.returncode == 0) == allowed, result.stderr

@@ -1,7 +1,8 @@
 # N03 Windows 无 Docker 持久开发环境
 
 使用真实 PostgreSQL、Memurai、Java、Python ExecutionRuntime、知行 Host 和 Electron 桌面壳。
-本入口不调用 Docker，不创建系统服务，不修改系统 PATH 或防火墙。原 Docker 部署保留。
+本入口不调用 Docker，不创建系统服务，不修改系统 PATH 或防火墙。旧的容器部署资产已删除，
+本入口是当前唯一的本地运行形态；数据迁移与回执见 `migrate_from_docker.py` 与批次迁移记录。
 
 ## 依赖准备（普通用户）
 
@@ -49,7 +50,7 @@ $homeDir = "$env:LOCALAPPDATA\ZhiyiNative\default"
 
 `init` 默认一次性从现有 `.secrets/kinlin-win-p1-001/deepseek_api_key` 读取模型密钥，
 并复制到当前 Windows 用户的 DPAPI 密文。也可明确指定 `-ProviderKeyFile 'C:\私有路径\key.txt'`。
-后续启动不依赖原密钥文件、容器或 Docker 目录内容。
+后续启动不依赖原密钥文件、容器或旧容器目录内容。
 自选工作目录仅能在首次 init 指定 `-Workspace 'C:\明确授权目录'`；默认是 home 内的 workspace。
 后续目录和 opaque Grant 身份保持固定，不能通过重复 init 扩张范围。
 
@@ -133,4 +134,4 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 数据完全不变；同一 home 重复 up/down/recover 亦不重建任何数据。
 桌面壳的 Chromium 用户数据固定在 `home\electron\`（不再与桌面热更新链共用默认
 `userData`，避免 Electron 单实例锁把 N03 窗口顶掉）；窗口位置状态随之独立，业务数据不受影响。
-N02（Docker relay 桌面开发入口）已退役，本入口是唯一的原生桌面运行形态。
+N02（旧桌面开发入口）已退役，本入口是唯一的原生桌面运行形态。

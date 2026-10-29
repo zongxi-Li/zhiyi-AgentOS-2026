@@ -1,1 +1,1 @@
-"""Docker infrastructure operations."""
+"""Windows native operations and their shared test helpers."""

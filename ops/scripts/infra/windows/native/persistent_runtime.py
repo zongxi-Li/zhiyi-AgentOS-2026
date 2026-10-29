@@ -1,7 +1,7 @@
 """User-owned persistent Windows deployment of the existing production apps.
 
-No Windows services, firewall rules, Docker CLI, alternate executor or workflow
-database are installed. init creates identities once; up never rotates them.
+No Windows services, firewall rules, container runtime, alternate executor or
+workflow database are installed. init creates identities once; up never rotates them.
 """
 import argparse
 import base64
@@ -94,6 +94,11 @@ def env_for(home, info, creds):
     env['AGENTOS_WORKSPACE_TEST_PYTHON'] = info.get('testPython',sys.executable)
     if info.get('backend') == 'hands':
         env['AGENTOS_LOCAL_RUNTIME_SHELL_ENABLED'] = 'true'
+        from urllib.parse import quote
+        env['AGENTOS_WORKSPACE_DATABASE_URL'] = f"postgresql://zhiyi_app:{quote(creds['db'], safe='')}@127.0.0.1:{ports(info)['postgres']}/zhiyi"
+        env['AGENTOS_WORKSPACE_GRANTS_FILE'] = str(home/'hands-grants.json')
+        env['AGENTOS_WORKSPACE_TEST_NODE'] = shutil.which('node') or ''
+        env['AGENTOS_WORKSPACE_TEST_NPM'] = shutil.which('npm.cmd') or ''
     return env
 
 
@@ -182,15 +187,29 @@ def schema(home, env, first):
 
 def start_hands(home, info, creds, state, env, start):
     grants = home/'hands-grants.json'
-    native.write_json(grants, {'grants':[{'grantId':'n01a-grant','workspaceId':'n01a-workspace',
+    dynamic = [g for g in native.read_json(grants).get('grants', []) if g['grantId'].startswith('wgrant_')] if grants.exists() else []
+    native.write_json(grants, {'grants':dynamic+[{'grantId':'n01a-grant','workspaceId':'n01a-workspace',
         'canonicalRoot':info['workspace'],'capabilities':native.CAPS+['shell.exec'],
         'allowedCallers':['n01a-credential'],'revoked':False}]})
+    # PostgreSQL is authoritative after crashes too. Missing table is possible
+    # only on a first boot, before Java/Flyway; no dynamic grant may survive it.
+    import psycopg
+    with psycopg.connect(env['AGENTOS_WORKSPACE_DATABASE_URL']) as connection:
+        exists = connection.execute("SELECT to_regclass('public.local_workspace_authorizations')").fetchone()[0]
+    if exists:
+        command = [sys.executable, '-c',
+            'import os; from app.execution.workspace_authority import WorkspaceAuthority; '
+            'a=WorkspaceAuthority(os.environ, os.environ["AGENTOS_LOCAL_RUNTIME_RESOURCE_ID"]); '
+            'c=a.connect(); a._project(c); c.close()']
+        subprocess.run(command, env=env, cwd=home, check=True)
+    elif dynamic:
+        raise RuntimeError('Dynamic workspace authority schema missing; refusing stale grant projection')
     keys = home/'temp/hands-keys.json'
     native.write_json(keys, {'credentials':[{'credentialId':'n01a-credential','secret':creds['hmac']}]})
     config = home/'hands-service.json'
     native.write_json(config, {'workspaceRoot':info['workspace'],'credentialsFile':str(keys),
         'grantsFile':str(grants),'dataDir':str(home/'hands-ledger'),'host':'127.0.0.1',
-        'port':ports(info)['host'],'confinement':'none'})
+        'port':ports(info)['host'],'confinement':'none','dynamicWorkspaces':True})
     node_env = dict(env, TSX_TSCONFIG_PATH=str(ROOT/'apps/hands/tsconfig.json'))
     try:
         record = start('host',[shutil.which('node'),str(ROOT/'apps/hands/node_modules/tsx/dist/cli.mjs'),
