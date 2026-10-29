@@ -130,11 +130,6 @@
                   </button>
                 </div>
 
-                <button class="chat-submenu-action new-chat-action" type="button" @click="startNewChat">
-                  <el-icon><EditPen /></el-icon>
-                  <span>{{ workspaceMode === 'agent' ? '新建 Agent 任务' : '新建对话' }}</span>
-                </button>
-
                 <div class="chat-submenu-section-head">
                     <span class="chat-submenu-section-title">{{ workspaceMode === 'agent' ? '工程项目' : '对话记录' }}</span>
                   <div class="chat-submenu-section-tools">
@@ -143,6 +138,10 @@
                     </span>
                   </div>
                   <span v-if="conversationListLoading && workspaceHistoryCount" class="chat-submenu-refreshing">更新中</span>
+                  <button class="chat-submenu-action new-chat-action" type="button" @click="startNewChat">
+                    <el-icon><EditPen /></el-icon>
+                    <span>{{ workspaceMode === 'agent' ? '新建 Agent 任务' : '新建对话' }}</span>
+                  </button>
                 </div>
 
                 <div v-if="conversationListLoading && !workspaceHistoryCount" class="chat-submenu-loading">正在加载…</div>
@@ -1611,13 +1610,15 @@ onUnmounted(() => {
 }
 
 .new-chat-action {
-  min-height: 34px;
-  margin-bottom: 8px;
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 26px;
   justify-content: flex-start;
-  padding: 0 9px;
+  padding: 0 8px;
   border: 0;
   background: transparent;
   color: var(--text-primary);
+  font-size: 12px;
   font-weight: 550;
   box-shadow: none;
 }

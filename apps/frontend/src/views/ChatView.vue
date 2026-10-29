@@ -529,6 +529,11 @@
               :patch-refs="[]"
               :max-items="8"
             />
+            <div v-else class="workflow-audit-empty">
+              <span class="workflow-audit-empty__badge" aria-hidden="true"><el-icon><Clock /></el-icon></span>
+              <p class="workflow-audit-empty__title">暂无运行审计事件</p>
+              <p class="workflow-audit-empty__hint">启动工作流后，这里会按时间同步 Trace、恢复、Checkpoint、Review 与 GraphPatch 引用。</p>
+            </div>
             <div v-if="isLoadingWorkflowResult && !activeAcgView" class="workflow-acg-loading">正在加载动态拓扑…</div>
           </section>
         </Transition>
@@ -2871,6 +2876,35 @@ const handleHeroLogoPointerUp = () => {
   border-radius: 0;
   background: color-mix(in srgb, var(--bg-card) 96%, var(--primary-fade));
 }
+
+.workflow-audit-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 24px 20px;
+  overflow: auto;
+  border-left: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
+  background: color-mix(in srgb, var(--bg-card) 96%, var(--primary-fade));
+  text-align: center;
+}
+
+.workflow-audit-empty__badge {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 10px;
+  border-radius: 13px;
+  background: var(--primary-fade);
+  color: var(--primary-color);
+  font-size: 26px;
+}
+
+.workflow-audit-empty__title { margin: 0; color: var(--text-primary); font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+.workflow-audit-empty__hint { margin: 0; max-width: 440px; color: var(--text-secondary); font-size: 13px; line-height: 1.65; letter-spacing: -0.01em; }
 
 .workflow-acg-panel.resizing {
   transition: none;
