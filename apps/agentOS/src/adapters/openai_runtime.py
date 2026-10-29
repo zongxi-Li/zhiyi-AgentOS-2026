@@ -532,7 +532,23 @@ class OpenAICompatibleRuntime:
                 usage=safe_usage,
                 metadata=safe_metadata,
             )
-        content = self._content_object(message.get("content"))
+        try:
+            content = self._content_object(message.get("content"))
+        except ModelInvocationError as exc:
+            # Keep model source/prompt text out of logs while retaining enough
+            # syntax evidence to diagnose code-bearing structured responses.
+            raw = message.get("content")
+            diagnostics = {"length": len(raw) if isinstance(raw, str) else 0}
+            if isinstance(raw, str):
+                try:
+                    json.loads(raw)
+                except json.JSONDecodeError as syntax:
+                    diagnostics.update(reason=syntax.msg, line=syntax.lineno, column=syntax.colno)
+            logger.warning("model_json_decode_failed provider=%s model=%s diagnostics=%s",
+                           self._manifest.provider, model, diagnostics)
+            exc.usage.update(safe_usage)
+            exc.metadata.update(safe_metadata, responseDiagnostics=diagnostics)
+            raise
         return ModelInvocationResponse(
             requestId=request.request_id,
             content=content,

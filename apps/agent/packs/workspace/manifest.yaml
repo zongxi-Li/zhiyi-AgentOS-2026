@@ -1,0 +1,9 @@
+id: workspace
+name: 本机工作区开发与测试
+version: 0.1.0
+module: packs.workspace
+description: AgentOS 受审计工具循环，经系统授权的 Hands 资源修改文件并运行真实测试。
+contributions:
+  agents: [workspace_developer]
+  capabilities: [workspace_execution]
+  workflows: []

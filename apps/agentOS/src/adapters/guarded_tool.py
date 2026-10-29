@@ -100,6 +100,18 @@ class GuardedToolRuntime:
             _gate=self._gate,
         )
 
+    def bind_context(self, context, guard):
+        binder = getattr(self.delegate, 'bind_context', None)
+        return GuardedToolRuntime(
+            delegate=binder(context, guard) if binder else self.delegate,
+            retries=self.retries, max_concurrency=self._max_concurrency,
+            min_interval_seconds=self._min_interval_seconds,
+            retry_delay_seconds=self.retry_delay_seconds, _gate=self._gate)
+
+    async def verified_observations(self, context):
+        collect = getattr(self.delegate, 'verified_observations', None)
+        return await collect(context) if collect else []
+
     async def run(
         self,
         text: str,

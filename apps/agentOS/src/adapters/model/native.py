@@ -331,6 +331,10 @@ class NativeGeneralAgent(BaseAgent):
         allowed_tools = sorted(
             str(item) for item in getattr(context.tool_runtime, "allowed_tools", ()) if str(item)
         )
+        verified_tool_observations = []
+        collect_evidence = getattr(context.tool_runtime, 'verified_observations', None)
+        if capability in {'verification','artifact_generation'} and callable(collect_evidence):
+            verified_tool_observations = await collect_evidence(context)
         prompt_envelope = self.prompt_builder.build_envelope(
             capability_descriptor=descriptor,
             step_goal=context.step.goal or context.step.name,
@@ -350,7 +354,7 @@ class NativeGeneralAgent(BaseAgent):
             tool_observations=(
                 [{"kind": "deterministic_calculation", "content": item} for item in calculated]
                 if capability == "industrial_capacity_analysis" else []
-            ),
+            ) + verified_tool_observations,
         )
         prompt = prompt_envelope.user_prompt
         system_prompt = prompt_envelope.system_prompt

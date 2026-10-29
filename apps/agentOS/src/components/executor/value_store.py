@@ -15,6 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 import sqlite3
 from time import time
@@ -429,6 +430,29 @@ class SQLiteExecutionValueStore:
                 "ALTER TABLE acg_node_commits ADD COLUMN stage TEXT NOT NULL DEFAULT 'prepared'"
             )
         self._connection.commit()
+
+    def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
+        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        row = self._connection.execute("SELECT run_id,payload_json FROM execution_values WHERE reference=?", (reference,)).fetchone()
+        if row is None:
+            return None
+        if row[0] != run_id:
+            raise ExecutionValueAccessError(reference)
+        return json.loads(row[1])
+
+    def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
+        # An immutable operation value, not a second task/Run state machine.
+        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        current = self.get_tool_value(run_id=run_id, key=key)
+        if current is not None:
+            if current != payload:
+                raise ValueError("immutable tool operation conflict")
+            return reference
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        self._connection.execute("INSERT INTO execution_values(reference,run_id,step_id,kind,payload_json,created_at,operation_id) VALUES(?,?,?,?,?,?,NULL)",
+                                 (reference,run_id,step_id,"output",encoded,time()))
+        self._connection.commit()
+        return reference
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """持久化通过输出合同的节点正文，并返回稳定输出引用。"""

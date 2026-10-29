@@ -573,7 +573,11 @@ def _assemble_default_runtime(
         registered_local_runtime = ensure_local_runtime_resource(
             resource_plane, local_runtime_config
         )
-        local_runtime_transport = HttpLocalRuntimeTransport(
+        transport_class = HttpLocalRuntimeTransport
+        if env.get('AGENTOS_EXECUTION_BACKEND') == 'hands':
+            from adapters.hands_http import HandsHttpTransport
+            transport_class = HandsHttpTransport
+        local_runtime_transport = transport_class(
             resource_id=registered_local_runtime.profile.runtime_id,
             address=registered_local_runtime.profile.endpoint.address,
             credential_provider=resource_plane,
@@ -596,6 +600,9 @@ def _assemble_default_runtime(
             if workspace_id and grant_id
             else None
         )
+    if env.get('AGENTOS_EXECUTION_BACKEND') == 'hands':
+        from app.tools.formal_workspace import FormalWorkspaceTools
+        runtime.tool_runtime = FormalWorkspaceTools(runtime, runtime.tool_runtime)
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)
     runtime.plugin_manifests = register_installed_packs(
         agent_registry=runtime.agent_registry,

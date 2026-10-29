@@ -41,6 +41,15 @@ class AuditedToolRuntime:
         """保留工具运行时的文本入口；具体编排授权仍由 delegate 自身负责。"""
         return await self.delegate.run(text, **kwargs)
 
+    def bind_context(self, context, guard):
+        binder = getattr(self.delegate, 'bind_context', None)
+        return AuditedToolRuntime(delegate=binder(context,guard) if binder else self.delegate,
+                                  allowed_tools=self.allowed_tools)
+
+    async def verified_observations(self, context):
+        collect = getattr(self.delegate, 'verified_observations', None)
+        return await collect(context) if collect else []
+
     async def execute(self, name: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
         """先验证授权并记录安全元数据，随后才调用可能产生副作用的 delegate。"""
         if name not in self.allowed_tools:

@@ -36,6 +36,18 @@ public class AgentOsReviewController {
         this.gateway = gateway;
     }
 
+    @GetMapping("/runs/{runId}/tool-approvals")
+    public ResponseEntity<Map<String, Object>> toolApprovals(@PathVariable String runId) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/tool-approvals"));
+    }
+
+    @PostMapping("/runs/{runId}/tool-approvals/{approvalId}")
+    public ResponseEntity<Map<String, Object>> resolveToolApproval(
+            @PathVariable String runId, @PathVariable String approvalId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.run(runId) + "/tool-approvals/"
+                + AgentOsPaths.segment(approvalId), body));
+    }
+
     @GetMapping("/runs/{runId}/copilot")
     public ResponseEntity<QueryResponse> getCopilot(@PathVariable String runId) {
         return AgentOsControllerSupport.projectedResponse(

@@ -407,6 +407,10 @@ class ACGNodeRunner:
             commitId=commit_id,
             attemptId=self.attempt_ids.get(step_id),
         )
+        if hasattr(step_tool_runtime, 'bind_context'):
+            guard = (lambda: self.invocation_guard(step_id, state)) if self.invocation_guard else None
+            step_tool_runtime = step_tool_runtime.bind_context(agent_context, guard)
+            agent_context.tool_runtime = step_tool_runtime
         await runtime_event_broker.publish(
             state.run_id,
             RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
@@ -881,7 +885,8 @@ class ACGNodeRunner:
     @staticmethod
     def _safe_tool_calls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """裁剪工具调用审计字段，禁止参数正文进入执行事件。"""
-        allowed = {"tool", "name", "status", "latencyMs", "errorCode"}
+        allowed = {"tool", "name", "status", "latencyMs", "errorCode", "executionId", "receiptChecksum",
+                   "runId", "stepId", "attemptId", "commitId", "resourceId", "bindingId", "receiptRef"}
         result: list[dict[str, Any]] = []
         seen: set[tuple[tuple[str, str], ...]] = set()
         for record in records:

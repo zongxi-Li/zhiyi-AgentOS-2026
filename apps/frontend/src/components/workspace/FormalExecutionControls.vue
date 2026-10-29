@@ -1,5 +1,6 @@
 <template>
   <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded }" aria-label="正式运行控制">
+    <FormalToolApprovals :run-id="runId" :active="run?.status === 'running'" />
     <header><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
     <dl v-if="!embedded" aria-live="polite">
       <div><dt>任务</dt><dd>{{ run?.status || '状态不可用' }}</dd></div>
@@ -34,6 +35,7 @@
 </template>
 
 <script setup lang="ts">
+import FormalToolApprovals from './FormalToolApprovals.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { agentosApi, type WorkflowRun } from '@/services/api/agentos'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'

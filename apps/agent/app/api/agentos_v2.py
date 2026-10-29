@@ -2483,6 +2483,34 @@ def create_router(
             result["formalControl"] = project_initial_control(runtime, run)
         return result
 
+    @router.get("/runs/{run_id}/tool-approvals")
+    async def formal_tool_approvals(run_id: str):
+        load_run(run_id, readonly=True)  # existing authenticated owner boundary
+        from app.tools.permissions import get_chat_permission_service
+        service = get_chat_permission_service()
+        pending = getattr(runtime, "formal_tool_pending", {})
+        return {"items": [item for key,item in pending.items()
+                          if item["sessionId"] == run_id and service.pending(key) is not None]}
+
+    @router.post("/runs/{run_id}/tool-approvals/{approval_id}")
+    async def resolve_formal_tool_approval(run_id: str, approval_id: str, decision: dict):
+        load_run(run_id, readonly=True)
+        from app.tools.permissions import get_chat_permission_service, ApprovalDecision, ApprovalResolutionError
+        pending = getattr(runtime, "formal_tool_pending", {}).get(approval_id)
+        if not pending or pending["sessionId"] != run_id:
+            raise HTTPException(404,"approval not found")
+        if decision.get("decision") not in {"allow_once","deny"}:
+            raise HTTPException(400,"one operation decision required")
+        try:
+            result = await get_chat_permission_service().resolve(approval_id,
+                decision=ApprovalDecision(decision["decision"]),session_id=run_id,
+                invocation_id=pending["invocationId"],capability_id=pending["capabilityId"],
+                relative_path=pending["relativePath"])
+        except ApprovalResolutionError as exc:
+            raise HTTPException(exc.status_code,exc.code) from exc
+        runtime.formal_tool_pending.pop(approval_id,None)
+        return {"resolved":True}
+
     @router.get("/runs/{run_id}/history-config")
     async def get_history_config(run_id: str):
         run = load_run(run_id)
