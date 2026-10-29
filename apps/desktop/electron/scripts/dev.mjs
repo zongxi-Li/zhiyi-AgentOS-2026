@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
- * Electron 桌面开发编排（对标 tauri dev 的 beforeDevCommand 语义）：
+ * Electron 桌面开发编排：
  * 1. 编译 main/preload；2. 确保 Vite dev server（mode=electron，15100）在位；
  * 3. 拉起 Electron 指向该 dev server；4. 退出时清理自己拉起的 Vite。
  * 外部已起 dev server（如 N02/N03 在 15200 起了自己的 Vite）时直接复用，

@@ -72,8 +72,6 @@ apps/agent/data/rag/chroma_db/
 .m2/
 .gradle/
 
-# Tauri / Rust generated artifacts
-apps/desktop/src-tauri/gen/
 
 # Local preview export
 output/settings-preview-dist/
@@ -168,4 +166,3 @@ apps/agentOS/references
 
 # 重组前旧路径的本地构建产物（仅本机残留，防止源代码管理面板噪音）
 frontend/.vite/
-desktop/src-tauri/gen/

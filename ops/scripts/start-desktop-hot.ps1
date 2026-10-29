@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$desktopDir = Join-Path $repoRoot 'apps\desktop'
+$desktopDir = Join-Path $repoRoot 'apps\desktop\electron'
 $frontendDir = Join-Path $repoRoot 'apps\frontend'
 
 function Pause-Launcher {
@@ -14,39 +14,36 @@ function Pause-Launcher {
   Read-Host '按 Enter 关闭此窗口'
 }
 
-$npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-if (-not $npm) {
-  Pause-Launcher '未找到 npm.cmd，请先安装 Node.js 并确认 npm 已加入 PATH。'
+$node = Get-Command node.exe -ErrorAction SilentlyContinue
+if (-not $node) {
+  Pause-Launcher '未找到 node.exe，请先安装 Node.js 并确认 node 已加入 PATH。'
   exit 1
 }
 
-if (-not (Test-Path (Join-Path $frontendDir 'node_modules\.bin\vite.cmd'))) {
-  Pause-Launcher "缺少前端依赖或 Vite，请先执行：`n  Set-Location `"$frontendDir`"`n  npm ci"
+if (-not (Test-Path (Join-Path $frontendDir 'node_modules\vite\bin\vite.js'))) {
+  Pause-Launcher "缺少前端依赖，请先执行：`n  Set-Location `"$frontendDir`"`n  npm ci"
   exit 1
 }
 
-if (-not (Test-Path (Join-Path $desktopDir 'node_modules\.bin\tauri.cmd'))) {
-  Pause-Launcher "缺少桌面依赖或 Tauri CLI，请先执行：`n  Set-Location `"$desktopDir`"`n  npm ci"
+if (-not (Test-Path (Join-Path $desktopDir 'node_modules\electron\cli.js'))) {
+  Pause-Launcher "缺少 Electron 运行时，请先执行：`n  Set-Location `"$desktopDir`"`n  npm install`n（网络受限时先执行 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'）"
   exit 1
 }
 
 if ($CheckOnly) {
-  Write-Host '热更新桌面版启动脚本检查通过。' -ForegroundColor Green
+  Write-Host 'Electron 桌面版启动脚本检查通过。' -ForegroundColor Green
   exit 0
 }
 
-# 防止已有桌面版本与本次开发版同时存在，避免误看旧页面。
-$installedProcesses = @(Get-Process -Name 'kinlin-desktop' -ErrorAction SilentlyContinue)
-
-foreach ($process in $installedProcesses) {
-  Write-Host "正在关闭已安装桌面版本（PID $($process.Id)）..." -ForegroundColor DarkYellow
-  if ($process.MainWindowHandle -ne 0) {
-    $null = $process.CloseMainWindow()
-    $null = $process.WaitForExit(3000)
-  }
-  if (-not $process.HasExited) {
-    Stop-Process -Id $process.Id
-  }
+# electron.exe / node.exe 是通用进程名，只能按命令行包含本仓库 electron 目录来识别
+# 残留的开发进程，绝不按进程名清理无关应用。
+$staleProcesses = @(
+  Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='node.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -and $_.CommandLine.Contains($desktopDir) }
+)
+foreach ($process in $staleProcesses) {
+  Write-Host "正在关闭残留 Electron 开发进程（PID $($process.ProcessId)）..." -ForegroundColor DarkYellow
+  Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
 }
 
 $occupiedPort = Get-NetTCPConnection -State Listen -LocalPort 15100 -ErrorAction SilentlyContinue
@@ -57,14 +54,14 @@ if ($occupiedPort) {
 
 Set-Location $desktopDir
 Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
-Write-Host '正在启动知弈 AgentOS 热更新桌面版...' -ForegroundColor Cyan
+Write-Host '正在启动知弈 AgentOS 热更新桌面版（Electron）...' -ForegroundColor Cyan
 Write-Host '修改 frontend 源码后，Vite 会自动更新桌面窗口。关闭桌面窗口即可结束本次开发运行。' -ForegroundColor Gray
 
-& $npm.Source run dev
+& $node.Source scripts\dev.mjs
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -ne 0) {
-  Pause-Launcher "热更新桌面版启动失败，退出码：$exitCode"
+  Pause-Launcher "Electron 桌面版启动失败，退出码：$exitCode"
 }
 
 exit $exitCode

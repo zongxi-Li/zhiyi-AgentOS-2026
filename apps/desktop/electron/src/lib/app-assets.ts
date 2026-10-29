@@ -67,7 +67,7 @@ export function contentTypeFor(filePath: string): string {
 }
 
 /**
- * 生产 CSP：比 Tauri 版更紧——script-src 不含 'unsafe-eval'，
+ * 生产 CSP：script-src 不含 'unsafe-eval'，
  * 桌面产物无 HMR 需求。connect 显式放行宿主 Gateway 的 HTTP/WS 与
  * 上层 HTTPS/WSS；origin 由 Main 启动参数注入（默认 9050）。
  */

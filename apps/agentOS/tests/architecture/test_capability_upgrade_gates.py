@@ -187,7 +187,7 @@ def test_acg_does_not_expose_shell_execution_in_pr6() -> None:
     assert "ProcessExecutionService" not in source
 
 
-def test_local_runtime_integration_does_not_route_chat_acg_or_tauri() -> None:
+def test_local_runtime_integration_does_not_route_chat_acg_or_desktop_host() -> None:
     """Chat may use the AgentOS Local Runtime seam without creating a parallel authority."""
     chat_api = SRC.parents[1] / "agent" / "app" / "api" / "chat.py"
     chat_catalog = SRC.parents[1] / "agent" / "app" / "tools" / "chat_catalog.py"
@@ -203,10 +203,6 @@ def test_local_runtime_integration_does_not_route_chat_acg_or_tauri() -> None:
     assert "subprocess" not in catalog_source
     assert "AgentRunContext" not in chat_executor.read_text(encoding="utf-8")
 
-    tauri_root = SRC.parents[1] / "desktop"
-    if tauri_root.exists():
-        tauri_source = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in tauri_root.rglob("*.rs"))
-        assert "LocalRuntime" not in tauri_source
 
 
 def test_electron_host_does_not_embed_execution_authority() -> None:

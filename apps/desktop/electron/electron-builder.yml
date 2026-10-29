@@ -1,6 +1,4 @@
-# 知弈 AgentOS Electron 桌面宿主打包配置。
-# 与 Tauri 版（appId com.kinlin.zhiyi、产品名 Zhiyi AgentOS）并存：
-# 独立 appId + 独立产品名，安装/卸载互不影响，迁移验收通过前不替换默认入口。
+# 知弈 AgentOS Electron 桌面宿主打包配置（唯一桌面宿主）。
 appId: com.kinlin.zhiyi.electron
 productName: Zhiyi AgentOS Electron
 directories:
@@ -10,7 +8,7 @@ files:
   - renderer/**
   - package.json
 asar: true
-icon: build/icon.ico
+icon: icons/icon.ico
 win:
   target:
     - target: nsis

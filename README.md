@@ -271,7 +271,7 @@ npm run test
 │   │   └── packs/              #   领域 Agent Pack (法律/教育/编程/写作/工业)
 │   ├── backend/                # Spring Boot 业务与安全网关
 │   ├── frontend/               # Vue 3 · Milan 工作台 + ACG 可视化
-│   └── desktop/                # Tauri 2 桌面壳
+│   └── desktop/                # Electron 桌面壳
 ├── contracts/                  # AgentOS v2 接口契约
 ├── benchmark/                  # 基准与冒烟脚本
 ├── tools/                      # 端-边-云演示 / 终端调试界面

@@ -33,7 +33,7 @@ test('contentTypeFor 常见映射与未知回退', () => {
   assert.equal(contentTypeFor('blob.bin'), 'application/octet-stream')
 })
 
-test('buildCsp 严格于 Tauri 版且不含通配符', () => {
+test('buildCsp 严格且不含通配符', () => {
   const csp = buildCsp('http://127.0.0.1:9050')
   assert.ok(csp.includes("script-src 'self'"), 'script-src 只允许 self')
   assert.ok(!csp.includes('unsafe-eval'), '生产桌面无 HMR，不允许 eval')

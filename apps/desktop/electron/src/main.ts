@@ -32,7 +32,7 @@ import {
 /**
  * 知弈 AgentOS Electron Desktop Host。
  *
- * 边界约束（与 Tauri 版一致，架构门禁另测）：
+ * 边界约束（架构门禁另测）：
  * - 本进程只负责窗口、原生交互与桌面生命周期；
  * - 不内嵌执行器、Scheduler，不直接调用模型生成执行决策；
  * - 任务执行权威在 AgentOS Runtime / 知行 Host，经既有 HTTP/WS 边界接入；
