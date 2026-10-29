@@ -122,6 +122,26 @@ describe('NativeWorkspacePicker', () => {
     }))
   })
 
+  it('cancels a pending directory selection without changing the trusted workspace', async () => {
+    fetchMock.mockResolvedValueOnce(response(trusted))
+    wrapper = mount(NativeWorkspacePicker)
+    await flushPromises()
+
+    await triggerButton(wrapper).trigger('click')
+    await nextTick()
+    mocks.openDirectory.mockResolvedValueOnce('C:\\work\\other')
+    panelButton('.workspace-trust__action')?.click()
+    await flushPromises()
+    expect(triggerButton(wrapper).text()).toContain('待信任 · other')
+
+    panelButton('.workspace-trust__revoke')?.click()
+    await flushPromises()
+
+    expect(triggerButton(wrapper).text()).toContain('已信任 · demo')
+    expect(document.querySelector('.workspace-trust__panel')?.textContent).not.toContain('待信任目录')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('revokes trust from the expanded panel', async () => {
     fetchMock.mockResolvedValueOnce(response(trusted))
     wrapper = mount(NativeWorkspacePicker)

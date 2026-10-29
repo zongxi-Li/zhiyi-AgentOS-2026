@@ -32,7 +32,7 @@
           stroke-linejoin="round"
         />
         <path
-          v-if="isTrusted"
+          v-if="isTrusted && !candidate"
           d="m5.4 7.7 1.7 1.7 3.5-3.5"
           fill="none"
           stroke="currentColor"
@@ -137,10 +137,22 @@
             >信任工作区</button>
           </div>
 
-          <div v-if="isTrusted && !candidate" class="workspace-trust__panel-footer">
-            <button type="button" class="workspace-trust__revoke" :disabled="busy" @click="revoke">
-              撤销信任
-            </button>
+          <div v-if="candidate || (isTrusted && !candidate)" class="workspace-trust__panel-footer">
+            <button
+              v-if="candidate"
+              type="button"
+              class="workspace-trust__revoke"
+              :disabled="busy"
+              title="清除待信任目录，保留当前授权"
+              @click="clearCandidate"
+            >取消选择</button>
+            <button
+              v-else
+              type="button"
+              class="workspace-trust__revoke"
+              :disabled="busy"
+              @click="revoke"
+            >撤销信任</button>
           </div>
 
           <p v-if="error" class="workspace-trust__error" role="alert">{{ error }}</p>
@@ -261,6 +273,12 @@ async function choose() {
     busy.value = false
     if (open.value) void nextTick(updatePosition)
   }
+}
+
+function clearCandidate() {
+  candidate.value = ''
+  error.value = ''
+  if (open.value) void nextTick(updatePosition)
 }
 
 async function trust() {
