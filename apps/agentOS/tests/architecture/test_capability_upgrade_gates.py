@@ -209,6 +209,17 @@ def test_local_runtime_integration_does_not_route_chat_acg_or_tauri() -> None:
         assert "LocalRuntime" not in tauri_source
 
 
+def test_electron_host_does_not_embed_execution_authority() -> None:
+    """The Electron desktop host stays a window shell: no executor, scheduler, or process spawning."""
+    electron_src = SRC.parents[1] / "desktop" / "electron" / "src"
+    assert electron_src.is_dir(), "Electron host sources are expected under apps/desktop/electron/src"
+    forbidden = ("LocalRuntime", "ExecutionBackend", "child_process", "node:child_process")
+    for path in electron_src.rglob("*.ts"):
+        source = path.read_text(encoding="utf-8")
+        for marker in forbidden:
+            assert marker not in source, f"{path.name} references {marker}"
+
+
 def test_chat_terminal_keeps_its_existing_composition() -> None:
     """Chat routes file work through the existing AgentOS Local Runtime adapter."""
     chat_api = SRC.parents[1] / "agent" / "app" / "api" / "chat.py"
