@@ -9,7 +9,6 @@ JDK 21、Maven、Node，以及现有前端 npm 依赖必须可用。还需 Elect
 （`apps/desktop/electron` 的 npm 依赖；Electron 二进制经 npm 安装，网络受限时可设
 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
 Python 3.14 使用 N01A 的两份锁文件安装到固定用户目录，参见 [N01A README](README.md)。
-不依赖 N02 位于 TEMP 的测试 venv。
 
 ```powershell
 # 仓库根目录
@@ -75,12 +74,13 @@ Java 18080、Vite 15200；`-Desktop` 使用 Chromium CDP 19222 开发取证端�
 | `workspace\` | 默认系统签发 Grant 的文件根目录 |
 | `uploads\` | Java 上传数据 |
 | `webview\` | 历史 Tauri WebView 用户数据目录；Electron 壳不再使用，备份默认不含登录浏览器状态 |
+| `electron\` | Electron 壳的 Chromium 用户数据与窗口状态；与桌面热更新链隔离，无业务数据 |
 | `logs\<UTC时间>-<随机标识>\` | 每次进程启动日志及 up 记录，不覆盖以前的日志 |
 | `logs\last-down.json` | 最近正常停止、端口、SQLite 独占句柄和 OS 锁检查结果 |
 
 初始化收紧的是本环境新建目录 ACL，仅当前用户和 SYSTEM；没有放宽目录或执行器权限。
 Redis 启动配置和 initdb 密码临时文件位于受限 temp，读取成功后删除；固定密码不放在
-进程命令行。down 保留 DPAPI 文件和全部数据，不像 N02 清除每次测试凭据。
+进程命令行。down 保留 DPAPI 文件和全部数据。
 登录会话权威仍是 PostgreSQL 的 `iam_login_sessions`，不是 Memurai 中的新会话真源。
 
 ## 停止、故障恢复与冷备份
@@ -123,7 +123,7 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 
 ## 桌面壳（Electron 单壳）
 
-`persistent_runtime` 与 N02 共用 `desktop_shell.py`，固定拉起 Electron 壳：以
+`persistent_runtime` 经 `desktop_shell.py` 拉起唯一的 Electron 壳：以
 `node apps/desktop/electron/node_modules/electron/cli.js` 启动，`--dev-server`
 指向本环境 Vite（`--mode electron`），CDP 调试端口为 19222 + 端口偏移，就绪探测为
 `/json/version`，窗口类名 `Chrome_WidgetWin_1`（需先在 `apps/desktop/electron` 执行
@@ -131,4 +131,6 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 报错；状态文件 `shell` 字段恒为 `electron`，历史状态仅作记录；`persistent.ps1` 不再有
 `-Shell` 参数。数据库、工作区、`environment.json`/`credentials.dpapi` 身份与所有持久
 数据完全不变；同一 home 重复 up/down/recover 亦不重建任何数据。
-详见 [N02 README 的桌面壳章节](README-N02.md)。
+桌面壳的 Chromium 用户数据固定在 `home\electron\`（不再与桌面热更新链共用默认
+`userData`，避免 Electron 单实例锁把 N03 窗口顶掉）；窗口位置状态随之独立，业务数据不受影响。
+N02（Docker relay 桌面开发入口）已退役，本入口是唯一的原生桌面运行形态。

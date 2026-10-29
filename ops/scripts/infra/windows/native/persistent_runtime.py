@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 
 import native_runtime as native
 import desktop_runtime as desktop
@@ -284,6 +285,9 @@ def up(home, use_desktop):
             appenv = desktop_shell.desktop_env(shell, front_env)
             command, cwd = desktop_shell.desktop_command(ROOT, shell, f"http://127.0.0.1:{ports(info)['frontend']}",
                                                          debug_port=ports(info)['debug'])
+            # 固定本栈自己的 Chromium 用户数据目录：与桌面热更新链的默认
+            # userData 隔离，避免 Electron 单实例锁把本窗口顶掉。
+            command.append(f'--user-data-dir={home / "electron"}')
             record = desktop.spawn_app(home, 'logs/'+session+'/desktop', command, appenv, cwd)
             state['processes']['desktop'] = record
             save(home, state)
@@ -298,8 +302,26 @@ def up(home, use_desktop):
         result = status(home)
         native.write_json(logdir/'up.json', result)
         return result
-    except BaseException:
-        down(home)
+    except BaseException as exc:
+        # 先落盘原始栈与服务日志尾部，再尝试清理；清理失败不得掩盖首因。
+        try:
+            failure = {'error': f'{type(exc).__name__}: {exc}', 'traceback': traceback.format_exc(),
+                       'session': session, 'logs': {}}
+            for logfile in sorted(logdir.glob('*.log')):
+                try:
+                    failure['logs'][logfile.name] = logfile.read_text(encoding='utf-8', errors='replace').splitlines()[-30:]
+                except OSError as read_error:
+                    failure['logs'][logfile.name] = [f'<unreadable: {read_error}>']
+            native.write_json(logdir/'up-failure.json', failure)
+        except Exception:
+            pass
+        try:
+            down(home)
+        except Exception as cleanup:
+            try:
+                native.write_json(logdir/'up-failure-cleanup.json', {'error': f'{type(cleanup).__name__}: {cleanup}'})
+            except Exception:
+                pass
         raise
     finally:
         passwordfile.unlink(missing_ok=True)
@@ -330,24 +352,32 @@ def down(home):
     creds = native.credentials(home)
     # Exact stale identities are never signalled; occupied ports still fail below.
     records = {name:record for name,record in state['processes'].items() if alive(record)}
+    stop_modes = {}
     for name,record in reversed(list(records.items())):
         if name == 'desktop':
             desktop.close_desktop(record, desktop_shell.window_classes(state.get('shell','electron')))
-            native.stop(record)
+            stop_modes[name] = native.stop(record) or 'window-closed'
         elif name == 'postgres':
             subprocess.run([str(Path(info['postgresBin'])/'pg_ctl.exe'), '-D', str(home/'postgres'),
                             'stop','-m','fast','-w','-t','45'], check=True, capture_output=True)
+            stop_modes[name] = 'pg_ctl'
         elif name == 'redis':
             with redis_client(creds,port=ports(info)['redis']) as client: client.shutdown(save=True)
             parent = alive(record)
             if parent: parent.wait(20)
+            stop_modes[name] = 'shutdown'
         else:
-            native.stop(record)
+            stop_modes[name] = native.stop(record) or 'already-exited'
     for port in list(ports(info).values()) if state.get('desktop') else list(ports(info).values())[:-1]: native.port_free(port)
     cleaned = dict(state, processes=records)
     # This keeps the existing Windows workflow lock and exclusive-handle checks.
     cleanup = native.down(home, cleaned, preserve_credentials=True)
-    result = {'status':'PASS','home':str(home),'cleanup':cleanup,'persistentCredentialsRetained':True}
+    escalated = sorted(name for name, mode in stop_modes.items() if mode in {'terminated', 'killed'})
+    if escalated:
+        print(f'WARNING: graceful stop unavailable for {escalated}; verified process trees were terminated',
+              file=sys.stderr, flush=True)
+    result = {'status':'PASS','home':str(home),'cleanup':cleanup,'persistentCredentialsRetained':True,
+              'stopModes':stop_modes,'escalated':escalated}
     for name in ['pg-init-password','redis-auth.conf','hands-keys.json']:
         (home/'temp'/name).unlink(missing_ok=True)
     native.write_json(home/'logs/last-down.json', result)

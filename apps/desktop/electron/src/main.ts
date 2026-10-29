@@ -40,7 +40,8 @@ import {
  */
 
 const DEV_DEFAULT_SERVER = 'http://127.0.0.1:15100'
-const DEFAULT_API_ORIGIN = 'http://127.0.0.1:9050'
+// 原生运行形态没有 Docker 网关：打包壳直连 N03 本机 Java 后端。
+const DEFAULT_API_ORIGIN = 'http://127.0.0.1:18080'
 
 function parseArgValue(flag: string): string | undefined {
   const prefix = `${flag}=`
@@ -306,6 +307,8 @@ function wireGlobalErrorHandling(): void {
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
+  // 同一 userData 目录已有实例：明确写入 stderr，避免上游只看到“进程已退出”。
+  console.error(`[electron] another instance already owns userData ${app.getPath('userData')}; exiting`)
   app.quit()
 } else {
   app.on('second-instance', () => {

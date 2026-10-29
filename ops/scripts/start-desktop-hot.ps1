@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [switch]$CheckOnly
 )
@@ -54,6 +54,9 @@ if ($occupiedPort) {
 
 Set-Location $desktopDir
 Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+# 外部 shell 可能带 ELECTRON_RUN_AS_NODE=1（例如工具链/调试器注入）；保留它会让
+# electron.exe 退化成普通 Node，main.js 里 electron.protocol 为 undefined 而启动失败。
+Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 Write-Host '正在启动知弈 AgentOS 热更新桌面版（Electron）...' -ForegroundColor Cyan
 Write-Host '修改 frontend 源码后，Vite 会自动更新桌面窗口。关闭桌面窗口即可结束本次开发运行。' -ForegroundColor Gray
 

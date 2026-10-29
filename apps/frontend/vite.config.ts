@@ -11,8 +11,8 @@ const DEV_PROXY_TIMEOUT_MS = 240000
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isElectron = mode === 'electron'
-  // 桌面（Electron）与 Web 共用本配置：15100 端口与宿主 Gateway 代理规则只在
-  // 桌面模式启用，平台适配层经别名切换。
+  // 桌面（Electron）与 Web 共用本配置：15100 端口与平台适配层只在桌面模式
+  // 启用，前端一律直连本机 Java 后端（N03 口径，默认 18080）。
   const platformAdapter = resolve(
     __dirname,
     isElectron ? 'src/platform/electron/adapter.ts' : 'src/platform/web/adapter.ts'
@@ -28,8 +28,7 @@ export default defineConfig(({ mode }) => {
   )
   const BACKEND_PROXY_TARGET =
     env.DEV_BACKEND_PROXY_TARGET ||
-    'http://127.0.0.1:9050'
-  const proxyThroughHostGateway = isElectron && BACKEND_PROXY_TARGET === 'http://127.0.0.1:9050'
+    'http://127.0.0.1:18080'
 
   return {
     plugins: [
@@ -45,7 +44,7 @@ export default defineConfig(({ mode }) => {
       }
     },
     build: {
-      // Electron 走独立产物目录，与 Web/Docker 的 dist 互不覆盖。
+      // Electron 走独立产物目录，与 Web 的 dist 互不覆盖。
       outDir: isElectron ? 'dist-electron' : 'dist',
       // The remaining large files are the app shell and lazy visualization
       // libraries; keep a guard for meaningful growth after code-splitting.
@@ -92,9 +91,10 @@ export default defineConfig(({ mode }) => {
       // 并与后端 CORS 白名单对应）：端口被占就快速失败，
       // 禁止 Vite 静默漂移到 3001 导致 API 全部落入 CORS 陷阱。
       strictPort: isElectron,
-      // Windows 宿主目录 bind mount 进容器后不产生 inotify 事件，chokidar 常规监听
-      // 会静默失效：源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
-      // 容器开发保留轮询；宿主桌面开发使用原生监听，避免持续扫描文件。
+      // 跨文件系统挂载可能不产生 inotify 事件，chokidar 常规监听会静默失效：
+      // 源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
+      // 需要轮询的环境显式设 CHOKIDAR_USEPOLLING=true；桌面开发使用原生监听，
+      // 避免持续扫描文件。
       watch: { usePolling: env.CHOKIDAR_USEPOLLING === 'true' || !isElectron, interval: 1000 },
       proxy: {
         '/api': {
@@ -106,12 +106,6 @@ export default defineConfig(({ mode }) => {
           // 对于有/api前缀的控制器（如digital-human），保留前缀
           // 对于没有/api前缀的控制器（如auth、chat），去掉前缀
           rewrite: (path) => {
-            // The desktop hot-reload server forwards to the host Gateway,
-            // whose own frontend proxy expects the /api prefix. Docker's
-            // frontend server forwards directly to Backend and still needs
-            // the legacy prefix removal below.
-            if (proxyThroughHostGateway) return path
-
             // 这些路径已经有/api前缀，保留
             const keepApiPrefix = [
               '/api/digital-human',

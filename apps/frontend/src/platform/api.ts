@@ -7,7 +7,7 @@ type ViteRuntimeEnv = {
 const env = (import.meta as ImportMeta & { env?: ViteRuntimeEnv }).env || {}
 const isDesktopFamilyMode = env.MODE === 'electron'
 const defaultDesktopApiOrigin = isDesktopFamilyMode && !env.DEV
-  ? 'http://127.0.0.1:9050'
+  ? 'http://127.0.0.1:18080'
   : ''
 // Desktop hot reload always uses its local Vite proxy. In particular, do not
 // inherit a shell-level VITE_API_BASE_URL left by another local service.
@@ -24,7 +24,7 @@ const normalizePath = (path: string): string => path.startsWith('/') ? path : `/
  *
  * Web builds and the desktop hot-reload build keep relative URLs so they use
  * the active Vite proxy. The packaged Electron build (自定义协议同源规则)
- * falls back to the host Gateway because no Vite server is present there.
+ * falls back to the loopback Java backend because no Vite server is present.
  */
 export const apiUrl = (path: string): string => `${absoluteApiOrigin}${normalizePath(path)}`
 

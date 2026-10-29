@@ -26,13 +26,14 @@ npm run dev
 # 或经仓库级入口（自动清残留进程/端口）：
 powershell -File ops/scripts/start-desktop-hot.ps1
 
-# 外部已有 dev server（例如 N02/N03 在 15200 起了自己的 Vite）时复用：
+# 外部已有 dev server（例如 N03 在 15200 起了自己的 Vite）时复用：
 ELECTRON_DEV_SERVER_URL=http://127.0.0.1:15200 npm run dev
 ```
 
-开发模式页面来自 Vite dev server（`--mode electron`），API/SSE/WS 走 Vite 代理；
-生产模式从注册为 standard+secure 的自定义协议 `kinlin-app://shell` 加载 asar 内产物，
-Origin 固定为 `kinlin-app://shell`（后端 CORS 已加该来源，不用通配符）。
+开发模式页面来自 Vite dev server（`--mode electron`），API/SSE/WS 走 Vite 代理（默认转发本机
+Java 后端 18080）；生产模式从注册为 standard+secure 的自定义协议 `kinlin-app://shell` 加载
+asar 内产物，Origin 固定为 `kinlin-app://shell`（后端 CORS 已加该来源，不用通配符），
+API 默认直连 `http://127.0.0.1:18080`（`KINLIN_API_ORIGIN` 可覆写，CSP 同步）。
 
 ## 构建 / 打包 / 测试
 

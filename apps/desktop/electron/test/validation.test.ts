@@ -11,7 +11,7 @@ import {
 
 test('parseHttpUrl 接受 http/https 与端口，拒绝其他协议与 userinfo', () => {
   assert.equal(parseHttpUrl('https://example.com/a?b=1')?.hostname, 'example.com')
-  assert.equal(parseHttpUrl('http://127.0.0.1:9050/api')?.port, '9050')
+  assert.equal(parseHttpUrl('http://127.0.0.1:18080/api')?.port, '18080')
   assert.equal(parseHttpUrl('ftp://example.com'), null)
   assert.equal(parseHttpUrl('javascript:alert(1)'), null)
   assert.equal(parseHttpUrl('file:///C:/x'), null)

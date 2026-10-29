@@ -34,17 +34,17 @@ test('contentTypeFor 常见映射与未知回退', () => {
 })
 
 test('buildCsp 严格且不含通配符', () => {
-  const csp = buildCsp('http://127.0.0.1:9050')
+  const csp = buildCsp('http://127.0.0.1:18080')
   assert.ok(csp.includes("script-src 'self'"), 'script-src 只允许 self')
   assert.ok(!csp.includes('unsafe-eval'), '生产桌面无 HMR，不允许 eval')
   assert.ok(!csp.includes('*'), '不出现任何通配符来源')
-  assert.ok(csp.includes('connect-src') && csp.includes('http://127.0.0.1:9050') && csp.includes('ws://127.0.0.1:9050'))
+  assert.ok(csp.includes('connect-src') && csp.includes('http://127.0.0.1:18080') && csp.includes('ws://127.0.0.1:18080'))
   assert.ok(csp.includes('https:') && csp.includes('wss:'), '保留上层 HTTPS/WSS 出口')
   assert.ok(csp.includes("frame-ancestors 'none'"))
   assert.ok(csp.includes("object-src 'none'"))
 
   const custom = buildCsp('http://10.1.2.3:8080')
   assert.ok(custom.includes('http://10.1.2.3:8080') && custom.includes('ws://10.1.2.3:8080'))
-  // 非法注入回退默认网关。
-  assert.ok(buildCsp('not-a-url').includes('http://127.0.0.1:9050'))
+  // 非法注入回退默认的本机 Java 后端。
+  assert.ok(buildCsp('not-a-url').includes('http://127.0.0.1:18080'))
 })

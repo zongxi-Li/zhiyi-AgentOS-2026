@@ -104,8 +104,13 @@ while (!(await isUp(devServerUrl))) {
 }
 
 console.log(`[dev] 启动 Electron：${devServerUrl}`)
+// 外部 shell/调试器可能注入 ELECTRON_RUN_AS_NODE=1；它会让 electron.exe 以普通
+// Node 运行 main.js（electron.protocol 为 undefined）。开发入口必须剥离它。
+const electronEnv = { ...process.env }
+delete electronEnv.ELECTRON_RUN_AS_NODE
 electronChild = spawn(process.execPath, [electronCli, project, `--dev-server=${devServerUrl}`, ...forwardArgs], {
   cwd: project,
+  env: electronEnv,
   stdio: 'inherit'
 })
 electronChild.on('exit', (code) => shutdown(code ?? 0))

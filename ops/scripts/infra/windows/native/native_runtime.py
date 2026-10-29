@@ -248,10 +248,10 @@ def spawn(run, name, command, env):
         raise RuntimeError(f'{name} exited immediately; see its log')
 
 
-def stop(record):
+def stop(record, *, allow_terminate=True):
     process = owned(record)
     if process is None:
-        return
+        return None
     descendants = process.children(recursive=True)
     # A dedicated hidden console lets SIGINT run both production cleanup paths.
     # The helper attaches only to this verified process's console. A loaded
@@ -262,15 +262,37 @@ def stop(record):
                        check=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
         try:
             process.wait(budget)
-            failure = None
-            break
+            for child in descendants:
+                child.wait(5)
+            return 'graceful'
         except Exception as exc:
             failure = exc
-    if failure is not None:
+    if not allow_terminate:
         # Keep credentials and state for diagnosis; never silently force-kill.
         raise RuntimeError(f'Graceful stop failed for owned PID {process.pid}') from failure
-    for child in descendants:
-        child.wait(5)
+    # Some non-interactive contexts (console input mode disabled at spawn time)
+    # never receive CTRL_C. Escalate only on the identity-verified process tree
+    # and report the escalation so shutdown is never silently forced.
+    print(f'WARNING: graceful stop timed out for PID {process.pid}; terminating the verified tree',
+          file=sys.stderr, flush=True)
+    for member in [*reversed(descendants), process]:
+        try:
+            member.terminate()
+        except Exception:
+            pass
+    try:
+        process.wait(15)
+        for child in descendants:
+            child.wait(5)
+        return 'terminated'
+    except Exception:
+        for member in [*reversed(descendants), process]:
+            try:
+                member.kill()
+            except Exception:
+                pass
+        process.wait(10)
+        return 'killed'
 
 
 def signal_process(pid):
@@ -483,8 +505,11 @@ def up(run, ai_port, host_port, *, fail_after_host=False):
 def down(run, state, *, preserve_credentials=False):
     with control_lock(run):
         records = [*state['processes'].values(), *state.get('transients', {}).values()]
+        stop_modes = {}
         for record in reversed(records):
-            stop(record)
+            mode = stop(record)
+            if mode:
+                stop_modes[str(record['pid'])] = mode
         for port in [state['aiPort'], state['hostPort']]:
             port_free(port)
         # Windows refuses renaming SQLite stores with leaked open handles.
@@ -522,7 +547,7 @@ def down(run, state, *, preserve_credentials=False):
                   'portsReleased': True, 'credentialsRemoved': not (run / 'credentials.dpapi').exists(),
                   'credentialsPreserved': preserve_credentials, 'databaseHandlesReleased': True,
                   'workflowLockReleased': True, 'checkedWorkflowLocks': locks,
-                  'exclusiveDatabaseOpenChecks': databases}
+                  'exclusiveDatabaseOpenChecks': databases, 'stopModes': stop_modes}
         write_json(run / 'down.json', result)
         return result
 

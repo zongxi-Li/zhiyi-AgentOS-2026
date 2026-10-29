@@ -68,11 +68,11 @@ export function contentTypeFor(filePath: string): string {
 
 /**
  * 生产 CSP：script-src 不含 'unsafe-eval'，
- * 桌面产物无 HMR 需求。connect 显式放行宿主 Gateway 的 HTTP/WS 与
- * 上层 HTTPS/WSS；origin 由 Main 启动参数注入（默认 9050）。
+ * 桌面产物无 HMR 需求。connect 显式放行本机 Java 后端的 HTTP/WS 与
+ * 上层 HTTPS/WSS；origin 由 Main 启动参数注入（默认 18080）。
  */
 export function buildCsp(apiOrigin: string): string {
-  const origin = /^https?:\/\//i.test(apiOrigin) ? apiOrigin.replace(/\/$/, '') : 'http://127.0.0.1:9050'
+  const origin = /^https?:\/\//i.test(apiOrigin) ? apiOrigin.replace(/\/$/, '') : 'http://127.0.0.1:18080'
   const wsOrigin = origin.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:')
   return [
     "default-src 'self'",
