@@ -1,0 +1,26 @@
+# 知弈 AgentOS Electron 桌面宿主打包配置。
+# 与 Tauri 版（appId com.kinlin.zhiyi、产品名 Zhiyi AgentOS）并存：
+# 独立 appId + 独立产品名，安装/卸载互不影响，迁移验收通过前不替换默认入口。
+appId: com.kinlin.zhiyi.electron
+productName: Zhiyi AgentOS Electron
+directories:
+  output: release
+files:
+  - dist/**
+  - renderer/**
+  - package.json
+asar: true
+icon: build/icon.ico
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}-Setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: 知弈 AgentOS Electron
+  uninstallDisplayName: 知弈 AgentOS Electron
