@@ -226,7 +226,9 @@ def owned(record):
         if actual != record:
             raise RuntimeError('Process identity changed; refusing to signal it')
         return process
-    except psutil.NoSuchProcess:
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        # A PID the ordinary user cannot inspect belongs to someone else; the
+        # owned process is gone exactly like a recycled PID.
         return None
 
 
@@ -252,16 +254,23 @@ def stop(record):
         return
     descendants = process.children(recursive=True)
     # A dedicated hidden console lets SIGINT run both production cleanup paths.
-    # The helper attaches only to this verified process's console.
-    subprocess.run([sys.executable, str(Path(__file__).resolve()), '_signal', str(process.pid)],
-                   check=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
-    try:
-        process.wait(25)
-        for child in descendants:
-            child.wait(5)
-    except Exception as exc:
+    # The helper attaches only to this verified process's console. A loaded
+    # dev server (vite) can need a second nudge past the first 25s window.
+    failure = None
+    for budget in (25, 20):
+        subprocess.run([sys.executable, str(Path(__file__).resolve()), '_signal', str(process.pid)],
+                       check=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            process.wait(budget)
+            failure = None
+            break
+        except Exception as exc:
+            failure = exc
+    if failure is not None:
         # Keep credentials and state for diagnosis; never silently force-kill.
-        raise RuntimeError(f'Graceful stop failed for owned PID {process.pid}') from exc
+        raise RuntimeError(f'Graceful stop failed for owned PID {process.pid}') from failure
+    for child in descendants:
+        child.wait(5)
 
 
 def signal_process(pid):
