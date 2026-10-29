@@ -1,4 +1,4 @@
-# Generated inside the target Linux/Python Docker image from pip --dry-run --report.
+# Generated for the target Linux/Python environment from pip --dry-run --report.
 # This lock intentionally contains hashes for target-platform binary wheels only.
 
 annotated-types==0.7.0 \

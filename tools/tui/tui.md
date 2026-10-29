@@ -8,27 +8,35 @@
 
 版本 0.1.0 — 2026-06-04
 
-当前约定：WebUI 和 TUI 统一使用 Docker 中的 AI 后端。默认 API 地址是 `http://127.0.0.1:8000/ai`，由根目录唯一基线 `compose.yaml` 叠加开发和 Windows 覆盖层启动。TUI 默认不再自动启动本地 `uvicorn` 后端，避免出现两套服务、两套数据源或行为不一致。
+当前约定：WebUI 与 TUI 统一连接 N03 原生持久栈里的 AI 服务，默认 API 地址是
+`http://127.0.0.1:18761/ai`（`persistent_runtime` 的 `aiPort`）。TUI 不启动、不监管后端进程；
+栈的生命周期唯一归 `ops/scripts/infra/windows/native/persistent.ps1`，避免出现两套服务、
+两套数据源或行为不一致。
 
 ## 快速开始
 
-推荐从仓库根目录运行：
+先从仓库根目录启动 N03 原生栈（PostgreSQL/Memurai/Java/Python/知行 Host）：
+
+```powershell
+.\ops\scripts\infra\windows\native\persistent.ps1 -Action up
+```
+
+再启动 TUI：
 
 ```powershell
 .\tools\tui\start.ps1 -Role lawyer
 ```
 
-脚本会做三件事：
+脚本会做两件事：
 
-1. 使用 `compose.yaml` + `.config/compose/dev.yaml` + `.config/compose/windows.yaml` 启动或复用 Docker `ai-service`。
-2. 等待 `http://127.0.0.1:8000/health` 可用。
-3. 设置 `AGENTOS_API_URL=http://127.0.0.1:8000/ai` 并启动 TUI。
+1. 探测 `http://127.0.0.1:18761/health`；不可用则提示先启动 N03 栈并退出（不代管后端）。
+2. 设置 `AGENTOS_API_URL=http://127.0.0.1:18761/ai` 并启动 TUI。
 
 也可以直接运行 CLI：
 
 ```powershell
 $env:PYTHONPATH = "tools/tui/src"
-$env:AGENTOS_API_URL = "http://127.0.0.1:8000/ai"
+$env:AGENTOS_API_URL = "http://127.0.0.1:18761/ai"
 python -m kinlin_tui.app os --role lawyer
 ```
 
@@ -43,19 +51,20 @@ zhiyi start --role lawyer
 如需连接非默认后端，可以显式传入：
 
 ```powershell
-zhiyi os --api-url http://127.0.0.1:8000/ai
+zhiyi os --api-url http://127.0.0.1:18761/ai
 ```
 
-## Docker 后端同步
+## 后端代码更新
 
-如果修改了 `apps/agent/app`、`apps/agent/packs` 或其他会被 `apps/agent/Dockerfile` 复制进镜像的后端代码，需要重建 Docker AI 服务，WebUI 和 TUI 才会同时生效：
+TUI、Web UI 与 N03 栈里的 AI 服务都直接运行仓库工作树的 Python 代码，没有镜像重建步骤。
+修改 `apps/agent/app`、`apps/agent/packs` 或 `apps/agentOS` 后，重启 N03 栈即可让三端同时生效：
 
 ```powershell
-docker compose -f compose.yaml -f .config/compose/dev.yaml -f .config/compose/windows.yaml --env-file .env.windows --profile debug-ports build ai-service ai-debug-port
-docker compose -f compose.yaml -f .config/compose/dev.yaml -f .config/compose/windows.yaml --env-file .env.windows --profile debug-ports up -d ai-service ai-debug-port
+.\ops\scripts\infra\windows\native\persistent.ps1 -Action down
+.\ops\scripts\infra\windows\native\persistent.ps1 -Action up
 ```
 
-验证 Docker 后端是否已使用新代码：
+验证 AI 服务是否已使用新代码：
 
 ```powershell
 @'
@@ -64,7 +73,7 @@ import urllib.request
 
 payload = json.dumps({"text": "你好", "sessionId": "probe"}, ensure_ascii=False).encode("utf-8")
 request = urllib.request.Request(
-    "http://127.0.0.1:8000/ai/agent/lawyer/chat",
+    "http://127.0.0.1:18761/ai/agent/lawyer/chat",
     data=payload,
     headers={"Content-Type": "application/json; charset=utf-8"},
     method="POST",
@@ -107,12 +116,12 @@ tools/tui/
 
 核心文件：
 
-- `app.py`：Textual 应用入口和 `zhiyi` CLI。默认连接 Docker API。
+- `app.py`：Textual 应用入口和 `zhiyi` CLI。默认连接 N03 原生 AI 服务（18761）。
 - `api/client.py`：`AgentOSClient`，封装 `/ai` 下的 HTTP 接口。
 - `screens/chat.py`：主聊天界面，负责角色切换、消息发送、会话 ID 复用。
 - `screens/dashboard.py`：工作流控制台，负责运行列表、步骤详情和 Trace 查看。
 - `theme.py`：角色主题、中文角色名、图标和 Textual CSS。
-- `start.ps1`：Windows PowerShell 一键启动脚本，统一走 Docker 后端。
+- `start.ps1`：Windows PowerShell 一键启动脚本，只探测并连接已运行的 N03 栈。
 - `tests/test_app.py`：TUI 回归测试。
 
 ## 启动入口
@@ -140,7 +149,8 @@ zhiyi start --role lawyer
 zhiyi --role lawyer
 ```
 
-`zhiyi start` 会尝试启动 Docker `ai-service`；`zhiyi os` 只启动 TUI，并默认连接 `http://127.0.0.1:8000/ai`。
+`zhiyi start` 只做健康检查后启动 TUI（要求 N03 栈已运行）；`zhiyi os` 只启动 TUI，
+并默认连接 `http://127.0.0.1:18761/ai`。
 
 ## 数据流
 
@@ -177,7 +187,7 @@ DashboardScreen
 `AgentOSClient` 默认地址：
 
 ```text
-http://127.0.0.1:8000/ai
+http://127.0.0.1:18761/ai
 ```
 
 重要约定：
@@ -255,23 +265,27 @@ lawyer -> teacher -> programmer -> writer
 
 推荐工作流：
 
-1. 确认 Docker `ai-service` 已启动：
+1. 启动 N03 原生栈并确认 AI 健康：
 
    ```powershell
-   docker compose -f compose.yaml -f .config/compose/dev.yaml -f .config/compose/windows.yaml --env-file .env.windows ps ai-service
+   .\ops\scripts\infra\windows\native\persistent.ps1 -Action up
+   Invoke-WebRequest http://127.0.0.1:18761/health -UseBasicParsing
    ```
+
 2. 启动 TUI：
 
    ```powershell
    .\tools\tui\start.ps1 -Role lawyer
    ```
+
 3. 修改 TUI 代码。
 4. 运行测试：
 
    ```powershell
    python -m pytest tools\tui\tests -q
    ```
-5. 如果同时修改了后端，重建并重启 Docker `ai-service`。
+
+5. 如果同时修改了后端，按“后端代码更新”一节 down/up 重启 N03 栈。
 6. 用真实接口探测关键路径，例如问候语、角色切换、Dashboard 列表。
 
 ## 测试
@@ -306,11 +320,11 @@ python -m pytest apps\agent\tests\test_agentos_core.py tools\tui\tests -q
 
 ### TUI 里“你好”仍然返回案件分析
 
-说明当前 `8000` 上的 Docker AI 服务还不是新镜像。重建并重启：
+说明 N03 栈里的 AI 进程仍是旧代码。按“后端代码更新”一节 down/up 重启栈：
 
 ```powershell
-docker compose -f compose.yaml -f .config/compose/dev.yaml -f .config/compose/windows.yaml --env-file .env.windows --profile debug-ports build ai-service ai-debug-port
-docker compose -f compose.yaml -f .config/compose/dev.yaml -f .config/compose/windows.yaml --env-file .env.windows --profile debug-ports up -d ai-service ai-debug-port
+.\ops\scripts\infra\windows\native\persistent.ps1 -Action down
+.\ops\scripts\infra\windows\native\persistent.ps1 -Action up
 ```
 
 然后用真实接口探测 `trace[0]["action"]` 是否为 `direct_response`。
@@ -319,22 +333,21 @@ docker compose -f compose.yaml -f .config/compose/dev.yaml -f .config/compose/wi
 
 优先检查：
 
-- `AGENTOS_API_URL` 是否是 `http://127.0.0.1:8000/ai`
-- Docker `ai-service` 是否健康
+- `AGENTOS_API_URL` 是否是 `http://127.0.0.1:18761/ai`
+- N03 AI 服务是否健康（`http://127.0.0.1:18761/health`）
 - 是否误连到代理或旧服务
 
 `AgentOSClient` 已设置 `trust_env=False`，正常情况下本地请求不应被系统代理劫持。
 
 ### WebUI 和 TUI 行为不一致
 
-先确认两者是否都连同一个 Docker AI 服务：
+先确认两者是否都连同一个 N03 AI 服务：
 
 ```powershell
-docker ps --format "table {{.Names}}\t{{.Ports}}"
+Invoke-WebRequest http://127.0.0.1:18761/health -UseBasicParsing
 ```
 
-期望看到 `federal-hub-ai-service-prod` 或当前 compose 项目的 `ai-service` 映射到 `0.0.0.0:8000->8000/tcp`。
-
+WebUI 的 Vite 代理默认也指向 `127.0.0.1:18080`（Java 后端）→ AI 18761；
 如果 TUI 设置了自定义 `AGENTOS_API_URL`，先清掉或改回：
 
 ```powershell

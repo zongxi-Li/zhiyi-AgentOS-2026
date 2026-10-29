@@ -48,11 +48,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       transport family.</li>
  *   <li>J1.3: WebSocket / STOMP / SockJS are removed transports — production sources
  *       must not reference them at all; streaming is SSE-only.</li>
- *   <li>J1.4B: no JWT default secret in prod/compose configs; JwtUtil reads no
+ *   <li>J1.4B: no JWT default secret in prod configs; JwtUtil reads no
  *       {@code @Value}; RoleSwitchOptimizer carries no local mutable role cache;
  *       controllers/services never touch cache infrastructure directly.</li>
  *   <li>J1.4A: controllers declare no {@code @Transactional}; formal configs
- *       (canonical/prod/compose) pin ddl-auto=validate + open-in-view=false and never
+ *       (canonical/prod) pin ddl-auto=validate + open-in-view=false and never
  *       point at H2; MyBatis / MyBatis-Plus stay banned at dependency and import level.</li>
  *   <li>No ACG semantic implementation leaks into the Java platform.</li>
  * </ul>
@@ -396,13 +396,11 @@ class ArchitectureGuardTest {
     /** 正式（production-authority）配置文件集合；dev/test 属开发豁免面，不在其列。 */
     private static final List<String> FORMAL_CONFIGS = List.of(
             "src/main/resources/application.yml",
-            "src/main/resources/application-prod.yml",
-            "src/main/resources/application-compose.yml");
+            "src/main/resources/application-prod.yml");
 
     /** J1.4B：production-authority 配置（不含 canonical——canonical 带开发默认属 dev 继承路径）。 */
     private static final List<String> FORMAL_PROD_CONFIGS = List.of(
-            "src/main/resources/application-prod.yml",
-            "src/main/resources/application-compose.yml");
+            "src/main/resources/application-prod.yml");
 
     private static String formalConfig(String relativePath) {
         try {
@@ -487,7 +485,7 @@ class ArchitectureGuardTest {
     // J1.4B infrastructure guards
     // ------------------------------------------------------------------
 
-    /** J1.4B §十九A：prod/compose 配置不得携带 JWT 默认 secret（fail-closed 占位符须无默认值）。 */
+    /** J1.4B §十九A：prod 配置不得携带 JWT 默认 secret（fail-closed 占位符须无默认值）。 */
     @Test
     void productionJwtSecretPlaceholderHasNoFallback() {
         List<String> offenders = FORMAL_PROD_CONFIGS.stream()
@@ -500,7 +498,7 @@ class ArchitectureGuardTest {
                 .toList();
 
         assertTrue(offenders.isEmpty(),
-                "prod/compose must declare app.jwt.secret as ${APP_JWT_SECRET} with no fallback: " + offenders);
+                "prod must declare app.jwt.secret as ${APP_JWT_SECRET} with no fallback: " + offenders);
     }
 
     /** J1.4B §十九B：secret/expiration 归 JwtProperties 持有，JwtUtil 不得直接 @Value。 */

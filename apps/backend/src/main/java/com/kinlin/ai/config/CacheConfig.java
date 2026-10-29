@@ -31,7 +31,7 @@ import java.util.concurrent.Callable;
  * Redis 缓存配置（J1.4B 收敛 + J1.4C 窄仪表）。
  *
  * <p>激活条件：{@code spring.cache.type=redis} 或未设置（matchIfMissing）——
- * 即 canonical/prod/compose；dev/test/pg-it 显式 {@code simple} 时本类退位，
+ * 即 canonical/prod；dev/test/pg-it 显式 {@code simple} 时本类退位，
  * 由 Boot 的 ConcurrentMapCacheManager 接管（@EnableCaching 在主应用类上，
  * 不随本类的条件退位而失效）。</p>
  *

@@ -19,7 +19,7 @@ import static org.mockito.Mockito.*;
  *
  * <p>本地 ConcurrentHashMap 双层缓存已删除，缓存职责整体移交 Spring Cache
  * （单元测试无缓存代理，@Cacheable 直通；真实缓存命中/逐出/序列化由
- * {@code RoleCacheRedisIntegrationTest} 在 Testcontainers Redis 上验证）。
+ * {@code RoleCacheRedisIntegrationTest} 在真实 Redis 临时实例上验证）。
  * 本测试锁定：委托关系、上下文派生、内置角色预热有界性。</p>
  */
 @ExtendWith(MockitoExtension.class)

@@ -22,7 +22,7 @@ import java.util.Map;
  * delegated to the narrow {@link AiDependencyHealthClient} — this controller performs
  * no transport itself.</p>
  *
- * <p>Redis 连接工厂按可选依赖注入：prod/compose（cache.type=redis）必有；
+ * <p>Redis 连接工厂按可选依赖注入：prod（cache.type=redis）必有；
  * dev/test/pg-it 显式排除 Redis 自动配置后无该 bean，/ready 将 redis 标记为
  * disabled 而不是让整个上下文无法启动。</p>
  */

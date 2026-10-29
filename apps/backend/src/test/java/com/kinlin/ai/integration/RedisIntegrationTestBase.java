@@ -7,7 +7,7 @@ import org.springframework.test.context.DynamicPropertySource;
 /**
  * J1.4B Redis 缓存契约测试基座：复用共享 PostgreSQL 临时集群，另起一个
  * 测试 JVM 自管的真实 Redis（Windows 用 N03 同源 Memurai，Linux/CI 用
- * redis-server）——不再依赖 Docker/Testcontainers 容器。
+ * redis-server）——不再依赖容器化测试基座。
  *
  * <p>profile 只声明 redis-it（自足 profile，见 application-redis-it.yml）——
  * 继承 {@link PostgresContainerBase} 的实例但不继承 pg-it profile，
@@ -28,7 +28,7 @@ public abstract class RedisIntegrationTestBase extends PostgresContainerBase {
         } catch (Throwable failure) {
             throw new IllegalStateException(
                     "BLOCKED_BY_REDIS: Redis 缓存契约测试需要本机 Memurai/redis-server 真实例"
-                            + "（已不再使用 Docker/Testcontainers）。请设置 ZHIYI_REDIS_BIN，"
+                            + "（测试自管临时实例，已移除容器化测试基座）。请设置 ZHIYI_REDIS_BIN，"
                             + "或准备 N03 同源 Memurai 依赖包 / 在 CI 安装 redis-server。"
                             + "本失败是显式失败，不是静默 skip。原因: " + failure.getMessage(),
                     failure);

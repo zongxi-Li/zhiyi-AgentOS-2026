@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * INT-2F-4A：隔离 PostgreSQL 上的 Flyway V11 迁移与会话撤销持久化行为。
  *
- * <p>真实 Testcontainers PostgreSQL + Flyway migrate + Hibernate validate
+ * <p>真实 PostgreSQL 临时实例（测试自管）+ Flyway migrate + Hibernate validate
  * （上下文启动即双关卡）；HTTP 注册/登录/登出后用 JdbcTemplate 直查
  * iam_login_sessions 表的真实行——证明撤销是持久事实，不是内存状态。</p>
  */

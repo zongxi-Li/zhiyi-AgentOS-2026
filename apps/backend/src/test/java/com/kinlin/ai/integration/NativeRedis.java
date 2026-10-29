@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
- * 测试自管的真实 Redis 临时实例（零 Docker / 零 Testcontainers）。
+ * 测试自管的真实 Redis 临时实例（零容器化测试基座）。
  *
  * <p>Windows 用 N03 同源 Memurai（本机 ZhiyiNative 依赖包），Linux/CI 用
  * redis-server；在临时目录写最小配置（loopback、随机端口、无 AUTH，与既有
@@ -49,7 +49,7 @@ public final class NativeRedis implements AutoCloseable {
             executable = locateBinary();
         } catch (RuntimeException failure) {
             throw new IllegalStateException(
-                    "BLOCKED_BY_REDIS: 找不到 Memurai/redis-server 本机二进制（不再使用 Docker/Testcontainers）。"
+                    "BLOCKED_BY_REDIS: 找不到 Memurai/redis-server 本机二进制（测试自管临时实例）。"
                             + "设置 ZHIYI_REDIS_BIN，或准备 ZhiyiNative Memurai 依赖包 / 在 CI 安装 redis-server。"
                             + "原因: " + failure.getMessage(),
                     failure);

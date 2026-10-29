@@ -9,10 +9,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from textual.app import App, Binding
 from textual.reactive import reactive
@@ -121,7 +119,7 @@ class AgentOSTuiApp(App):
 # ============================================================================
 
 
-DEFAULT_DOCKER_API_URL = "http://127.0.0.1:8000/ai"
+DEFAULT_API_URL = "http://127.0.0.1:18761/ai"
 
 
 def _service_root_from_api_url(api_url: str) -> str:
@@ -143,26 +141,17 @@ def _api_health_ok(api_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
-def _repo_root() -> Path | None:
-    """Locate the repository root that contains the Python AI service."""
-    candidates = [Path.cwd(), *Path(__file__).resolve().parents]
-    for candidate in candidates:
-        if (candidate / "apps" / "agent" / "app" / "main.py").exists():
-            return candidate
-    return None
-
-
 def _run_os(args: argparse.Namespace) -> None:
-    """Launch the AgentOS TUI."""
+    """Launch the AgentOS TUI against the native N03 stack."""
     if args.api_url:
         os.environ["AGENTOS_API_URL"] = args.api_url
     elif "AGENTOS_API_URL" not in os.environ:
-        os.environ["AGENTOS_API_URL"] = DEFAULT_DOCKER_API_URL
-        if not _api_health_ok(DEFAULT_DOCKER_API_URL):
+        os.environ["AGENTOS_API_URL"] = DEFAULT_API_URL
+        if not _api_health_ok(DEFAULT_API_URL):
             print(
-                "Docker AgentOS backend is not healthy at "
-                f"{DEFAULT_DOCKER_API_URL}. Start Docker services with `zhiyi start` "
-                "or pass --api-url explicitly.",
+                "Native AgentOS backend is not healthy at "
+                f"{DEFAULT_API_URL}. Start the N03 persistent stack "
+                "(ops/scripts/infra/windows/native/persistent.ps1 up) or pass --api-url explicitly.",
                 flush=True,
             )
 
@@ -179,35 +168,22 @@ def _run_os(args: argparse.Namespace) -> None:
 
 
 def _run_start(args: argparse.Namespace) -> None:
-    """Start Docker services then launch TUI."""
-    import subprocess
-    import time
+    """Require the already-running native backend, then launch the TUI.
 
-    print("Starting Docker services...")
-    root = _repo_root()
-    prod_compose = root / "docker" / "docker-compose.prod.yml" if root else None
-    compose_command = ["docker", "compose"]
-    if prod_compose and prod_compose.exists():
-        compose_command.extend(["-f", str(prod_compose)])
-    compose_command.extend(["up", "-d", "ai-service"])
-    subprocess.run(compose_command, check=True)
-
-    url = f"http://127.0.0.1:8000/health"
-    print("Waiting for ai-service...", end="", flush=True)
-    for _ in range(30):
-        try:
-            import urllib.request
-            urllib.request.urlopen(url, timeout=2)
-            print(" OK")
-            break
-        except Exception:
-            print(".", end="", flush=True)
-            time.sleep(2)
-    else:
-        print(" TIMEOUT")
+    The TUI never supervises PostgreSQL/Memurai/AI processes: the N03
+    ``persistent.ps1`` lifecycle owns them, so there is exactly one stack.
+    """
+    url = args.api_url or os.environ.get("AGENTOS_API_URL") or DEFAULT_API_URL
+    if not _api_health_ok(url):
+        print(
+            "Native AgentOS backend is not healthy at "
+            f"{url}. Start the N03 persistent stack first "
+            "(ops/scripts/infra/windows/native/persistent.ps1 up), then rerun `zhiyi start`.",
+            flush=True,
+        )
         sys.exit(1)
 
-    os.environ["AGENTOS_API_URL"] = args.api_url or DEFAULT_DOCKER_API_URL
+    os.environ["AGENTOS_API_URL"] = url
     role_map = {
         "lawyer": RoleTheme.LAWYER,
         "teacher": RoleTheme.TEACHER,
@@ -243,7 +219,7 @@ def _build_parser() -> argparse.ArgumentParser:
     os_parser.set_defaults(func=_run_os)
 
     # ---- zhiyi start ----
-    start_parser = sub.add_parser("start", help="Start Docker + launch TUI")
+    start_parser = sub.add_parser("start", help="Require the running native stack, then launch TUI")
     start_parser.add_argument(
         "--role", "-r",
         default="lawyer",

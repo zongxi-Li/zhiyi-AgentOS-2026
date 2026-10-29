@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * 测试自管的真实 PostgreSQL 临时实例（零 Docker / 零 Testcontainers）。
+ * 测试自管的真实 PostgreSQL 临时实例（零容器化测试基座）。
  *
  * <p>定位本机 PostgreSQL 15.x 二进制（{@code ZHIYI_PG_BIN} → 本机 ZhiyiNative
  * 依赖包 → CI apt 的 {@code /usr/lib/postgresql/<ver>/bin}）后，在临时目录
@@ -29,7 +29,7 @@ import java.util.stream.Stream;
  * JVM shutdown hook 优雅停止、清理临时目录。</p>
  *
  * <p>与容器方案的语义差异只在于生命周期归属：实例由测试 JVM 自己 spawn 和
- * 停止，不依赖 Docker daemon；连接串、Flyway/Hibernate 校验与真实 SQL 行为
+ * 停止，不依赖容器运行时；连接串、Flyway/Hibernate 校验与真实 SQL 行为
  * 完全一致。二进制/启动失败是显式失败（BLOCKED_BY_PG），不是静默 skip。</p>
  */
 public final class NativePostgres implements AutoCloseable {
@@ -68,7 +68,7 @@ public final class NativePostgres implements AutoCloseable {
             bin = locateBin();
         } catch (RuntimeException failure) {
             throw new IllegalStateException(
-                    "BLOCKED_BY_PG: 找不到 PostgreSQL 15.x 本机二进制（不再使用 Docker/Testcontainers）。"
+                    "BLOCKED_BY_PG: 找不到 PostgreSQL 15.x 本机二进制（测试自管临时实例）。"
                             + "设置 ZHIYI_PG_BIN 指向 bin 目录，或运行 prepare_persistent_dependencies.py / "
                             + "在 CI 安装 postgresql。原因: " + failure.getMessage(),
                     failure);

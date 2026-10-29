@@ -1,7 +1,7 @@
 # J1.4A 持久化契约 profile：真实 PostgreSQL（测试 JVM 自管临时实例，动态注入 datasource）。
 #
 # 目标矩阵（任务书 §十三）：
-#   DB        = 真实 PostgreSQL 15.x 真实例（本机二进制临时 cluster，零 Docker）
+#   DB        = 真实 PostgreSQL 15.x 真实例（本机二进制临时 cluster，零容器运行时依赖）
 #   Flyway    = true（migrate 权威）
 #   ddl-auto  = validate（Hibernate 只做 schema 校验）
 #   OSIV      = false（由 canonical application.yml 继承，此处不得覆盖）

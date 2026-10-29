@@ -66,7 +66,7 @@ class JwtPropertiesTest {
     }
 
     /**
-     * 生产 fail-closed 机制证明：prod/compose yml 声明
+     * 生产 fail-closed 机制证明：prod yml 声明
      * {@code app.jwt.secret: ${APP_JWT_SECRET}}（无默认值），环境变量缺失时
      * 占位符无法解析 → 上下文启动失败，绝不会静默绑定仓库默认 secret。
      */

@@ -2,21 +2,16 @@
 param(
     [ValidateSet("lawyer", "teacher", "programmer", "writer")]
     [string]$Role = "lawyer",
-    [int]$Port = 8000,
-    [switch]$Docker,
-    [switch]$NoBuild
+    # N03 persistent_runtime 的 AI 端口（默认 18761）
+    [int]$Port = 18761
 )
 
 $ErrorActionPreference = "Stop"
-$PYTHON = "C:/Users/LZX/AppData/Local/Programs/Python/Python314/python.exe"
+$PYTHON = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+if (-not $PYTHON) {
+    throw "python.exe 不在 PATH；请先安装 Python 3.14 并把 python 加入 PATH。"
+}
 $TUI_SRC = Join-Path $PSScriptRoot "src"
-$REPO_ROOT = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$COMPOSE_FILES = @(
-    (Join-Path $REPO_ROOT "compose.yaml"),
-    (Join-Path $REPO_ROOT ".config\compose\dev.yaml"),
-    (Join-Path $REPO_ROOT ".config\compose\windows.yaml")
-)
-$COMPOSE_ENV_FILE = Join-Path $REPO_ROOT ".env.windows"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
@@ -50,49 +45,27 @@ function Test-HttpHealth {
 }
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " ZhiYi AgentOS TUI Launcher" -ForegroundColor Cyan
+Write-Host " ZhiYi AgentOS TUI Launcher (native N03)" -ForegroundColor Cyan
 Write-Host " Role: $Role  |  API: http://127.0.0.1:$($Port)/ai" -ForegroundColor Cyan
-if ($NoBuild) {
-    Write-Host " Mode: Docker shared backend (reuse existing image)" -ForegroundColor Magenta
-} else {
-    Write-Host " Mode: Docker shared backend (rebuild ai-service)" -ForegroundColor Magenta
-}
 Write-Host "============================================" -ForegroundColor Cyan
 
+# TUI 不在本脚本内拉起/监管后端：N03 persistent.ps1 是唯一栈生命周期 owner。
 Write-Host ""
-$buildLabel = if ($NoBuild) { "Starting" } else { "Building/restarting" }
-Write-Host "[1/2] $buildLabel Docker ai-service..." -ForegroundColor Yellow
-if (-not (Test-Path -LiteralPath $COMPOSE_ENV_FILE -PathType Leaf)) {
-    throw "Windows Compose environment file does not exist: $COMPOSE_ENV_FILE"
-}
-$composeArgs = @()
-foreach ($composeFile in $COMPOSE_FILES) {
-    $composeArgs += @("-f", $composeFile)
-}
-$composeArgs += @("--env-file", $COMPOSE_ENV_FILE, "--profile", "debug-ports")
-$env:KINLIN_AI_DEBUG_PORT = "$Port"
-$upArgs = @("up", "-d")
-if (-not $NoBuild) {
-    $upArgs += "--build"
-}
-$upArgs += @("ai-service", "ai-debug-port")
-docker compose @composeArgs @upArgs 2>&1
-
-Write-Host "       Waiting for ai-service..." -NoNewline
+Write-Host "[1/2] Checking native AgentOS backend on port $Port..." -NoNewline
 $ok = $false
-for ($i = 0; $i -lt 90; $i++) {
-    Start-Sleep -Milliseconds 2000
+for ($i = 0; $i -lt 15; $i++) {
     if (Test-HttpHealth $Port) {
         Write-Host " OK" -ForegroundColor Green
         $ok = $true
         break
-    } else {
-        Write-Host "." -NoNewline
     }
+    Write-Host "." -NoNewline
+    Start-Sleep -Milliseconds 1000
 }
 if (-not $ok) {
-    Write-Host " TIMEOUT" -ForegroundColor Red
-    Write-Host "       Check the canonical Compose stack with .\ops\scripts\infra\windows\status.ps1" -ForegroundColor Red
+    Write-Host " UNAVAILABLE" -ForegroundColor Red
+    Write-Host "       Start the N03 persistent stack first:" -ForegroundColor Red
+    Write-Host "       .\ops\scripts\infra\windows\native\persistent.ps1 -Action up" -ForegroundColor Red
     exit 1
 }
 

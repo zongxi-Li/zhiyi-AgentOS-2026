@@ -35,7 +35,7 @@ def main() -> int:
         packages.append((name, version, [str(sha256)]))
     packages.sort(key=lambda item: item[0])
     lines = [
-        "# Generated inside the target Linux/Python Docker image from pip --dry-run --report.",
+        "# Generated for the target Linux/Python environment from pip --dry-run --report.",
         "# This lock intentionally contains hashes for target-platform binary wheels only.",
         "",
     ]

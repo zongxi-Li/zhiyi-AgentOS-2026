@@ -154,7 +154,7 @@
         </dependency>
 
         <!-- 真实 PostgreSQL/Redis 集成测试由测试 JVM 自管临时实例提供
-             （NativePostgres/NativeRedis，零 Docker/Testcontainers），
+             （NativePostgres/NativeRedis，零容器运行时依赖），
              不再引入容器运行时依赖。 -->
 
         <!-- Micrometer指标监控 -->

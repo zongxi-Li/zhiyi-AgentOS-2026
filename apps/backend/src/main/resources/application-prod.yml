@@ -12,18 +12,16 @@ spring:
     validate-on-migrate: true
   data:
     redis:
-      host: redis
-      port: 6379
+      host: ${SPRING_REDIS_HOST:127.0.0.1}
+      port: ${SPRING_REDIS_PORT:6379}
 
 app:
   upload:
-    dir: /app/data/uploads
+    dir: ${APP_UPLOAD_DIR:./data/uploads}
   jwt:
     # J1.4B fail-closed：生产禁止回落仓库默认 secret。
-    # 打包部署：docker-entrypoint.sh 经 configtree 注入 app.jwt.secret
-    # （Docker secret jwt_secret，缺失/为空即 exit 78 拒绝启动），
-    # 且 configtree 导入源优先级高于本文件。
-    # 裸跑 prod：APP_JWT_SECRET 未设置 → 占位符解析失败 → 应用启动失败。
+    # 原生运行形态（N03 persistent_runtime）在进程环境注入 APP_JWT_SECRET；
+    # 缺失/为空时占位符解析失败 → 应用启动失败（启动期 fail-closed）。
     secret: ${APP_JWT_SECRET}
 
 ai:

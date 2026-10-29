@@ -1,8 +1,8 @@
-"""服务端模型供应商档案：支持不重启容器热切换激活供应商。
+"""服务端模型供应商档案：支持不重启 AI 进程热切换激活供应商。
 
-档案持久化在数据卷（APP_DATA_DIR/agentos/llm_profiles.json）。API Key 不落在
+档案持久化在数据目录（APP_DATA_DIR/agentos/llm_profiles.json）。API Key 不落在
 档案里：通过 api_key_env 引用既有密钥环境变量（含 _FILE 密钥文件约定），仅在
-用户新增自定义供应商时允许内联 api_key（保存在本地数据卷）。
+用户新增自定义供应商时允许内联 api_key（保存在本地数据目录）。
 
 解析顺序约定：激活档案可用（key/base_url/model 齐全）时优先于环境变量；
 档案缺失或不可用时回落到原有 TEXT_ENGINE 环境变量逻辑，行为与升级前一致。
@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from app.paths import APP_DATA_DIR
 
 PROFILES_FILE_OVERRIDE_ENV = "AGENTOS_LLM_PROFILES_FILE"
-# APP_DATA_DIR 在容器内即 /app/data/agentos，档案与其他 AgentOS 数据同级
+# APP_DATA_DIR 默认在仓库内 app/data（N03 可用 AGENTOS_DATA_DIR 覆写），档案与其他 AgentOS 数据同级
 _DEFAULT_PROFILE_REL_PATH = Path("llm_profiles.json")
 _STORE_VERSION = 1
 

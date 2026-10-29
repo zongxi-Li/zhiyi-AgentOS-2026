@@ -14,11 +14,10 @@ import java.nio.charset.StandardCharsets;
  *   <li>secret 非空且 ≥ 64 字节（HS512 要求 512 位密钥，不足时 jjwt 会在
  *       签名期抛 WeakKeyException，fail-fast 到启动期而非首个请求）。</li>
  *   <li>expiration &gt; 0。</li>
- *   <li>生产 fail-closed：application-prod/compose 声明
+ *   <li>生产 fail-closed：application-prod 声明
  *       {@code app.jwt.secret: ${APP_JWT_SECRET}}（无仓库默认值）——
- *       打包部署由 docker-entrypoint.sh 经 configtree 注入（缺失即 exit 78，
- *       容器层 fail-closed）；裸跑 prod 时占位符解析失败使应用启动失败，
- *       禁止回落仓库默认 secret。</li>
+ *       原生运行形态（N03 persistent_runtime）在进程环境注入；缺失时
+ *       占位符解析失败使应用启动失败，禁止回落仓库默认 secret。</li>
  * </ul>
  *
  * <p>dev/test 继承 canonical 的稳定开发默认 secret，属允许的非生产测试值。</p>

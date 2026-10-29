@@ -159,7 +159,7 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 双 timeout 键决策（J1.2 §17）：`ai.service.timeout` 与 `agent.timeout-ms` 数值当前相等但**语义独立保留**
 （Platform-AI 生命周期 vs AgentOS 生命周期），不合并；运维调节需求一致确认后再收敛（J1.4 候选）。
 
-部署兼容性：所有环境变量（`AI_SERVICE_URL` 等）与 docker compose 接线保持原样。
+部署兼容性：所有环境变量（`AI_SERVICE_URL` 等）与原生 N03 运行时的接线保持原样。
 
 ## 6. Trusted Header 边界（不变更协议）
 
@@ -222,7 +222,7 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 | SSE ownership | `AiSseGatewayService` 唯一上游 SSE 桥（冻结至 N2） |
 | persistence authority | backend 启动期 Flyway 唯一 schema owner + Hibernate validate；OSIV=false；schema-tool=MANUAL_TOOL |
 | cache authority | Spring Cache（生产 = RedisCacheManager `"roles"`，TTL 1h）唯一共享 cache owner；`@CacheEvict` 失效协议；Redis 故障 degrade-to-DB |
-| JWT configuration authority | typed `JwtProperties`（HS512 ≥64B，启动期 fail-fast）；prod/compose 无默认 secret（`${APP_JWT_SECRET}` 缺失即启动失败） |
+| JWT configuration authority | typed `JwtProperties`（HS512 ≥64B，启动期 fail-fast）；prod 无默认 secret（`${APP_JWT_SECRET}` 缺失即启动失败） |
 | network stack | Spring MVC inbound + WebClient outbound + SSE streaming（RestTemplate / WebSocket / STOMP / SockJS = 已删除态，守卫禁止复活） |
 | Java 平台语义边界 | Java 不拥有 ACG semantics（TaskPlan / ACG topology / Scheduler / ExecutionBinding 等，§1） |
 
@@ -243,20 +243,19 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 
 ## 11. CI Freeze Gate（`.github/workflows/backend-ci.yml`）
 
-- **触发**：push → master、pull_request → master；**不做 path 过滤**（根级 pom/compose/.env 样例
+- **触发**：push → master、pull_request → master；**不做 path 过滤**（根级 pom / 运行配置
   同样影响 backend，过滤省时风险不划算）。
-- **Java 版本对齐**：CI = **17**（pom `java.version=17` + 运行镜像 `eclipse-temurin:17.0.19_10-jre-jammy`；
-  本机 benchmark 的 JDK 21 只是测量工具，不代表项目版本）。
+- **Java 版本对齐**：CI = **17**（pom `java.version=17`；本机 benchmark 的 JDK 21 只是测量工具，不代表项目版本）。
 - **必跑两步**：`mvn test`（全量 305：unit + 30 条架构守卫 + 自管 PostgreSQL/Redis 真实例 +
   security contracts + observability contracts，即 §十二~十四全部冻结门的执行体）+
   `mvn package -DskipTests`（生产 jar 可构建）。
 - **性能基准不在 required gate**：`@Tag("performance")` 由 surefire `excludedGroups` 默认排除
   （`-Pperformance` 打开）；P50/P95/P99 基线永不作为 PR blocking threshold。
-- **测试数据库/缓存是零 Docker 自管临时实例**：`NativePostgres` 定位本机 PostgreSQL 15.x
+- **测试数据库/缓存是零容器运行时自管临时实例**：`NativePostgres` 定位本机 PostgreSQL 15.x
   二进制（`ZHIYI_PG_BIN` → ZhiyiNative 依赖包 → CI apt `/usr/lib/postgresql/*/bin`），在临时目录
   `initdb` + 随机 loopback 端口启动，JVM 关闭时 `pg_ctl stop` 并清理；`NativeRedis` 同理
   （Windows 用 N03 同源 Memurai，CI 用 redis-server）。缺二进制显式 `BLOCKED_BY_PG/REDIS`
-  失败，不静默 skip。CI 只 apt 安装本机服务，不依赖 runner 的 Docker daemon。
+  失败，不静默 skip。CI 只 apt 安装本机服务，不依赖容器运行时。
 - **分支保护建议**（不由工具自动改远端）：Settings → Branches → Add branch protection rule →
   勾选 Require status checks → 选中 `backend-gate`（job 名）为 required check（针对 master）。
 
@@ -264,7 +263,7 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 
 基线是**回归参照**，不是 SLA / 保证 / 容量上限；CI 不设性能阈值。
 
-环境：Windows 11 本机（原生，无 Docker）；benchmark JVM 21（仅测量工具）；
+环境：Windows 11 本机（原生，无容器运行时）；benchmark JVM 21（仅测量工具）；
 PostgreSQL 15.19 真实例 + Memurai 4.1.2（测试 JVM 自管临时实例，pg-it/redis-it profiles）；
 fake Python upstream（JDK HttpServer，15ms 固定延迟，**零真实 LLM/公网调用**，测的是 Java 自身开销）；
 并发档 1/10/25/50，warmup 5s、measure 10s；指标 P50/P95/P99/max + 吞吐 + 错误率 + CPU +

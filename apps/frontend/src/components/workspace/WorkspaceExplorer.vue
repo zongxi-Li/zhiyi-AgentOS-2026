@@ -286,7 +286,7 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
   min-height: 27px;
   padding: 0 7px;
   cursor: pointer;
-  /* 一级标题（OVERVIEW/STEPS/OUTPUT）用强调蓝与条目行区分，参考 VS Code Docker 侧栏分区头 */
+  /* 一级标题（OVERVIEW/STEPS/OUTPUT）用强调蓝与条目行区分，参考 VS Code 侧栏分区头 */
   color: var(--wb-accent, var(--primary-color));
   font-size: 10px;
   font-weight: 750;
