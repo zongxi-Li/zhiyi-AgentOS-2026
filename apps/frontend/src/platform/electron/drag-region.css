@@ -1,0 +1,21 @@
+/*
+ * Electron 无边框窗口的自定义标题栏拖动区：
+ * Tauri 用 data-tauri-drag-region 语义（仅命中元素自身时开始系统拖动），
+ * Electron 对应能力是 CSS -webkit-app-region。本规则把同一属性名映射到
+ * app-region；交互子元素（按钮/输入/链接等）显式还给 no-drag，
+ * 避免标题栏按钮被拖动区吞掉点击。
+ */
+[data-electron-drag-region] {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+[data-electron-drag-region] button,
+[data-electron-drag-region] a,
+[data-electron-drag-region] input,
+[data-electron-drag-region] select,
+[data-electron-drag-region] textarea,
+[data-electron-drag-region] [role='button'],
+[data-electron-drag-region] [data-electron-no-drag] {
+  -webkit-app-region: no-drag;
+}

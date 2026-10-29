@@ -1,0 +1,350 @@
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  Notification,
+  screen,
+  session,
+  shell
+} from 'electron'
+import { readFileSync, writeFileSync } from 'node:fs'
+import * as path from 'node:path'
+import { IPC } from './lib/ipc-contract'
+import { APP_INDEX_URL, APP_SCHEME, APP_HOST, handleAppProtocol, registerAppScheme } from './lib/protocol'
+import { createFileLogger, type FileLogger } from './lib/logging'
+import {
+  fitsAnyDisplay,
+  parseBoolean,
+  parseBoundedText,
+  parseExtensions,
+  parseHttpUrl
+} from './lib/validation'
+import {
+  DEFAULT_WINDOW_STATE,
+  dropStalePosition,
+  parseWindowState,
+  serializeWindowState,
+  type WindowState
+} from './lib/window-state'
+
+/**
+ * 知弈 AgentOS Electron Desktop Host。
+ *
+ * 边界约束（与 Tauri 版一致，架构门禁另测）：
+ * - 本进程只负责窗口、原生交互与桌面生命周期；
+ * - 不内嵌执行器、Scheduler，不直接调用模型生成执行决策；
+ * - 任务执行权威在 AgentOS Runtime / 知行 Host，经既有 HTTP/WS 边界接入；
+ * - 用户选择的目录只作为候选路径返回，是否允许访问由 Host Grant 权威决定。
+ */
+
+const DEV_DEFAULT_SERVER = 'http://127.0.0.1:15100'
+const DEFAULT_API_ORIGIN = 'http://127.0.0.1:9050'
+
+function parseArgValue(flag: string): string | undefined {
+  const prefix = `${flag}=`
+  for (const arg of process.argv) {
+    if (arg.startsWith(prefix)) return arg.slice(prefix.length)
+  }
+  return undefined
+}
+
+const devServerUrl = parseArgValue('--dev-server')
+const openDevtools = process.argv.includes('--devtools')
+const apiOrigin = (() => {
+  const configured = parseHttpUrl(process.env.KINLIN_API_ORIGIN)
+  return configured ? configured.origin : DEFAULT_API_ORIGIN
+})()
+
+registerAppScheme() // 必须发生在 app ready 之前
+
+let mainWindow: BrowserWindow | null = null
+let logger: FileLogger | null = null
+
+const stateFilePath = (): string => path.join(app.getPath('userData'), 'window-state.json')
+
+function loadWindowState(): WindowState {
+  const raw = (() => {
+    try {
+      return readFileSync(stateFilePath(), 'utf8')
+    } catch {
+      return null
+    }
+  })()
+  const parsed = parseWindowState(raw, DEFAULT_WINDOW_STATE)
+  return dropStalePosition(parsed, (bounds) => fitsAnyDisplay(bounds, screen.getAllDisplays().map((d) => d.bounds)))
+}
+
+function persistWindowState(win: BrowserWindow): void {
+  if (!logger) return
+  try {
+    const payload = serializeWindowState(win.getNormalBounds(), win.isMaximized(), win.isFullScreen())
+    writeFileSync(stateFilePath(), payload, 'utf8')
+  } catch (error) {
+    logger.warn('window state persist failed', { error: String(error) })
+  }
+}
+
+function rendererDir(): string {
+  // dist/main.js 与 renderer/ 在同一 asar（或仓库 electron 目录）内。
+  return path.resolve(__dirname, '..', 'renderer')
+}
+
+function isAllowedPageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (devServerUrl) return parsed.origin === new URL(devServerUrl).origin
+    return parsed.protocol === `${APP_SCHEME}:` && parsed.host === APP_HOST
+  } catch {
+    return false
+  }
+}
+
+function createWindow(): void {
+  if (!logger) return
+  const state = loadWindowState()
+  const win = new BrowserWindow({
+    title: '知弈 AgentOS',
+    width: state.width,
+    height: state.height,
+    minWidth: 1100,
+    minHeight: 700,
+    x: state.x,
+    y: state.y,
+    frame: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: false,
+      devTools: !app.isPackaged || Boolean(devServerUrl)
+    }
+  })
+
+  win.once('ready-to-show', () => {
+    win.show()
+    if (state.isMaximized) win.maximize()
+  })
+
+  const sendMaximizeState = (): void => {
+    if (!win.isDestroyed()) win.webContents.send(IPC.windowMaximizeChanged, win.isMaximized())
+  }
+  win.on('maximize', sendMaximizeState)
+  win.on('unmaximize', sendMaximizeState)
+  win.on('close', () => persistWindowState(win))
+
+  mainWindow = win
+
+  const target = devServerUrl || APP_INDEX_URL
+  const log = logger
+  log.info('loading page', { target })
+  win.loadURL(target).catch((error) => {
+    log.error('page load failed', { target, error: String(error) })
+    dialog.showErrorBox('知弈 AgentOS', '界面加载失败，请查看日志后重试。')
+    app.quit()
+  })
+  if (openDevtools) win.webContents.openDevTools({ mode: 'detach' })
+}
+
+/** 会话级加固：拒绝全部权限请求与检查（media/geolocation/notifications 等）。 */
+function hardenSession(target: Electron.Session, log: FileLogger): void {
+  target.setPermissionRequestHandler((_contents, permission, callback) => {
+    log.warn('permission request denied', { permission })
+    callback(false)
+  })
+  target.setPermissionCheckHandler((_contents, permission) => {
+    log.warn('permission check denied', { permission })
+    return false
+  })
+}
+
+function wireWebContentsGuards(): void {
+  app.on('web-contents-created', (_event, contents) => {
+    contents.on('will-navigate', (event, url) => {
+      if (isAllowedPageUrl(url)) return
+      event.preventDefault()
+      logger?.warn('navigation blocked', { url })
+      const parsed = parseHttpUrl(url)
+      if (parsed) void shell.openExternal(parsed.toString()).catch(() => undefined)
+    })
+    contents.setWindowOpenHandler(({ url }) => {
+      // window.open 一律不建新窗口；HTTP(S) 目标交系统浏览器。
+      const parsed = parseHttpUrl(url)
+      if (parsed) {
+        void shell.openExternal(parsed.toString()).catch(() => undefined)
+      } else {
+        logger?.warn('window.open blocked', { url })
+      }
+      return { action: 'deny' }
+    })
+    contents.on('will-attach-webview', (event) => {
+      event.preventDefault()
+      logger?.warn('webview attach denied')
+    })
+    contents.on('render-process-gone', (_event, details) => {
+      logger?.error('renderer process gone', { reason: details.reason, exitCode: details.exitCode })
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        void dialog
+          .showMessageBox(mainWindow, {
+            type: 'error',
+            buttons: ['重新加载', '退出'],
+            defaultId: 0,
+            cancelId: 1,
+            message: '界面进程异常退出',
+            detail: `原因：${details.reason}`
+          })
+          .then((choice) => {
+            if (choice.response === 0 && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload()
+            else app.quit()
+          })
+      }
+    })
+  })
+}
+
+function registerIpcHandlers(): void {
+  const authorized = (event: Electron.IpcMainInvokeEvent): boolean =>
+    Boolean(mainWindow) && !mainWindow!.isDestroyed() && event.sender.id === mainWindow!.webContents.id
+
+  const guard = (event: Electron.IpcMainInvokeEvent): void => {
+    if (!authorized(event)) {
+      logger?.warn('unauthorized ipc sender', { senderId: event.sender.id })
+      throw new Error('Unauthorized IPC sender')
+    }
+  }
+
+  ipcMain.handle(IPC.windowMinimize, (event) => {
+    guard(event)
+    mainWindow?.minimize()
+    return null
+  })
+  ipcMain.handle(IPC.windowToggleMaximize, (event) => {
+    guard(event)
+    if (!mainWindow) return null
+    if (mainWindow.isMaximized()) mainWindow.unmaximize()
+    else mainWindow.maximize()
+    return null
+  })
+  ipcMain.handle(IPC.windowClose, (event) => {
+    guard(event)
+    mainWindow?.close()
+    return null
+  })
+  ipcMain.handle(IPC.windowIsMaximized, (event) => {
+    guard(event)
+    return mainWindow?.isMaximized() ?? false
+  })
+  ipcMain.handle(IPC.windowIsFullscreen, (event) => {
+    guard(event)
+    return mainWindow?.isFullScreen() ?? false
+  })
+  ipcMain.handle(IPC.windowSetFullscreen, (event, raw) => {
+    guard(event)
+    const fullscreen = parseBoolean(raw)
+    if (fullscreen === null) throw new Error('Invalid fullscreen flag')
+    mainWindow?.setFullScreen(fullscreen)
+    return null
+  })
+  ipcMain.handle(IPC.dialogOpenFile, async (event, raw) => {
+    guard(event)
+    const payload = (raw ?? {}) as { extensions?: unknown }
+    const extensions = parseExtensions(payload.extensions)
+    if (extensions === null) throw new Error('Invalid file filters')
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: extensions && extensions.length > 0 ? [{ name: 'Supported files', extensions }] : undefined
+    })
+    const filePath = result.canceled ? undefined : result.filePaths[0]
+    if (!filePath) return null
+    return { name: path.basename(filePath), path: filePath }
+  })
+  ipcMain.handle(IPC.dialogOpenDirectory, async (event) => {
+    guard(event)
+    if (!mainWindow) return null
+    // 只返回候选路径；是否允许访问由后端 Host Grant 权威决定。
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })
+    if (result.canceled) return null
+    return result.filePaths[0] ?? null
+  })
+  ipcMain.handle(IPC.notify, (event, raw) => {
+    guard(event)
+    const payload = (raw ?? {}) as { title?: unknown; body?: unknown }
+    const title = parseBoundedText(payload.title, 200)
+    if (!title) throw new Error('Invalid notification title')
+    const body = parseBoundedText(payload.body, 2000)
+    new Notification({ title, body: body ?? undefined }).show()
+    return null
+  })
+  ipcMain.handle(IPC.openExternal, async (event, raw) => {
+    guard(event)
+    const parsed = parseHttpUrl(raw)
+    if (!parsed) throw new Error('Only HTTP(S) external URLs are allowed')
+    await shell.openExternal(parsed.toString())
+    return null
+  })
+  ipcMain.handle(IPC.appInfo, (event) => {
+    guard(event)
+    return { version: app.getVersion(), platform: process.platform, packaged: app.isPackaged }
+  })
+}
+
+function wireGlobalErrorHandling(): void {
+  process.on('uncaughtException', (error) => {
+    logger?.error('uncaught exception', { name: error.name, message: error.message, stack: error.stack })
+    dialog.showErrorBox('知弈 AgentOS 主进程异常', `${error.name}: ${error.message}\n\n详情见应用日志。`)
+    app.exit(1)
+  })
+  process.on('unhandledRejection', (reason) => {
+    logger?.error('unhandled rejection', { reason: String(reason) })
+  })
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  app.whenReady().then(() => {
+    logger = createFileLogger(path.join(app.getPath('userData'), 'logs'))
+    logger.info('main starting', {
+      appVersion: app.getVersion(),
+      electron: process.versions.electron,
+      chromium: process.versions.chrome,
+      platform: process.platform,
+      packaged: app.isPackaged,
+      devServer: devServerUrl ?? null,
+      apiOrigin
+    })
+    wireGlobalErrorHandling()
+
+    // 无边框窗口的标题栏菜单没有存在意义；F12/Ctrl+R 等默认加速键一并移除。
+    Menu.setApplicationMenu(null)
+    hardenSession(session.defaultSession, logger)
+    wireWebContentsGuards()
+
+    if (!devServerUrl) {
+      handleAppProtocol(rendererDir(), apiOrigin)
+    }
+    registerIpcHandlers()
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    app.quit()
+  })
+}

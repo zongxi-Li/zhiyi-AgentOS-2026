@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "@platform": ["./src/platform/electron/adapter.ts"],
+      "@window-controls": ["./src/components/desktop/ElectronWindowControls.vue"],
+      "@ui-zoom": ["./src/platform/electron/uiZoom.ts"],
+      "@tauri-apps/*": ["../desktop/node_modules/@tauri-apps/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],
+  "exclude": ["src/**/*.spec.ts"]
+}

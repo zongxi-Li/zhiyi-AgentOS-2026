@@ -118,3 +118,11 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 
 这些探针调用真实 Memurai 和生产 Lua coordinator / 正式 HTTP API；不能替代实际桌面
 操作。本轮证据和剩余限制见 [N03 实施报告](../../../../../docs/开发记录/PR-N03-Windows-Persistent-Native-实施与验收.md)。
+
+## 桌面壳选择（默认 Tauri，可切 Electron）
+
+`persistent_runtime` 与 N02 共用 `desktop_shell.py` 抽象：默认 Tauri 回退入口不变，
+`& $entry up -HomeDir $homeDir -Python $py -Desktop -Shell electron` 切换为 Electron 壳
+（需先在 `apps/desktop/electron` 执行 `npm install`）。数据库、工作区、
+`environment.json`/`credentials.dpapi` 身份与所有持久数据完全不变；同一 home 在两种壳
+之间重复 up/down/recover 亦不重建任何数据。详见 [N02 README 的桌面壳章节](README-N02.md)。

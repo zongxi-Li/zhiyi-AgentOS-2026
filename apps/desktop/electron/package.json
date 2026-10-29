@@ -1,0 +1,23 @@
+{
+  "name": "kinlin-desktop-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "知弈 AgentOS Electron 桌面宿主（只负责窗口、原生交互与桌面生命周期；任务执行权威在 AgentOS Runtime）",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "dev": "node scripts/dev.mjs",
+    "start": "node build.mjs && node scripts/copy-renderer.mjs && electron .",
+    "test": "node --test \"test/*.test.ts\"",
+    "pack": "node build.mjs && node scripts/copy-renderer.mjs && electron-builder --dir",
+    "dist": "node build.mjs && node scripts/copy-renderer.mjs && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.0"
+  }
+}

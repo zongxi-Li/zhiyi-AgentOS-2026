@@ -11,20 +11,40 @@ const DEV_PROXY_TIMEOUT_MS = 240000
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isDesktop = mode === 'desktop'
+  const isElectron = mode === 'electron'
+  // 桌面家族共享 15100 端口与宿主 Gateway 代理规则；Electron 只是换平台适配层。
+  const isDesktopFamily = isDesktop || isElectron
   const platformAdapter = resolve(
     __dirname,
-    isDesktop ? 'src/platform/desktop/adapter.ts' : 'src/platform/web/adapter.ts'
+    isDesktop
+      ? 'src/platform/desktop/adapter.ts'
+      : isElectron
+        ? 'src/platform/electron/adapter.ts'
+        : 'src/platform/web/adapter.ts'
   )
-  // 桌面构建把窗口控件打进顶栏；Web 构建换成空占位，保证永不解析 @tauri-apps/api/window。
+  // 桌面构建把窗口控件打进顶栏；Web 构建换成空占位，保证永不解析 @tauri-apps/api/window
+  // 或任何 Electron 桥模块。
   const windowControls = resolve(
     __dirname,
-    isDesktop ? 'src/components/desktop/DesktopWindowControls.vue' : 'src/platform/web/windowControlsStub.ts'
+    isDesktop
+      ? 'src/components/desktop/DesktopWindowControls.vue'
+      : isElectron
+        ? 'src/components/desktop/ElectronWindowControls.vue'
+        : 'src/platform/web/windowControlsStub.ts'
+  )
+  const uiZoomEntry = resolve(
+    __dirname,
+    isDesktop
+      ? 'src/platform/desktop/uiZoom.ts'
+      : isElectron
+        ? 'src/platform/electron/uiZoom.ts'
+        : 'src/platform/web/uiZoomStub.ts'
   )
   const desktopNodeModules = resolve(__dirname, '../desktop/node_modules')
   const BACKEND_PROXY_TARGET =
     env.DEV_BACKEND_PROXY_TARGET ||
     'http://127.0.0.1:9050'
-  const proxyThroughHostGateway = isDesktop && BACKEND_PROXY_TARGET === 'http://127.0.0.1:9050'
+  const proxyThroughHostGateway = isDesktopFamily && BACKEND_PROXY_TARGET === 'http://127.0.0.1:9050'
 
   return {
     plugins: [
@@ -40,6 +60,8 @@ export default defineConfig(({ mode }) => {
       }
     },
     build: {
+      // Electron 走独立产物目录，Web/Docker 的 dist 与 Tauri 的 frontendDist 互不覆盖。
+      outDir: isElectron ? 'dist-electron' : 'dist',
       // The remaining large files are the app shell and lazy visualization
       // libraries; keep a guard for meaningful growth after code-splitting.
       chunkSizeWarningLimit: 800
@@ -69,14 +91,9 @@ export default defineConfig(({ mode }) => {
       alias: [
         { find: '@platform', replacement: platformAdapter },
         { find: '@window-controls', replacement: windowControls },
-        // 桌面端 Ctrl+滚轮界面缩放的初始化入口；Web 构建换空占位，保证永不解析 @tauri-apps/api/webview。
-        {
-          find: '@ui-zoom',
-          replacement: resolve(
-            __dirname,
-            isDesktop ? 'src/platform/desktop/uiZoom.ts' : 'src/platform/web/uiZoomStub.ts'
-          )
-        },
+        // 桌面端 Ctrl+滚轮界面缩放的初始化入口；Web 构建换空占位，保证永不解析
+        // @tauri-apps/api/webview 或 Electron 桥模块。
+        { find: '@ui-zoom', replacement: uiZoomEntry },
         ...(isDesktop ? [
           { find: '@tauri-apps/api', replacement: resolve(desktopNodeModules, '@tauri-apps/api') },
           { find: '@tauri-apps/plugin-dialog', replacement: resolve(desktopNodeModules, '@tauri-apps/plugin-dialog') },
@@ -97,15 +114,15 @@ export default defineConfig(({ mode }) => {
       ],
     },
     server: {
-      port: isDesktop ? 15100 : 3000,
+      port: isDesktopFamily ? 15100 : 3000,
       // 桌面模式端口是 tauri dev 的硬约定（tauri.conf.json devUrl=127.0.0.1:15100，
-      // 后端 CORS 白名单也只围绕该源设计）：端口被占就快速失败，
+      // Electron dev 复用同一端口与同一套后端 CORS 白名单）：端口被占就快速失败，
       // 禁止 Vite 静默漂移到 3001 导致 API 全部落入 CORS 陷阱。
-      strictPort: isDesktop,
+      strictPort: isDesktopFamily,
       // Windows 宿主目录 bind mount 进容器后不产生 inotify 事件，chokidar 常规监听
       // 会静默失效：源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
       // 容器开发保留轮询；宿主桌面开发使用原生监听，避免持续扫描文件。
-      watch: { usePolling: env.CHOKIDAR_USEPOLLING === 'true' || !isDesktop, interval: 1000 },
+      watch: { usePolling: env.CHOKIDAR_USEPOLLING === 'true' || !isDesktopFamily, interval: 1000 },
       proxy: {
         '/api': {
           target: BACKEND_PROXY_TARGET,
