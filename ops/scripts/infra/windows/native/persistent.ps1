@@ -11,7 +11,6 @@ param(
     [string]$Snapshot,
     [ValidateSet('python','hands')][string]$Backend = 'python',
     [ValidateRange(0,1000)][int]$PortOffset = 0,
-    [ValidateSet('tauri','electron')][string]$Shell = 'tauri',
     [switch]$Desktop
 )
 $ErrorActionPreference = 'Stop'
@@ -25,7 +24,6 @@ if ($Action -eq 'init') {
     if ($BackendJar) { $nativeArgs += @('--backend-jar',$BackendJar) }
 }
 if ($Desktop) { $nativeArgs += '--desktop' }
-if ($Desktop -and $Shell) { $env:KINLIN_DESKTOP_SHELL = $Shell }
 if ($Snapshot) { $nativeArgs += @('--snapshot',$Snapshot) }
 & $Python @nativeArgs
 exit $LASTEXITCODE

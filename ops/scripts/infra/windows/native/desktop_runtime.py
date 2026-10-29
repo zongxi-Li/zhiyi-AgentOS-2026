@@ -90,7 +90,7 @@ def spawn_app(run, name, command, env, cwd):
     return native.identity(psutil.Process(child.pid))
 
 
-def show_desktop(record, classes=(desktop_shell.TAURI_WINDOW_CLASS,)):
+def show_desktop(record, classes=desktop_shell.ELECTRON_WINDOW_CLASSES):
     """The interactive app window is visible; its helper console stays hidden."""
     import win32con
     import win32gui
@@ -109,7 +109,7 @@ def show_desktop(record, classes=(desktop_shell.TAURI_WINDOW_CLASS,)):
     return windows
 
 
-def close_desktop(record, classes=(desktop_shell.TAURI_WINDOW_CLASS,)):
+def close_desktop(record, classes=desktop_shell.ELECTRON_WINDOW_CLASSES):
     """Close only windows descended from this lifecycle's verified owner."""
     import win32con
     import win32gui
@@ -148,7 +148,7 @@ def java_environment(run, state, creds):
                 SPRING_REDIS_PASSWORD=(SECRETS/'redis_password').read_text().strip(),
                 APP_JWT_SECRET=creds['jwt'],AI_INTERNAL_TOKEN=creds['token'],AI_INTERNAL_REQUIRED='true',
                 AI_SERVICE_URL='http://127.0.0.1:18761',SERVER_PORT='18080',SERVER_ADDRESS='127.0.0.1',
-                CORS_ALLOWED_ORIGINS='http://127.0.0.1:15200,http://tauri.localhost,tauri://localhost,kinlin-app://shell',
+                CORS_ALLOWED_ORIGINS='http://127.0.0.1:15200,kinlin-app://shell',
                 APP_UPLOAD_DIR=str(run/'uploads'),SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE='3',
                 SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE='1')
 
@@ -185,9 +185,8 @@ def up(run, workspace, desktop):
     state = {'format':'kinlin-native-desktop-v1','runDirectory':str(run),'workspace':str(workspace),
              'aiPort':18761,'hostPort':18765,'javaPort':18080,'frontendPort':15200,
              'database':identifier,'processes':{},'created':time.time(),'desktop':desktop}
-    shell = desktop_shell.current_shell() if desktop else 'tauri'
     if desktop:
-        state['shell'] = shell
+        state['shell'] = desktop_shell.current_shell()
     save(run,state)
     try:
         sql = f"CREATE ROLE {identifier} LOGIN PASSWORD '{creds['db']}';\nCREATE DATABASE {identifier} OWNER {identifier};\n"
@@ -226,18 +225,14 @@ def up(run, workspace, desktop):
             'SYSTEMROOT','WINDIR','COMSPEC','PATH','PATHEXT','USERPROFILE','APPDATA','LOCALAPPDATA',
             'PROGRAMDATA','TEMP','TMP','PYTHONUTF8','NO_PROXY'}}
         front_env.update(DEV_BACKEND_PROXY_TARGET='http://127.0.0.1:18080',VITE_API_BASE_URL='')
-        frontend_mode = desktop_shell.frontend_mode(shell) if desktop else 'desktop'
+        frontend_mode = 'electron'
         state['processes']['frontend']=native.spawn(run,'frontend',[shutil.which('node'),str(ROOT/'apps/frontend/node_modules/vite/bin/vite.js'),
             str(ROOT/'apps/frontend'),'--mode',frontend_mode,'--host','127.0.0.1','--port','15200'],front_env); save(run,state)
         wait_until(lambda: socket.create_connection(('127.0.0.1',15200),timeout=1).close() is None,state['processes']['frontend'])
         if desktop:
-            config=run/'tauri-native.json'
-            if shell == 'tauri':
-                native.write_json(config,{'identifier':'com.kinlin.zhiyi.native-dev',
-                                          'build':{'beforeDevCommand':'','devUrl':'http://127.0.0.1:15200'}})
-            desktop_env=desktop_shell.desktop_env(shell,front_env,run)
-            command,cwd=desktop_shell.desktop_command(ROOT,shell,'http://127.0.0.1:15200',
-                                                      config_path=config if shell=='tauri' else None)
+            shell = state['shell']
+            desktop_env=desktop_shell.desktop_env(shell,front_env)
+            command,cwd=desktop_shell.desktop_command(ROOT,shell,'http://127.0.0.1:15200')
             state['processes']['desktop']=spawn_app(run,'desktop',command,desktop_env,cwd); save(run,state)
             wait_until(desktop_shell.ready_check(),state['processes']['desktop'],240)
             state['desktopWindows']=show_desktop(state['processes']['desktop'],desktop_shell.window_classes(shell)); save(run,state)
@@ -250,7 +245,7 @@ def up(run, workspace, desktop):
 
 def status(run,state):
     result={'services':{},'runtime':native.snapshot(state),'workspace':state['workspace'],'database':state['database'],
-            'desktopShell':state.get('shell','tauri')}
+            'desktopShell':state.get('shell','electron')}
     for name,record in state['processes'].items():
         result['services'][name] = {'alive':native.owned(record) is not None,'process':record}
     try: result['javaHealth']=native.health(18080,'/actuator/health')
@@ -263,7 +258,7 @@ def down(run,state):
     errors=[]
     for name,record in reversed(list(state['processes'].items())):
         try:
-            if name == 'desktop': close_desktop(record,desktop_shell.window_classes(state.get('shell','tauri')))
+            if name == 'desktop': close_desktop(record,desktop_shell.window_classes(state.get('shell','electron')))
             native.stop(record)
         except Exception as exc: errors.append({'service':name,'error':str(exc)})
     if errors:

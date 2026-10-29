@@ -104,7 +104,7 @@ def java_environment(home, info, creds):
         SPRING_REDIS_PASSWORD=creds['redis'], APP_JWT_SECRET=creds['jwt'],
         AI_INTERNAL_REQUIRED='true', AI_SERVICE_URL=f"http://127.0.0.1:{ports(info)['ai']}",
         SERVER_PORT=str(ports(info)['java']), SERVER_ADDRESS='127.0.0.1',
-        CORS_ALLOWED_ORIGINS=f"http://127.0.0.1:{ports(info)['frontend']},http://tauri.localhost,tauri://localhost,kinlin-app://shell",
+        CORS_ALLOWED_ORIGINS=f"http://127.0.0.1:{ports(info)['frontend']},kinlin-app://shell",
         APP_UPLOAD_DIR=str(home/'uploads'), SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE='3',
         SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE='1')
 
@@ -214,7 +214,7 @@ def up(home, use_desktop):
     session = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+secrets.token_hex(2)
     logdir = home/'logs'/session
     logdir.mkdir()
-    shell = desktop_shell.current_shell() if use_desktop else 'tauri'
+    shell = desktop_shell.current_shell()
     state.update(processes={}, desktop=use_desktop, shell=shell, session=session)
     save(home, state)
     env = env_for(home, info, creds)
@@ -276,20 +276,14 @@ def up(home, use_desktop):
             'SYSTEMROOT','WINDIR','COMSPEC','PATH','PATHEXT','USERPROFILE','APPDATA','LOCALAPPDATA','PROGRAMDATA',
             'TEMP','TMP','NO_PROXY'}}
         front_env.update(DEV_BACKEND_PROXY_TARGET=f"http://127.0.0.1:{ports(info)['java']}", VITE_API_BASE_URL='')
-        frontend_mode = desktop_shell.frontend_mode(shell) if use_desktop else 'desktop'
+        frontend_mode = 'electron'
         vite = start('frontend', [shutil.which('node'), str(ROOT/'apps/frontend/node_modules/vite/bin/vite.js'),
                                   str(ROOT/'apps/frontend'), '--mode',frontend_mode,'--host','127.0.0.1','--port',str(ports(info)['frontend'])], front_env)
         desktop.wait_until(lambda: native.health(ports(info)['frontend'],'/api/health/ready').get('status') == 'UP', vite, 60)
         if use_desktop:
-            configfile = home/'tauri-native.json'
-            if shell == 'tauri':
-                native.write_json(configfile, {'identifier':'com.kinlin.zhiyi.native-dev',
-                    'build':{'beforeDevCommand':'','devUrl':f"http://127.0.0.1:{ports(info)['frontend']}"}})
-            appenv = desktop_shell.desktop_env(shell, front_env, home, debug_port=ports(info)['debug'])
+            appenv = desktop_shell.desktop_env(shell, front_env)
             command, cwd = desktop_shell.desktop_command(ROOT, shell, f"http://127.0.0.1:{ports(info)['frontend']}",
-                                                         config_path=configfile if shell == 'tauri' else None,
-                                                         debug_port=ports(info)['debug'],
-                                                         bin_name='kinlin-integration-dev' if info.get('portOffset') else None)
+                                                         debug_port=ports(info)['debug'])
             record = desktop.spawn_app(home, 'logs/'+session+'/desktop', command, appenv, cwd)
             state['processes']['desktop'] = record
             save(home, state)
@@ -338,7 +332,7 @@ def down(home):
     records = {name:record for name,record in state['processes'].items() if alive(record)}
     for name,record in reversed(list(records.items())):
         if name == 'desktop':
-            desktop.close_desktop(record, desktop_shell.window_classes(state.get('shell','tauri')))
+            desktop.close_desktop(record, desktop_shell.window_classes(state.get('shell','electron')))
             native.stop(record)
         elif name == 'postgres':
             subprocess.run([str(Path(info['postgresBin'])/'pg_ctl.exe'), '-D', str(home/'postgres'),

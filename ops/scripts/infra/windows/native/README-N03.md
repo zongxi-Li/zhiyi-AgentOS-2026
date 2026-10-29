@@ -1,11 +1,13 @@
 # N03 Windows 无 Docker 持久开发环境
 
-使用真实 PostgreSQL、Memurai、Java、Python ExecutionRuntime、知行 Host 和 Tauri。
+使用真实 PostgreSQL、Memurai、Java、Python ExecutionRuntime、知行 Host 和 Electron 桌面壳。
 本入口不调用 Docker，不创建系统服务，不修改系统 PATH 或防火墙。原 Docker 部署保留。
 
 ## 依赖准备（普通用户）
 
-JDK 21、Maven、Node、Rust/MSVC、WebView2，以及现有前端和 Tauri npm 依赖必须可用。
+JDK 21、Maven、Node，以及现有前端 npm 依赖必须可用。还需 Electron 运行时
+（`apps/desktop/electron` 的 npm 依赖；Electron 二进制经 npm 安装，网络受限时可设
+`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
 Python 3.14 使用 N01A 的两份锁文件安装到固定用户目录，参见 [N01A README](README.md)。
 不依赖 N02 位于 TEMP 的测试 venv。
 
@@ -57,7 +59,7 @@ Mission 仍按正式控制区执行：准备任务图 → 激活暂停 → 准�
 关闭后再次 up 可登录原账户，继续查看会话、Mission、Run 和 canonical final deliverable。
 
 默认 loopback 端口：PostgreSQL 15432、Memurai 16379、Python 18761、知行 18765、
-Java 18080、Vite 15200；`-Desktop` 使用 WebView2 19222 开发取证端口。
+Java 18080、Vite 15200；`-Desktop` 使用 Chromium CDP 19222 开发取证端口。
 成功 up/status/down 返回 0；DOWN 或冲突、初始化/恢复失败返回非零。
 同一 home 的生命周期由 OS 文件锁串行化；已运行时再次 up 会拒绝，不会重复执行或换库。
 
@@ -72,7 +74,7 @@ Java 18080、Vite 15200；`-Desktop` 使用 WebView2 19222 开发取证端口。
 | `data\` | 现有生产 Runtime 的 SQLite、Checkpoint、Artifact 内容与 manifest 等 |
 | `workspace\` | 默认系统签发 Grant 的文件根目录 |
 | `uploads\` | Java 上传数据 |
-| `webview\` | 独立 Tauri WebView 用户配置；备份默认不含登录浏览器状态 |
+| `webview\` | 历史 Tauri WebView 用户数据目录；Electron 壳不再使用，备份默认不含登录浏览器状态 |
 | `logs\<UTC时间>-<随机标识>\` | 每次进程启动日志及 up 记录，不覆盖以前的日志 |
 | `logs\last-down.json` | 最近正常停止、端口、SQLite 独占句柄和 OS 锁检查结果 |
 
@@ -119,10 +121,14 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 这些探针调用真实 Memurai 和生产 Lua coordinator / 正式 HTTP API；不能替代实际桌面
 操作。本轮证据和剩余限制见 [N03 实施报告](../../../../../docs/开发记录/PR-N03-Windows-Persistent-Native-实施与验收.md)。
 
-## 桌面壳选择（默认 Tauri，可切 Electron）
+## 桌面壳（Electron 单壳）
 
-`persistent_runtime` 与 N02 共用 `desktop_shell.py` 抽象：默认 Tauri 回退入口不变，
-`& $entry up -HomeDir $homeDir -Python $py -Desktop -Shell electron` 切换为 Electron 壳
-（需先在 `apps/desktop/electron` 执行 `npm install`）。数据库、工作区、
-`environment.json`/`credentials.dpapi` 身份与所有持久数据完全不变；同一 home 在两种壳
-之间重复 up/down/recover 亦不重建任何数据。详见 [N02 README 的桌面壳章节](README-N02.md)。
+`persistent_runtime` 与 N02 共用 `desktop_shell.py`，固定拉起 Electron 壳：以
+`node apps/desktop/electron/node_modules/electron/cli.js` 启动，`--dev-server`
+指向本环境 Vite（`--mode electron`），CDP 调试端口为 19222 + 端口偏移，就绪探测为
+`/json/version`，窗口类名 `Chrome_WidgetWin_1`（需先在 `apps/desktop/electron` 执行
+`npm install`）。`KINLIN_DESKTOP_SHELL` 仅接受 `electron`（默认），设为其他值会启动即
+报错；状态文件 `shell` 字段恒为 `electron`，历史状态仅作记录；`persistent.ps1` 不再有
+`-Shell` 参数。数据库、工作区、`environment.json`/`credentials.dpapi` 身份与所有持久
+数据完全不变；同一 home 重复 up/down/recover 亦不重建任何数据。
+详见 [N02 README 的桌面壳章节](README-N02.md)。
