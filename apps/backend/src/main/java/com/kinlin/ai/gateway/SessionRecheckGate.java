@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -39,11 +40,12 @@ final class SessionRecheckGate {
     private final UUID userId;
     private final Duration recheckPeriod;
     private final Duration queryTimeout;
-    private final long leaseMillis;
+    private final long leaseNanos;
+    private final LongSupplier monotonicTime;
     private final Scheduler recheckScheduler;
     private final Runnable onRevoked;
 
-    private final AtomicLong leaseDeadline = new AtomicLong(Long.MAX_VALUE);
+    private final AtomicLong leaseDeadline = new AtomicLong();
     private final AtomicBoolean inFlight = new AtomicBoolean();
     private final AtomicBoolean revoked = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -60,26 +62,35 @@ final class SessionRecheckGate {
             Scheduler recheckScheduler,
             Runnable onRevoked
     ) {
+        this(sessionActivityProbe, sid, userId, recheckPeriod, queryTimeout, lease,
+                recheckScheduler, onRevoked, System::nanoTime);
+    }
+
+    SessionRecheckGate(SessionActivityProbe sessionActivityProbe, UUID sid, UUID userId,
+                       Duration recheckPeriod, Duration queryTimeout, Duration lease,
+                       Scheduler recheckScheduler, Runnable onRevoked, LongSupplier monotonicTime) {
         this.sessionActivityProbe = sessionActivityProbe;
         this.sid = sid;
         this.userId = userId;
         this.recheckPeriod = recheckPeriod;
         this.queryTimeout = queryTimeout;
-        this.leaseMillis = lease.toMillis();
+        this.leaseNanos = lease.toNanos();
+        this.monotonicTime = monotonicTime;
         this.recheckScheduler = recheckScheduler;
         this.onRevoked = onRevoked;
     }
 
     /** 建连：初始租期覆盖 filter 认证观测，周期任务（t=0 首查 + 每 P）随即启动。 */
     void start(Scheduler clock) {
-        leaseDeadline.set(System.currentTimeMillis() + leaseMillis);
+        // Elapsed validity must not follow host/VM wall-clock corrections.
+        leaseDeadline.set(monotonicTime.getAsLong() + leaseNanos);
         timer = Flux.interval(Duration.ZERO, recheckPeriod, clock)
                 .subscribe(tick -> runCheck(), error -> revoke());
     }
 
     /** 交付门：租期内放行；否则 fail-closed 拒绝并终止流。 */
     Mono<ServerSentEvent<String>> admit(ServerSentEvent<String> event) {
-        if (!revoked.get() && System.currentTimeMillis() < leaseDeadline.get()) {
+        if (!revoked.get() && monotonicTime.getAsLong() - leaseDeadline.get() < 0) {
             return Mono.just(event);
         }
         if (!revoked.get()) {
@@ -131,7 +142,7 @@ final class SessionRecheckGate {
         if (!inFlight.compareAndSet(false, true)) {
             return;
         }
-        long t0 = System.currentTimeMillis();
+        long t0 = monotonicTime.getAsLong();
         Mono.fromCallable(() -> sessionActivityProbe.isSessionActive(sid, userId))
                 .subscribeOn(recheckScheduler)
                 .timeout(queryTimeout)
@@ -140,7 +151,7 @@ final class SessionRecheckGate {
                             if (inFlight.compareAndSet(true, false) && !revoked.get() && !closed.get()) {
                                 if (active) {
                                     // 租期从查询开始时刻 t0 起算，不从返回时刻重新计时
-                                    leaseDeadline.set(t0 + leaseMillis);
+                                    leaseDeadline.set(t0 + leaseNanos);
                                 } else {
                                     log.info("SSE session check rejected an inactive session");
                                     revoke();

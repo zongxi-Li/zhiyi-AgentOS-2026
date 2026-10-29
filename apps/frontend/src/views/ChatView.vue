@@ -235,6 +235,7 @@
                   reasoningPath: msg.reasoningPath,
                   modelInfo: msg.modelInfo,
                   thinkingState: msg.thinkingState,
+                  streamError: msg.streamError,
                   streamActivity: msg.streamActivity,
                   streamPhase: msg.streamPhase,
                   thinkingDurationMs: msg.thinkingDurationMs,
@@ -395,7 +396,7 @@
               :rows="1"
               :autosize="{ minRows: 1, maxRows: 6 }"
               resize="none"
-              :placeholder="$t('chat.placeholder')"
+              :placeholder="$t(isAgentMode ? 'chat.placeholder' : 'chat.conversationPlaceholder')"
               @keydown="handleKeydown"
             />
               <div class="composer-footer">

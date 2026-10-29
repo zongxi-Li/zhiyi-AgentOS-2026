@@ -16,6 +16,8 @@ import org.springframework.http.codec.ServerSentEvent;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import reactor.core.publisher.SignalType;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 
@@ -23,6 +25,7 @@ import java.io.IOException;
 @RestController
 @RequestMapping("/ai")
 @RequiredArgsConstructor
+@Slf4j
 public class AiServiceProxyController {
 
     private final AiProxyService aiProxyService;
@@ -55,9 +58,19 @@ public class AiServiceProxyController {
                             .concatWith(Mono.defer(() -> Mono.fromRunnable(
                                             () -> chatStreamPersistenceService.complete(prepared, capture))
                                     .subscribeOn(Schedulers.boundedElastic())
-                                    .then(Mono.empty())));
+                                    .then(Mono.empty())))
+                            .doFinally(signal -> {
+                                if (signal == SignalType.CANCEL) {
+                                    capture.cancel();
+                                    Mono.fromRunnable(() -> chatStreamPersistenceService.complete(prepared, capture))
+                                            .subscribeOn(Schedulers.boundedElastic())
+                                            .subscribe(ignored -> { }, error -> log.warn(
+                                                    "Chat cancellation persistence failed; type={}", error.getClass().getSimpleName()));
+                                }
+                            });
                     return ResponseEntity.status(response.getStatusCode())
                             .headers(response.getHeaders())
+                            .header("X-Chat-Context-Id", prepared.contextId())
                             .body(observed);
                 });
     }

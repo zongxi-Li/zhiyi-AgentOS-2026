@@ -160,4 +160,26 @@ class SessionRecheckGateTest {
             Thread.currentThread().interrupt();
         }
     }
+
+    @Test
+    void leaseUsesElapsedTimeIncludingAcrossNanoTimeWraparound() {
+        // A nanoTime origin is arbitrary and may be negative or wrap. Wall time
+        // adjustments must have no role in this five-second validity interval.
+        java.util.concurrent.atomic.AtomicLong time =
+                new java.util.concurrent.atomic.AtomicLong(Long.MAX_VALUE - TimeUnit.SECONDS.toNanos(2));
+        gate = new SessionRecheckGate(loginSessionService, sid, userId,
+                Duration.ofSeconds(3), Duration.ofSeconds(1), Duration.ofSeconds(5),
+                Schedulers.boundedElastic(), () -> { }, time::get);
+        reactor.test.scheduler.VirtualTimeScheduler clock = reactor.test.scheduler.VirtualTimeScheduler.create();
+        try {
+            gate.start(clock);
+            time.addAndGet(TimeUnit.SECONDS.toNanos(4));
+            StepVerifier.create(gate.admit(event("within lease"))).expectNextCount(1).verifyComplete();
+            time.addAndGet(TimeUnit.SECONDS.toNanos(1));
+            StepVerifier.create(gate.admit(event("expired")))
+                    .expectError(SessionRecheckGate.SessionRevokedException.class).verify();
+        } finally {
+            clock.dispose();
+        }
+    }
 }

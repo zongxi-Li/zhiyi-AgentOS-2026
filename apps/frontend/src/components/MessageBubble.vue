@@ -154,6 +154,8 @@
           </Transition>
         </section>
 
+        <p v-if="message.streamError && message.streamError !== message.content" class="stream-error" role="status">{{ message.streamError }}</p>
+
         <section
           v-if="approvalActivities.length"
           class="approval-work"
@@ -416,6 +418,7 @@ interface Props {
     reasoningPath?: ReasoningStep[]
     modelInfo?: string
     thinkingState?: 'thinking' | 'complete' | 'error'
+    streamError?: string
     streamActivity?: 'receiving' | 'waiting' | 'complete'
     streamPhase?: string
     thinkingDurationMs?: number
@@ -546,6 +549,7 @@ const headerThinkingActive = computed(() => {
 })
 
 const thinkingLabel = computed(() => {
+  if (props.message.streamError) return props.message.streamError === '已停止生成' ? '已停止生成' : '回复已中断'
   const seconds = thinkingDurationSeconds.value
   const duration = seconds === null ? '' : `（用时 ${seconds} 秒）`
   if (props.message.thinkingState === 'complete') return `已思考${duration}`
@@ -606,6 +610,11 @@ const formatTime = (date: Date) => {
 </script>
 
 <style scoped lang="scss">
+.stream-error {
+  color: var(--danger, #b54735);
+  font-size: 13px;
+  margin: 12px 0;
+}
 .message-bubble {
   width: 100%;
   display: flex;

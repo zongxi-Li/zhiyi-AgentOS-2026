@@ -79,6 +79,7 @@
   },
   "chat": {
     "placeholder": "Describe a task and let agents deliver it together",
+    "conversationPlaceholder": "Message AI",
     "send": "Send",
     "clear": "Clear",
     "newChat": "Select a role to start an immersive conversation",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Iterable, Literal
 from uuid import uuid4
 
@@ -100,6 +100,31 @@ class ToolInvocationContext:
     _call_count: int = 0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    def invocation_timeout(self, name: str) -> float:
+        execution = max(0.1, float(settings.TOOL_TIMEOUT_SECONDS))
+        if name in {"terminal", "run_command"}:
+            execution = max(execution, float(settings.TOOL_TERMINAL_MAX_TIMEOUT_SECONDS) + 5.0)
+        service = getattr(self.catalog, "permission_service", None)
+        ttl = getattr(service, "approval_ttl", None)
+        if name in (*ChatToolCatalog.FILE_TOOL_NAMES, *ChatToolCatalog.COMMAND_TOOL_NAMES) and ttl is not None:
+            return execution + float(ttl.total_seconds())
+        return execution
+
+    def sdk_tools(self) -> list[Any]:
+        tools = []
+        for name in sorted(self.allowed_tools):
+            if name not in SDK_TOOLS:
+                continue
+            tool = SDK_TOOLS[name]
+            if (name in (*ChatToolCatalog.FILE_TOOL_NAMES, *ChatToolCatalog.COMMAND_TOOL_NAMES)
+                    and getattr(self.catalog, "permission_service", None) is not None):
+                # SDK applies an independent timeout outside invoke(). Its envelope
+                # must include the same human approval budget, without changing
+                # policy TTL, executor limits, or tools shared by other runs.
+                tool = replace(tool, timeout_seconds=max(tool.timeout_seconds or 0, self.invocation_timeout(name) + 5.0))
+            tools.append(tool)
+        return tools
+
     async def _permission_event_sink(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.permission_event_queue is not None:
             await self.permission_event_queue.put((event_type, payload))
@@ -125,23 +150,7 @@ class ToolInvocationContext:
             catalog_kwargs: dict[str, Any] = {"role_id": self.role_id}
             if self.provider:
                 catalog_kwargs["provider"] = self.provider
-            invocation_timeout = max(0.1, float(settings.TOOL_TIMEOUT_SECONDS))
-            if name in {"terminal", "run_command"}:
-                invocation_timeout = max(
-                    invocation_timeout,
-                    float(settings.TOOL_TERMINAL_MAX_TIMEOUT_SECONDS) + 5.0,
-                )
-            permission_service = getattr(self.catalog, "permission_service", None)
-            if name in (*ChatToolCatalog.FILE_TOOL_NAMES, *ChatToolCatalog.COMMAND_TOOL_NAMES) and permission_service is not None:
-                # Approval is an explicit user wait, not a normal tool
-                # execution timeout. Keep the original invocation alive until
-                # the policy TTL has elapsed.
-                approval_ttl = getattr(permission_service, "approval_ttl", None)
-                if approval_ttl is not None:
-                    invocation_timeout = max(
-                        invocation_timeout,
-                        float(approval_ttl.total_seconds()) + 5.0,
-                    )
+            invocation_timeout = self.invocation_timeout(name)
             if name in (*ChatToolCatalog.FILE_TOOL_NAMES, *ChatToolCatalog.COMMAND_TOOL_NAMES) and getattr(self.catalog, "supports_call_id", False):
                 catalog_kwargs["call_id"] = call_id
                 catalog_kwargs["request_id"] = self.request_id or self.session_id
@@ -546,7 +555,7 @@ class AgentsToolRuntime:
             should_replay_reasoning_content=(lambda _: replay_reasoning),
             buffer_streamed_tool_calls=True,
         )
-        tools = [SDK_TOOLS[name] for name in sorted(context.allowed_tools) if name in SDK_TOOLS]
+        tools = context.sdk_tools()
         availability = self.catalog.availability(context.provider)
         available_names = sorted(
             name for name in context.allowed_tools if availability.get(name, {}).get("available")
@@ -901,12 +910,12 @@ class AgentsToolRuntime:
                 },
             )
         finally:
-            if stream_task is not None and not stream_task.done():
-                stream_task.cancel()
-                await asyncio.gather(stream_task, return_exceptions=True)
-            if permission_task is not None and not permission_task.done():
-                permission_task.cancel()
-                await asyncio.gather(permission_task, return_exceptions=True)
+            # Cancel every owned waiter before awaiting SDK teardown. A second
+            # downstream cancellation must not strand the permission Queue.get.
+            waiters = [task for task in (stream_task, permission_task) if task is not None]
+            for task in waiters:
+                if not task.done(): task.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
             permission_service = getattr(self.catalog, "permission_service", None)
             cancel = getattr(self.catalog, "cancel", None)
             if cancel is not None:

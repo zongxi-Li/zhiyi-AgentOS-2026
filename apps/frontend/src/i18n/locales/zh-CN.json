@@ -79,6 +79,7 @@
   },
   "chat": {
     "placeholder": "描述你的任务，协同多个智能体完成交付",
+    "conversationPlaceholder": "输入消息，与 AI 对话",
     "send": "发送",
     "clear": "清空",
     "newChat": "选择角色开始沉浸式对话",

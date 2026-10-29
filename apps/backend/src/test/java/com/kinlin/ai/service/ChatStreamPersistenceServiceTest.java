@@ -204,4 +204,67 @@ class ChatStreamPersistenceServiceTest {
             throw new AssertionError(error);
         }
     }
+
+    @Test
+    void persistsFailedPartialReplyOnceWithoutRawReasoningOrErrorPayload() {
+        MessageRepository messages = mock(MessageRepository.class);
+        ChatStreamPersistenceService service = new ChatStreamPersistenceService(
+                mock(ConversationRepository.class), messages, new ObjectMapper());
+        var capture = service.capture();
+        capture.accept(event("reasoning_delta", Map.of("delta", "private reasoning")));
+        capture.accept(event("content_delta", Map.of("delta", "partial answer")));
+        capture.accept(ServerSentEvent.builder("{\"code\":\"AUTH_SESSION_INVALIDATED\"}")
+                .event("auth.invalidated").build());
+        var prepared = new ChatStreamPersistenceService.PreparedStream(UUID.randomUUID(), "ctx", Map.of("model", "deepseek-flash"));
+        service.complete(prepared, capture);
+        service.complete(prepared, capture);
+        var captor = org.mockito.ArgumentCaptor.forClass(Message.class);
+        verify(messages).save(captor.capture());
+        assertEquals("partial answer", captor.getValue().getContent());
+        assertTrue(captor.getValue().getMetadata().toString().contains("登录会话"));
+        assertTrue(captor.getValue().getMetadata().toString().contains("failed"));
+        assertFalse(captor.getValue().getMetadata().toString().contains("private reasoning"));
+        assertEquals("deepseek-flash", captor.getValue().getMetadata().get("model_info"));
+    }
+
+    @Test
+    void persistsCancellationWithoutInventingModelContent() {
+        MessageRepository messages = mock(MessageRepository.class);
+        ChatStreamPersistenceService service = new ChatStreamPersistenceService(
+                mock(ConversationRepository.class), messages, new ObjectMapper());
+        var capture = service.capture();
+        capture.cancel();
+        service.complete(new ChatStreamPersistenceService.PreparedStream(UUID.randomUUID(), "ctx", Map.of()), capture);
+        var captor = org.mockito.ArgumentCaptor.forClass(Message.class);
+        verify(messages).save(captor.capture());
+        assertEquals("已停止生成", captor.getValue().getContent());
+        assertTrue(captor.getValue().getMetadata().toString().contains("cancelled"));
+    }
+
+    @Test
+    void retryContextExcludesFailedRepliesAndKeepsSuccessfulContent() {
+        UUID userId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+        Conversation conversation = new Conversation();
+        conversation.setId(conversationId);
+        conversation.setUserId(userId);
+        conversation.setContextId("ctx-retry");
+        conversation.setWorkspaceMode("chat");
+        ConversationRepository conversations = mock(ConversationRepository.class);
+        when(conversations.findByContextId("ctx-retry")).thenReturn(Optional.of(conversation));
+        MessageRepository messages = mock(MessageRepository.class);
+        Message failed = new Message();
+        failed.setRole(Message.MessageRole.ASSISTANT);
+        failed.setContent("failure text must not become model input");
+        failed.setMetadata(Map.of("executionSummary", List.of(Map.of("stage", "chat_stream", "status", "failed"))));
+        Message successful = new Message();
+        successful.setRole(Message.MessageRole.ASSISTANT);
+        successful.setContent("previous answer");
+        when(messages.findByConversationIdOrderByCreatedAtAsc(conversationId)).thenReturn(List.of(failed, successful));
+        var prepared = new ChatStreamPersistenceService(conversations, messages, new ObjectMapper())
+                .prepare(Map.of("context_id", "ctx-retry", "text", "try again"));
+        assertEquals(List.of(Map.of("role", "assistant", "content", "previous answer")), prepared.body().get("context"));
+    }
 }

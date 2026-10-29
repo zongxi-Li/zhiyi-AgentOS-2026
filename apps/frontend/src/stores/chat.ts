@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { parseChatStreamData, parseSseDataLine, type ChatStreamEvent } from '@/utils/sse'
+import { chatStreamErrorMessage, parseChatStreamFrame, type ChatStreamEvent } from '@/utils/sse'
 import { apiUrl } from '@/platform'
 import { workflowApi, type AsyncWorkflowStartResponse } from '@/services/api/workflow'
 import { chatApi, type ChatRequest } from '@/services/api/chat'
@@ -72,6 +72,7 @@ export interface Message {
   reasoningPath?: any[]
   modelInfo?: string
   thinkingState?: 'thinking' | 'complete' | 'error'
+  streamError?: string
   streamActivity?: 'receiving' | 'waiting' | 'complete'
   streamPhase?: string
   thinkingDurationMs?: number
@@ -341,9 +342,7 @@ export const useChatStore = defineStore('chat', () => {
       role: 'assistant',
       content: '',
       createdAt: new Date(),
-      modelInfo: runtimeSettings.provider === 'system'
-        ? 'AI (streaming)'
-        : runtimeSettings.selectedModel,
+      modelInfo: runtimeSettings.selectedModel || '系统默认',
       thinkingState: runtimeSettings.thinkingMode === 'disabled' ? undefined : 'thinking',
       requestedThinkingMode: runtimeSettings.thinkingMode,
       reasoningContent: '',
@@ -353,17 +352,14 @@ export const useChatStore = defineStore('chat', () => {
     }
     messages.value.push(streamMsg)
     const streamIndex = messages.value.length - 1
-    const thinkingStartedAt = Date.now()
+    const thinkingStartedAt = performance.now()
+    let terminal: 'done' | 'error' | 'cancelled' | null = null
     const finishThinking = (state: 'complete' | 'error', durationMs?: number) => {
       const message = messages.value[streamIndex]
       if (!message) return
       if (!message.thinkingState && message.requestedThinkingMode === 'disabled') return
       message.thinkingState = state
-      message.thinkingDurationMs = Math.max(0, durationMs ?? (Date.now() - thinkingStartedAt))
-    }
-    const setStreamContent = (content: string) => {
-      const message = messages.value[streamIndex]
-      if (message) message.content = content
+      message.thinkingDurationMs = Math.max(0, durationMs ?? (performance.now() - thinkingStartedAt))
     }
     const appendStreamContent = (delta: string) => {
       const message = messages.value[streamIndex]
@@ -376,7 +372,18 @@ export const useChatStore = defineStore('chat', () => {
       const message = messages.value[streamIndex]
       if (message) message.reasoningContent = (message.reasoningContent || '') + delta
     }
+    const failStream = (description: string, state: 'error' | 'cancelled' = 'error') => {
+      terminal = state
+      finishThinking('error')
+      const message = messages.value[streamIndex]
+      if (!message) return
+      message.streamActivity = 'complete'
+      message.streamPhase = state === 'cancelled' ? '已停止生成' : '请求未完成'
+      message.streamError = description
+      if (!message.content) message.content = description
+    }
     const applyStreamEvent = (event: ChatStreamEvent) => {
+      if (terminal === 'error' || terminal === 'cancelled') return
       const message = messages.value[streamIndex]
       if (!message) return
       const data = event.data || {}
@@ -541,6 +548,12 @@ export const useChatStore = defineStore('chat', () => {
           }
           break
         case 'done':
+          if (data.status && data.status !== 'completed') {
+            failStream(data.status === 'cancelled' ? '已停止生成' : chatStreamErrorMessage(data.code),
+              data.status === 'cancelled' ? 'cancelled' : 'error')
+            break
+          }
+          terminal = 'done'
           message.streamActivity = 'complete'
           message.streamPhase = '已完成'
           if (typeof data.contextId === 'string' && data.contextId) contextId.value = data.contextId
@@ -558,10 +571,9 @@ export const useChatStore = defineStore('chat', () => {
           finishThinking(message.content ? 'complete' : 'error')
           break
         case 'error':
-          message.streamActivity = 'complete'
-          message.streamPhase = '请求未完成'
-          finishThinking('error')
-          if (!message.content) message.content = `Stream request failed: ${data.code || 'AI_STREAM_FAILED'}`
+        case 'auth.invalidated':
+          failStream(chatStreamErrorMessage(event.event === 'auth.invalidated'
+            ? 'AUTH_SESSION_INVALIDATED' : data.code))
           break
       }
     }
@@ -594,63 +606,57 @@ export const useChatStore = defineStore('chat', () => {
         })
       })
 
+      const streamContextId = resp.headers.get('X-Chat-Context-Id')
+      if (streamContextId) contextId.value = streamContextId
       if (!resp.ok) {
-        finishThinking('error')
-        setStreamContent(`Stream request failed: HTTP ${resp.status}`)
+        failStream(resp.status === 401 ? chatStreamErrorMessage('AUTH_SESSION_INVALIDATED')
+          : `回复请求失败（HTTP ${resp.status}），请重试`)
         return
       }
 
       const reader = resp.body?.getReader()
       if (!reader) {
-        finishThinking('error')
-        setStreamContent('流式读取失败')
+        failStream('流式读取失败，请重试')
         return
       }
       const decoder = new TextDecoder()
       let buffer = ''
-      let streamComplete = false
+      const consumeFrame = (frame: string) => {
+        const event = parseChatStreamFrame(frame)
+        if (event) applyStreamEvent(event)
+      }
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          const data = parseSseDataLine(line)
-          if (data !== null) {
-            const event = parseChatStreamData(data)
-            if (!event) continue
-            applyStreamEvent(event)
-            if (event.event === 'done') {
-              streamComplete = true
-            }
-          }
-        }
+        const frames = buffer.split(/\r?\n\r?\n/)
+        buffer = frames.pop() || ''
+        for (const frame of frames) consumeFrame(frame)
       }
-      if (streamComplete) {
+      buffer += decoder.decode()
+      if (buffer.trim()) consumeFrame(buffer)
+      if (terminal === 'done') {
         if (!streamMsg.content) {
-          finishThinking('error')
-          setStreamContent('AI 返回了空响应，请重试')
+          failStream('AI 返回了空响应，请重试')
         } else {
           finishThinking('complete')
         }
         emitHistoryRefresh()
-      } else if (!streamMsg.content) {
-        finishThinking('error')
-        setStreamContent('流式响应意外结束，请重试')
+      } else if (!terminal) {
+        failStream('流式响应意外结束，请重试')
       }
     } catch (e) {
-      finishThinking('error')
       if ((e as Error).name === 'AbortError') {
-        if (!streamMsg.content) setStreamContent('已停止生成')
+        failStream('已停止生成', 'cancelled')
       } else {
-        setStreamContent('流式请求失败: ' + (e as Error).message)
+        failStream('流式请求失败: ' + (e as Error).message)
       }
     } finally {
       const message = messages.value[streamIndex]
+      if (message) message.streamActivity = 'complete'
       if (message?.thinkingState === 'thinking') {
-        finishThinking(message.content && !message.content.startsWith('Stream request failed:') ? 'complete' : 'error')
+        finishThinking(terminal === 'done' ? 'complete' : 'error')
       }
       if (activeStreamController === streamController) activeStreamController = null
       activeRequestId = null
@@ -801,7 +807,12 @@ export const useChatStore = defineStore('chat', () => {
         outputTokens: msg.metadata?.outputTokens,
         latencyMs: msg.metadata?.latencyMs,
         executionSummary: msg.metadata?.executionSummary,
-        thinkingState: msg.metadata?.thinkingEnabled ? 'complete' : undefined,
+        streamError: msg.metadata?.executionSummary?.find((stage: ExecutionSummaryItem) =>
+          stage.stage === 'chat_stream' && stage.status !== 'completed')?.description,
+        streamActivity: msg.role?.toLowerCase() === 'user' ? undefined : 'complete',
+        thinkingState: msg.metadata?.executionSummary?.some((stage: ExecutionSummaryItem) =>
+          stage.stage === 'chat_stream' && stage.status !== 'completed') ? 'error'
+          : msg.metadata?.thinkingEnabled ? 'complete' : undefined,
         agentMode: 'default'
       }))
 

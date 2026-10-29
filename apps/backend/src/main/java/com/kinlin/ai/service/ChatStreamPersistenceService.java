@@ -64,15 +64,27 @@ public class ChatStreamPersistenceService {
 
     @Transactional
     public void complete(PreparedStream prepared, StreamCapture capture) {
-        if (!capture.completed || capture.content.isEmpty()) {
-            return;
-        }
         Message assistantMessage = new Message();
+        synchronized (capture) {
+            if (capture.persisted) return;
+            capture.persisted = true;
+            if (!capture.completed && capture.failure == null) {
+                capture.failure = "回复连接中断，请重试";
+            }
+            if (capture.completed && capture.content.isEmpty()) {
+                capture.completed = false;
+                capture.failure = "AI 返回了空响应，请重试";
+            }
+            assistantMessage.setContent(capture.content.isEmpty() ? capture.failure : capture.content.toString());
+            Map<String, Object> metadata = capture.metadata();
+            if (!metadata.containsKey("effectiveModel")) {
+                metadata.put("model_info", stringValue(prepared.body().get("model")));
+            }
+            assistantMessage.setMetadata(metadata);
+        }
         assistantMessage.setConversationId(prepared.conversationId());
         assistantMessage.setRole(Message.MessageRole.ASSISTANT);
-        assistantMessage.setContent(capture.content.toString());
         assistantMessage.setMessageType(Message.MessageType.TEXT);
-        assistantMessage.setMetadata(capture.metadata());
         messageRepository.save(assistantMessage);
     }
 
@@ -96,12 +108,21 @@ public class ChatStreamPersistenceService {
 
     private List<Map<String, String>> buildContext(UUID conversationId) {
         return messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId).stream()
+                .filter(message -> !isUnfinishedReply(message))
                 .filter(message -> message.getContent() != null && !message.getContent().isBlank())
                 .map(message -> Map.of(
                         "role", message.getRole() == Message.MessageRole.USER ? "user" : "assistant",
                         "content", message.getContent()
                 ))
                 .toList();
+    }
+
+    private boolean isUnfinishedReply(Message message) {
+        if (message.getRole() != Message.MessageRole.ASSISTANT || message.getMetadata() == null) return false;
+        Object summary = message.getMetadata().get("executionSummary");
+        return summary instanceof List<?> items && items.stream().anyMatch(item ->
+                item instanceof Map<?, ?> stage && "chat_stream".equals(stage.get("stage"))
+                        && !"completed".equals(stage.get("status")));
     }
 
     private String stringValue(Object value) {
@@ -130,13 +151,16 @@ public class ChatStreamPersistenceService {
         private boolean reasoningCompleted;
         private boolean contentStarted;
         private boolean completed;
+        private boolean persisted;
+        private boolean cancelled;
+        private String failure;
 
         private StreamCapture(ObjectMapper objectMapper) {
             this.objectMapper = objectMapper;
         }
 
         @SuppressWarnings("unchecked")
-        public void accept(ServerSentEvent<String> event) {
+        public synchronized void accept(ServerSentEvent<String> event) {
             if (event == null || event.data() == null || event.data().isBlank()) {
                 return;
             }
@@ -176,7 +200,12 @@ public class ChatStreamPersistenceService {
                             "requestedThinkingMode", "effectiveThinkingMode",
                             "effectiveReasoningEffort", "resolutionReasons");
                     case "done" -> {
-                        completed = "completed".equals(String.valueOf(data.get("status")));
+                        String status = String.valueOf(data.get("status"));
+                        completed = failure == null && "completed".equals(status);
+                        if (!completed && failure == null) {
+                            cancelled = "cancelled".equals(status);
+                            failure = cancelled ? "已停止生成" : "回复生成未完成，请重试";
+                        }
                         addSources(data.get("sources"));
                         Object records = data.get("toolExecutions");
                         if (toolExecutions.isEmpty() && records instanceof List<?> items) {
@@ -188,8 +217,22 @@ public class ChatStreamPersistenceService {
                         }
                         copy(data, "toolsUsed");
                     }
+                    case "auth.invalidated" -> {
+                        completed = false;
+                        failure = "登录会话已失效或暂时无法验证，请重新登录后重试";
+                    }
+                    case "error" -> {
+                        completed = false;
+                        Object code = data.getOrDefault("code", envelope.getOrDefault("error", "AI_STREAM_FAILED"));
+                        failure = switch (String.valueOf(code)) {
+                            case "SSE_IDLE_TIMEOUT" -> "等待模型响应超时，请重试";
+                            case "SSE_MAX_DURATION" -> "本次回复已达到最长生成时间，请重试";
+                            case "AI_STREAM_INTERRUPTED" -> "模型连接中断，请重试";
+                            default -> "回复生成失败，请重试";
+                        };
+                    }
                     default -> {
-                        // reasoning_delta and error are intentionally not persisted as message metadata.
+                        // Raw reasoning and provider error payloads are never persisted.
                     }
                 }
             } catch (Exception ignored) {
@@ -197,7 +240,14 @@ public class ChatStreamPersistenceService {
             }
         }
 
-        public Map<String, Object> metadata() {
+        public synchronized void cancel() {
+            if (!completed && failure == null) {
+                cancelled = true;
+                failure = "已停止生成";
+            }
+        }
+
+        public synchronized Map<String, Object> metadata() {
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.putAll(usage);
             normalizeTokenName(metadata, "input_tokens", "inputTokens");
@@ -217,6 +267,8 @@ public class ChatStreamPersistenceService {
                 metadata.put("sources", List.copyOf(sources.values()));
             }
             List<Map<String, String>> summary = new ArrayList<>();
+            summary.add(Map.of("stage", "chat_stream", "status", completed ? "completed" : cancelled ? "cancelled" : "failed",
+                    "description", completed ? "回复已完成" : failure == null ? "回复生成未完成，请重试" : failure));
             for (Map<String, Object> item : toolExecutions) {
                 String toolName = String.valueOf(item.getOrDefault("toolName", "unknown"));
                 String status = String.valueOf(item.getOrDefault("status", "completed"));

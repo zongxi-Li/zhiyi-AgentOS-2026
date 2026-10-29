@@ -39,6 +39,22 @@ def _catalog(service, executor):
     )
 
 
+def test_sdk_timeout_keeps_full_approval_budget_without_mutating_shared_tools():
+    from app.tools.runtime import SDK_TOOLS
+
+    service = ChatPermissionService(approval_ttl_seconds=300)
+    context = ToolInvocationContext(_catalog(service, _Executor()), frozenset({'write_file'}))
+    original = SDK_TOOLS['write_file']
+    tool = context.sdk_tools()[0]
+    assert tool is not original
+    assert tool.timeout_seconds > service.approval_ttl.total_seconds()
+    assert tool.timeout_seconds > context.invocation_timeout('write_file')
+    assert original.timeout_seconds == 30.0
+    # Calls without a Chat permission service retain the original SDK budget.
+    plain = ToolInvocationContext(_catalog(None, _Executor()), frozenset({'write_file'}))
+    assert plain.sdk_tools()[0] is original
+
+
 def test_policy_defaults_read_list_and_asks_for_mutations():
     policy = PermissionPolicy()
     grants = SessionPermissionStore()
@@ -269,7 +285,8 @@ def test_approval_endpoint_resolves_pending_request_without_grant_authority(monk
     asyncio.run(scenario())
 
 
-def test_runtime_stream_emits_approval_events_while_original_tool_waits(monkeypatch):
+@pytest.mark.parametrize('cancel_pending', [False, True])
+def test_runtime_stream_emits_approval_events_while_original_tool_waits(monkeypatch, cancel_pending):
     async def scenario():
         service = ChatPermissionService()
         executor = _Executor()
@@ -314,16 +331,24 @@ def test_runtime_stream_emits_approval_events_while_original_tool_waits(monkeypa
         )
 
         events = []
-        async for event in runtime.stream(
+        stream = runtime.stream(
             "write stream.txt",
             model="test-model",
             base_url="https://example.test/v1",
             api_key="test-key",
             request_id="request-stream",
             session_id="session-stream",
-        ):
+        )
+        tasks_before = asyncio.all_tasks()
+        async for event in stream:
             events.append(event)
             if event.event is ChatStreamEventType.APPROVAL_REQUIRED:
+                if cancel_pending:
+                    await stream.aclose()
+                    await asyncio.sleep(0)
+                    assert executor.calls == []
+                    assert not (asyncio.all_tasks() - tasks_before)
+                    return
                 approval = event.data["approval"]
                 await service.resolve(
                     approval["approvalId"],

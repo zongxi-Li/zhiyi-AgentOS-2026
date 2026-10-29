@@ -27,6 +27,7 @@ export type ChatStreamEventType =
   | 'usage'
   | 'done'
   | 'error'
+  | 'auth.invalidated'
 
 export interface ChatStreamEvent {
   event: ChatStreamEventType
@@ -69,4 +70,37 @@ export function parseChatStreamData(data: string): ChatStreamEvent | null {
     return null
   }
   return null
+}
+
+/** Keep the SSE event field: gateway terminal events have no JSON envelope. */
+export function parseChatStreamFrame(frame: string): ChatStreamEvent | null {
+  let eventName = ''
+  const data: string[] = []
+  for (const line of frame.split(/\r?\n/)) {
+    if (line.startsWith('event:')) eventName = line.slice(6).trim()
+    const value = parseSseDataLine(line)
+    if (value !== null) data.push(value)
+  }
+  if (!data.length) return null
+  const payload = data.join('\n')
+  if (eventName === 'auth.invalidated' || eventName === 'error') {
+    try {
+      const parsed = JSON.parse(payload)
+      if (!parsed.event) return {
+        event: eventName, requestId: 'unknown', sequence: 0,
+        data: { code: parsed.code || parsed.error || 'AI_STREAM_FAILED' }
+      }
+    } catch { return null }
+  }
+  return parseChatStreamData(payload)
+}
+
+export function chatStreamErrorMessage(code?: string): string {
+  switch (code) {
+    case 'AUTH_SESSION_INVALIDATED': return '登录会话已失效或暂时无法验证，请重新登录后重试'
+    case 'SSE_IDLE_TIMEOUT': return '等待模型响应超时，请重试'
+    case 'SSE_MAX_DURATION': return '本次回复已达到最长生成时间，请重试'
+    case 'AI_STREAM_INTERRUPTED': return '模型连接中断，请重试'
+    default: return `回复生成失败，请重试${code ? `（${code}）` : ''}`
+  }
 }
