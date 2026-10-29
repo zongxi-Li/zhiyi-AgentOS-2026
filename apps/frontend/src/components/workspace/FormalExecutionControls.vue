@@ -1,7 +1,7 @@
 <template>
-  <section v-if="visible" class="formal-control" aria-label="正式运行控制">
-    <header><strong>运行控制</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
-    <dl aria-live="polite">
+  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded }" aria-label="正式运行控制">
+    <header><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
+    <dl v-if="!embedded" aria-live="polite">
       <div><dt>任务</dt><dd>{{ run?.status || '状态不可用' }}</dd></div>
       <div><dt>图</dt><dd>{{ control?.status || '证据不可用' }}</dd></div>
       <div><dt>许可</dt><dd>{{ control?.permitStatus || '尚未签发' }}</dd></div>
@@ -13,14 +13,21 @@
       <button v-if="action" type="button" class="formal-control__primary" :disabled="disabled" @click="submit">
         {{ pending ? '正在提交…' : error && !blocked ? '重试原操作' : formalActionLabels[action] }}
       </button>
-      <button v-if="canCancel && !historical" type="button" :disabled="pending || cancelPending || !run" @click="emit('cancel')">
+      <button v-if="canCancel && !historical" type="button" :disabled="readonly || pending || cancelPending || !run" @click="emit('cancel')">
         {{ cancelPending ? '正在取消…' : '取消任务' }}
       </button>
     </div>
     <p v-if="error" class="formal-control__error" role="alert">{{ error }}</p>
-    <WorkflowReviewPanel v-if="run?.status === 'waiting_review' && !historical && !blocked" :run-id="run.runId"
+    <small v-if="readonly && !historical && action">切换为“按需确认”权限后可操作。</small>
+    <WorkflowReviewPanel v-if="showReview && run?.status === 'waiting_review' && !historical && !blocked && !readonly" :run-id="run.runId"
       :run="reviewRun" :progress="null" compact @reviewed="emit('refresh')" @conflict="emit('refresh')" />
-    <details v-if="control"><summary>授权与关联引用</summary><dl>
+    <details v-if="control"><summary>{{ embedded ? '运行状态与授权引用' : '授权与关联引用' }}</summary><dl>
+      <template v-if="embedded">
+        <div><dt>任务</dt><dd>{{ run?.status || '状态不可用' }}</dd></div>
+        <div><dt>图</dt><dd>{{ control.status }}</dd></div>
+        <div><dt>许可</dt><dd>{{ control.permitStatus || '尚未签发' }}</dd></div>
+        <div><dt>执行命令</dt><dd>{{ control.dispatch?.status || '尚未提交' }}</dd></div>
+      </template>
       <div v-for="(value, key) in references" :key="key"><dt>{{ key }}</dt><dd :title="String(value)">{{ value || '—' }}</dd></div>
     </dl></details>
   </section>
@@ -32,7 +39,7 @@ import { agentosApi, type WorkflowRun } from '@/services/api/agentos'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { formalActionLabels, formalSource, nextFormalAction, prepareFormalCommand } from '@/features/acg/formalControl'
 
-const props = defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean }>()
+const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; readonly?: boolean; showReview?: boolean }>(), { embedded: false, readonly: false, showReview: true })
 const emit = defineEmits<{ refresh: []; cancel: [] }>()
 const pending = ref(false)
 const error = ref('')
@@ -48,14 +55,14 @@ const visible = computed(() => seenFormal.value || Boolean(control.value) || pro
 const action = computed(() => props.run?.runId === props.runId && props.run?.missionId === props.missionId ? nextFormalAction(props.run) : null)
 const source = computed(() => action.value && props.run ? formalSource(props.run, action.value) : '')
 watch(source, () => { error.value = ''; blocked.value = false })
-const disabled = computed(() => pending.value || blocked.value || props.historical || acknowledged.value === source.value)
+const disabled = computed(() => props.readonly || pending.value || blocked.value || props.historical || acknowledged.value === source.value)
 const reviewRun = computed(() => props.run ? { ...props.run, review: props.run.review || props.run.executionState?.reviewPayload } : null)
 const references = computed(() => ({ Commit: control.value?.commitId, Graph: control.value?.graphId, Version: control.value?.graphVersion,
   Activation: control.value?.activationId, Handoff: control.value?.handoffId, Permit: control.value?.permitId, Dispatch: control.value?.dispatch?.dispatchId }))
 const explanation = computed(() => {
   if (!props.run || !control.value) return '无法验证正式状态，控制操作已禁用。'
   if (props.historical) return '历史 Run 只读。'
-  if (props.run.status === 'completed') return '运行已完成；已登记的 Artifact 可从左侧打开或下载，最终交付以正式引用为准。'
+  if (props.run.status === 'completed') return props.embedded ? '任务已完成，可从左侧查看或下载交付文件。' : '运行已完成；已登记的 Artifact 可从左侧打开或下载，最终交付以正式引用为准。'
   if (['failed', 'cancelled'].includes(props.run.status)) return props.run.lifecycleMessage || '运行已停止。请查看下方故障与恢复证据。'
   if (props.run.status === 'waiting_review') return '等待审核；审核决定由正式接口处理。'
   if (props.run.status === 'running' || props.run.status === 'retrying') return '以 Run 查询与节点事件观察实际执行。'
@@ -101,6 +108,7 @@ const submit = async () => {
 
 <style scoped>
 .formal-control { flex: 0 0 auto; max-height: 58%; overflow: auto; padding: 10px 12px; border-bottom: 1px solid var(--wb-border-soft); color: var(--wb-text); background: var(--wb-surface-pane); font-size: 12px; }
+.formal-control.is-embedded { max-height: none; overflow: visible; margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); background: var(--wb-surface-inset); }
 header, .formal-control__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 header strong { font-size: 12px; font-weight: 600; }
 dl { display: grid; gap: 5px; margin: 10px 0; }

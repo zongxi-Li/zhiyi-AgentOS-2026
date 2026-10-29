@@ -77,16 +77,14 @@
 
       <template #right="rightState">
         <div class="workspace-inspector-column">
-        <FormalExecutionControls :key="selectedRunId || ''" :run="runtimeObservation?.run || null"
-          :run-id="selectedRunId" :mission-id="missionId" :historical="isHistorical"
-          :can-cancel="canCancelActiveRun" :cancel-pending="cancelPending"
-          @refresh="loadWorkspace(selectedRunId || undefined)" @cancel="cancelActiveRun" />
         <WorkbenchAuxiliarySidebar
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
           :component-props="auxiliaryViewProps"
           @open-file="emit('open-workspace-file', $event)"
           @select-run="selectRun"
+          @refresh-run="loadWorkspace(selectedRunId || undefined)"
+          @cancel-run="cancelActiveRun"
         />
         <RuntimeInspector
           v-else
@@ -203,7 +201,6 @@ import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
 import { missionDocumentContent } from '@/components/workspace/missionSemanticDisplay'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
-import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue'
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
@@ -394,6 +391,9 @@ const auxiliaryViewProps = computed(() => ({
   runId: projection.value?.activeRun?.runId || selectedRunId.value || null,
   runStatus: projection.value?.activeRun?.status || null,
   runtimeObservation: runtimeObservation.value,
+  missionId: missionId.value,
+  canCancel: canCancelActiveRun.value,
+  cancelPending: cancelPending.value,
   historical: isHistorical.value,
   ...(activeAuxiliaryView.value?.getProps?.(workbenchContext.value) || {})
 }))

@@ -4,6 +4,7 @@ import AcgCopilotPanel from './AcgCopilotPanel.vue'
 import { agentosApi } from '@/services/api/agentos'
 import type { CopilotState } from '@/services/api/agentos/api/copilot'
 import { clearCopilotSession } from './copilotSessionCache'
+import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 
 vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn() } }))
 const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision: 3, modelAvailable: true,
@@ -48,6 +49,32 @@ async function panel(props = {}) {
 beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.setCopilotPermission).mockImplementation(async (_, permission) => ({ missionId: 'mission-1', taskPermission: permission })); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.useRealTimers() })
 describe('task Copilot', () => {
+  it('owns formal controls and forwards refresh/cancel without issuing commands on mount', async () => {
+    const run = {runId:'run-1',missionId:'mission-1',status:'pending',steps:[],formalControl:{status:'PLANNING_ACCEPTED'}}
+    const w = await panel({missionId:'mission-1',canCancel:true,runtimeObservation:{runId:'run-1',run,traces:[]}})
+    const controls = w.getComponent(FormalExecutionControls)
+    expect(w.get('.conversation .formal-control').exists()).toBe(true)
+    expect(controls.props()).toMatchObject({embedded:true,runId:'run-1',missionId:'mission-1',readonly:false,canCancel:true})
+    controls.vm.$emit('refresh'); await flushPromises()
+    expect(w.emitted('refresh-run')).toHaveLength(1)
+    controls.vm.$emit('cancel')
+    expect(w.emitted('cancel-run')).toHaveLength(1)
+    await w.get('[aria-label="选择权限"]').trigger('click')
+    await w.get('.permission-menu button:first-of-type').trigger('click'); await flushPromises()
+    expect(controls.props('readonly')).toBe(true)
+    await w.get('.copilot-tabs button:last-child').trigger('click')
+    expect(controls.exists()).toBe(true)
+    expect(w.get('.conversation').isVisible()).toBe(false)
+  })
+
+  it('uses a single review surface and refuses another run observation', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({...state(),status:'waiting_review',review:review()})
+    const w = await panel({runtimeObservation:{runId:'run-1',traces:[],run:{runId:'run-1',status:'waiting_review',formalControl:{status:'ACTIVATED'}}}})
+    expect(w.getComponent(FormalExecutionControls).props('showReview')).toBe(false)
+    expect(w.findAll('.review-card')).toHaveLength(1)
+    await w.setProps({runtimeObservation:{runId:'run-2',run:{runId:'run-2',formalControl:{status:'ACTIVATED'}}} as any})
+    expect(w.getComponent(FormalExecutionControls).props('run')).toBeNull()
+  })
   it('restores task permission across runs and preserves the source of historical proposals', async () => {
     const proposal = { sourceRunId: 'run-1', operationId: 'proposal', user: 'rerun', assistant: 'ready', createdAt: '2026-10-06T01:00:00Z', observedRevision: 3,
       action: { kind: 'rerun' as const, stepId: null, expectedRevision: 3, executeStepIds: ['A'], reusedStepIds: [], content: 'rerun', executionEnvironmentChanged: true } }

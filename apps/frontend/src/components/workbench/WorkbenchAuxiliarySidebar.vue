@@ -11,6 +11,8 @@
         v-bind="componentProps"
         @open-file="emit('open-file', $event)"
         @select-run="emit('select-run', $event)"
+        @refresh-run="emit('refresh-run')"
+        @cancel-run="emit('cancel-run')"
       />
     </div>
   </aside>
@@ -28,6 +30,8 @@ defineProps<{
 const emit = defineEmits<{
   'open-file': [request: WorkspaceFileOpenRequest]
   'select-run': [runId: string]
+  'refresh-run': []
+  'cancel-run': []
 }>()
 </script>
 

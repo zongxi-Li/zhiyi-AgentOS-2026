@@ -19,6 +19,18 @@ const execute = (wrapper: ReturnType<typeof render>) => wrapper.findAll('button'
 beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.stubGlobal('crypto', webcrypto) })
 
 describe('formal Workbench controls', () => {
+  it('keeps embedded controls read-only and exposes technical evidence on demand', async () => {
+    const post = vi.spyOn(agentosApi, 'submitFormalControl')
+    const w = render(permitted(), {embedded:true,readonly:true})
+    expect(w.text()).toContain('任务进展')
+    expect(w.get('details').attributes('open')).toBeUndefined()
+    expect(w.get('summary').text()).toBe('运行状态与授权引用')
+    await execute(w).trigger('click')
+    await w.findAll('button').find(b => b.text() === '取消任务')!.trigger('click')
+    expect(post).not.toHaveBeenCalled()
+    expect(w.emitted('cancel')).toBeUndefined()
+    w.unmount()
+  })
   it('never dispatches on Permit issuance or on refresh', async () => {
     const post = vi.spyOn(agentosApi, 'submitFormalControl')
     const w = render()
