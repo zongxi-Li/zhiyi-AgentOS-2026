@@ -9,6 +9,8 @@
     "build:web": "vue-tsc -p tsconfig.json && vite build --mode web",
     "dev:desktop": "vite --mode desktop",
     "build:desktop": "vue-tsc -p tsconfig.desktop.json && vite build --mode desktop",
+    "dev:electron": "vite --mode electron",
+    "build:electron": "vue-tsc -p tsconfig.electron.json && vite build --mode electron",
     "test": "vitest run",
     "test:watch": "vitest",
     "build:docker": "npm run build:web",
