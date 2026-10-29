@@ -8,8 +8,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -84,30 +82,24 @@ class PostgresMigrationIntegrationTest extends PostgresIntegrationTestBase {
 
     /**
      * §二十二.3：迁移可重复性——在第二个全新空数据库上重放
-     * V1→latest 并通过 Flyway 自身的 validate。
+     * V1→latest 并通过 Flyway 自身的 validate。fresh 语义保留：同一自管临时
+     * 实例上的另一个全新 database，从空 schema 开始，不共享第一库的任何对象。
      */
     @Test
     void migrationReplaysCleanlyOnAFreshEmptyDatabase() {
-        try (PostgreSQLContainer<?> fresh = new PostgreSQLContainer<>(
-                DockerImageName.parse("postgres:15.17-alpine"))
-                .withDatabaseName("kinlin_fresh")
-                .withUsername("kinlin_fresh")
-                .withPassword("kinlin_fresh_password")) {
+        String freshUrl = POSTGRES.createDatabase("kinlin_fresh");
 
-            fresh.start();
+        Flyway migrate = Flyway.configure()
+                .dataSource(freshUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                .load();
+        int executed = migrate.migrate().migrationsExecuted;
+        List<String> classpath = classpathMigrationVersions();
+        assertThat(executed).isEqualTo(classpath.size());
 
-            Flyway migrate = Flyway.configure()
-                    .dataSource(fresh.getJdbcUrl(), fresh.getUsername(), fresh.getPassword())
-                    .load();
-            int executed = migrate.migrate().migrationsExecuted;
-            List<String> classpath = classpathMigrationVersions();
-            assertThat(executed).isEqualTo(classpath.size());
-
-            Flyway.configure()
-                    .dataSource(fresh.getJdbcUrl(), fresh.getUsername(), fresh.getPassword())
-                    .load()
-                    .validate();
-        }
+        Flyway.configure()
+                .dataSource(freshUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                .load()
+                .validate();
     }
 
     private static String lastOf(List<String> versions) {

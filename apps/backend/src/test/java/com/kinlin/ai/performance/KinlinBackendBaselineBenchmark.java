@@ -345,8 +345,8 @@ class KinlinBackendBaselineBenchmark extends RedisIntegrationTestBase {
         var osBean = (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         System.out.printf("[ENV] cpu-cores=%d max-heap=%dMB%n",
                 osBean.getAvailableProcessors(), Runtime.getRuntime().maxMemory() / 1024 / 1024);
-        System.out.println("[ENV] postgres=" + PostgresContainerBase.POSTGRES.getDockerImageName()
-                + " redis=" + RedisIntegrationTestBase.REDIS.getDockerImageName());
+        System.out.println("[ENV] postgres=" + PostgresContainerBase.POSTGRES.describe()
+                + " redis=" + RedisIntegrationTestBase.REDIS.describe());
         System.out.printf("[ENV] warmup=%ds measure=%ds levels=%s cache=%s%n",
                 WARMUP_SECONDS, MEASURE_SECONDS, Arrays.toString(CONCURRENCY_LEVELS),
                 environment.getProperty("spring.cache.type"));

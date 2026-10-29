@@ -173,8 +173,8 @@ class RoleCacheRedisIntegrationTest extends RedisIntegrationTestBase {
     /**
      * §十五：Redis 被定义为 optional cache——不可用时核心 DB 路径仍可工作
      * （degrade-to-DB，CacheConfig 的 CacheErrorHandler 吞掉缓存异常）。
-     * 必须保持最后一个执行：共享 Redis 容器停掉后不再重启（重启会分配
-     * 新端口，而应用上下文持旧端口），后续也无需再用。
+     * 必须保持最后一个执行：本基座停掉自己 spawn 的测试实例后不再重启；
+     * 后续用例也无需再用（如需恢复，用基座的 restartRedis() 复用同一端口）。
      */
     @Test
     @Order(6)
@@ -184,7 +184,7 @@ class RoleCacheRedisIntegrationTest extends RedisIntegrationTestBase {
         optimizer.getRoleCached(roleId);
         verify(roleService, times(1)).getRole(roleId);
 
-        REDIS.stop();
+        stopRedis();
 
         long start = System.currentTimeMillis();
         Role degraded = optimizer.getRoleCached(roleId);

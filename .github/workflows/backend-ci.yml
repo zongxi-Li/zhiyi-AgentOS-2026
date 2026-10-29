@@ -34,9 +34,23 @@ jobs:
           java-version: '17'
           cache: maven
 
-      # Required test gate：unit + architecture guard + PostgreSQL/Redis
-      # Testcontainers（github runner 自带 Docker，纯云环境证明 §六）
-      # + security contracts + observability contracts（J1.4D §五/§十~十四）。
+      # 零 Docker：PostgreSQL/Redis 集成测试由测试 JVM 自管临时实例，
+      # runner 只需要本机二进制（不再使用 Testcontainers / Docker daemon）。
+      - name: Install native PostgreSQL/Redis test services
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql redis-server
+          PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)"
+          test -x "$PG_BIN/initdb"
+          test -x "$PG_BIN/postgres"
+          test -x "$(command -v redis-server)"
+          echo "ZHIYI_PG_BIN=$PG_BIN" >> "$GITHUB_ENV"
+          "$PG_BIN/initdb" --version
+          redis-server --version
+
+      # Required test gate：unit + architecture guard + 自管 PostgreSQL/Redis
+      # 真实例（零 Docker 依赖）+ security contracts + observability contracts
+      # （J1.4D §五/§十~十四）。
       - name: Run backend test gate (mvn test)
         working-directory: apps/backend
         run: mvn -B -ntp test

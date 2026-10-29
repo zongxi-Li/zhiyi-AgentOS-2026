@@ -206,7 +206,7 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 5. SSE protocol（RuntimeEventEnvelope）——N2。
 6. Resource transport（multipart/binary 上游传输的系统化收敛）——N3。
 7. ~~GitHub 远端无 CI~~ → **J1.4D 已建立** `.github/workflows/backend-ci.yml`（required gate，
-   push/PR → master 必跑 `mvn test` 全量含 Testcontainers + `mvn package -DskipTests`，见 §11）。
+   push/PR → master 必跑 `mvn test` 全量含自管 PostgreSQL/Redis 真实例 + `mvn package -DskipTests`，见 §11）。
 
 ## 9. Architecture Freeze Status（J1.4D，2026-10-01）
 
@@ -247,14 +247,16 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
   同样影响 backend，过滤省时风险不划算）。
 - **Java 版本对齐**：CI = **17**（pom `java.version=17` + 运行镜像 `eclipse-temurin:17.0.19_10-jre-jammy`；
   本机 benchmark 的 JDK 21 只是测量工具，不代表项目版本）。
-- **必跑两步**：`mvn test`（全量 305：unit + 30 条架构守卫 + PostgreSQL/Redis Testcontainers +
+- **必跑两步**：`mvn test`（全量 305：unit + 30 条架构守卫 + 自管 PostgreSQL/Redis 真实例 +
   security contracts + observability contracts，即 §十二~十四全部冻结门的执行体）+
   `mvn package -DskipTests`（生产 jar 可构建）。
 - **性能基准不在 required gate**：`@Tag("performance")` 由 surefire `excludedGroups` 默认排除
   （`-Pperformance` 打开）；P50/P95/P99 基线永不作为 PR blocking threshold。
-- **Testcontainers 1.21.4 override 是正式版本决策**：Boot 3.2.0 BOM 钉的 1.19.x 内置 docker-java
-  无法对接 Docker Engine 29（API ≥1.44）；1.21.4（docker-java 3.4.2）向下兼容旧引擎，
-  GitHub runner 的 Docker 直接可用。非临时本机 hack —— pom 属性注释 + 本节双记录，禁止回退。
+- **测试数据库/缓存是零 Docker 自管临时实例**：`NativePostgres` 定位本机 PostgreSQL 15.x
+  二进制（`ZHIYI_PG_BIN` → ZhiyiNative 依赖包 → CI apt `/usr/lib/postgresql/*/bin`），在临时目录
+  `initdb` + 随机 loopback 端口启动，JVM 关闭时 `pg_ctl stop` 并清理；`NativeRedis` 同理
+  （Windows 用 N03 同源 Memurai，CI 用 redis-server）。缺二进制显式 `BLOCKED_BY_PG/REDIS`
+  失败，不静默 skip。CI 只 apt 安装本机服务，不依赖 runner 的 Docker daemon。
 - **分支保护建议**（不由工具自动改远端）：Settings → Branches → Add branch protection rule →
   勾选 Require status checks → 选中 `backend-gate`（job 名）为 required check（针对 master）。
 
@@ -262,8 +264,8 @@ J1.2B Controller 层规则：controller 只做 web 层职责（参数绑定、HT
 
 基线是**回归参照**，不是 SLA / 保证 / 容量上限；CI 不设性能阈值。
 
-环境：Windows 11 本机 Docker Desktop（Engine 29.0.1）；benchmark JVM 21（仅测量工具）；
-PostgreSQL 15.17-alpine + Redis 7.4.9-alpine（Testcontainers，pg-it/redis-it profiles）；
+环境：Windows 11 本机（原生，无 Docker）；benchmark JVM 21（仅测量工具）；
+PostgreSQL 15.19 真实例 + Memurai 4.1.2（测试 JVM 自管临时实例，pg-it/redis-it profiles）；
 fake Python upstream（JDK HttpServer，15ms 固定延迟，**零真实 LLM/公网调用**，测的是 Java 自身开销）；
 并发档 1/10/25/50，warmup 5s、measure 10s；指标 P50/P95/P99/max + 吞吐 + 错误率 + CPU +
 Hikari pending + query/request + cache hitRatio。
