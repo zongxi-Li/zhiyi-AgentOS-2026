@@ -8,6 +8,7 @@
     </div>
 
     <div class="workspace-file-explorer__tools">
+      <button v-if="desktopWorkspace" type="button" class="workspace-file-explorer__open" @click="chooseFolder">打开文件夹</button>
       <label class="workspace-file-explorer__filter">
         <el-icon aria-hidden="true"><Search /></el-icon>
         <input v-model="filterText" type="search" aria-label="筛选文件名" placeholder="筛选文件..." />
@@ -58,6 +59,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { getElectronBridge } from '@/platform/electron/bridge'
 import { FolderOpened, Refresh, Search } from '@element-plus/icons-vue'
 import { agentosApi, type WorkspaceFileEntry, type WorkspaceFileOpenRequest } from '@/services/api/agentos'
 import WorkspaceFileTreeNode from './WorkspaceFileTreeNode.vue'
@@ -71,6 +73,20 @@ const ignoredDirectories = new Set([
   '.pytest_cache', '.mypy_cache', '.ruff_cache', 'build', '.next', '.nuxt'
 ])
 
+const desktopWorkspace = getElectronBridge()?.workspace
+const desktopWorkspaceId = ref<string | null>(null)
+async function chooseFolder() {
+  try {
+    const folder = await desktopWorkspace?.choose()
+    if (!folder) return
+    desktopWorkspaceId.value = folder.id
+    workspaceRoot.value = folder.root
+    selectedPath.value = ''; filterText.value = ''
+    await refresh()
+  } catch (error: any) { rootError.value = error?.message || '无法打开文件夹' }
+}
+const listFiles = (missionId: string, path: string) => desktopWorkspaceId.value && desktopWorkspace
+  ? desktopWorkspace.list(desktopWorkspaceId.value, path) : agentosApi.listWorkspaceFiles(missionId, path)
 const nodes = ref<WorkspaceFileTreeItem[]>([])
 const workspaceRoot = ref('')
 const selectedPath = ref('')
@@ -79,7 +95,7 @@ const rootLoading = ref(false)
 const rootError = ref('')
 
 const makeNodes = (entries: WorkspaceFileEntry[]): WorkspaceFileTreeItem[] => entries
-  .filter(entry => !(entry.type === 'directory' && ignoredDirectories.has(entry.name.toLowerCase())))
+  .filter(entry => desktopWorkspaceId.value || !(entry.type === 'directory' && ignoredDirectories.has(entry.name.toLowerCase())))
   .map(entry => ({
     ...entry,
     expanded: false,
@@ -109,13 +125,15 @@ const filterNodes = (items: WorkspaceFileTreeItem[], query: string): WorkspaceFi
 const visibleNodes = computed(() => filterNodes(nodes.value, filterText.value))
 
 const errorMessage = (error: unknown) => {
-  const responseData = (error as { response?: { data?: { detail?: unknown } } })?.response?.data
-  return typeof responseData?.detail === 'string' ? responseData.detail : '无法读取工作区目录'
+  const responseData = (error as { response?: { data?: { detail?: unknown; message?: unknown } } })?.response?.data
+  return typeof responseData?.detail === 'string' ? responseData.detail
+    : typeof responseData?.message === 'string' ? responseData.message : (error as Error)?.message || '无法读取工作区目录'
 }
 
 const refresh = async () => {
   const missionId = props.missionId
-  if (!missionId) {
+  const selectedWorkspace = desktopWorkspaceId.value
+  if (!missionId && !desktopWorkspaceId.value) {
     workspaceRoot.value = ''
     nodes.value = []
     rootError.value = '当前没有可用的工作区'
@@ -124,32 +142,33 @@ const refresh = async () => {
   rootLoading.value = true
   rootError.value = ''
   try {
-    const listing = await agentosApi.listWorkspaceFiles(missionId, '.')
-    if (missionId !== props.missionId) return
+    const listing = await listFiles(missionId, '.')
+    if (missionId !== props.missionId || selectedWorkspace !== desktopWorkspaceId.value) return
     workspaceRoot.value = listing.workspaceRoot
     nodes.value = makeNodes(listing.entries)
   } catch (error) {
-    if (missionId !== props.missionId) return
+    if (missionId !== props.missionId || selectedWorkspace !== desktopWorkspaceId.value) return
     rootError.value = errorMessage(error)
     nodes.value = []
   } finally {
-    if (missionId === props.missionId) rootLoading.value = false
+    if (missionId === props.missionId && selectedWorkspace === desktopWorkspaceId.value) rootLoading.value = false
   }
 }
 
 const loadDirectory = async (node: WorkspaceFileTreeItem) => {
   if (node.loading || (node.loaded && !node.error)) return
   const missionId = props.missionId
+  const selectedWorkspace = desktopWorkspaceId.value
   node.loading = true
   node.error = ''
   try {
-    const listing = await agentosApi.listWorkspaceFiles(missionId, node.path)
-    if (missionId !== props.missionId) return
+    const listing = await listFiles(missionId, node.path)
+    if (missionId !== props.missionId || selectedWorkspace !== desktopWorkspaceId.value) return
     workspaceRoot.value = listing.workspaceRoot
     node.children = makeNodes(listing.entries)
     node.loaded = true
   } catch (error) {
-    if (missionId === props.missionId) node.error = errorMessage(error)
+    if (missionId === props.missionId && selectedWorkspace === desktopWorkspaceId.value) node.error = errorMessage(error)
   } finally {
     node.loading = false
   }
@@ -166,7 +185,8 @@ const selectFile = (node: WorkspaceFileTreeItem) => {
     missionId: props.missionId,
     workspaceRoot: workspaceRoot.value,
     relativePath: node.path,
-    name: node.name
+    name: node.name,
+    ...(desktopWorkspaceId.value ? {desktopWorkspaceId: desktopWorkspaceId.value} : {})
   })
 }
 
@@ -177,10 +197,17 @@ watch(() => props.missionId, () => {
   void refresh()
 })
 
-onMounted(() => void refresh())
+onMounted(async () => {
+  try { const folder = await desktopWorkspace?.current(); if (folder) { desktopWorkspaceId.value = folder.id; workspaceRoot.value = folder.root } }
+  catch { /* The native folder picker remains available. */ }
+  await refresh()
+})
 </script>
 
 <style scoped>
+.workspace-file-explorer__open { flex:none; border:1px solid var(--wb-border-strong); border-radius:4px; background:var(--wb-surface-1); color:var(--wb-text-secondary); padding:4px 8px; font:inherit; cursor:pointer; }
+.workspace-file-explorer__open:hover { color:var(--wb-text); background:var(--wb-hover); }
+.workspace-file-explorer__open:focus-visible { outline:2px solid var(--wb-accent); outline-offset:2px; }
 .workspace-file-explorer {
   display: flex;
   width: 100%;

@@ -3,6 +3,7 @@ import { Clock, Document, Files, FolderOpened, Odometer, Share } from '@element-
 import type { WorkspaceEntryKind } from '@/services/api/agentos'
 
 const WORKSPACE_ENTRY_ICONS: Record<WorkspaceEntryKind, Component> = {
+  local_file: Document,
   folder: FolderOpened,
   graph: Share,
   virtual_document: Document,

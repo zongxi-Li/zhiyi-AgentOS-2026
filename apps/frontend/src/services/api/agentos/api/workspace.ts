@@ -16,6 +16,20 @@ export const createWorkspaceApi = () => ({
     return response.data
   },
 
+  async readWorkspaceFile(missionId: string, path: string, options: { signal?: AbortSignal } = {}) {
+    const response = await agentosRequest.get<{workspaceRoot: string; path: string; content: string; version?: string | null}>(
+      `/missions/${encodeURIComponent(missionId)}/workspace/file`,
+      { params: { path }, signal: options.signal }
+    )
+    return response.data
+  },
+
+  async saveWorkspaceFile(missionId: string, body: {path: string; content: string; expectedVersion: string; operationId: string}) {
+    const response = await agentosRequest.post<{path: string; version: string}>(
+      `/missions/${encodeURIComponent(missionId)}/workspace/file`, body)
+    return response.data
+  },
+
   async listWorkspaceFiles(
     missionId: string,
     path = '.',

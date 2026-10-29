@@ -40,6 +40,24 @@ public class AgentOsObservationController {
         this.gateway = gateway;
     }
 
+    @GetMapping("/missions/{missionId}/workspace/files")
+    public ResponseEntity<Map<String, Object>> listWorkspaceFiles(
+            @PathVariable String missionId, @RequestParam(defaultValue = ".") String path,
+            @RequestParam(defaultValue = "1000") int maxEntries) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("path", path);
+        params.put("maxEntries", String.valueOf(maxEntries));
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.mission(missionId) + "/workspace/files", params)));
+    }
+
+    @GetMapping("/missions/{missionId}/workspace/file")
+    public ResponseEntity<Map<String, Object>> readWorkspaceFile(
+            @PathVariable String missionId, @RequestParam String path) {
+        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.mission(missionId) + "/workspace/file", Map.of("path", path))));
+    }
+
     @GetMapping("/missions/{missionId}/workspace")
     public ResponseEntity<QueryResponse> getMissionWorkspace(
             @PathVariable String missionId,

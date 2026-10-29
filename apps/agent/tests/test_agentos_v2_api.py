@@ -1879,6 +1879,84 @@ async def test_workspace_file_listing_rejects_parent_paths_and_never_falls_back_
         runtime.identity_lifecycle.lifecycle_service.close()
 
 
+async def test_workspace_file_browser_normalizes_hands_entries_and_reads_only_granted_text(tmp_path, monkeypatch) -> None:
+    from types import SimpleNamespace
+    from app.tools.contracts import ToolPayload
+    from app.tools.local_runtime import LocalRuntimeToolError
+    import app.tools
+    runtime = _runtime(tmp_path, with_identity=True)
+    mission = runtime.create_mission("File browser")
+    calls = []
+    class Client:
+        async def workspace_root(self, authorization): return 'C:/authorized'
+    class Catalog:
+        async def execute(self, name, arguments, **kwargs):
+            calls.append((name, arguments))
+            if arguments['path']=='denied': raise LocalRuntimeToolError('PATH_OUTSIDE_WORKSPACE','denied')
+            if name=='list_files':
+                result={'entries':[{'name':'note.md','type':'file'},{'name':'sub','type':'directory'},
+                                   {'name':'../escape','type':'file'}]}
+            else: result={'text':'<script>literal text</script>'}
+            return ToolPayload(summary='actual contract fixture',data={'result':result})
+    runtime.local_runtime_client=Client()
+    runtime.local_runtime_authorization=SimpleNamespace(grant_id='grant',workspace_id='workspace')
+    monkeypatch.setattr(app.tools,'get_chat_tool_runtime',lambda:SimpleNamespace(catalog=Catalog()))
+    app=FastAPI();app.include_router(create_router(runtime,RunExecutionCoordinator(runtime)))
+    base=f'/agentos/v2/missions/{mission.mission_id}/workspace'
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
+            listing=await client.get(base+'/files',params={'path':'docs'})
+            assert listing.json()['entries']==[{'name':'note.md','type':'file','path':'docs/note.md'},
+                                               {'name':'sub','type':'directory','path':'docs/sub'}]
+            preview=await client.get(base+'/file',params={'path':'docs/note.md'})
+            assert preview.json()['content']=='<script>literal text</script>'
+            before=len(calls)
+            assert (await client.get(base+'/file',params={'path':'../outside'})).status_code==400
+            assert len(calls)==before
+            assert (await client.get(base+'/file',params={'path':'denied'})).status_code==403
+    finally: runtime.identity_lifecycle.lifecycle_service.close()
+
+
+async def test_workspace_file_save_uses_once_approval_and_rejects_stale_versions(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import app.tools
+    from app.tools.chat_catalog import ChatToolCatalog
+    from app.tools.contracts import ToolPayload
+    from app.tools.permissions import ChatPermissionService
+    runtime = _runtime(tmp_path, with_identity=True)
+    mission = runtime.create_mission("Save file")
+    writes = []
+    class Client:
+        async def workspace_root(self, authorization): return 'C:/authorized'
+    class Executor:
+        authorization = SimpleNamespace(workspace_id='workspace')
+        async def execute(self, name, arguments, **kwargs):
+            if name == 'read_file': return ToolPayload(summary='read', data={'result':{'text':'original','version':'v1'}})
+            writes.append(arguments)
+            return ToolPayload(summary='write', data={'result':{'version':'v2'}})
+    catalog = ChatToolCatalog(local_runtime_executor=Executor(), permission_service=ChatPermissionService())
+    runtime.local_runtime_client=Client()
+    runtime.local_runtime_authorization=Executor.authorization
+    monkeypatch.setattr(app.tools,'get_chat_tool_runtime',lambda:SimpleNamespace(catalog=catalog))
+    app=FastAPI();app.include_router(create_router(runtime,RunExecutionCoordinator(runtime)))
+    url=f'/agentos/v2/missions/{mission.mission_id}/workspace/file'
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
+            body={'path':'note.txt','content':'edited','expectedVersion':'stale','operationId':'save-operation-001'}
+            assert (await client.post(url,json=body)).status_code==409
+            assert not writes
+            body['expectedVersion']='v1'
+            saved=await client.post(url,json=body)
+            assert saved.status_code==200, saved.text
+            assert saved.json()['version']=='v2'
+            assert writes==[{'path':'note.txt','content':'edited','expectedVersion':'v1','overwrite':True}]
+            assert len(catalog.permission_service._completed)==1
+            assert not catalog.permission_service._pending
+            body['allowedRoot']='C:/'
+            assert (await client.post(url,json=body)).status_code==422
+    finally: runtime.identity_lifecycle.lifecycle_service.close()
+
+
 async def test_v2_rerun_creates_another_run_under_same_mission(tmp_path) -> None:
     runtime = _runtime(tmp_path, with_identity=True)
     task = runtime.create_mission(

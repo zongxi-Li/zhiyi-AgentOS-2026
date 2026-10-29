@@ -46,6 +46,13 @@ public class AgentOsMissionController {
         ));
     }
 
+    @PostMapping("/missions/{missionId}/workspace/file")
+    public ResponseEntity<Map<String, Object>> saveWorkspaceFile(
+            @PathVariable String missionId, @RequestBody Map<String, Object> body) {
+        return AgentOsControllerSupport.response(gateway.post(
+                AgentOsPaths.mission(missionId) + "/workspace/file", body));
+    }
+
     @PostMapping("/missions/{missionId}/semantics")
     public ResponseEntity<Map<String, Object>> editSemantics(
             @PathVariable String missionId, @RequestBody Map<String, Object> body) {

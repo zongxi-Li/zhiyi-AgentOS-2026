@@ -1,3 +1,4 @@
+import type { WorkspaceFileListing } from '@/services/api/agentos/types/workspace'
 /**
  * Electron 桥合同：Main Process 经安全 Preload（contextBridge）暴露的最小白名单面。
  * Renderer 只依赖本类型与 getElectronBridge()，永不 import 'electron'，
@@ -32,6 +33,13 @@ export interface KinlinDesktopBridge {
   dialog: {
     openFile(extensions?: string[]): Promise<KinlinOpenFileResult | null>
     openDirectory(): Promise<string | null>
+  }
+  workspace?: {
+    choose(): Promise<{id: string; root: string} | null>
+    current(): Promise<{id: string; root: string} | null>
+    list(id: string, relative: string): Promise<WorkspaceFileListing>
+    read(id: string, relative: string): Promise<{workspaceRoot: string; path: string; content: string; version: string}>
+    save(id: string, relative: string, content: string, version: string): Promise<{path: string; version: string}>
   }
   notify(title: string, body?: string): void
   openExternal(url: string): Promise<void>

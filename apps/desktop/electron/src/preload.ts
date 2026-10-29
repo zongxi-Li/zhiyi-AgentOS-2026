@@ -55,6 +55,13 @@ const bridge = {
       invoke(IPC.dialogOpenFile, extensions === undefined ? {} : { extensions }) as Promise<{ name: string; path: string } | null>,
     openDirectory: (): Promise<string | null> => invoke(IPC.dialogOpenDirectory) as Promise<string | null>
   },
+  workspace: {
+    choose: () => invoke(IPC.workspaceChoose),
+    current: () => invoke(IPC.workspaceCurrent),
+    list: (id: string, relative: string) => invoke(IPC.workspaceList, id, relative),
+    read: (id: string, relative: string) => invoke(IPC.workspaceRead, id, relative),
+    save: (id: string, relative: string, content: string, version: string) => invoke(IPC.workspaceSave, id, relative, content, version)
+  },
   notify: (title: string, body?: string): void => {
     void invoke(IPC.notify, { title, body }).catch(() => undefined)
   },

@@ -53,6 +53,7 @@ export interface HandsFilesystemProvider {
   readonly sandboxMode: HandsSandboxMode
   readonly workspaceRoot: string
   readText(path: string, signal?: AbortSignal): Promise<string>
+  readVersionedText?(path: string, signal?: AbortSignal): Promise<{ text: string; version: string }>
   listDir(path: string, signal?: AbortSignal): Promise<HandsDirEntry[]>
   writeText(path: string, content: string, guard: HandsWriteGuard | undefined, signal?: AbortSignal): Promise<HandsWriteOutcome>
   editText(path: string, edit: HandsEditRequest, guard: HandsWriteGuard | undefined, signal?: AbortSignal): Promise<HandsEditOutcome>

@@ -72,6 +72,14 @@ from app.api.agentos_contracts import (
 logger = logging.getLogger(__name__)
 
 
+class WorkspaceFileSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    path: str = Field(min_length=1, max_length=4096)
+    content: str = Field(max_length=1_048_576)
+    expected_version: str = Field(alias="expectedVersion", min_length=1, max_length=512)
+    operation_id: str = Field(alias="operationId", pattern=r"^[a-zA-Z0-9_-]{16,80}$")
+
+
 class MissionCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -855,6 +863,8 @@ def create_router(
         attachment_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Resolve actor ownership and sealed materials for a Mission or Run command."""
+        if any(key in payload for key in ('workspaceBinding', 'allowedRoot', 'grantId', 'workspaceId', 'resourceId', 'securityProfile')):
+            raise HTTPException(status_code=422, detail='Workspace authority cannot be supplied as input')
         if runtime.mission_semantic_service is not None and current_semantic_principal() is None:
             raise HTTPException(status_code=403, detail="trusted semantic principal is required")
         if any(key in payload for key in ("missionIntentBasis", "missionIntentBasisRef", "semanticPrincipal", "inheritParentBasis")):
@@ -1992,13 +2002,8 @@ def create_router(
             exclude_none=True,
         )
 
-    @router.get("/missions/{mission_id}/workspace/files")
-    async def list_workspace_files(
-        mission_id: str,
-        path: str = Query(default="."),
-        max_entries: int = Query(default=1000, alias="maxEntries", ge=1, le=1000),
-    ):
-        """List one directory through the existing grant-bound fs.list tool."""
+    async def workspace_file_read(mission_id: str, path: str, tool_name: str, arguments: dict, *, save_operation: str | None = None):
+        """Use the existing owner check, startup Grant and read-only file tools."""
         require_mission_access(mission_id)
         relative_path = normalize_relative_path(path)
         if relative_path is None or len(relative_path) > 4096:
@@ -2009,26 +2014,77 @@ def create_router(
         if client is None or authorization is None:
             raise HTTPException(status_code=503, detail="workspace file capability unavailable")
 
+        authority = getattr(runtime, 'workspace_authority', None)
+        if authority is not None:
+            # Explorer is a human action, scoped to the latest frozen Mission Run.
+            runs = runtime.workflow_store.list_runs(mission_id=mission_id)
+            if not runs:
+                raise HTTPException(403, 'Mission has no frozen workspace Run')
+            selected_run = max(runs, key=lambda item: item.created_at)
+            _require_access(selected_run)
+            try:
+                authorization = authority.resolve(selected_run)
+            except PermissionError as exc:
+                raise HTTPException(403, str(exc)) from exc
+            from contracts.capability import CapabilityInvocation
+            from contracts.local_runtime import LocalRuntimeExecutionLimits
+            capability = {'read_file':'fs.read','list_files':'fs.list','write_file':'fs.write'}[tool_name]
+            business = dict(arguments, path=relative_path)
+            business.pop('maxEntries', None)
+            call_id = f'workspace-human:{mission_id}:{save_operation or uuid4().hex}'
+            result = await client.execute(CapabilityInvocation(invocationId=call_id, capabilityId=capability, input=business),
+                resource_id=runtime.local_runtime_resource.profile.runtime_id, authorization=authorization,
+                limits=LocalRuntimeExecutionLimits(timeoutSeconds=30, maxStdoutBytes=64000, maxStderrBytes=32000),
+                idempotency_key=call_id)
+            if result.status != 'completed':
+                raise HTTPException(409, result.error.code if result.error else 'Workspace operation failed')
+            return selected_run.input['workspaceBinding']['workspaceRoot'], relative_path, result.output
+
         try:
             workspace_root = await client.workspace_root(authorization)
             from app.tools import get_chat_tool_runtime
 
-            payload = await get_chat_tool_runtime().catalog.execute(
-                "list_files",
-                {"path": relative_path, "maxEntries": max_entries},
-                call_id=f"workspace-explorer:{uuid4().hex}",
-                session_id=f"workspace-explorer:{mission_id}",
+            catalog = get_chat_tool_runtime().catalog
+            session_id = f"workspace-explorer:{mission_id}"
+            call_id = f"workspace-save:{mission_id}:{save_operation}" if save_operation else f"workspace-explorer:{uuid4().hex}"
+
+            async def confirm_user_save(event, data):
+                # This authenticated endpoint represents the human's explicit Save
+                # action. Resolve only this invocation, once; DENY policy still wins.
+                if event == "approval_required" and save_operation:
+                    from app.tools.permissions import ApprovalDecision
+                    approval = data["approval"]
+                    await catalog.permission_service.resolve(
+                        approval["approvalId"], decision=ApprovalDecision.ALLOW_ONCE,
+                        session_id=session_id, invocation_id=call_id,
+                        capability_id="fs.write", relative_path=relative_path)
+
+            payload = await catalog.execute(
+                tool_name,
+                {"path": relative_path, **arguments},
+                call_id=call_id,
+                session_id=session_id,
+                **({"permission_event_sink": confirm_user_save} if save_operation else {}),
             )
         except HTTPException:
             raise
         except Exception as exc:
             from app.tools.local_runtime import LocalRuntimeToolError
+            from app.tools.permissions import PermissionDeniedError
 
+            if isinstance(exc, PermissionDeniedError):
+                raise HTTPException(status_code=403, detail="workspace access denied") from exc
             if isinstance(exc, LocalRuntimeToolError):
+                if exc.code == "FS_NOT_TEXT":
+                    raise HTTPException(status_code=415, detail="Only UTF-8 text files can be opened") from exc
+                if exc.code == "FS_TOO_LARGE":
+                    raise HTTPException(status_code=413, detail="File exceeds the 1 MiB editor limit") from exc
+                if exc.code in {"FS_STALE_VERSION", "FS_NOT_OBSERVED"}:
+                    raise HTTPException(status_code=409, detail="File changed on disk; reload before saving") from exc
                 if exc.code in {"PATH_INVALID", "DIRECTORY_REQUIRED", "LIST_LIMIT_EXCEEDED"}:
                     raise HTTPException(status_code=400, detail=exc.code) from exc
-                if exc.code in {"PATH_NOT_FOUND", "PARENT_NOT_FOUND"}:
-                    raise HTTPException(status_code=404, detail="workspace directory not found") from exc
+                if exc.code in {"PATH_NOT_FOUND", "PARENT_NOT_FOUND", "FS_NOT_FOUND"}:
+                    raise HTTPException(status_code=404, detail="workspace path not found") from exc
                 if exc.code in {
                     "PATH_OUTSIDE_WORKSPACE", "CAPABILITY_DENIED", "GRANT_REVOKED", "GRANT_EXPIRED"
                 }:
@@ -2038,19 +2094,72 @@ def create_router(
             raise HTTPException(status_code=503, detail="workspace file capability unavailable") from exc
 
         result = payload.data.get("result") if isinstance(payload.data, dict) else None
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=502, detail="workspace response is invalid")
+        return workspace_root, relative_path, result
+
+    @router.get("/missions/{mission_id}/workspace/files")
+    async def list_workspace_files(
+        mission_id: str, path: str = Query(default="."),
+        max_entries: int = Query(default=1000, alias="maxEntries", ge=1, le=1000),
+    ):
+        workspace_root, relative_path, result = await workspace_file_read(
+            mission_id, path, "list_files", {"maxEntries": max_entries})
         entries = result.get("entries") if isinstance(result, dict) else None
         if not isinstance(entries, list):
             raise HTTPException(status_code=502, detail="workspace listing response is invalid")
+        if len(entries) > max_entries:
+            raise HTTPException(status_code=400, detail="LIST_LIMIT_EXCEEDED")
+        # Hands entries have name/type; derive child paths from the authorized
+        # directory instead of requiring an executor-specific path field.
+        children = []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if (not isinstance(name, str) or name in {"", ".", ".."}
+                    or any(c in name for c in "/\\:\x00") or item.get("type") not in {"file", "directory"}):
+                continue
+            child_path = name if relative_path == "." else relative_path.rstrip("/") + "/" + name
+            children.append({"name": name, "type": item["type"], "path": child_path})
         return {
             "workspaceRoot": workspace_root,
             "path": relative_path,
-            "entries": [
-                item for item in entries
-                if isinstance(item, dict)
-                and isinstance(item.get("name"), str)
-                and item.get("type") in {"file", "directory"}
-            ],
+            "entries": children,
         }
+
+    @router.get("/missions/{mission_id}/workspace/file")
+    async def read_workspace_file(mission_id: str, path: str = Query(min_length=1)):
+        workspace_root, relative_path, result = await workspace_file_read(
+            mission_id, path, "read_file", {"versioned": True})
+        content = result.get("content", result.get("text"))
+        if (not isinstance(content, str) or result.get("binary") or result.get("isBinary")
+                or result.get("encoding") == "base64" or "\x00" in content):
+            raise HTTPException(status_code=415, detail="Only text files can be previewed")
+        if len(content.encode("utf-8")) > 1_048_576:
+            raise HTTPException(status_code=413, detail="File exceeds the 1 MiB preview limit")
+        return {"workspaceRoot": workspace_root, "path": relative_path, "content": content,
+                "version": result.get("version")}
+
+    @router.post("/missions/{mission_id}/workspace/file")
+    async def save_workspace_file(mission_id: str, body: WorkspaceFileSaveRequest):
+        # No client-selected root, Grant or security profile. Never fall back to
+        # a plain overwrite if this backend lacks conditional-write support.
+        require_mission_access(mission_id)
+        if "\x00" in body.content:
+            raise HTTPException(status_code=415, detail="Only text files can be saved")
+        if len(body.content.encode("utf-8")) > 1_048_576:
+            raise HTTPException(status_code=413, detail="File exceeds the 1 MiB editor limit")
+        snapshot = await read_workspace_file(mission_id, body.path)
+        if not snapshot.get("version"):
+            raise HTTPException(status_code=409, detail="This runtime supports read-only editing; conditional writes unavailable")
+        if snapshot["version"] != body.expected_version:
+            raise HTTPException(status_code=409, detail="File changed on disk; reload before saving")
+        root, path, result = await workspace_file_read(
+            mission_id, body.path, "write_file",
+            {"content": body.content, "expectedVersion": body.expected_version, "overwrite": True},
+            save_operation=body.operation_id)
+        return {"workspaceRoot": root, "path": path, "version": result.get("version")}
 
     def change_mission_record_state(mission_id: str, state: MissionRecordState) -> dict[str, Any]:
         require_mission_access(mission_id)

@@ -28,8 +28,8 @@
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import { fileURLToPath } from 'node:url'
-import { realpath } from 'node:fs/promises'
-import { resolve, relative, isAbsolute } from 'node:path'
+import { realpath, lstat } from 'node:fs/promises'
+import { resolve, relative, isAbsolute, dirname } from 'node:path'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 // probeWindowsJob is not re-exported from the package index; import the module
@@ -135,6 +135,18 @@ class DshFilesystemProvider implements HandsFilesystemProvider {
   ) {}
 
   async #resolve(path: string, signal?: AbortSignal, fenceRead = false): Promise<FsTarget> {
+    const absolute = resolve(this.workspaceRoot, path)
+    let component = absolute
+    while (true) {
+      const info = await lstat(component).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      })
+      if (info?.isSymbolicLink()) throw Object.assign(new Error('Workspace links are forbidden'), { code: 'FS_SANDBOX_DENIED' })
+      const parent = dirname(component)
+      if (parent === component) break
+      component = parent
+    }
     if (fenceRead) {
     // DSH fs-sandbox fences writes, not reads. Hands' workspace capabilities
     // must fence both, independently of shell sandbox configuration.
@@ -154,6 +166,17 @@ class DshFilesystemProvider implements HandsFilesystemProvider {
 
   async readText(path: string, signal?: AbortSignal): Promise<string> {
     return this.ctx.fs.readText(await this.#resolve(path, signal, true), signal)
+  }
+
+  async readVersionedText(path: string, signal?: AbortSignal): Promise<{ text: string; version: string }> {
+    const target = await this.#resolve(path, signal, true)
+    const before = await this.ctx.fs.lstat(target.displayPath, undefined, signal)
+    if (!before || before.type !== 'file') throw new Error('HANDS_FILE_NOT_FOUND')
+    if ((before.size ?? 0) > 1_048_576) throw Object.assign(new Error('Editor file exceeds 1 MiB'), { code: 'FS_TOO_LARGE' })
+    const text = await this.ctx.fs.readText(target, signal)
+    const after = await this.ctx.fs.lstat(target.displayPath, undefined, signal)
+    if (!after || before.version !== after.version) throw Object.assign(new Error('File changed during read'), { code: 'FS_STALE_VERSION' })
+    return { text, version: after.version }
   }
 
   async listDir(path: string, signal?: AbortSignal): Promise<HandsDirEntry[]> {

@@ -9,9 +9,10 @@ import {
   session,
   shell
 } from 'electron'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import * as path from 'node:path'
 import { IPC } from './lib/ipc-contract'
+import { WorkspaceFiles } from './lib/workspace-files'
 import { APP_INDEX_URL, APP_SCHEME, APP_HOST, handleAppProtocol, registerAppScheme } from './lib/protocol'
 import { createFileLogger, type FileLogger } from './lib/logging'
 import {
@@ -36,7 +37,7 @@ import {
  * - 本进程只负责窗口、原生交互与桌面生命周期；
  * - 不内嵌执行器、Scheduler，不直接调用模型生成执行决策；
  * - 任务执行权威在 AgentOS Runtime / 知行 Host，经既有 HTTP/WS 边界接入；
- * - 用户选择的目录只作为候选路径返回，是否允许访问由 Host Grant 权威决定。
+ * - 手动文件编辑由原生目录选择器授权；Agent 执行的目录权限仍由 Host Grant 决定。
  */
 
 const DEV_DEFAULT_SERVER = 'http://127.0.0.1:15100'
@@ -52,6 +53,12 @@ function parseArgValue(flag: string): string | undefined {
 }
 
 const devServerUrl = parseArgValue('--dev-server')
+const isolatedUserData = parseArgValue('--user-data-dir')
+if (isolatedUserData) {
+  if (!path.isAbsolute(isolatedUserData)) throw new Error('--user-data-dir must be absolute')
+  mkdirSync(isolatedUserData, { recursive: true })
+  app.setPath('userData', isolatedUserData)
+}
 const openDevtools = process.argv.includes('--devtools')
 const apiOrigin = (() => {
   const configured = parseHttpUrl(process.env.KINLIN_API_ORIGIN)
@@ -217,6 +224,18 @@ function registerIpcHandlers(): void {
       throw new Error('Unauthorized IPC sender')
     }
   }
+
+  const workspaceFiles = new WorkspaceFiles(path.join(app.getPath('userData'), 'workspace-folders.json'))
+  ipcMain.handle(IPC.workspaceChoose, async event => {
+    guard(event)
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {title: '打开工作文件夹', properties: ['openDirectory']})
+    return result.canceled || !result.filePaths[0] ? null : workspaceFiles.select(result.filePaths[0])
+  })
+  ipcMain.handle(IPC.workspaceCurrent, event => { guard(event); return workspaceFiles.current() })
+  ipcMain.handle(IPC.workspaceList, (event, id, relative) => { guard(event); return workspaceFiles.list(id, relative) })
+  ipcMain.handle(IPC.workspaceRead, (event, id, relative) => { guard(event); return workspaceFiles.read(id, relative) })
+  ipcMain.handle(IPC.workspaceSave, (event, id, relative, content, version) => { guard(event); return workspaceFiles.save(id, relative, content, version) })
 
   ipcMain.handle(IPC.windowMinimize, (event) => {
     guard(event)

@@ -438,9 +438,9 @@ class LocalRuntimeToolExecutor:
     @staticmethod
     def _business_input(tool_name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         allowed: dict[str, tuple[str, ...]] = {
-            "read_file": ("path", "encoding", "binary"),
+            "read_file": ("path", "encoding", "binary", "versioned"),
             "list_files": ("path", "maxEntries"),
-            "write_file": ("path", "content", "overwrite", "createParents", "encoding", "binary"),
+            "write_file": ("path", "content", "overwrite", "createParents", "encoding", "binary", "expectedVersion"),
             "patch_file": ("path", "patch", "encoding", "expectedSha256"),
             "run_command": ("mode", "program", "args", "command", "cwd", "timeout"),
         }[tool_name]

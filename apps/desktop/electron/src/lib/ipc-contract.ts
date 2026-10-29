@@ -14,6 +14,11 @@ export const IPC = {
   windowMaximizeChanged: 'kinlin:window/maximize-changed',
   dialogOpenFile: 'kinlin:dialog/open-file',
   dialogOpenDirectory: 'kinlin:dialog/open-directory',
+  workspaceChoose: 'kinlin:workspace/choose',
+  workspaceCurrent: 'kinlin:workspace/current',
+  workspaceList: 'kinlin:workspace/list',
+  workspaceRead: 'kinlin:workspace/read',
+  workspaceSave: 'kinlin:workspace/save',
   notify: 'kinlin:notify',
   openExternal: 'kinlin:open-external',
   appInfo: 'kinlin:app/info'

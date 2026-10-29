@@ -173,6 +173,10 @@ export class HandsEngine {
     switch (capabilityId) {
       case 'fs.read': {
         const { path } = requireInput<FsReadInput>(input, ['path'])
+        if (input.versioned === true && fs.readVersionedText) {
+          const snapshot = await fs.readVersionedText(path, signal)
+          return { path, ...snapshot, bytes: Buffer.byteLength(snapshot.text, 'utf8') }
+        }
         const text = await fs.readText(path, signal)
         return { path, text, bytes: Buffer.byteLength(text, 'utf8') }
       }

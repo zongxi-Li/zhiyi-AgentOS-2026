@@ -20,7 +20,7 @@
             <span class="editor-tab__kind" aria-hidden="true">
               <el-icon><component :is="workspaceEntryIcon(opened.entry.kind)" /></el-icon>
             </span>
-            <span class="editor-tab__name">{{ editorTitle(opened.entry) }}</span>
+            <span class="editor-tab__name">{{ editorTitle(opened.entry) }}{{ opened.entry.metadata?.dirty ? ' ●' : '' }}</span>
             <span v-if="!opened.available" class="editor-tab__missing">missing</span>
           </button>
           <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="emit('close', opened.entry.entryId)">×</button>
@@ -66,8 +66,14 @@
     </nav>
 
     <section class="editor-group__surface" :class="{ 'editor-group__surface--task': activeOpened?.entry.kind === 'task' }">
+      <WorkspaceFileEditor
+        v-for="opened in localFiles" :key="opened.entry.entryId"
+        v-show="opened.entry.entryId === activeEditorId"
+        :request="fileRequest(opened.entry)"
+        @dirty-change="setDirty(opened.entry, $event)"
+      />
       <component
-        v-if="activeOpened && editorContribution"
+        v-if="activeOpened && activeOpened.entry.kind !== 'local_file' && editorContribution"
         :is="editorContribution.component"
         :key="editorKey"
         :entry="activeOpened.entry"
@@ -94,7 +100,7 @@
         @artifact-projection="emit('artifactProjection', $event)"
         @semantics-saved="emit('semanticsSaved')"
       />
-      <div v-else class="editor-group__empty">
+      <div v-else-if="activeOpened?.entry.kind !== 'local_file'" class="editor-group__empty">
         <img class="editor-group__empty-watermark" src="/logo.webp" alt="" aria-hidden="true" />
       </div>
     </section>
@@ -103,6 +109,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import WorkspaceFileEditor from '@/components/workbench/WorkspaceFileEditor.vue'
+import type { WorkspaceFileOpenRequest } from '@/services/api/agentos'
 import { Expand, View } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
 import type { AuxiliaryViewContribution, WorkbenchContext } from '@/workbench/types'
@@ -153,6 +161,9 @@ const emit = defineEmits<{
   artifactProjection: [payload: { entryId: string; projection: ArtifactDocumentModel }]
 }>()
 
+const localFiles = computed(() => props.openEntries.filter(item => item.entry.kind === 'local_file'))
+const fileRequest = (entry: WorkspaceEntry) => entry.metadata!.fileRequest as WorkspaceFileOpenRequest
+const setDirty = (entry: WorkspaceEntry, dirty: boolean) => { entry.metadata!.dirty = dirty }
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
 const editorContribution = computed(() => props.registry.resolveEditor(activeOpened.value?.entry || null, props.workbenchContext))
 const editorKey = computed(() => {

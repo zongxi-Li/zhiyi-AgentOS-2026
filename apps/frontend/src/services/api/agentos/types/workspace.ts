@@ -2,7 +2,7 @@ import type { GraphProjection } from './graph'
 import type { WorkflowStatus } from './workflow'
 import type { InputAttachment } from './artifacts'
 
-export type WorkspaceEntryKind = 'folder' | 'graph' | 'virtual_document' | 'task' | 'artifact' | 'run' | 'progress'
+export type WorkspaceEntryKind = 'local_file' | 'folder' | 'graph' | 'virtual_document' | 'task' | 'artifact' | 'run' | 'progress'
 export type WorkspaceIdentityQuality = 'canonical' | 'legacy'
 export type WorkspaceRunStatus = WorkflowStatus | 'succeeded' | 'superseded'
 export interface WorkspaceMission {
@@ -140,6 +140,7 @@ export interface WorkspaceFileListing {
 }
 
 export interface WorkspaceFileOpenRequest {
+  desktopWorkspaceId?: string
   missionId: string
   workspaceRoot: string
   relativePath: string

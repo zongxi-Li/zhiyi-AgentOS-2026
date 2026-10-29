@@ -36,6 +36,20 @@ class AgentOsObservationControllerTest {
     }
 
     @Test
+    void workspaceFilesForwardEncodedRelativePathsAndPreserveReadDenials() throws Exception {
+        String listing = "/ai/agentos/v2/missions/m1/workspace/files?path=docs/a%20b&maxEntries=1000";
+        gateway.getResponses.put(listing, RecordingAgentOsGateway.response(200, Map.of(
+                "workspaceRoot", "C:/authorized", "path", "docs/a b", "entries", List.of())));
+        mockMvc.perform(get("/api/agentos/v2/missions/m1/workspace/files").param("path", "docs/a b"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.path").value("docs/a b"));
+        assertEquals(listing, gateway.lastGetPath);
+        String file = "/ai/agentos/v2/missions/m1/workspace/file?path=secret.txt";
+        gateway.getResponses.put(file, RecordingAgentOsGateway.response(403, Map.of("detail", "workspace access denied")));
+        mockMvc.perform(get("/api/agentos/v2/missions/m1/workspace/file").param("path", "secret.txt"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.detail").value("workspace access denied"));
+    }
+
+    @Test
     void missionWorkspaceForwardsTheOptionalRunSelectionAndProjectsTheEnvelope() throws Exception {
         String workspacePath = "/ai/agentos/v2/missions/mission%20001/workspace?runId=run%20001";
         gateway.getResponses.put(workspacePath, RecordingAgentOsGateway.response(

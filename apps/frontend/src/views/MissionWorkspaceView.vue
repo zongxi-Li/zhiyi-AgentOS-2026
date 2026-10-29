@@ -81,7 +81,7 @@
           v-if="activeAuxiliaryView"
           :view="activeAuxiliaryView"
           :component-props="auxiliaryViewProps"
-          @open-file="emit('open-workspace-file', $event)"
+          @open-file="openWorkspaceFile"
           @select-run="selectRun"
           @refresh-run="loadWorkspace(selectedRunId || undefined)"
           @cancel-run="cancelActiveRun"
@@ -189,13 +189,14 @@
         </button>
       </div>
     </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
@@ -219,6 +220,14 @@ const router = useRouter()
 const emit = defineEmits<{
   'open-workspace-file': [request: WorkspaceFileOpenRequest]
 }>()
+const openWorkspaceFile = (request: WorkspaceFileOpenRequest) => {
+  const id = `local-file:${request.missionId}:${request.desktopWorkspaceId || request.workspaceRoot}:${request.relativePath}`
+  if (openEditors.value.includes(id)) { activeEditorId.value = id; return }
+  openEntry({entryId: id, kind: 'local_file',
+    name: request.name, title: request.relativePath, group: 'files', displayOrder: 0,
+    metadata: {fileRequest: request}})
+  emit('open-workspace-file', request)
+}
 const missionId = computed(() => String(route.params.missionId || route.query.missionId || ''))
 const registry = createNativeWorkbenchRegistry()
 
@@ -318,7 +327,7 @@ const openEntries = computed<OpenWorkspaceEntry[]>(() => openEditors.value.flatM
   const current = entriesById.value.get(entryId)
   const snapshot = entryCache.value[entryId]
   if (!current && !snapshot) return []
-  return [{ entry: current || snapshot, available: Boolean(current) }]
+  return [{ entry: current || snapshot, available: Boolean(current) || snapshot?.kind === 'local_file' }]
 }))
 const activeOpened = computed(() => openEntries.value.find(item => item.entry.entryId === activeEditorId.value) || null)
 const inspectorEntry = computed(() => activeOpened.value?.entry || null)
@@ -922,7 +931,13 @@ const openEntry = (entry: WorkspaceEntry) => {
   }
 }
 
+const confirmFileNavigation = () => !openEntries.value.some(item => item.entry.metadata?.dirty)
+  || window.confirm('文件尚未保存，离开将放弃修改。是否继续？')
+onBeforeRouteLeave(confirmFileNavigation)
+onBeforeRouteUpdate((to, from) => to.params.missionId === from.params.missionId || confirmFileNavigation())
+
 const closeEditor = (entryId: string) => {
+  if (entryCache.value[entryId]?.metadata?.dirty && !window.confirm('文件尚未保存，确定关闭并放弃修改？')) return
   const index = openEditors.value.indexOf(entryId)
   if (index < 0) return
   openEditors.value.splice(index, 1)
