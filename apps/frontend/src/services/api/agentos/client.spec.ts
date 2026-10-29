@@ -48,7 +48,7 @@ describe('AgentOS request authentication policy', () => {
     expect(agentosRequest.defaults.baseURL).toBe('/api/agentos/v2')
   })
 
-  it('shares expired-session cleanup and performs one Tauri hash redirect', async () => {
+  it('shares expired-session cleanup and performs one desktop hash redirect', async () => {
     localStorage.setItem('token', 'expired-token')
     localStorage.setItem('userId', 'user_1')
     window.location.hash = '#/missions?run=1'

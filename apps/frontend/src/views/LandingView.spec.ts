@@ -11,7 +11,7 @@ vi.mock('@/platform', () => ({
   apiUrl: (path: string) => path,
   platform: {
     get platform() { return platformState.desktop ? 'desktop' : 'web' },
-    get dragRegionProps() { return platformState.desktop ? { 'data-tauri-drag-region': '' } : {} }
+    get dragRegionProps() { return platformState.desktop ? { 'data-electron-drag-region': '' } : {} }
   }
 }))
 
@@ -179,7 +179,7 @@ describe('LandingView', () => {
     const { wrapper } = await mountLanding()
 
     expect(wrapper.find('.landing-view').classes()).not.toContain('is-desktop-shell')
-    expect(wrapper.find('.landing-header').attributes('data-tauri-drag-region')).toBeUndefined()
+    expect(wrapper.find('.landing-header').attributes('data-electron-drag-region')).toBeUndefined()
   })
 
   it('mounts the window drag region on the header when running in the desktop shell', async () => {
@@ -187,7 +187,7 @@ describe('LandingView', () => {
     const { wrapper } = await mountLanding()
 
     expect(wrapper.find('.landing-view').classes()).toContain('is-desktop-shell')
-    expect(wrapper.find('.landing-header').attributes('data-tauri-drag-region')).toBe('')
+    expect(wrapper.find('.landing-header').attributes('data-electron-drag-region')).toBe('')
   })
 
   it('keeps the brand link a SPA navigation to the landing route', async () => {

@@ -19,7 +19,7 @@ export interface PlatformAdapter {
   readonly platform: PlatformName
 
   /**
-   * 窗口拖拽区属性：desktop 返回 data-tauri-drag-region，
+   * 窗口拖拽区属性：electron 返回 data-electron-drag-region，
    * web 返回空对象——属性名字符串因此不进入 Web 产物。
    */
   readonly dragRegionProps: Record<string, string>

@@ -5,7 +5,7 @@ type ViteRuntimeEnv = {
 }
 
 const env = (import.meta as ImportMeta & { env?: ViteRuntimeEnv }).env || {}
-const isDesktopFamilyMode = env.MODE === 'desktop' || env.MODE === 'electron'
+const isDesktopFamilyMode = env.MODE === 'electron'
 const defaultDesktopApiOrigin = isDesktopFamilyMode && !env.DEV
   ? 'http://127.0.0.1:9050'
   : ''
@@ -23,9 +23,8 @@ const normalizePath = (path: string): string => path.startsWith('/') ? path : `/
  * Resolve an API path against the configured Backend origin.
  *
  * Web builds and the desktop hot-reload build keep relative URLs so they use
- * the active Vite proxy. Packaged desktop builds (Tauri WebView 与 Electron
- * 自定义协议同源规则) fall back to the host Gateway because no Vite server
- * is present there.
+ * the active Vite proxy. The packaged Electron build (自定义协议同源规则)
+ * falls back to the host Gateway because no Vite server is present there.
  */
 export const apiUrl = (path: string): string => `${absoluteApiOrigin}${normalizePath(path)}`
 

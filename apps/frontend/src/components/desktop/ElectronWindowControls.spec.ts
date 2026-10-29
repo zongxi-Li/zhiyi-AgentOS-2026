@@ -5,7 +5,7 @@ import type { KinlinDesktopBridge } from '@/platform/electron/bridge'
 
 import ElectronWindowControls from './ElectronWindowControls.vue'
 
-// 不 mock @tauri-apps，改为在 window.kinlinDesktop 上注入完整的 Electron 桥 mock。
+// 不依赖平台桥实现，直接在 window.kinlinDesktop 上注入完整的 Electron 桥 mock。
 const createBridge = () =>
   ({
     window: {

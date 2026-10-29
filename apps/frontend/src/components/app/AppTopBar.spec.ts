@@ -9,7 +9,7 @@ vi.mock('@/platform', () => ({
   isDesktop: () => platformState.desktop,
   platform: {
     get platform() { return platformState.desktop ? 'desktop' : 'web' },
-    get dragRegionProps() { return platformState.desktop ? { 'data-tauri-drag-region': '' } : {} }
+    get dragRegionProps() { return platformState.desktop ? { 'data-electron-drag-region': '' } : {} }
   }
 }))
 
@@ -257,11 +257,11 @@ describe('AppTopBar', () => {
 
     expect(wrapper.find('.desktop-window-controls').exists()).toBe(false)
     expect(wrapper.find('[aria-label="关闭"]').exists()).toBe(false)
-    expect(wrapper.find('[data-tauri-drag-region]').exists()).toBe(false)
+    expect(wrapper.find('[data-electron-drag-region]').exists()).toBe(false)
   })
 
   it('keeps every topbar surface draggable in the desktop shell', async () => {
-    // Tauri 拖动区只认被点中的元素：网格包裹层若不带 drag-region，
+    // 桌面拖动区只认被点中的元素：网格包裹层若不带 drag-region，
     // 顶栏空白处（含窗口控件两侧）按下时 target 落在包裹层上，窗口就拖不动了。
     platformState.desktop = true
     try {
@@ -276,7 +276,7 @@ describe('AppTopBar', () => {
         '.app-topbar__right'
       ]
       for (const selector of surfaces) {
-        expect(wrapper.get(selector).attributes('data-tauri-drag-region')).toBe('')
+        expect(wrapper.get(selector).attributes('data-electron-drag-region')).toBe('')
       }
       wrapper.unmount()
     } finally {

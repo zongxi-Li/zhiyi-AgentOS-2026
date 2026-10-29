@@ -1067,7 +1067,7 @@ onBeforeUnmount(() => {
 }
 .workspace-request-error {
   /* Keep the notice in the route viewport. Fixed positioning put it under the
-     desktop title bar, so only the lower edge was visible in Tauri. */
+     desktop title bar, so only the lower edge was visible in the desktop shell. */
   position: absolute;
   top: 14px;
   right: 18px;

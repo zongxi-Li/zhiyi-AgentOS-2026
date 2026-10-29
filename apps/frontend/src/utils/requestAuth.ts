@@ -47,7 +47,7 @@ export const attachAuthToken = (config: InternalAxiosRequestConfig) => {
 }
 
 const redirectToLoginAfterUnauthorized = () => {
-  // Tauri uses hash history because a native WebView has no server-side
+  // Desktop shells use hash history because the app has no server-side
   // fallback for deep links. Change only the hash so Vue Router performs the
   // transition inside the current page, onto the standalone login surface.
   if (isDesktop()) {

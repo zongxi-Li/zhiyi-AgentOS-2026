@@ -286,7 +286,7 @@ export const useWorkbenchLayout = (options: UseWorkbenchLayoutOptions = {}) => {
     if (typeof window !== 'undefined') {
       window.addEventListener('resize', handleViewportResize)
     }
-    // 视口可能在挂载后仍在 settles（Tauri 窗口创建/缩放、停靠布局变化），
+    // 视口可能在挂载后仍在 settles（Electron 窗口创建/缩放、停靠布局变化），
     // resize 事件不保证已经带着最终宽度来过，这里主动量一次。
     handleViewportResize()
     if (typeof ResizeObserver !== 'undefined' && containerRef.value) {

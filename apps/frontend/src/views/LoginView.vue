@@ -319,7 +319,7 @@ const handleRegister = async () => {
 @media (max-width: 560px) { .auth-view { overflow-y: auto; } .auth-topbar { width: calc(100% - 40px); min-height: 72px; } .auth-brand { font-size: 18px; } .auth-brand__logo { width: 32px; height: 32px; } .auth-theme-toggle span { display: none; } .auth-theme-toggle { margin-left: 8px; padding: 0 9px; } .auth-layout { width: calc(100% - 32px); min-height: auto; padding-top: 4vh; padding-bottom: 28px; } .auth-card { padding: 28px 22px 24px; border-radius: 20px; } .auth-card__heading h2 { font-size: 27px; } .auth-footer { width: calc(100% - 32px); padding-bottom: 16px; font-size: 9px; } }
 @media (prefers-reduced-motion: reduce) { .auth-form :deep(.el-input__wrapper), .auth-submit, .auth-providers button { transition: none; } }
 
-/* Tauri 隐藏了原生标题栏，桌面 shell 下由登录页顶栏兼任窗口拖拽区，
+/* 桌面壳隐藏原生标题栏，由登录页顶栏兼任窗口拖拽区，
    右上角承载窗口控制按钮（纯 Web 版不渲染桌面 shell）。 */
 .auth-view.is-desktop-shell { overflow-y: auto; scrollbar-gutter: stable; }
 .auth-view.is-desktop-shell .auth-topbar { width: 100%; min-height: 52px; padding-left: 18px; box-sizing: border-box; }

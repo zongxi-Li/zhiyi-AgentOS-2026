@@ -1,7 +1,7 @@
 /**
  * Electron 桥合同：Main Process 经安全 Preload（contextBridge）暴露的最小白名单面。
  * Renderer 只依赖本类型与 getElectronBridge()，永不 import 'electron'，
- * 保证 Web/Tauri 构建与测试环境永不解析 Node/Electron 模块。
+ * 保证 Web 构建与测试环境永不解析 Node/Electron 模块。
  */
 export interface KinlinOpenFileResult {
   name: string

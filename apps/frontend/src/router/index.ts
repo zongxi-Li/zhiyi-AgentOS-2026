@@ -221,7 +221,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({
-  // Tauri's bundled WebView has no server fallback for deep links. Keep the
+  // The desktop shell has no server fallback for deep links. Keep the
   // browser URL contract unchanged and use hashes only inside the desktop shell.
   history: isDesktop() ? createWebHashHistory() : createWebHistory(),
   routes

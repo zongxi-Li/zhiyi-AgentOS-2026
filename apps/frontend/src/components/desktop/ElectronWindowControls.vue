@@ -32,7 +32,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getElectronBridge, type KinlinDesktopBridge } from '@/platform/electron/bridge'
 
-// 只负责窗口本体：最小化 / 最大化 / 还原 / 关闭 / F11 全屏 / 真实窗口状态同步；不感知任何业务概念；Electron 版把 F11 收在渲染进程键盘事件，等价 Tauri Rust 侧 global-shortcut。
+// 只负责窗口本体：最小化 / 最大化 / 还原 / 关闭 / F11 全屏 / 真实窗口状态同步；不感知任何业务概念；Electron 版把 F11 收在渲染进程键盘事件。
 const maximized = ref(false)
 const runtimeAvailable = ref(false)
 let bridge: KinlinDesktopBridge | null = null

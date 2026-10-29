@@ -239,7 +239,7 @@ import { plainMissionTitle } from '@/utils/missionTitle'
 
 // Desktop 构建下本栏即窗口标题栏（decorations:false）：
 // 空白区域承担拖拽与双击最大化，右侧挂窗口控制；
-// Web 构建通过 @window-controls 别名拿到空占位，不含任何 Tauri API。
+// Web 构建通过 @window-controls 别名拿到空占位，不含任何桌面 API。
 const desktopShell = isDesktop()
 const dragRegionProps = platform.dragRegionProps
 
