@@ -6,15 +6,22 @@ param(
     [string]$Memurai = "$env:LOCALAPPDATA\ZhiyiNative\dependencies\memurai-4.1.2\memurai.exe",
     [string]$ProviderKeyFile,
     [string]$Workspace,
+    [string]$TestPython,
+    [string]$BackendJar,
     [string]$Snapshot,
+    [ValidateSet('python','hands')][string]$Backend = 'python',
+    [ValidateRange(0,1000)][int]$PortOffset = 0,
     [switch]$Desktop
 )
 $ErrorActionPreference = 'Stop'
 $nativeArgs = @("$PSScriptRoot\persistent_runtime.py",$Action,'--home',$HomeDir)
 if ($Action -eq 'init') {
     $nativeArgs += @('--postgres-bin',$PostgresBin,'--memurai',$Memurai)
+    $nativeArgs += @('--backend',$Backend,'--port-offset',"$PortOffset")
     if ($ProviderKeyFile) { $nativeArgs += @('--provider-key-file',$ProviderKeyFile) }
     if ($Workspace) { $nativeArgs += @('--workspace',$Workspace) }
+    if ($TestPython) { $nativeArgs += @('--test-python',$TestPython) }
+    if ($BackendJar) { $nativeArgs += @('--backend-jar',$BackendJar) }
 }
 if ($Desktop) { $nativeArgs += '--desktop' }
 if ($Snapshot) { $nativeArgs += @('--snapshot',$Snapshot) }

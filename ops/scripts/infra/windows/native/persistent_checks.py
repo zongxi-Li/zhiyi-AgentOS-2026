@@ -19,7 +19,8 @@ import urllib.parse
 import native_runtime as native
 import persistent_runtime as deployment
 
-sys.path.insert(0, str(native.ROOT/'apps/agentOS/src'))
+for folder in ['apps','apps/agent','apps/agentOS','apps/agentOS/src']:
+    sys.path.insert(0,str(native.ROOT/folder))
 from components.scheduler.leases import RedisLeaseCoordinator, LeaseRenewalFailedError
 
 
@@ -85,7 +86,7 @@ def capture(home, run_id, output):
     creds = native.credentials(home)
     info = deployment.manifest(home)
     def api(path):
-        request = urllib.request.Request('http://127.0.0.1:18080'+path,
+        request = urllib.request.Request(f"http://127.0.0.1:{deployment.ports(info)['java']}"+path,
             headers={'Authorization':'Bearer '+creds['browser_token']})
         with urllib.request.urlopen(request,timeout=30) as response: return json.load(response)
     base = '/api/agentos/v2/runs/'+urllib.parse.quote(run_id,safe='')
@@ -111,6 +112,47 @@ def capture(home, run_id, output):
     native.write_json(output,result)
     native.write_json(output.with_name(output.stem+'-run.json'),run)
     native.write_json(output.with_name(output.stem+'-output.json'),content)
+    if info.get('backend') == 'hands':
+        import asyncio
+        from adapters.hands_http import HandsHttpTransport, receipt_checksum
+        class Credentials:
+            def current_signing_credential(self, resource_id): return 'n01a-credential',creds['hmac']
+        async def reconcile():
+            transport = HandsHttpTransport(resource_id='capture',credential_provider=Credentials(),
+                address=f"http://127.0.0.1:{deployment.ports(info)['host']}/v1/executions")
+            verified=[]
+            try:
+                for line in (home/'hands-ledger/ledger.jsonl').read_text(encoding='utf-8').splitlines():
+                    row=json.loads(line)
+                    if row.get('t')!='receipt' or row['receipt'].get('identity',{}).get('runId')!=run_id: continue
+                    receipt=row['receipt']
+                    remote=await transport.query_execution(row['executionId'])
+                    assert remote['receipt']==receipt and receipt_checksum(receipt)==receipt['checksum']
+                    verified.append({'executionId':row['executionId'],'state':remote['state'],'receipt':receipt})
+            finally: await transport.aclose()
+            return verified
+        verified=asyncio.run(reconcile())
+        result['handsReceiptChecksums']={r['executionId']:r['receipt']['checksum'] for r in verified}
+        result['handsReceiptsVerified']=len(verified)
+        def member(node,name):
+            return next((item['value'] for item in (node or {}).get('members',[]) if item['name']==name),{})
+        artifact=member((content or {}).get('content',{}),'artifact')
+        markdown=member(artifact,'content').get('text')
+        if isinstance(markdown,str):
+            result['contentArtifactEnvelope']={field:member(artifact,field).get('text') for field in
+                ['artifactId','artifactKey','checksum','manifestId','mediaType']}
+            with sqlite3.connect((home/'data/identity.sqlite3').as_uri()+'?mode=ro',uri=True) as identity:
+                row=identity.execute("""SELECT a.artifact_id,a.artifact_key,a.checksum,a.content_ref,a.media_type,a.producer_attempt_id
+                    FROM artifacts a JOIN run_artifact_bindings b ON b.artifact_id=a.artifact_id
+                    WHERE b.run_id=? AND a.artifact_key='final'""",(run_id,)).fetchone()
+            result['canonicalArtifact']=dict(zip(
+                ['artifactId','artifactKey','checksum','manifestId','mediaType','producerAttemptId'],row)) if row else None
+            result['canonicalMarkdownSha256']=hashlib.sha256(markdown.encode('utf-8')).hexdigest()
+            output.with_name(output.stem+'-final.md').write_text(markdown,encoding='utf-8')
+        native.write_json(output.with_name(output.stem+'-hands.json'),verified)
+        native.write_json(output.with_name(output.stem+'-provenance.json'),api(base+'/provenance'))
+        native.write_json(output.with_name(output.stem+'-trace.json'),api(base+'/trace?view=workspace'))
+        native.write_json(output,result)
     print({'recorded':str(output),'runStatus':run['status'],'outputRef':output_ref,'files':files})
 
 

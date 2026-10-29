@@ -11,6 +11,10 @@ default-run = "kinlin-desktop"
 name = "kinlin-native-dev"
 path = "src/native_dev.rs"
 
+[[bin]]
+name = "kinlin-integration-dev"
+path = "src/integration_dev.rs"
+
 [lib]
 name = "kinlin_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

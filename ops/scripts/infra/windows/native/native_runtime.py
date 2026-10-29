@@ -221,6 +221,8 @@ def owned(record):
     try:
         process = psutil.Process(record['pid'])
         actual = identity(process)
+        if actual['created'] != record['created']:
+            return None  # PID reused: the owned process is gone; never signal its successor.
         if actual != record:
             raise RuntimeError('Process identity changed; refusing to signal it')
         return process
@@ -362,7 +364,8 @@ def prepare(run, env, name):
 def snapshot(state):
     import psutil
     result = {'services': {}, 'coreReady': True}
-    for name, path, port in [('host', '/health', state['hostPort']),
+    hands = state.get('backend') == 'hands'
+    for name, path, port in [('host', '/v1/health' if hands else '/health', state['hostPort']),
                              ('ai', '/health/ready', state['aiPort'])]:
         record = state['processes'].get(name)
         try:
@@ -370,7 +373,7 @@ def snapshot(state):
             if process is None:
                 raise RuntimeError('owned process absent')
             tree = [process, *process.children(recursive=True)]
-            tokens = [windows_token(member.pid) for member in tree if member.name().lower() == 'python.exe']
+            tokens = [windows_token(member.pid) for member in tree if member.name().lower() == ('node.exe' if hands and name == 'host' else 'python.exe')]
             if not tokens or any(t['elevated'] or int(t['integritySid'].rsplit('-', 1)[1]) > 8192 for t in tokens):
                 raise RuntimeError('Runtime must use ordinary-user non-elevated tokens')
             listeners = [c for member in tree for c in member.net_connections(kind='tcp')
@@ -380,7 +383,10 @@ def snapshot(state):
             if any(c.laddr.ip != '127.0.0.1' for c in listeners):
                 raise RuntimeError('non-loopback listener detected')
             payload = health(port, path)
-            if name == 'host':
+            if name == 'host' and hands:
+                assert payload['ok'] and payload['service'] == 'zhiyi-hands'
+                assert payload['protocolVersion'] == '1'
+            elif name == 'host':
                 assert payload['status'] == 'online' and payload['resourceId'] == 'n01a-host'
                 assert payload['protocolVersion'] == '1' and sorted(payload['capabilities']) == CAPS
             else:

@@ -19,6 +19,7 @@
     <description>知弈 AgentOS - 面向下一代 AI Agent 基础设施的多 Agent 任务闭环系统 Backend Service</description>
 
     <properties>
+        <zhiyi.build.directory>${project.basedir}/target</zhiyi.build.directory>
         <java.version>17</java.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
@@ -208,6 +209,7 @@
     </dependencies>
 
     <build>
+        <directory>${zhiyi.build.directory}</directory>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

@@ -23,6 +23,9 @@ ROOT = native.ROOT
 PORTS = [15432, 16379, 18761, 18765, 18080, 15200, 19222]
 FORMAT = 'zhiyi-windows-persistent-v1'
 
+def ports(info):
+    return dict(zip(['postgres','redis','ai','host','java','frontend','debug'], [port+int(info.get('portOffset',0)) for port in PORTS]))
+
 
 def protect(directory):
     """Restrict only this newly created user-owned directory; never broaden ACLs."""
@@ -61,8 +64,8 @@ def manifest(home):
 def state_for(home):
     path = home / 'runtime-state.json'
     return native.read_json(path) if path.exists() else {
-        'format': FORMAT, 'runDirectory': str(home), 'aiPort': 18761,
-        'hostPort': 18765, 'processes': {}, 'desktop': False,
+        'format': FORMAT, 'runDirectory': str(home), 'aiPort': ports(manifest(home))['ai'] if (home/'environment.json').exists() else 18761,
+        'hostPort': ports(manifest(home))['host'] if (home/'environment.json').exists() else 18765, 'processes': {}, 'desktop': False, 'backend': manifest(home).get('backend','python') if (home/'environment.json').exists() else 'python',
     }
 
 
@@ -82,21 +85,25 @@ def env_for(home, info, creds):
         'DEEPSEEK_MODEL': 'deepseek-chat', 'AGENTOS_LLM_PROVIDER': 'deepseek',
         'AGENTOS_LLM_MODEL': 'deepseek-chat', 'TEXT_ENGINE': 'deepseek', 'DEEPSEEK_ENABLED': 'true',
         'REDIS_PASSWORD': creds['redis'],
-        'AGENTOS_COORDINATION_REDIS_URL': 'redis://127.0.0.1:16379/1',
-        'PROVIDER_STATE_REDIS_URL': 'redis://127.0.0.1:16379/2',
+        'AGENTOS_COORDINATION_REDIS_URL': f"redis://127.0.0.1:{ports(info)['redis']}/1",
+        'PROVIDER_STATE_REDIS_URL': f"redis://127.0.0.1:{ports(info)['redis']}/2",
     })
+    env['AGENTOS_EXECUTION_BACKEND'] = info.get('backend','python')
+    env['AGENTOS_WORKSPACE_TEST_PYTHON'] = info.get('testPython',sys.executable)
+    if info.get('backend') == 'hands':
+        env['AGENTOS_LOCAL_RUNTIME_SHELL_ENABLED'] = 'true'
     return env
 
 
 def java_environment(home, info, creds):
     return dict(env_for(home, info, creds),
-        SPRING_DATASOURCE_URL='jdbc:postgresql://127.0.0.1:15432/zhiyi',
+        SPRING_DATASOURCE_URL=f"jdbc:postgresql://127.0.0.1:{ports(info)['postgres']}/zhiyi",
         SPRING_DATASOURCE_USERNAME='zhiyi_app', SPRING_DATASOURCE_PASSWORD=creds['db'],
-        SPRING_REDIS_HOST='127.0.0.1', SPRING_REDIS_PORT='16379', SPRING_REDIS_DATABASE='0',
+        SPRING_REDIS_HOST='127.0.0.1', SPRING_REDIS_PORT=str(ports(info)['redis']), SPRING_REDIS_DATABASE='0',
         SPRING_REDIS_PASSWORD=creds['redis'], APP_JWT_SECRET=creds['jwt'],
-        AI_INTERNAL_REQUIRED='true', AI_SERVICE_URL='http://127.0.0.1:18761',
-        SERVER_PORT='18080', SERVER_ADDRESS='127.0.0.1',
-        CORS_ALLOWED_ORIGINS='http://127.0.0.1:15200,http://tauri.localhost,tauri://localhost',
+        AI_INTERNAL_REQUIRED='true', AI_SERVICE_URL=f"http://127.0.0.1:{ports(info)['ai']}",
+        SERVER_PORT=str(ports(info)['java']), SERVER_ADDRESS='127.0.0.1',
+        CORS_ALLOWED_ORIGINS=f"http://127.0.0.1:{ports(info)['frontend']},http://tauri.localhost,tauri://localhost",
         APP_UPLOAD_DIR=str(home/'uploads'), SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE='3',
         SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE='1')
 
@@ -109,16 +116,16 @@ def pg_env(creds):
 def sql(info, creds, text):
     result = subprocess.run([str(Path(info['postgresBin'])/'psql.exe'), '-X', '-q', '-t', '-A',
                              '-v', 'ON_ERROR_STOP=1'], input=text, text=True, encoding='utf-8',
-                            capture_output=True, env=pg_env(creds))
+                            capture_output=True, env=dict(pg_env(creds),PGPORT=str(ports(info)['postgres'])))
     if result.returncode:
         # DDL errors can echo a password literal; never expose that stderr.
         raise RuntimeError('Native PostgreSQL administrative command failed')
     return result.stdout.strip()
 
 
-def redis_client(creds, db=0):
+def redis_client(creds, db=0, *, port=16379):
     import redis
-    return redis.Redis(host='127.0.0.1', port=16379, password=creds['redis'],
+    return redis.Redis(host='127.0.0.1', port=port, password=creds['redis'],
                        db=db, socket_timeout=3, socket_connect_timeout=3)
 
 
@@ -154,7 +161,9 @@ def init(home, args):
             'redisDatabases': {'java': 0, 'coordination': 1, 'providerState': 2},
             'created': datetime.now(timezone.utc).isoformat(),
             'redisLicense': 'Memurai Developer; development/testing only; 10-day maximum uptime',
-            'initialized': False}
+            'initialized': False, 'portOffset':args.port_offset, 'backend':args.backend,
+            'testPython':str(args.test_python.absolute()) if args.test_python else sys.executable,
+            'backendJar':str(args.backend_jar.absolute()) if args.backend_jar else str(ROOT/'apps/backend/target/kinlin-backend-1.0.0.jar')}
     native.write_json(home/'environment.json', info)
     save(home, state_for(home))
     return {'status': 'READY', 'initializedNow': True, 'home': str(home), 'workspace': str(workspace)}
@@ -169,6 +178,27 @@ def schema(home, env, first):
             subprocess.run(command, cwd=home, env=env, stdout=log, stderr=log, check=True)
 
 
+def start_hands(home, info, creds, state, env, start):
+    grants = home/'hands-grants.json'
+    native.write_json(grants, {'grants':[{'grantId':'n01a-grant','workspaceId':'n01a-workspace',
+        'canonicalRoot':info['workspace'],'capabilities':native.CAPS+['shell.exec'],
+        'allowedCallers':['n01a-credential'],'revoked':False}]})
+    keys = home/'temp/hands-keys.json'
+    native.write_json(keys, {'credentials':[{'credentialId':'n01a-credential','secret':creds['hmac']}]})
+    config = home/'hands-service.json'
+    native.write_json(config, {'workspaceRoot':info['workspace'],'credentialsFile':str(keys),
+        'grantsFile':str(grants),'dataDir':str(home/'hands-ledger'),'host':'127.0.0.1',
+        'port':ports(info)['host'],'confinement':'none'})
+    node_env = dict(env, TSX_TSCONFIG_PATH=str(ROOT/'apps/hands/tsconfig.json'))
+    try:
+        record = start('host',[shutil.which('node'),str(ROOT/'apps/hands/node_modules/tsx/dist/cli.mjs'),
+            '--tsconfig',str(ROOT/'apps/hands/tsconfig.json'),str(ROOT/'apps/hands/hands/service-main.ts'),
+            '--config',str(config)],node_env)
+        desktop.wait_until(lambda:native.health(ports(info)['host'],'/v1/health').get('ok'),record,60)
+    finally:
+        keys.unlink(missing_ok=True)
+
+
 def up(home, use_desktop):
     info, creds, state = manifest(home), native.credentials(home), state_for(home)
     workspace = Path(info['workspace'])
@@ -176,8 +206,9 @@ def up(home, use_desktop):
         raise RuntimeError('Startup-issued workspace root changed; refusing to reissue authority')
     if any(alive(record) for record in state['processes'].values()):
         raise RuntimeError('This persistent environment already owns running processes; use status or recover')
-    for port in PORTS if use_desktop else PORTS[:-1]: native.port_free(port)
-    if not (ROOT/'apps/backend/target/kinlin-backend-1.0.0.jar').is_file():
+    for port in list(ports(info).values()) if use_desktop else list(ports(info).values())[:-1]: native.port_free(port)
+    backend_jar = Path(info.get('backendJar',str(ROOT/'apps/backend/target/kinlin-backend-1.0.0.jar')))
+    if not backend_jar.is_file():
         raise RuntimeError('Build the Java backend first: mvn -DskipTests package')
     session = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+secrets.token_hex(2)
     logdir = home/'logs'/session
@@ -203,7 +234,7 @@ def up(home, use_desktop):
                                stdout=log, stderr=log, check=True)
             passwordfile.unlink()
             with (pgdata/'postgresql.conf').open('a', encoding='utf-8') as file:
-                file.write("\nlisten_addresses='127.0.0.1'\nport=15432\npassword_encryption='scram-sha-256'\n")
+                file.write(f"\nlisten_addresses='127.0.0.1'\nport={ports(info)['postgres']}\npassword_encryption='scram-sha-256'\n")
         pg = start('postgres', [str(Path(info['postgresBin'])/'postgres.exe'), '-D', str(pgdata)])
         def postgres_ready():
             try: return sql(info, creds, 'SELECT 1;') == '1'
@@ -216,47 +247,50 @@ def up(home, use_desktop):
                 sql(info, creds, 'CREATE DATABASE zhiyi OWNER zhiyi_app;')
         # Configuration carries a DPAPI-decrypted password only during launch.
         # The stable non-secret settings are also recorded for support/backup.
-        config = ('bind 127.0.0.1\nprotected-mode yes\nport 16379\n'
+        config = (f"bind 127.0.0.1\nprotected-mode yes\nport {ports(info)['redis']}\n"
                   f'dir "{(home/"redis").as_posix()}"\n'
                   'appendonly yes\nappendfsync everysec\nsave 60 1\n'
                   'maxmemory-policy noeviction\n')
         (home/'redis/settings.conf').write_text(config, encoding='utf-8')
         authconfig.write_text(config+'requirepass '+creds['redis']+'\n', encoding='utf-8')
         redis = start('redis', [info['memurai'], str(authconfig)])
-        client = redis_client(creds)
+        client = redis_client(creds,port=ports(info)['redis'])
         desktop.wait_until(lambda: client.ping(), redis, 60)
         client.close()
         authconfig.unlink()
         schema(home, env, not (home/'data').exists())
         local_env = dict(env, PYTHONPATH=os.pathsep.join([str(ROOT/'apps/local-runtime'), str(ROOT/'apps/agentOS/src')]))
-        start('host', [sys.executable, '-m', 'runtime.main'], local_env)
+        if info.get('backend') == 'hands':
+            start_hands(home,info,creds,state,env,start)
+        else:
+            start('host', [sys.executable, '-m', 'runtime.main'], local_env)
         ai = start('ai', [sys.executable, '-m', 'uvicorn', 'app.main:app', '--host','127.0.0.1',
-                           '--port','18761','--workers','1'])
-        desktop.wait_until(lambda: native.health(18761,'/health/ready').get('status') == 'UP', ai, 180)
-        java = start('java', [shutil.which('java'), '-jar', str(ROOT/'apps/backend/target/kinlin-backend-1.0.0.jar')],
+                           '--port',str(ports(info)['ai']),'--workers','1'])
+        desktop.wait_until(lambda: native.health(ports(info)['ai'],'/health/ready').get('status') == 'UP', ai, 180)
+        java = start('java', [shutil.which('java'), '-jar', str(backend_jar)],
                      java_environment(home, info, creds))
-        desktop.wait_until(lambda: native.health(18080,'/actuator/health/readiness').get('status') == 'UP', java, 150)
+        desktop.wait_until(lambda: native.health(ports(info)['java'],'/actuator/health/readiness').get('status') == 'UP', java, 150)
         front_env = {key:value for key,value in env.items() if key in {
             'SYSTEMROOT','WINDIR','COMSPEC','PATH','PATHEXT','USERPROFILE','APPDATA','LOCALAPPDATA','PROGRAMDATA',
             'TEMP','TMP','NO_PROXY'}}
-        front_env.update(DEV_BACKEND_PROXY_TARGET='http://127.0.0.1:18080', VITE_API_BASE_URL='')
+        front_env.update(DEV_BACKEND_PROXY_TARGET=f"http://127.0.0.1:{ports(info)['java']}", VITE_API_BASE_URL='')
         vite = start('frontend', [shutil.which('node'), str(ROOT/'apps/frontend/node_modules/vite/bin/vite.js'),
-                                  str(ROOT/'apps/frontend'), '--mode','desktop','--host','127.0.0.1','--port','15200'], front_env)
-        desktop.wait_until(lambda: native.health(15200,'/api/health/ready').get('status') == 'UP', vite, 60)
+                                  str(ROOT/'apps/frontend'), '--mode','desktop','--host','127.0.0.1','--port',str(ports(info)['frontend'])], front_env)
+        desktop.wait_until(lambda: native.health(ports(info)['frontend'],'/api/health/ready').get('status') == 'UP', vite, 60)
         if use_desktop:
             configfile = home/'tauri-native.json'
             native.write_json(configfile, {'identifier':'com.kinlin.zhiyi.native-dev',
-                'build':{'beforeDevCommand':'','devUrl':'http://127.0.0.1:15200'}})
+                'build':{'beforeDevCommand':'','devUrl':f"http://127.0.0.1:{ports(info)['frontend']}"}})
             appenv = dict(front_env, WEBVIEW2_USER_DATA_FOLDER=str(home/'webview'),
-                          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=19222')
+                          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f"--remote-debugging-port={ports(info)['debug']}")
             for key in ['CARGO_HOME','RUSTUP_HOME','CARGO_TARGET_DIR','VSINSTALLDIR']:
                 if os.getenv(key): appenv[key] = os.environ[key]
             record = desktop.spawn_app(home, 'logs/'+session+'/desktop', [shutil.which('node'),
                 str(ROOT/'apps/desktop/node_modules/@tauri-apps/cli/tauri.js'), 'dev', '--config', str(configfile),
-                '--no-watch','--','--bin','kinlin-native-dev'], appenv, ROOT/'apps/desktop')
+                '--no-watch','--','--bin','kinlin-integration-dev' if info.get('portOffset') else 'kinlin-native-dev'], appenv, ROOT/'apps/desktop')
             state['processes']['desktop'] = record
             save(home, state)
-            desktop.wait_until(lambda: native.health(19222,'/json/version'), record, 240)
+            desktop.wait_until(lambda: native.health(ports(info)['debug'],'/json/version'), record, 240)
             state['desktopWindows'] = desktop.show_desktop(record)
             save(home, state)
         if not info['initialized']:
@@ -284,10 +318,10 @@ def status(home):
     try:
         creds = native.credentials(home)
         result['postgresReady'] = sql(info, creds, 'SELECT 1;') == '1'
-        client = redis_client(creds)
+        client = redis_client(creds,port=ports(info)['redis'])
         result['redisReady'] = client.ping()
         client.close()
-        result['javaReady'] = native.health(18080,'/actuator/health/readiness')['status'] == 'UP'
+        result['javaReady'] = native.health(ports(info)['java'],'/actuator/health/readiness')['status'] == 'UP'
     except Exception:
         result.update(postgresReady=False, redisReady=False, javaReady=False)
     result['status'] = 'UP' if result['services'] and all(x['alive'] for x in result['services'].values()) and result['runtime']['coreReady'] and all(result.get(x) for x in ['postgresReady','redisReady','javaReady']) else 'DOWN'
@@ -307,17 +341,17 @@ def down(home):
             subprocess.run([str(Path(info['postgresBin'])/'pg_ctl.exe'), '-D', str(home/'postgres'),
                             'stop','-m','fast','-w','-t','45'], check=True, capture_output=True)
         elif name == 'redis':
-            with redis_client(creds) as client: client.shutdown(save=True)
+            with redis_client(creds,port=ports(info)['redis']) as client: client.shutdown(save=True)
             parent = alive(record)
             if parent: parent.wait(20)
         else:
             native.stop(record)
-    for port in PORTS if state.get('desktop') else PORTS[:-1]: native.port_free(port)
+    for port in list(ports(info).values()) if state.get('desktop') else list(ports(info).values())[:-1]: native.port_free(port)
     cleaned = dict(state, processes=records)
     # This keeps the existing Windows workflow lock and exclusive-handle checks.
     cleanup = native.down(home, cleaned, preserve_credentials=True)
     result = {'status':'PASS','home':str(home),'cleanup':cleanup,'persistentCredentialsRetained':True}
-    for name in ['pg-init-password','redis-auth.conf']:
+    for name in ['pg-init-password','redis-auth.conf','hands-keys.json']:
         (home/'temp'/name).unlink(missing_ok=True)
     native.write_json(home/'logs/last-down.json', result)
     return result
@@ -326,7 +360,7 @@ def down(home):
 def require_stopped(home):
     if any(alive(record) for record in state_for(home)['processes'].values()):
         raise RuntimeError('Stop the application before cold backup or restore')
-    for port in PORTS: native.port_free(port)
+    for port in ports(manifest(home)).values(): native.port_free(port)
 
 
 def backup(home, destination):
@@ -397,7 +431,11 @@ def main():
     parser.add_argument('--memurai', type=Path)
     parser.add_argument('--provider-key-file', type=Path)
     parser.add_argument('--workspace', type=Path)
+    parser.add_argument('--test-python', type=Path)
+    parser.add_argument('--backend-jar', type=Path)
     parser.add_argument('--desktop', action='store_true')
+    parser.add_argument('--backend',choices=['python','hands'],default='python')
+    parser.add_argument('--port-offset',type=int,choices=range(0,1001),default=0)
     parser.add_argument('--snapshot', type=Path)
     args = parser.parse_args()
     home = args.home.absolute()
