@@ -13,11 +13,13 @@
     </div>
     <button v-if="status !== 'checking'" type="button" @click="retry">重试</button>
   </div>
+  <NativeWorkspacePicker v-if="isDesktopRuntime && status === 'online'" />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { checkRuntimeStatus, isDesktop, type RuntimeStatus } from '@/platform'
+import NativeWorkspacePicker from './NativeWorkspacePicker.vue'
 
 const isDesktopRuntime = isDesktop()
 const status = ref<RuntimeStatus>('checking')

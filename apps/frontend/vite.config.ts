@@ -176,6 +176,9 @@ export default defineConfig(({ mode }) => {
         '/ai': {
           target: BACKEND_PROXY_TARGET,
           changeOrigin: true,
+          // Upgrade requests retain the Java authentication boundary too.
+          // Availability still requires a corresponding Java WS endpoint.
+          ws: true,
           timeout: DEV_PROXY_TIMEOUT_MS,
           proxyTimeout: DEV_PROXY_TIMEOUT_MS,
           rewrite: (path) => {

@@ -5,6 +5,11 @@ description = "知弈 AgentOS desktop shell"
 authors = ["知弈 AgentOS"]
 license = "MIT"
 edition = "2021"
+default-run = "kinlin-desktop"
+
+[[bin]]
+name = "kinlin-native-dev"
+path = "src/native_dev.rs"
 
 [lib]
 name = "kinlin_desktop_lib"

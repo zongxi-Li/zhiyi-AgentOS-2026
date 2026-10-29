@@ -112,6 +112,7 @@ declare module 'vue' {
     ModelAggregationCard: typeof import('./src/components/federated/ModelAggregationCard.vue')['default']
     ModelManagementPanel: typeof import('./src/components/resource-center/ModelManagementPanel.vue')['default']
     ModelRuntimeControls: typeof import('./src/components/ModelRuntimeControls.vue')['default']
+    NativeWorkspacePicker: typeof import('./src/components/platform/NativeWorkspacePicker.vue')['default']
     PermissionSelector: typeof import('./src/components/PermissionSelector.vue')['default']
     PlanningStageArtifact: typeof import('./src/components/workspace/PlanningStageArtifact.vue')['default']
     ProblemsPanel: typeof import('./src/components/workbench/ProblemsPanel.vue')['default']

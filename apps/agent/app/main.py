@@ -83,6 +83,8 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.include_router(chat.router, prefix="/ai", tags=["AI"])
 app.include_router(tts.router, prefix="/ai", tags=["TTS"])
 app.include_router(llm_admin.router, prefix="/ai", tags=["AI"])
+from app.api.local_workspace import create_router as create_local_workspace_router
+app.include_router(create_local_workspace_router(runtime), prefix="/ai", tags=["LocalWorkspace"])
 app.include_router(
     agentos_v2.create_router(runtime, coordinator),
     prefix="/ai",
