@@ -20,18 +20,20 @@
       @toggle-fullscreen="emit('toggleFullscreen')"
       @close="emit('close')"
     >
-      <div v-if="inspectorSummary" class="runtime-inspector__summary">
-        <div class="runtime-inspector__summary-line">
-          <span v-if="inspectorSummary.role" class="runtime-inspector__role">{{ inspectorSummary.role }}</span>
-          <span v-if="inspectorSummary.status" class="runtime-inspector__status" :class="`is-${inspectorSummary.statusTone}`">
-            <i aria-hidden="true"></i>{{ inspectorSummary.status }}
-          </span>
-          <span class="runtime-inspector__artifact">
-            {{ inspectorSummary.artifactCount ? `${inspectorSummary.artifactCount} 个 Artifact` : '无 Artifact' }}
-          </span>
+      <template #header-meta>
+        <div v-if="inspectorSummary" class="runtime-inspector__summary">
+          <div class="runtime-inspector__summary-line">
+            <span v-if="inspectorSummary.role" class="runtime-inspector__role">{{ inspectorSummary.role }}</span>
+            <span v-if="inspectorSummary.status" class="runtime-inspector__status" :class="`is-${inspectorSummary.statusTone}`">
+              <i aria-hidden="true"></i>{{ inspectorSummary.status }}
+            </span>
+            <span class="runtime-inspector__artifact">
+              {{ inspectorSummary.artifactCount ? `${inspectorSummary.artifactCount} 个 Artifact` : '无 Artifact' }}
+            </span>
+          </div>
+          <code v-if="inspectorSummary.key" class="runtime-inspector__key">{{ inspectorSummary.key }}</code>
         </div>
-        <code v-if="inspectorSummary.key" class="runtime-inspector__key">{{ inspectorSummary.key }}</code>
-      </div>
+      </template>
       <template v-if="isTaskInspector">
         <nav class="runtime-inspector__tabs" aria-label="Inspector tabs" role="tablist">
           <button
@@ -373,9 +375,9 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 <style scoped>
 .runtime-inspector { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--wb-surface-pane); color: var(--wb-text); }
 .runtime-inspector__empty { padding: 22px 15px; color: var(--wb-text-muted); font-size: 12px; line-height: 1.6; }
-.runtime-inspector__summary { display: grid; gap: 7px; padding: 12px 15px 13px; border-bottom: 0; background: color-mix(in srgb, var(--wb-surface-pane) 82%, var(--wb-surface-inset)); }
-.runtime-inspector__summary-line { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
-.runtime-inspector__role, .runtime-inspector__status, .runtime-inspector__artifact { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 7px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); font-size: 10px; line-height: 1.2; }
+.runtime-inspector__summary { display: grid; gap: 4px; min-width: 0; padding-top: 1px; }
+.runtime-inspector__summary-line { display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; gap: 5px; min-width: 0; }
+.runtime-inspector__role, .runtime-inspector__status, .runtime-inspector__artifact { display: inline-flex; align-items: center; min-height: 19px; padding: 2px 6px; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-sm); font-size: 9px; line-height: 1.2; white-space: nowrap; }
 .runtime-inspector__role { color: var(--wb-text-secondary); background: var(--wb-surface-inset); }
 .runtime-inspector__status { gap: 5px; color: var(--wb-text-secondary); }
 .runtime-inspector__status i { width: 6px; height: 6px; border-radius: 50%; background: var(--wb-text-muted); }
@@ -390,7 +392,7 @@ const sectionProps = (section: { getProps?: (context: WorkbenchInspectorContext)
 .runtime-inspector__status.is-retry { color: var(--wb-retry); border-color: color-mix(in srgb, var(--wb-retry) 24%, var(--wb-border-soft)); background: color-mix(in srgb, var(--wb-retry) 7%, transparent); }
 .runtime-inspector__status.is-retry i { background: var(--wb-retry); }
 .runtime-inspector__artifact { color: var(--wb-text-muted); }
-.runtime-inspector__key { min-width: 0; overflow: hidden; color: var(--wb-text); font: 11px/1.4 var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+.runtime-inspector__key { max-width: 100%; min-width: 0; overflow: hidden; color: var(--wb-text-muted); font: 9px/1.3 var(--font-mono, monospace); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-inspector__tabs { display: flex; gap: 2px; min-height: 38px; margin: 4px 0 2px; padding: 2px; border: 0; border-radius: 9px; background: var(--wb-surface-inset); overflow-x: auto; scrollbar-width: none; }
 .runtime-inspector__tabs::-webkit-scrollbar { display: none; }
 .runtime-inspector__tabs button { flex: 1 0 auto; min-height: 32px; padding: 0 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; transition: color 140ms var(--ease-out), background 140ms var(--ease-out), box-shadow 140ms var(--ease-out), transform 140ms var(--ease-out); }
