@@ -212,7 +212,7 @@ describe('ChatView ACG progress integration', () => {
     chatStoreMock.messages.push({ id: 'message_1', role: 'user', content: '开始任务' })
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.find('.chat-panel').classes()).not.toContain('hero-mode')
+    expect(wrapper.get('.chat-panel').classes()).not.toContain('hero-mode')
     expect(wrapper.find('.context-panel').exists()).toBe(true)
     expect(wrapper.find('.workflow-acg-panel').exists()).toBe(true)
     expect(wrapper.get('.composer-missions').classes()).toContain('is-conversation')

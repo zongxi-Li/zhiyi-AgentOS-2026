@@ -2986,7 +2986,7 @@ const handleHeroLogoPointerUp = () => {
 
 .chat-panel.hero-mode .composer {
   position: absolute;
-  top: var(--hero-composer-center-y);
+  top: calc(var(--hero-composer-center-y) + var(--hero-composer-offset-y, 0px));
   right: 0;
   left: 0;
   z-index: 4;
@@ -4279,6 +4279,8 @@ const handleHeroLogoPointerUp = () => {
 .chat-panel.hero-mode {
   --hero-composer-center-y: 55.5%;
   --hero-slogan-offset-y: 218px;
+  /* Keep breathing room between the hero slogan and the composer shelf. */
+  --hero-composer-offset-y: 24px;
 }
 
 .chat-panel.hero-mode .empty-state {
