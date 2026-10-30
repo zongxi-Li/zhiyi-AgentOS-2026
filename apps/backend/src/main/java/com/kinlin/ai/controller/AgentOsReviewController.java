@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AgentOsClient;
+import com.kinlin.ai.projection.workspace.mapper.WorkspaceFilesProjectionMapper;
 import com.kinlin.ai.dto.agentos.AgentOsApiResponse;
 import com.kinlin.ai.dto.agentos.AgentOsReviewRequest;
 import com.kinlin.ai.dto.agentos.AgentOsReviewResponse;
@@ -37,8 +38,8 @@ public class AgentOsReviewController {
     }
 
     @GetMapping("/runs/{runId}/tool-approvals")
-    public ResponseEntity<Map<String, Object>> toolApprovals(@PathVariable String runId) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.run(runId) + "/tool-approvals"));
+    public ResponseEntity<QueryResponse> toolApprovals(@PathVariable String runId) {
+        return AgentOsControllerSupport.projectedResponse(gateway.get(AgentOsPaths.run(runId) + "/tool-approvals"), WorkspaceFilesProjectionMapper::approvals);
     }
 
     @PostMapping("/runs/{runId}/tool-approvals/{approvalId}")

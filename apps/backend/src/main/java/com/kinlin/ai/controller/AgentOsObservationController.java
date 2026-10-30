@@ -1,6 +1,7 @@
 package com.kinlin.ai.controller;
 
 import com.kinlin.ai.client.AgentOsClient;
+import com.kinlin.ai.projection.workspace.mapper.WorkspaceFilesProjectionMapper;
 import com.kinlin.ai.gateway.AgentOsPaths;
 import com.kinlin.ai.projection.common.dto.QueryResponse;
 import com.kinlin.ai.projection.resource.mapper.ResourceUsageProjectionMapper;
@@ -41,21 +42,21 @@ public class AgentOsObservationController {
     }
 
     @GetMapping("/missions/{missionId}/workspace/files")
-    public ResponseEntity<Map<String, Object>> listWorkspaceFiles(
+    public ResponseEntity<QueryResponse> listWorkspaceFiles(
             @PathVariable String missionId, @RequestParam(defaultValue = ".") String path,
             @RequestParam(defaultValue = "1000") int maxEntries) {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("path", path);
         params.put("maxEntries", String.valueOf(maxEntries));
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
-                AgentOsPaths.mission(missionId) + "/workspace/files", params)));
+        return AgentOsControllerSupport.projectedFileResponse(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.mission(missionId) + "/workspace/files", params)), WorkspaceFilesProjectionMapper::listing);
     }
 
     @GetMapping("/missions/{missionId}/workspace/file")
-    public ResponseEntity<Map<String, Object>> readWorkspaceFile(
+    public ResponseEntity<QueryResponse> readWorkspaceFile(
             @PathVariable String missionId, @RequestParam String path) {
-        return AgentOsControllerSupport.response(gateway.get(AgentOsPaths.query(
-                AgentOsPaths.mission(missionId) + "/workspace/file", Map.of("path", path))));
+        return AgentOsControllerSupport.projectedFileResponse(gateway.get(AgentOsPaths.query(
+                AgentOsPaths.mission(missionId) + "/workspace/file", Map.of("path", path))), WorkspaceFilesProjectionMapper::content);
     }
 
     @GetMapping("/missions/{missionId}/workspace")

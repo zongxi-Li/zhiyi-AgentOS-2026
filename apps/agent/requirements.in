@@ -28,3 +28,6 @@ chromadb==1.5.9
 posthog==6.9.3
 # Included explicitly so one hash lock is complete when validated from Windows.
 colorama==0.4.6
+
+# PostgreSQL workspace authority (including Windows binary libpq).
+psycopg[binary]==3.3.6

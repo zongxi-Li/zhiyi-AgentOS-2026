@@ -2017,7 +2017,12 @@ def create_router(
         authority = getattr(runtime, 'workspace_authority', None)
         if authority is not None:
             # Explorer is a human action, scoped to the latest frozen Mission Run.
-            runs = runtime.workflow_store.list_runs(mission_id=mission_id)
+            actor = current_trusted_user()
+            runs = runtime.workflow_store.list_runs(
+                mission_id=mission_id,
+                owner_user_id=(actor.user_id if actor else None),
+                owner_tenant_id=(actor.tenant_id if actor else None),
+            )
             if not runs:
                 raise HTTPException(403, 'Mission has no frozen workspace Run')
             selected_run = max(runs, key=lambda item: item.created_at)

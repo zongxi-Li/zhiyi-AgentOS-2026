@@ -1917,6 +1917,44 @@ async def test_workspace_file_browser_normalizes_hands_entries_and_reads_only_gr
     finally: runtime.identity_lifecycle.lifecycle_service.close()
 
 
+async def test_dynamic_workspace_file_listing_passes_trusted_owner_to_run_query(tmp_path):
+    from types import SimpleNamespace
+    from contracts.local_runtime import LocalRuntimeAuthorizationRef
+    runtime = _runtime(tmp_path, with_identity=True)
+    mission = runtime.create_mission("Owned dynamic files", input={"authenticatedUserId":"owner", "authenticatedTenantId":"tenant"})
+    _, run = runtime.prepare_run(mission.mission_id, workflow_id="api-workflow")
+    authorization = LocalRuntimeAuthorizationRef(grantId="grant", workspaceId="workspace")
+    run.input["workspaceBinding"] = {"workspaceRoot":"C:/owned"}
+    runtime.workflow_store.save_run(run)
+    calls = []
+    class Client:
+        async def execute(self, invocation, **kwargs):
+            calls.append((invocation, kwargs))
+            return SimpleNamespace(status="completed", output={"content":"owned file"}, error=None)
+    runtime.local_runtime_client = Client()
+    runtime.local_runtime_authorization = authorization
+    runtime.local_runtime_resource = SimpleNamespace(profile=SimpleNamespace(runtime_id="hands"))
+    runtime.workspace_authority = SimpleNamespace(resolve=lambda selected: authorization)
+    app = FastAPI(); app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    path = f"/agentos/v2/missions/{mission.mission_id}/workspace/file?path=note.txt"
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            actor_token = _trusted_user_context.set(TrustedUserContext("owner","owner","user","tenant"))
+            try:
+                response = await client.get(path)
+                assert response.status_code == 200, response.text
+                assert response.json()["content"] == "owned file"
+                assert calls[0][1]["authorization"] == authorization
+            finally: _trusted_user_context.reset(actor_token)
+            actor_token = _trusted_user_context.set(TrustedUserContext("other","other","user","tenant"))
+            try:
+                # This legacy identity fixture conceals a foreign Mission as 404.
+                assert (await client.get(path)).status_code == 404
+                assert len(calls) == 1
+            finally: _trusted_user_context.reset(actor_token)
+    finally: runtime.identity_lifecycle.lifecycle_service.close()
+
+
 async def test_workspace_file_save_uses_once_approval_and_rejects_stale_versions(tmp_path, monkeypatch):
     from types import SimpleNamespace
     import app.tools

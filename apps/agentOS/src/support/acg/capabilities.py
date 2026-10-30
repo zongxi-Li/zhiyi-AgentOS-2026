@@ -144,7 +144,10 @@ class CapabilityCatalog:
 
         allowed = {self._normalize(item) for item in capability_ids}
         scoped = CapabilityCatalog(
-            descriptor.model_copy(deep=True)
+            descriptor.model_copy(deep=True, update={
+                "optional_dependencies": [dependency for dependency in descriptor.optional_dependencies
+                                          if dependency in allowed],
+            })
             for capability_id, descriptor in self._descriptors.items()
             if capability_id in allowed
         )

@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
         AgentOsReviewController.class,
         AgentOsArtifactController.class,
         AgentOsObservationController.class,
+        com.kinlin.ai.controller.AgentOsWorkspaceController.class,
         AgentOsEventController.class
 })
 public class AgentOsGatewayExceptionHandler {

@@ -35,6 +35,16 @@ final class AgentOsControllerSupport {
         return ResponseEntity.status(response.status()).body(body);
     }
 
+    static <T extends QueryResponse> ResponseEntity<QueryResponse> projectedFileResponse(
+            Map<String, Object> payload, Function<Map<String, Object>, T> mapper) {
+        var upstream = response(payload);
+        if (!upstream.getStatusCode().is2xxSuccessful() && upstream.getBody().get("detail") instanceof String detail) {
+            return ResponseEntity.status(upstream.getStatusCode()).body(
+                new com.kinlin.ai.projection.workspace.dto.WorkspaceFileErrorQuery(detail));
+        }
+        return projectedResponse(payload, mapper);
+    }
+
     static <T extends QueryResponse> ResponseEntity<QueryResponse> projectedResponse(
             Map<String, Object> payload, Function<Map<String, Object>, T> mapper
     ) {

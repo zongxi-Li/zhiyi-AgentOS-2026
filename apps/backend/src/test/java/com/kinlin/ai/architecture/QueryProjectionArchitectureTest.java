@@ -214,7 +214,8 @@ class QueryProjectionArchitectureTest {
                     "getResourceUsage", "getResourceHealthHistory", "getResourceCredential")
                     .contains(method.getName());
         }
-        if (controller == AgentOsObservationController.class) {
+        if (controller == AgentOsObservationController.class
+                || controller == com.kinlin.ai.controller.AgentOsWorkspaceController.class) {
             return AnnotatedElementUtils.hasAnnotation(method, GetMapping.class);
         }
         if (controller == StatisticsController.class || controller == UserProfileController.class
