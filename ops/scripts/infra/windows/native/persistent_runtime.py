@@ -92,11 +92,12 @@ def env_for(home, info, creds):
     })
     env['AGENTOS_EXECUTION_BACKEND'] = info.get('backend','python')
     env['AGENTOS_WORKSPACE_TEST_PYTHON'] = info.get('testPython',sys.executable)
+    from urllib.parse import quote
+    env['AGENTOS_WORKSPACE_DATABASE_URL'] = f"postgresql://zhiyi_app:{quote(creds['db'], safe='')}@127.0.0.1:{ports(info)['postgres']}/zhiyi"
+    env['AGENTOS_WORKSPACE_GRANTS_FILE'] = str(home/'hands-grants.json')
+    env['ZHIYI_LOCAL_RUNTIME_WORKSPACE_PROJECTION'] = str(home/'hands-grants.json')
     if info.get('backend') == 'hands':
         env['AGENTOS_LOCAL_RUNTIME_SHELL_ENABLED'] = 'true'
-        from urllib.parse import quote
-        env['AGENTOS_WORKSPACE_DATABASE_URL'] = f"postgresql://zhiyi_app:{quote(creds['db'], safe='')}@127.0.0.1:{ports(info)['postgres']}/zhiyi"
-        env['AGENTOS_WORKSPACE_GRANTS_FILE'] = str(home/'hands-grants.json')
         env['AGENTOS_WORKSPACE_TEST_NODE'] = shutil.which('node') or ''
         env['AGENTOS_WORKSPACE_TEST_NPM'] = shutil.which('npm.cmd') or ''
     return env
@@ -185,7 +186,7 @@ def schema(home, env, first):
             subprocess.run(command, cwd=home, env=env, stdout=log, stderr=log, check=True)
 
 
-def start_hands(home, info, creds, state, env, start):
+def prepare_workspace_grants(home, info, env):
     grants = home/'hands-grants.json'
     dynamic = [g for g in native.read_json(grants).get('grants', []) if g['grantId'].startswith('wgrant_')] if grants.exists() else []
     native.write_json(grants, {'grants':dynamic+[{'grantId':'n01a-grant','workspaceId':'n01a-workspace',
@@ -204,6 +205,10 @@ def start_hands(home, info, creds, state, env, start):
         subprocess.run(command, env=env, cwd=home, check=True)
     elif dynamic:
         raise RuntimeError('Dynamic workspace authority schema missing; refusing stale grant projection')
+
+
+def start_hands(home, info, creds, state, env, start):
+    grants = home/'hands-grants.json'
     keys = home/'temp/hands-keys.json'
     native.write_json(keys, {'credentials':[{'credentialId':'n01a-credential','secret':creds['hmac']}]})
     config = home/'hands-service.json'
@@ -281,6 +286,7 @@ def up(home, use_desktop):
         client.close()
         authconfig.unlink()
         schema(home, env, not (home/'data').exists())
+        prepare_workspace_grants(home, info, env)
         local_env = dict(env, PYTHONPATH=os.pathsep.join([str(ROOT/'apps/local-runtime'), str(ROOT/'apps/agentOS/src')]))
         if info.get('backend') == 'hands':
             start_hands(home,info,creds,state,env,start)

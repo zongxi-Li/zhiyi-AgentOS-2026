@@ -27,9 +27,11 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
         local_runtime_executor: LocalRuntimeToolExecutor | None = None,
         legacy_terminal_enabled: bool | None = None,
         permission_service: ChatPermissionService | None = None,
+        workspace_executor_factory: Callable[[], LocalRuntimeToolExecutor] | None = None,
     ) -> None:
         super().__init__()
         self._local_runtime_executor = local_runtime_executor
+        self._workspace_executor_factory = workspace_executor_factory
         # Composition roots explicitly inject the Chat policy. Keeping the
         # default empty preserves the unbound catalog's existing behavior.
         self.permission_service = permission_service
@@ -138,13 +140,15 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
                 raise LocalRuntimeToolError(
                     "LOCAL_RUNTIME_UNAVAILABLE", "Local Runtime is unavailable."
                 )
+            executor = self._workspace_executor_factory() if self._workspace_executor_factory else self._local_runtime_executor
+            workspace_id = executor.authorization.workspace_id if self._workspace_executor_factory else self._workspace_id
             if self.permission_service is not None:
                 await self.permission_service.authorize(
                     tool_name=name,
                     arguments=arguments,
                     call_id=str(call_id or ""),
                     session_id=str(session_id or ""),
-                    workspace_id=self._workspace_id,
+                    workspace_id=workspace_id,
                     emit=permission_event_sink,
                 )
             del role_id, provider
@@ -154,7 +158,7 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
                     "request_id": str(request_id or session_id or call_id or ""),
                     "event_sink": permission_event_sink,
                 })
-            return await self._local_runtime_executor.execute(
+            return await executor.execute(
                 name,
                 arguments,
                 **executor_kwargs,

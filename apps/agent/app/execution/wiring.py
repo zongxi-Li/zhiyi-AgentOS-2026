@@ -600,10 +600,10 @@ def _assemble_default_runtime(
             if workspace_id and grant_id
             else None
         )
+    if env.get('AGENTOS_WORKSPACE_DATABASE_URL'):
+        from app.execution.workspace_authority import WorkspaceAuthority
+        runtime.workspace_authority = WorkspaceAuthority(env, runtime.local_runtime_resource.profile.runtime_id)
     if env.get('AGENTOS_EXECUTION_BACKEND') == 'hands':
-        if env.get('AGENTOS_WORKSPACE_DATABASE_URL'):
-            from app.execution.workspace_authority import WorkspaceAuthority
-            runtime.workspace_authority = WorkspaceAuthority(env, runtime.local_runtime_resource.profile.runtime_id)
         from app.tools.formal_workspace import FormalWorkspaceTools
         runtime.tool_runtime = FormalWorkspaceTools(runtime, runtime.tool_runtime)
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)

@@ -21,6 +21,58 @@ from components.resource.service import ResourcePlane
 from contracts.resource import Placement, RuntimeKind, RuntimeProfile
 
 
+def test_chat_composition_uses_the_authenticated_users_current_workspace(monkeypatch):
+    from app.security import internal_auth
+    from app.tools import runtime as tool_runtime
+    template = _executor()
+    actor = SimpleNamespace(user_id='current-user')
+    selected = LocalRuntimeAuthorizationRef(grantId='selected-grant', workspaceId='selected-workspace')
+
+    def resolve_current(current):
+        assert current is actor
+        return selected
+
+    execution = SimpleNamespace(local_runtime_client=template.client,
+        resource_plane=template.resource_plane, local_runtime_resource=SimpleNamespace(
+            profile=SimpleNamespace(runtime_id=template.resource_id)),
+        local_runtime_health_projector=template.health_projector,
+        local_runtime_transport=template.health_transport,
+        local_runtime_authorization=template.authorization,
+        workspace_authority=SimpleNamespace(resolve_current=resolve_current))
+    monkeypatch.setattr(internal_auth, 'current_trusted_user', lambda: actor)
+    monkeypatch.setattr(tool_runtime, '_chat_runtime', None)
+    catalog = tool_runtime.configure_chat_tool_runtime(execution).catalog
+    catalog.permission_service = None
+    asyncio.run(catalog.execute('read_file', {'path': 'note.txt'}, call_id='current-workspace'))
+    assert template.client.calls[0][1]['authorization'] == selected
+    assert catalog._local_runtime_executor.authorization == template.authorization
+
+
+def test_dynamic_workspace_is_pinned_before_permission_wait():
+    first_client, second_client = _Client(), _Client()
+    first, second = _executor(client=first_client), _executor(client=second_client)
+    second.authorization = LocalRuntimeAuthorizationRef(grantId="grant-2", workspaceId="workspace-2")
+    selected = [first]
+    approval_scopes = []
+
+    async def approve(**kwargs):
+        approval_scopes.append(kwargs["workspace_id"])
+        selected[0] = second
+
+    catalog = ChatToolCatalog(local_runtime_executor=first,
+        permission_service=SimpleNamespace(authorize=approve),
+        workspace_executor_factory=lambda: selected[0], legacy_terminal_enabled=False)
+
+    async def scenario():
+        await catalog.execute("read_file", {"path": "note.txt"}, call_id="dynamic-1")
+        await catalog.execute("read_file", {"path": "note.txt"}, call_id="dynamic-2")
+
+    asyncio.run(scenario())
+    assert approval_scopes == ["workspace-1", "workspace-2"]
+    assert first_client.calls[0][1]["authorization"].workspace_id == "workspace-1"
+    assert second_client.calls[0][1]["authorization"].workspace_id == "workspace-2"
+
+
 class _HealthProjector:
     def __init__(self, healthy=True):
         self.healthy = healthy

@@ -687,7 +687,12 @@ class ExecutionRuntime(CollaboratorAccess):
             if parent_run_id:
                 parent_workspace_run = self.workflow_store.get_run(parent_run_id)
                 workspace_authority.resolve(parent_workspace_run)
-                run_input['workspaceBinding'] = deepcopy(parent_workspace_run.input['workspaceBinding'])
+                if 'workspaceBinding' in parent_workspace_run.input:
+                    run_input['workspaceBinding'] = deepcopy(parent_workspace_run.input['workspaceBinding'])
+                else:
+                    # Legacy Python Runs have no directory snapshot; a new Run
+                    # freezes the authenticated user's current selection.
+                    workspace_authority.freeze(run_input)
             else:
                 workspace_authority.freeze(run_input)
         basis = None

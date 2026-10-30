@@ -1917,17 +1917,38 @@ async def test_workspace_file_browser_normalizes_hands_entries_and_reads_only_gr
     finally: runtime.identity_lifecycle.lifecycle_service.close()
 
 
-async def test_dynamic_workspace_file_listing_passes_trusted_owner_to_run_query(tmp_path):
+def test_legacy_workspace_rerun_freezes_current_selection(tmp_path):
+    from types import SimpleNamespace
+    runtime = _runtime(tmp_path, with_identity=True)
+    try:
+        mission = runtime.create_mission('Legacy workspace rerun')
+        _, parent = runtime.prepare_run(mission.mission_id, workflow_id='api-workflow')
+        current = {'workspaceRoot': 'C:/selected', 'workspaceId': 'new-workspace'}
+        runtime.workspace_authority = SimpleNamespace(resolve=lambda run: None,
+            freeze=lambda inputs: inputs.update(workspaceBinding=dict(current)))
+        _, child = runtime.prepare_run(mission.mission_id, workflow_id='api-workflow', parent_run_id=parent.run_id)
+        assert child.input['workspaceBinding'] == current
+        assert 'workspaceBinding' not in runtime.workflow_store.get_run(parent.run_id).input
+    finally:
+        runtime.identity_lifecycle.lifecycle_service.close()
+
+
+@pytest.mark.parametrize('frozen', [True, False])
+async def test_dynamic_workspace_file_listing_passes_trusted_owner_to_run_query(tmp_path, frozen):
     from types import SimpleNamespace
     from contracts.local_runtime import LocalRuntimeAuthorizationRef
     runtime = _runtime(tmp_path, with_identity=True)
     mission = runtime.create_mission("Owned dynamic files", input={"authenticatedUserId":"owner", "authenticatedTenantId":"tenant"})
     _, run = runtime.prepare_run(mission.mission_id, workflow_id="api-workflow")
     authorization = LocalRuntimeAuthorizationRef(grantId="grant", workspaceId="workspace")
-    run.input["workspaceBinding"] = {"workspaceRoot":"C:/owned"}
+    if frozen:
+        run.input["workspaceBinding"] = {"workspaceRoot":"C:/owned"}
     runtime.workflow_store.save_run(run)
     calls = []
     class Client:
+        async def workspace_root(self, authorization):
+            return 'C:/startup'
+
         async def execute(self, invocation, **kwargs):
             calls.append((invocation, kwargs))
             return SimpleNamespace(status="completed", output={"content":"owned file"}, error=None)

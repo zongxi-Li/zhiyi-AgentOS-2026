@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 from capabilities import CapabilityDispatcher, FileSystemPolicy, FilesystemCapabilities
-from grants import GrantAuthorizationService, InMemoryGrantStore
+from grants import GrantAuthorizationService, GrantStore, InMemoryGrantStore
 from process import ProcessExecutionService
 from workspace import CanonicalWorkspaceResolver
 
@@ -45,7 +45,12 @@ def _configured_capabilities(values: dict[str, str]) -> set[str]:
     return capabilities
 
 
-def _build_grant_store(values: dict[str, str], resolver: CanonicalWorkspaceResolver) -> InMemoryGrantStore:
+def _build_grant_store(values: dict[str, str], resolver: CanonicalWorkspaceResolver) -> GrantStore:
+    projection = values.get('ZHIYI_LOCAL_RUNTIME_WORKSPACE_PROJECTION')
+    if projection:
+        from grants.projected import ProjectedGrantStore
+        return ProjectedGrantStore(projection, _required(values, 'ZHIYI_LOCAL_RUNTIME_CREDENTIAL_ID'),
+                                   _configured_capabilities(values))
     grants_file = str(values.get("ZHIYI_LOCAL_RUNTIME_GRANTS_FILE") or "").strip()
     if grants_file:
         return build_grant_store_from_bootstrap(

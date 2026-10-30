@@ -2043,7 +2043,9 @@ def create_router(
                 idempotency_key=call_id)
             if result.status != 'completed':
                 raise HTTPException(409, result.error.code if result.error else 'Workspace operation failed')
-            return selected_run.input['workspaceBinding']['workspaceRoot'], relative_path, result.output
+            frozen = selected_run.input.get('workspaceBinding')
+            workspace_root = frozen['workspaceRoot'] if isinstance(frozen, dict) else await client.workspace_root(authorization)
+            return workspace_root, relative_path, result.output
 
         try:
             workspace_root = await client.workspace_root(authorization)

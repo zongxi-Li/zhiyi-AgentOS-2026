@@ -974,11 +974,21 @@ def configure_chat_tool_runtime(execution_runtime: object) -> AgentsToolRuntime:
             resource_id=str(resource_id),
             authorization=authorization,
         )
+    workspace_executor_factory = None
+    authority = getattr(execution_runtime, 'workspace_authority', None)
+    if executor is not None and authority is not None:
+        def workspace_executor_factory():
+            from copy import copy
+            from app.security.internal_auth import current_trusted_user
+            bound = copy(executor)
+            bound.authorization = authority.resolve_current(current_trusted_user()) or authorization
+            return bound
     _chat_runtime = AgentsToolRuntime(
         catalog=ChatToolCatalog(
             local_runtime_executor=executor,
             permission_service=get_chat_permission_service(),
             legacy_terminal_enabled=settings.CHAT_LEGACY_CONTAINER_TERMINAL_ENABLED,
+            workspace_executor_factory=workspace_executor_factory,
         )
     )
     return _chat_runtime

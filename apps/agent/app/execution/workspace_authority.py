@@ -1,7 +1,7 @@
 """Trusted local workspace issuer. PostgreSQL is authority; Hands JSON is a projection.
 
-No model input is consumed here. Root identity and reparse boundaries are checked
-again before each operation. Revoked grants are never reused on reauthorization.
+No model input is consumed here. Any accessible directory can be selected;
+aliases resolve to their real location. Revoked grants are never reused.
 """
 import hashlib
 import json
@@ -18,20 +18,13 @@ def canonical_directory(value):
     raw = str(value)
     if not raw or '\x00' in raw or not Path(raw).is_absolute():
         raise PermissionError('Absolute local directory required')
-    if os.name == 'nt' and (raw.startswith(('\\\\', '//')) or ':' in raw[2:]):
-        raise PermissionError('UNC, device and stream paths are not supported')
-    # Inspect the original path BEFORE resolve: resolving would hide a junction.
-    if '..' in Path(raw).parts:
-        raise PermissionError('Parent traversal is forbidden')
-    candidate = Path(os.path.abspath(raw))
-    for part in [*reversed(candidate.parents), candidate]:
-        info = part.lstat()
-        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
-            raise PermissionError('Reparse points are forbidden in workspace roots')
-    resolved = candidate.resolve(strict=True)
+    try:
+        resolved = Path(raw).resolve(strict=True)
+    except RuntimeError as exc:
+        raise PermissionError('Directory link cannot be resolved') from exc
     info = resolved.stat()
-    if not stat.S_ISDIR(info.st_mode) or resolved.parent == resolved:
-        raise PermissionError('A project directory, not a drive root, is required')
+    if not stat.S_ISDIR(info.st_mode):
+        raise PermissionError('An existing directory is required')
     return os.path.normcase(str(resolved)), f'{info.st_dev}:{info.st_ino}'
 
 
@@ -127,13 +120,26 @@ class WorkspaceAuthority:
 
     def resolve(self, run):
         binding = run.input.get('workspaceBinding')
+        if binding is None and self.environment.get('AGENTOS_EXECUTION_BACKEND') == 'python':
+            # Existing Python Runs predate dynamic selection and retain their startup root.
+            return LocalRuntimeAuthorizationRef(
+                grantId=self.environment['AGENTOS_LOCAL_RUNTIME_GRANT_ID'],
+                workspaceId=self.environment['AGENTOS_LOCAL_RUNTIME_WORKSPACE_ID'])
+        return self._resolve(binding, str(run.input.get('authenticatedUserId')),
+                             run.input.get('authenticatedTenantId') or '__unscoped__')
+
+    def resolve_current(self, actor):
+        owner, tenant = self.owner(actor)
+        selected = self.current(actor)
+        return self._resolve(selected, owner, tenant) if selected else None
+
+    def _resolve(self, binding, owner, tenant):
         if not isinstance(binding, dict):
             raise PermissionError('Run has no frozen authorized workspace; select a directory before creating the Run')
         with self.connect() as conn:
             row = conn.execute('SELECT * FROM local_workspace_authorizations WHERE workspace_id=%s', (binding['workspaceId'],)).fetchone()
         if (not row or row['revoked'] or row['grant_id'] != binding['grantId'] or
-                row['user_id'] != str(run.input.get('authenticatedUserId')) or
-                row['tenant_id'] != (run.input.get('authenticatedTenantId') or '__unscoped__') or
+                row['user_id'] != owner or row['tenant_id'] != tenant or
                 row['resource_id'] != self.resource_id or row['canonical_root'] != binding['workspaceRoot']):
             raise PermissionError('Workspace grant is revoked or does not match the frozen Run')
         root, identity = canonical_directory(row['canonical_root'])

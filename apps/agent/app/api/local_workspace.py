@@ -1,7 +1,7 @@
-"""User-visible binding to the system-issued, startup-scoped Host Grant.
+"""User-visible selection of any accessible directory through backend-issued grants.
 
-Selecting a path confirms the existing authority; no client-selected allowedRoot
-or new Grant enters the executor. Changing roots requires an explicit relaunch.
+The default native environment supports live selection. Legacy integrations that
+do not configure a workspace authority retain their startup-scoped grant.
 """
 from pathlib import Path
 
