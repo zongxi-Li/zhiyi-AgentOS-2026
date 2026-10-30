@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     SSE_HEARTBEAT_INTERVAL: float = 5.0
     SSE_TEST_MODE: bool = False
     PROVIDER_STATE_ENABLED: bool = False
-    PROVIDER_STATE_REDIS_URL: str = "redis://redis:6379/0"
+    PROVIDER_STATE_REDIS_URL: str = "redis://127.0.0.1:16379/2"
     PROVIDER_STATE_TTL_SECONDS: int = 3600
     REDIS_PASSWORD: str = ""
     TOOL_RUNTIME_ENABLED: bool = True
