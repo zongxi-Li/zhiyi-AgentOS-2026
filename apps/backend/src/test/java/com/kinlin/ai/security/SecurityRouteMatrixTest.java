@@ -29,6 +29,17 @@ class SecurityRouteMatrixTest {
     private MockMvc mockMvc;
 
     @Test
+    void directLocalApiAliasesReachControllersThroughRealSecurity() throws Exception {
+        mockMvc.perform(get("/api/health/ready")).andExpect(status().is2xxSuccessful());
+        // Empty login reaches request validation (400), rather than an unmapped route or auth rejection.
+        mockMvc.perform(post("/api/auth/login").contentType("application/json").content("{}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/roles/builtin")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/auth/logout")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/agentos/v2/missions")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void publicRoutesStayPublicAndHitRealEndpoints() throws Exception {
         // health 组：真实存在（HealthController）
         mockMvc.perform(get("/health")).andExpect(status().is2xxSuccessful());
