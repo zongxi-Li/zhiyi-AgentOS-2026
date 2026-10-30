@@ -101,14 +101,18 @@ def capture(home, run_id, output):
     with sqlite3.connect((home/'data/workflows.sqlite3').as_uri()+'?mode=ro',uri=True) as conn:
         workflow_counts = {table:conn.execute('SELECT count(*) FROM '+table).fetchone()[0]
             for table in ['tasks','runs','graph_execution_permits','execution_dispatch_commands']}
-    files = {str(p.relative_to(Path(info['workspace']))):hashlib.sha256(p.read_bytes()).hexdigest()
-             for p in Path(info['workspace']).rglob('*') if p.is_file()}
+        stored_run = json.loads(conn.execute('SELECT payload FROM runs WHERE run_id=?', (run_id,)).fetchone()[0])
+    # Dynamic execution uses the Run-frozen server binding, not the startup root.
+    workspace_binding = stored_run.get('input', {}).get('workspaceBinding') or {}
+    workspace = Path(workspace_binding.get('workspaceRoot') or info['workspace'])
+    files = {str(p.relative_to(workspace)):hashlib.sha256(p.read_bytes()).hexdigest()
+             for p in workspace.rglob('*') if p.is_file()}
     result = {'runId':run_id,'missionId':run['missionId'],'runStatus':run['status'],
         'outputRef':output_ref,'outputSha256':hashlib.sha256(json.dumps(content,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
         'workflowCounts':workflow_counts,'postgresCounts':json.loads(counts),
         'conversationIds':[x.get('contextId',x.get('id')) for x in conversations],
         'workspaceFiles':files,'modelCalls':calls,'home':str(home),
-        'workspace':info['workspace'], 'credentialsSha256':hashlib.sha256((home/'credentials.dpapi').read_bytes()).hexdigest()}
+        'workspace':str(workspace), 'startupWorkspace':info['workspace'], 'workspaceBinding':workspace_binding, 'credentialsSha256':hashlib.sha256((home/'credentials.dpapi').read_bytes()).hexdigest()}
     native.write_json(output,result)
     native.write_json(output.with_name(output.stem+'-run.json'),run)
     native.write_json(output.with_name(output.stem+'-output.json'),content)

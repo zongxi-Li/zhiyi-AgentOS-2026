@@ -1,5 +1,12 @@
 # N03 Windows 无 Docker 持久开发环境
 
+当前 Hands 动态工作区用法及真实 Electron 验收范围见
+[EX-M1 运行说明](README-EX-M1.md) 和
+[M2B 验收记录](../../../../../docs/开发记录/PR-EX-M2B-动态工作区ACG-Hands端到端验收.md)。
+Hands 配置下，初始化工作区是启动默认值；用户可在桌面另选目录并由后端授权。
+每个正式 Run 冻结授权身份，撤销后不能通过重新授权继承旧 Run 权限。
+Python 依赖锁包含 WorkspaceAuthority 使用的 `psycopg[binary]`；首次安装仍使用下述带 hash 的锁文件。
+
 使用真实 PostgreSQL、Memurai、Java、Python ExecutionRuntime、知行 Host 和 Electron 桌面壳。
 本入口不调用 Docker，不创建系统服务，不修改系统 PATH 或防火墙。旧的容器部署资产已删除，
 本入口是当前唯一的本地运行形态；数据迁移与回执见 `migrate_from_docker.py` 与批次迁移记录。

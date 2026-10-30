@@ -1,5 +1,9 @@
 # PR-EL-01 Electron 桌面宿主全链路迁移报告
 
+> 本文保留 EL-01 历史迁移验收范围，不代表动态工作区和 Hands 正式开发已经验收。
+> 后续基于主仓当前代码的 Electron + WorkspaceAuthority + ACG/Hands 联调、回归及剩余问题见
+> [PR-EX-M2B 验收记录](PR-EX-M2B-动态工作区ACG-Hands端到端验收.md)。
+
 日期：2026-10-29　分支：`pr-el-01-electron-host`（独立 worktree `../kinlin_ai-el01`，基于 master `145726f0`）
 
 ## 结论

@@ -1,5 +1,11 @@
 # EX-M1：原生环境选择 Hands 执行后端
 
+> 范围说明：下文 M1 的端口、固定工作区和历史桌面证据仅代表 M1。
+> 当前入口的 `-Desktop` 启动 Electron；动态工作区必须在 Electron 中选择候选目录，
+> 再由登录用户通过 WorkspaceAuthority 授权。目录选择 IPC 本身不签发 Grant。
+> Electron、动态授权、正式 ACG 开发及冷重启的本次证据见
+> [M2B 验收记录](../../../../../docs/开发记录/PR-EX-M2B-动态工作区ACG-Hands端到端验收.md)。
+
 沿用 [N03 环境](README-N03.md) 的 PostgreSQL、Memurai、DPAPI、Workflow SQLite、Java 和 Python 服务。
 Hands 是独立 Node.js 服务，源代码仅从本仓 `apps/hands` 加载；不读取原 zhi-xing 仓库。
 默认 `Backend=python` 保留原 Local Runtime，`Backend=hands` 使用同一 ResourcePlane/HMAC/Grant 选择 Hands。
