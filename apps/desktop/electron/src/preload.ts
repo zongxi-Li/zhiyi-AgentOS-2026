@@ -62,6 +62,15 @@ const bridge = {
     read: (id: string, relative: string) => invoke(IPC.workspaceRead, id, relative),
     save: (id: string, relative: string, content: string, version: string) => invoke(IPC.workspaceSave, id, relative, content, version)
   },
+  terminal: {
+    profiles: () => invoke(IPC.terminalProfiles),
+    list: () => invoke(IPC.terminalList),
+    create: (options: unknown) => invoke(IPC.terminalCreate, options),
+    read: (id: string, after: number) => invoke(IPC.terminalRead, id, after),
+    write: (id: string, data: string) => invoke(IPC.terminalWrite, id, data),
+    resize: (id: string, cols: number, rows: number) => invoke(IPC.terminalResize, id, cols, rows),
+    close: (id: string) => invoke(IPC.terminalClose, id)
+  },
   notify: (title: string, body?: string): void => {
     void invoke(IPC.notify, { title, body }).catch(() => undefined)
   },

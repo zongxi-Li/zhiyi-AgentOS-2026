@@ -214,6 +214,9 @@
     </div>
 
     <div class="app-topbar__right" v-bind="dragRegionProps">
+      <button v-if="desktopShell" class="app-topbar__terminal" type="button" aria-label="切换内置终端" title="终端 · Ctrl+`" @click="toggleDesktopTerminal">
+        <span aria-hidden="true">›_</span><span>终端</span>
+      </button>
       <DesktopWindowControls v-if="desktopShell" />
     </div>
   </header>
@@ -236,6 +239,7 @@ import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 import { agentosApi, type MissionListItem } from '@/services/api/agentos'
 import { plainMissionTitle } from '@/utils/missionTitle'
+import { toggleDesktopTerminal } from '@/composables/useDesktopTerminal'
 
 // Desktop 构建下本栏即窗口标题栏（decorations:false）：
 // 空白区域承担拖拽与双击最大化，右侧挂窗口控制；
@@ -1131,4 +1135,8 @@ onBeforeUnmount(() => {
 .app-command-center.is-focused {
   box-shadow: 0 0 0 3px var(--app-topbar-focus-ring), 0 2px 8px rgba(0, 0, 0, 0.26);
 }
+.app-topbar__terminal { display:inline-flex; align-items:center; gap:6px; height:26px; margin-right:8px; padding:0 8px; border:0; border-radius:3px; background:transparent; color:var(--text-secondary,#a1a1aa); font:11px var(--font-sans,system-ui,sans-serif); cursor:pointer; -webkit-app-region:no-drag; }
+.app-topbar__terminal > span:first-child { font:14px Consolas,monospace; }
+.app-topbar__terminal:hover { color:var(--text-primary,#e4e4e7); background:var(--bg-tertiary,#303038); }
+.app-topbar__terminal:focus-visible { outline:1px solid var(--wb-accent,#7aa2d7); outline-offset:1px; }
 </style>

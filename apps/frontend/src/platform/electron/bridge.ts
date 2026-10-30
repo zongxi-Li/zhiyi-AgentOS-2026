@@ -15,7 +15,23 @@ export interface KinlinAppInfo {
   packaged: boolean
 }
 
+export interface TerminalProfile { id: string; name: string }
+export interface TerminalSession {
+  id: string; profileId: string; profileName: string; cwd: string; pid: number
+  state: 'running' | 'exited'; exitCode: number | null; cols: number; rows: number; createdAt: string
+}
+export interface TerminalBridge {
+  profiles(): Promise<{ profiles: TerminalProfile[] }>
+  list(): Promise<{ sessions: TerminalSession[] }>
+  create(options: { profileId?: string; cwd?: string; cols?: number; rows?: number }): Promise<TerminalSession>
+  read(id: string, after: number): Promise<{ session: TerminalSession; cursor: number; truncated: boolean; chunks: {sequence: number; data: string}[] }>
+  write(id: string, data: string): Promise<unknown>
+  resize(id: string, cols: number, rows: number): Promise<unknown>
+  close(id: string): Promise<unknown>
+}
+
 export interface KinlinDesktopBridge {
+  terminal?: TerminalBridge
   window: {
     minimize(): void
     toggleMaximize(): void

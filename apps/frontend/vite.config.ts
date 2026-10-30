@@ -8,7 +8,7 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 const DEV_PROXY_TIMEOUT_MS = 240000
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isElectron = mode === 'electron'
   // 桌面（Electron）与 Web 共用本配置：15100 端口与平台适配层只在桌面模式
@@ -33,8 +33,10 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
-      Components({ resolvers: [ElementPlusResolver()] }),
-      AutoImport({ resolvers: [ElementPlusResolver()] })
+      // The running dev server owns declaration generation. Parallel production
+      // builds must not contend for these tracked files on Windows.
+      Components({ resolvers: [ElementPlusResolver()], dts: command === 'serve' ? 'components.d.ts' : false }),
+      AutoImport({ resolvers: [ElementPlusResolver()], dts: command === 'serve' ? 'auto-imports.d.ts' : false })
     ],
     css: {
       preprocessorOptions: {

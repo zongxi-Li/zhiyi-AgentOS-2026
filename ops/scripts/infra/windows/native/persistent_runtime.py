@@ -20,13 +20,14 @@ import traceback
 import native_runtime as native
 import desktop_runtime as desktop
 import desktop_shell
+import terminal_service
 
 ROOT = native.ROOT
-PORTS = [15432, 16379, 18761, 18765, 18080, 15200, 19222]
+PORTS = [15432, 16379, 18761, 18765, 18080, 15200, 18766, 19222]
 FORMAT = 'zhiyi-windows-persistent-v1'
 
 def ports(info):
-    return dict(zip(['postgres','redis','ai','host','java','frontend','debug'], [port+int(info.get('portOffset',0)) for port in PORTS]))
+    return dict(zip(['postgres','redis','ai','host','java','frontend','terminal','debug'], [port+int(info.get('portOffset',0)) for port in PORTS]))
 
 
 def protect(directory):
@@ -287,6 +288,7 @@ def up(home, use_desktop):
         authconfig.unlink()
         schema(home, env, not (home/'data').exists())
         prepare_workspace_grants(home, info, env)
+        terminal_service.start(home, info, creds, state)
         local_env = dict(env, PYTHONPATH=os.pathsep.join([str(ROOT/'apps/local-runtime'), str(ROOT/'apps/agentOS/src')]))
         if info.get('backend') == 'hands':
             start_hands(home,info,creds,state,env,start)
@@ -308,6 +310,7 @@ def up(home, use_desktop):
         desktop.wait_until(lambda: native.health(ports(info)['frontend'],'/api/health/ready').get('status') == 'UP', vite, 60)
         if use_desktop:
             appenv = desktop_shell.desktop_env(shell, front_env)
+            appenv.update(terminal_service.desktop_environment(home, info, creds))
             command, cwd = desktop_shell.desktop_command(ROOT, shell, f"http://127.0.0.1:{ports(info)['frontend']}",
                                                          debug_port=ports(info)['debug'])
             # 固定本栈自己的 Chromium 用户数据目录：与桌面热更新链的默认
@@ -351,6 +354,47 @@ def up(home, use_desktop):
     finally:
         passwordfile.unlink(missing_ok=True)
         authconfig.unlink(missing_ok=True)
+
+
+def open_desktop(home):
+    """Start an idle environment, focus its window, or reopen only its closed shell."""
+    info, state = manifest(home), state_for(home)
+    if not any(alive(record) for record in state['processes'].values()):
+        return up(home, True)
+    current = status(home)
+    required = ('postgres', 'redis', 'host', 'ai', 'java', 'frontend')
+    if not (all(current['services'].get(name, {}).get('alive') for name in required)
+            and current['runtime']['coreReady']
+            and all(current.get(name) for name in ('postgresReady', 'redisReady', 'javaReady'))):
+        raise RuntimeError('Local services are only partially running; inspect status/logs before recovery')
+    shell = desktop_shell.current_shell()
+    terminal = state['processes'].get('terminal')
+    if not terminal or not alive(terminal):
+        terminal_service.start(home, info, native.credentials(home), state)
+    record = state['processes'].get('desktop')
+    if record and alive(record):
+        windows = desktop.show_desktop(record, desktop_shell.window_classes(shell))
+        if not windows:
+            raise RuntimeError('Desktop process exists but has no window; inspect its log')
+        return dict(current, desktopWindows=windows)
+    native.port_free(ports(info)['debug'])
+    # Only OS/frontend variables reach the desktop; no DPAPI credentials are inherited.
+    appenv = {key: value for key, value in os.environ.items() if key.upper() in {
+        'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATH', 'PATHEXT', 'USERPROFILE', 'APPDATA',
+        'LOCALAPPDATA', 'PROGRAMDATA', 'TEMP', 'TMP', 'NO_PROXY'}}
+    appenv.update(terminal_service.desktop_environment(home, info, native.credentials(home)))
+    command, cwd = desktop_shell.desktop_command(ROOT, shell, f"http://127.0.0.1:{ports(info)['frontend']}",
+                                                 debug_port=ports(info)['debug'])
+    command.append(f'--user-data-dir={home / "electron"}')
+    logname = 'logs/desktop-reopen-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + secrets.token_hex(2)
+    record = desktop.spawn_app(home, logname, command, desktop_shell.desktop_env(shell, appenv), cwd)
+    state.update(desktop=True, shell=shell)
+    state['processes']['desktop'] = record
+    save(home, state)
+    desktop.wait_until(desktop_shell.ready_check(ports(info)['debug']), record, 240)
+    state['desktopWindows'] = desktop.show_desktop(record, desktop_shell.window_classes(shell))
+    save(home, state)
+    return status(home)
 
 
 def status(home):
@@ -477,7 +521,7 @@ def restore(home, source):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['init','up','status','down','recover','backup','restore'])
+    parser.add_argument('action', choices=['init','up','open','status','down','recover','backup','restore'])
     parser.add_argument('--home', type=Path, required=True)
     parser.add_argument('--postgres-bin', type=Path)
     parser.add_argument('--memurai', type=Path)
@@ -499,6 +543,7 @@ def main():
     with native.control_lock(control):
         if args.action == 'init': result = init(home,args)
         elif args.action == 'up': result = up(home,args.desktop)
+        elif args.action == 'open': result = open_desktop(home)
         elif args.action == 'down': result = down(home)
         elif args.action == 'status': result = status(home)
         elif args.action == 'recover':

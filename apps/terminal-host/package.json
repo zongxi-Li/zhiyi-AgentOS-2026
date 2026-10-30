@@ -1,0 +1,14 @@
+{
+  "name": "zhiyi-terminal-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local interactive terminals operated by the desktop user; separate from Agent execution",
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
+  }
+}

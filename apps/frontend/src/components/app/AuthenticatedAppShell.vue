@@ -354,6 +354,7 @@
                 </template>
               </Suspense>
             </el-main>
+            <DesktopTerminalDock v-if="isDesktop()" />
           </el-container>
         </el-container>
       </el-container>
@@ -405,7 +406,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled,
@@ -415,6 +416,7 @@ import {
 } from '@element-plus/icons-vue'
 import AppTopBar from '@/components/app/AppTopBar.vue'
 import DesktopRuntimeStatus from '@/components/platform/DesktopRuntimeStatus.vue'
+const DesktopTerminalDock = defineAsyncComponent(() => import('@/components/terminal/DesktopTerminalDock.vue'))
 import { authApi } from '@/services/api/auth'
 import BrandLoader from '@/components/common/BrandLoader.vue'
 import { conversationApi, type Conversation } from '@/services/api/conversation'

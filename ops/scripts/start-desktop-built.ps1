@@ -37,5 +37,6 @@ if ($Build -or -not (Test-Path -LiteralPath $executable)) {
 }
 
 Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
+. (Join-Path $PSScriptRoot 'infra\windows\native\terminal-env.ps1')
 & $executable
 exit $LASTEXITCODE

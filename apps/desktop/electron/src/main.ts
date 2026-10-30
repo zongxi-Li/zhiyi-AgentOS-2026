@@ -12,6 +12,7 @@ import {
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import * as path from 'node:path'
 import { IPC } from './lib/ipc-contract'
+import { TerminalClient } from './lib/terminal-client'
 import { WorkspaceFiles } from './lib/workspace-files'
 import { APP_INDEX_URL, APP_SCHEME, APP_HOST, handleAppProtocol, registerAppScheme } from './lib/protocol'
 import { createFileLogger, type FileLogger } from './lib/logging'
@@ -69,6 +70,7 @@ registerAppScheme() // 必须发生在 app ready 之前
 
 let mainWindow: BrowserWindow | null = null
 let logger: FileLogger | null = null
+const terminalClient = new TerminalClient()
 
 const stateFilePath = (): string => path.join(app.getPath('userData'), 'window-state.json')
 
@@ -217,6 +219,7 @@ function wireWebContentsGuards(): void {
 function registerIpcHandlers(): void {
   const authorized = (event: Electron.IpcMainInvokeEvent): boolean =>
     Boolean(mainWindow) && !mainWindow!.isDestroyed() && event.sender.id === mainWindow!.webContents.id
+      && event.senderFrame === mainWindow!.webContents.mainFrame
 
   const guard = (event: Electron.IpcMainInvokeEvent): void => {
     if (!authorized(event)) {
@@ -226,6 +229,13 @@ function registerIpcHandlers(): void {
   }
 
   const workspaceFiles = new WorkspaceFiles(path.join(app.getPath('userData'), 'workspace-folders.json'))
+  ipcMain.handle(IPC.terminalProfiles, event => { guard(event); return terminalClient.profiles() })
+  ipcMain.handle(IPC.terminalList, event => { guard(event); return terminalClient.list() })
+  ipcMain.handle(IPC.terminalCreate, (event, options) => { guard(event); return terminalClient.create(options) })
+  ipcMain.handle(IPC.terminalRead, (event, id, after) => { guard(event); return terminalClient.read(id, after) })
+  ipcMain.handle(IPC.terminalWrite, (event, id, data) => { guard(event); return terminalClient.write(id, data) })
+  ipcMain.handle(IPC.terminalResize, (event, id, cols, rows) => { guard(event); return terminalClient.resize(id, cols, rows) })
+  ipcMain.handle(IPC.terminalClose, (event, id) => { guard(event); return terminalClient.close(id) })
   ipcMain.handle(IPC.workspaceChoose, async event => {
     guard(event)
     if (!mainWindow) return null
@@ -366,6 +376,13 @@ if (!gotSingleInstanceLock) {
     })
   })
 
+  let terminalCleanupStarted = false
+  app.on('before-quit', event => {
+    if (terminalCleanupStarted) return
+    terminalCleanupStarted = true
+    event.preventDefault()
+    void terminalClient.closeAll().catch(() => undefined).finally(() => app.quit())
+  })
   app.on('window-all-closed', () => {
     app.quit()
   })

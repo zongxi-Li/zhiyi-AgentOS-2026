@@ -19,6 +19,13 @@ export const IPC = {
   workspaceList: 'kinlin:workspace/list',
   workspaceRead: 'kinlin:workspace/read',
   workspaceSave: 'kinlin:workspace/save',
+  terminalProfiles: 'kinlin:terminal/profiles',
+  terminalList: 'kinlin:terminal/list',
+  terminalCreate: 'kinlin:terminal/create',
+  terminalRead: 'kinlin:terminal/read',
+  terminalWrite: 'kinlin:terminal/write',
+  terminalResize: 'kinlin:terminal/resize',
+  terminalClose: 'kinlin:terminal/close',
   notify: 'kinlin:notify',
   openExternal: 'kinlin:open-external',
   appInfo: 'kinlin:app/info'

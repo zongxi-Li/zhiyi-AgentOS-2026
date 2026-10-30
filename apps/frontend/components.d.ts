@@ -37,6 +37,7 @@ declare module 'vue' {
     ConversationList: typeof import('./src/components/ConversationList.vue')['default']
     CreateRoleDialog: typeof import('./src/components/CreateRoleDialog.vue')['default']
     DesktopRuntimeStatus: typeof import('./src/components/platform/DesktopRuntimeStatus.vue')['default']
+    DesktopTerminalDock: typeof import('./src/components/terminal/DesktopTerminalDock.vue')['default']
     DigitalHuman: typeof import('./src/components/DigitalHuman.vue')['default']
     EditorGroup: typeof import('./src/components/workspace/EditorGroup.vue')['default']
     EditorObjectRow: typeof import('./src/components/workspace/EditorObjectRow.vue')['default']

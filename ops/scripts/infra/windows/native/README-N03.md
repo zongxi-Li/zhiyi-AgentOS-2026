@@ -78,6 +78,7 @@ Python 与 Hands 后端都接受当前用户可访问的真实目录，包括磁
 已冻结目录的 Run 保持自己的目录，避免切换工作区后把旧任务写入新位置。
 新建或重跑未冻结目录的旧 Python Run 时，采用当时的用户选择。
 登录、工作区归属与撤销、工具审批保持原有规则。
+
 | 路径/数据库 | 内容 |
 | --- | --- |
 | `environment.json` | 固定环境、数据库身份和工作区配置，无密码 |
@@ -148,3 +149,17 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 桌面壳的 Chromium 用户数据固定在 `home\electron\`（不再与桌面热更新链共用默认
 `userData`，避免 Electron 单实例锁把 N03 窗口顶掉）；窗口位置状态随之独立，业务数据不受影响。
 N02（旧桌面开发入口）已退役，本入口是唯一的原生桌面运行形态。
+
+## 本地终端服务
+
+首次运行在 `apps/terminal-host` 执行 `npm ci` 安装 `node-pty`。N03 的 `up`/`open`
+自动启动独立 Node PTY 服务，监听 `127.0.0.1:18766 + portOffset`，记录在
+`runtime-state.json` 的 `processes.terminal`；日志为 `logs/terminal-service.log`。
+`open` 可为已有健康环境补启终端服务，不重启数据库、AI、Host 或 Java。
+Electron Main 获得用途隔离的终端凭据，渲染进程仅使用受校验的 IPC；创建 Shell 时只继承
+系统和用户目录/PATH 等必要环境变量。临时凭据文件在服务读取后删除。
+
+退出 Electron 时关闭该桌面拥有的 PTY；收起终端面板、切页与页面刷新不关闭会话。
+N03 `down` 负责停止终端服务。终端是人工操作入口，不改变模型工具权限与 Run 执行合同。
+当前 Windows 系统 ConPTY 路径在关闭时可能输出上游 `AttachConsole failed` 辅助进程诊断；
+实际 Shell/前台子进程回收须以进程检查结果为准，不能仅凭该日志判断失败或成功。

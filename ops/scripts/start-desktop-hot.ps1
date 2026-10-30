@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [switch]$CheckOnly
 )
@@ -53,6 +53,7 @@ if ($occupiedPort) {
 }
 
 Set-Location $desktopDir
+. (Join-Path $PSScriptRoot 'infra\windows\native\terminal-env.ps1')
 Remove-Item Env:VITE_API_BASE_URL -ErrorAction SilentlyContinue
 # 外部 shell 可能带 ELECTRON_RUN_AS_NODE=1（例如工具链/调试器注入）；保留它会让
 # electron.exe 退化成普通 Node，main.js 里 electron.protocol 为 undefined 而启动失败。
