@@ -23,7 +23,7 @@
             <span class="editor-tab__name">{{ editorTitle(opened.entry) }}{{ opened.entry.metadata?.dirty ? ' ●' : '' }}</span>
             <span v-if="!opened.available" class="editor-tab__missing">missing</span>
           </button>
-          <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="emit('close', opened.entry.entryId)">×</button>
+          <button class="editor-tab__close" type="button" :aria-label="`关闭 ${opened.entry.name}`" :title="`关闭 ${opened.entry.name}`" @click="closeEditor(opened.entry.entryId)">×</button>
         </div>
         <span v-if="!openEntries.length" class="editor-tabs__empty">从 Explorer 打开一个文件</span>
       </div>
@@ -71,6 +71,7 @@
         v-show="opened.entry.entryId === activeEditorId"
         :request="fileRequest(opened.entry)"
         @dirty-change="setDirty(opened.entry, $event)"
+        @status-change="recordEditorStatus(opened.entry.entryId, $event)"
       />
       <component
         v-if="activeOpened && activeOpened.entry.kind !== 'local_file' && editorContribution"
@@ -108,8 +109,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import WorkspaceFileEditor from '@/components/workbench/WorkspaceFileEditor.vue'
+import { computed, ref, watch } from 'vue'
+import WorkspaceFileEditor, { type WorkspaceFileEditorStatus } from '@/components/workbench/WorkspaceFileEditor.vue'
 import type { WorkspaceFileOpenRequest } from '@/services/api/agentos'
 import { Expand, View } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
@@ -147,6 +148,7 @@ const emit = defineEmits<{
   activate: [entryId: string]
   contentReady: [runId: string | null]
   close: [entryId: string]
+  editorStatus: [status: WorkspaceFileEditorStatus | null]
   selectSemanticTask: [semanticTaskKey: string | null]
   selectSymbol: [symbol: RunDocumentSymbol]
   openSemanticTask: [semanticTaskKey: string | null]
@@ -164,6 +166,12 @@ const emit = defineEmits<{
 const localFiles = computed(() => props.openEntries.filter(item => item.entry.kind === 'local_file'))
 const fileRequest = (entry: WorkspaceEntry) => entry.metadata!.fileRequest as WorkspaceFileOpenRequest
 const setDirty = (entry: WorkspaceEntry, dirty: boolean) => { entry.metadata!.dirty = dirty }
+// 各文件编辑器把元信息上报到这里，只有活动编辑器的那份会转发给窗口状态栏。
+const editorStatuses = ref<Record<string, WorkspaceFileEditorStatus>>({})
+const recordEditorStatus = (entryId: string, status: WorkspaceFileEditorStatus) => { editorStatuses.value[entryId] = status }
+const closeEditor = (entryId: string) => { delete editorStatuses.value[entryId]; emit('close', entryId) }
+const activeEditorStatus = computed(() => editorStatuses.value[props.activeEditorId || ''] || null)
+watch(activeEditorStatus, status => emit('editorStatus', status), {immediate: true})
 const activeOpened = computed(() => props.openEntries.find(item => item.entry.entryId === props.activeEditorId))
 const editorContribution = computed(() => props.registry.resolveEditor(activeOpened.value?.entry || null, props.workbenchContext))
 const editorKey = computed(() => {

@@ -77,6 +77,17 @@
     </div>
 
     <div class="workbench-status-bar__actions">
+      <div v-if="editorStatus" class="workbench-status-bar__editor" role="status" aria-label="编辑器文件信息">
+        <span
+          class="workbench-status-bar__editor-segment"
+          :class="{ 'is-readonly': !editorStatus.editable }"
+          :title="editorStatus.editable ? '本地文件，支持版本保护保存' : '只读 · 当前执行后端不支持版本保护保存'"
+        >{{ editorStatus.editable ? '本地文件' : '只读' }}</span>
+        <span class="workbench-status-bar__editor-segment" :title="`语言 ${editorStatus.language}`">{{ editorStatus.language }}</span>
+        <span class="workbench-status-bar__editor-segment" title="文件编码 UTF-8">UTF-8</span>
+        <span class="workbench-status-bar__editor-segment" :title="`共 ${editorStatus.lines} 行`">{{ editorStatus.lines }} 行</span>
+        <span class="workbench-status-bar__editor-segment" :title="`光标位置 ${editorStatus.cursor}`">{{ editorStatus.cursor }}</span>
+      </div>
       <button
         class="workbench-status-bar__toggle"
         type="button"
@@ -96,6 +107,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ArrowDown, ArrowUp, Check, Delete } from '@element-plus/icons-vue'
 import type { WorkbenchBottomTab } from './WorkbenchBottomPanel.vue'
+import type { WorkspaceFileEditorStatus } from './WorkspaceFileEditor.vue'
 import { statusSemanticColor } from '@/utils/statusSemantic'
 
 export interface WorkbenchRunSummary {
@@ -121,13 +133,16 @@ const props = withDefaults(defineProps<{
   rerunLabel?: string
   /** Run whose delete request is in flight; its button shows a busy state. */
   deletingRunId?: string | null
+  /** Active file editor meta (language/encoding/lines/cursor); omitted renders no editor block. */
+  editorStatus?: WorkspaceFileEditorStatus | null
 }>(), {
   runs: () => [],
   canRerun: false,
   rerunPending: false,
   rerunDisabledReason: '当前运行尚未结束',
   rerunLabel: '再次运行',
-  deletingRunId: null
+  deletingRunId: null,
+  editorStatus: null
 })
 
 const emit = defineEmits<{
@@ -352,6 +367,19 @@ onBeforeUnmount(() => {
 .workbench-status-bar__tab-count.is-alert { color: var(--wb-danger); opacity: 1; }
 
 .workbench-status-bar__actions { flex: 0 0 auto; display: inline-flex; align-items: stretch; }
+
+/* VS Code style editor meta segments on the right side of the window bar. */
+.workbench-status-bar__editor { flex: 0 0 auto; display: inline-flex; align-items: stretch; }
+.workbench-status-bar__editor-segment {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-left: 1px solid var(--wb-border-soft);
+  color: var(--wb-text-muted);
+  white-space: nowrap;
+}
+.workbench-status-bar__editor-segment:hover { color: var(--wb-text); background: var(--wb-hover); }
+.workbench-status-bar__editor-segment.is-readonly { color: var(--wb-warning); }
 
 .workbench-status-bar__toggle {
   display: inline-flex;

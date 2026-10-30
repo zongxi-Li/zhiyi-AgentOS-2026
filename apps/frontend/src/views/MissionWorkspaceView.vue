@@ -56,6 +56,7 @@
           @select-auxiliary="selectAuxiliaryView($event, mainState)"
           @activate="activeEditorId = $event"
           @close="closeEditor"
+          @editor-status="activeEditorStatus = $event"
           @select-semantic-task="selectSemanticTask"
           @select-symbol="selectRunSymbol"
           @open-semantic-task="openSemanticTask"
@@ -135,6 +136,7 @@
           :model-value="panelActiveTab"
           :tabs="panelTabs"
           :collapsed="collapsed"
+          :editor-status="activeEditorStatus"
           :run-id="projection?.activeRun?.runId || selectedRunId || null"
           :run-status="projection?.activeRun?.status || null"
           :historical="isHistorical"
@@ -200,6 +202,7 @@ import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vu
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
+import type { WorkspaceFileEditorStatus } from '@/components/workbench/WorkspaceFileEditor.vue'
 import { missionDocumentContent } from '@/components/workspace/missionSemanticDisplay'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
@@ -242,6 +245,8 @@ const selectedRunId = ref<string | null>(typeof route.query.runId === 'string' ?
 const currentRunId = ref<string | null>(null)
 const openEditors = ref<string[]>([])
 const activeEditorId = ref<string | null>(null)
+// 活动文件编辑器的元信息（语言/编码/行数/行列），转交给窗口底部状态栏展示。
+const activeEditorStatus = ref<WorkspaceFileEditorStatus | null>(null)
 const selectedSemanticTaskKey = ref<string | null>(null)
 const selectedSymbolId = ref<string | null>(null)
 const selectedSymbolType = ref<RunDocumentSymbol['type'] | null>(null)

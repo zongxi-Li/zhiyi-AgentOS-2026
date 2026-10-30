@@ -160,4 +160,33 @@ describe('WorkbenchStatusBar', () => {
     expect(wrapper.emitted('delete-run')).toBeUndefined()
     wrapper.unmount()
   })
+
+  it('renders the active file editor meta as VS Code style segments on the right', () => {
+    const wrapper = mount(WorkbenchStatusBar, {
+      props: { tabs, modelValue: 'communication', collapsed: false, editorStatus: { editable: true, language: 'JS', lines: 2, cursor: '行 1，列 1' } }
+    })
+
+    const segments = wrapper.findAll('.workbench-status-bar__editor-segment')
+    expect(segments.map(segment => segment.text())).toEqual(['本地文件', 'JS', 'UTF-8', '2 行', '行 1，列 1'])
+    // 编辑器信息在运行面板开关左侧，不再占用编辑器内部的一行。
+    const rightChildren = wrapper.get('.workbench-status-bar__actions').element.children
+    expect(rightChildren[0].classList.contains('workbench-status-bar__editor')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('marks readonly editors and hides the editor block when no file is active', () => {
+    const readonly = mount(WorkbenchStatusBar, {
+      props: { tabs, modelValue: 'communication', collapsed: false, editorStatus: { editable: false, language: 'MD', lines: 1, cursor: '行 1，列 1' } }
+    })
+
+    const tag = readonly.find('.workbench-status-bar__editor-segment')
+    expect(tag.text()).toBe('只读')
+    expect(tag.classes()).toContain('is-readonly')
+    expect(tag.attributes('title')).toContain('不支持版本保护保存')
+    readonly.unmount()
+
+    const empty = mount(WorkbenchStatusBar, { props: { tabs, modelValue: 'communication', collapsed: false } })
+    expect(empty.find('.workbench-status-bar__editor').exists()).toBe(false)
+    empty.unmount()
+  })
 })
