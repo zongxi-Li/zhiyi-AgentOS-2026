@@ -189,7 +189,8 @@ describe('HANDS-02B crash reconciliation (new service over the same ledger)', ()
     const first = post(body, 'durable-receipt')
     const executionId = (first.body as { executionId: string }).executionId
     await pollTerminal(service, executionId, CRED_POLL)
-    const before = (callHandle(service, signRequest({ credentialId: CRED, secret: SECRET, method: 'GET', path: `/v1/executions/${executionId}`, body: '', idempotencyKey: 'get-d1' })).body as { receipt: unknown }).receipt
+    const beforeRecord = callHandle(service, signRequest({ credentialId: CRED, secret: SECRET, method: 'GET', path: `/v1/executions/${executionId}`, body: '', idempotencyKey: 'get-d1' })).body as { receipt: unknown; updatedAt: string }
+    const before = beforeRecord.receipt
 
     await service.stop()
     const revived = new HandsService({
@@ -201,8 +202,9 @@ describe('HANDS-02B crash reconciliation (new service over the same ledger)', ()
     await revived.start()
     service = revived
     cleaner.push(async () => revived.stop())
-    const after = (callHandle(revived, signRequest({ credentialId: CRED, secret: SECRET, method: 'GET', path: `/v1/executions/${executionId}`, body: '', idempotencyKey: 'get-d2' })).body as { receipt: unknown }).receipt
-    expect(after).toEqual(before)
+    const afterRecord = callHandle(revived, signRequest({ credentialId: CRED, secret: SECRET, method: 'GET', path: `/v1/executions/${executionId}`, body: '', idempotencyKey: 'get-d2' })).body as { receipt: unknown; updatedAt: string }
+    expect(afterRecord.receipt).toEqual(before)
+    expect(afterRecord.updatedAt).toBe(beforeRecord.updatedAt)
   })
 
   it('a torn (half-written) ledger tail line is ignored and replay still works', async () => {

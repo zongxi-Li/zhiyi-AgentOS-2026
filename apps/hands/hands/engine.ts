@@ -138,7 +138,7 @@ export class HandsEngine {
       // process ran and its exit code is evidence). Formal managed test calls
       // carry a trusted executable/argv descriptor and must settle as failed
       // when the project test command fails.
-      if (request.capabilityId === 'shell.exec' && typeof input.executable === 'string' &&
+      if (request.capabilityId === 'shell.exec' && typeof request.input.executable === 'string' &&
           (output.timedOut === true || output.exitCode !== 0)) {
         // formal command failure is classified below
         return this.#seal(base, startedAt, 'failed', output, {

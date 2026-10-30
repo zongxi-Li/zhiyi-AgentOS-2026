@@ -187,6 +187,7 @@ export class ExecutionLedger {
             this.#validateReceipt(record, parsed.receipt)
             record.receipt = parsed.receipt
             record.state = parsed.receipt.status.toUpperCase() as LedgerState
+            record.updatedAt = parsed.ts
           }
           break
         }
