@@ -9,16 +9,16 @@ superseded）且能从同任务既有蓝图解析出 blueprint_id 的 Run；蓝�
 活跃态的 Run 一律跳过并报告。回填行的 metadata 会写入 backfill 溯源标记，
 与正常投影行明确区分。
 
-用法（在 ai-service 容器内执行）:
-    python3 /app/ops_scripts/backfill_identity_runs.py            # 只读预览
-    python3 /app/ops_scripts/backfill_identity_runs.py --apply    # 实际写入
+用法（本地 N03 数据目录，先停止对应环境）:
+    python ops/scripts/backfill_identity_runs.py --data-dir <home>/data
+    python ops/scripts/backfill_identity_runs.py --data-dir <home>/data --apply
+必须显式选择目录；使用 workflows.sqlite3 和 identity.sqlite3。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -176,17 +176,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--data-dir",
-        default=os.getenv("AGENTOS_DATA_DIR", "/app/data/agentos"),
-        help="包含 workflows.sqlite3 与 identity_v2.sqlite3 的目录",
+        type=Path,
+        required=True,
+        help="N03 home/data 目录（包含 workflows.sqlite3 与 identity.sqlite3）",
     )
     parser.add_argument("--apply", action="store_true", help="实际写入；缺省为只读预览")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     runtime_db = data_dir / "workflows.sqlite3"
-    identity_db = data_dir / "identity_v2.sqlite3"
+    identity_db = data_dir / "identity.sqlite3"
     for path in (runtime_db, identity_db):
-        if not path.exists():
+        if not path.is_file():
             print(f"缺少数据库文件: {path}", file=sys.stderr)
             return 2
 

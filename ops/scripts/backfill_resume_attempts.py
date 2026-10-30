@@ -14,30 +14,21 @@ Pending · Attempt 0。根治代码在 apps/agentOS/src/runtime/workflow_runtime
 幂等性：attempt/step_execution ID 由 sha256(run:step) 确定性派生，重复执行时
 INSERT OR IGNORE 命中既有行直接跳过；已有 Attempt 的任务整步跳过。
 
-用法（容器内）：/opt/kinlin-venv/bin/python /tmp/backfill_resume_attempts.py [--apply]
+用法（本地 N03，先停止对应环境）：
+python ops/scripts/backfill_resume_attempts.py --data-dir <home>/data [--apply]
+使用 workflows.sqlite3、identity.sqlite3、content.sqlite3，必须显式选择目录。
 不带 --apply 只做盘点与校验，不写库。
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sqlite3
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/app/agentOS/src")
-
-from components.content import SQLiteContentManifestStore
-from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
-from runtime.v2.reconciliation import IdentityProjectionReconciler
-from runtime.v2.resume_projection import build_reused_step_projection_events
-from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
-
-WORKFLOW_DB = Path("/app/data/agentos/workflows.sqlite3")
-IDENTITY_DB = Path("/app/data/agentos/identity_v2.sqlite3")
-MANIFEST_DB = Path("/app/data/agentos/content_manifests.sqlite3")
-
-APPLY = "--apply" in sys.argv
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps/agentOS/src"))
 
 
 def digest_id(prefix: str, *parts: str) -> str:
@@ -46,6 +37,25 @@ def digest_id(prefix: str, *parts: str) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", type=Path, required=True, help="停止后的 N03 home/data 目录")
+    parser.add_argument("--apply", action="store_true", help="实际写入；缺省为预览")
+    args = parser.parse_args()
+    WORKFLOW_DB = args.data_dir / "workflows.sqlite3"
+    IDENTITY_DB = args.data_dir / "identity.sqlite3"
+    MANIFEST_DB = args.data_dir / "content.sqlite3"
+    APPLY = args.apply
+    for database in (WORKFLOW_DB, IDENTITY_DB, MANIFEST_DB):
+        if not database.is_file():
+            print(f"缺少数据库文件: {database}", file=sys.stderr)
+            return 2
+
+    from components.content import SQLiteContentManifestStore
+    from runtime.v2 import AcgIdentityLifecycleService, IdentityProjectionBridge
+    from runtime.v2.reconciliation import IdentityProjectionReconciler
+    from runtime.v2.resume_projection import build_reused_step_projection_events
+    from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+
     store = SQLiteWorkflowStore(WORKFLOW_DB)
     service = AcgIdentityLifecycleService.from_sqlite(IDENTITY_DB)
     bridge = IdentityProjectionBridge(
