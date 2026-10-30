@@ -56,6 +56,12 @@ public class LocalApiPathFilter extends OncePerRequestFilter {
             }
 
             @Override
+            public String getPathInfo() {
+                // DispatcherServlet owns the entire canonical path (default '/' mapping).
+                return null;
+            }
+
+            @Override
             public StringBuffer getRequestURL() {
                 String original = super.getRequestURL().toString();
                 return new StringBuffer(original.substring(0, original.length() - uri.length()))

@@ -28,7 +28,7 @@ const normalizePath = (path: string): string => path.startsWith('/') ? path : `/
  */
 export const apiUrl = (path: string): string => `${absoluteApiOrigin}${normalizePath(path)}`
 
-/** Resolve Backend health/readiness endpoints through the same /api Gateway path. */
+/** Resolve health/readiness through the Java backend's /api aliases. */
 export const backendUrl = (path: string): string => {
   const normalizedPath = normalizePath(path)
   const gatewayPath = normalizedPath === '/api' || normalizedPath.startsWith('/api/')

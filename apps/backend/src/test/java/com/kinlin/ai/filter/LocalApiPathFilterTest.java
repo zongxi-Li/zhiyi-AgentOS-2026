@@ -7,6 +7,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class LocalApiPathFilterTest {
 
@@ -27,6 +28,7 @@ class LocalApiPathFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/local" + incoming);
         request.setContextPath("/local");
         request.setServletPath(incoming);
+        request.setPathInfo(incoming);
         request.setQueryString("cursor=a%2Fb");
         request.addHeader("Authorization", "Bearer example");
         request.setContent("payload".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -34,6 +36,7 @@ class LocalApiPathFilterTest {
             HttpServletRequest http = (HttpServletRequest) wrapped;
             assertEquals("/local" + expected, http.getRequestURI());
             assertEquals(expected, http.getServletPath());
+            if (!incoming.equals(expected)) assertNull(http.getPathInfo());
             assertEquals("http://localhost/local" + expected, http.getRequestURL().toString());
             assertEquals("cursor=a%2Fb", http.getQueryString());
             assertEquals("Bearer example", http.getHeader("Authorization"));

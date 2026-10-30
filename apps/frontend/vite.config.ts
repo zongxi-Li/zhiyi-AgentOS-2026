@@ -102,31 +102,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           timeout: DEV_PROXY_TIMEOUT_MS,
           proxyTimeout: DEV_PROXY_TIMEOUT_MS,
-          // 智能处理：部分控制器有/api前缀，部分没有
-          // 对于有/api前缀的控制器（如digital-human），保留前缀
-          // 对于没有/api前缀的控制器（如auth、chat），去掉前缀
-          rewrite: (path) => {
-            // 这些路径已经有/api前缀，保留
-            const keepApiPrefix = [
-              '/api/digital-human',
-              '/api/kylin-os',
-              '/api/emotion',
-              '/api/knowledge-graph',
-              '/api/role-fusion',
-              '/api/alerts',
-              '/api/feedback',
-              '/api/federated-models',
-              '/api/agentos/v2'
-            ]
-
-            // 检查是否需要保留/api前缀
-            if (keepApiPrefix.some(prefix => path.startsWith(prefix))) {
-              return path // 保留/api前缀
-            }
-
-            // 其他路径去掉/api前缀
-            return path.replace(/^\/api/, '')
-          },
+          // Java 入口统一兼容 /api 别名；开发与打包版使用相同路由。
           configure: (proxy, _options) => {
             proxy.on('error', (err, _req, _res) => {
               console.log('proxy error', err)
