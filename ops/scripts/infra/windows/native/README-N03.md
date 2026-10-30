@@ -2,7 +2,7 @@
 
 当前 Hands 动态工作区用法及真实 Electron 验收范围见
 [EX-M1 运行说明](README-EX-M1.md) 和
-[M2B 验收记录](../../../../../docs/开发记录/PR-EX-M2B-动态工作区ACG-Hands端到端验收.md)。
+[M2B 验收记录](../../../../../docs/开发记录/PR-EX-M1-M2B-执行闭环与工作区授权-合并记录.md)。
 Hands 配置下，初始化工作区是启动默认值；用户可在桌面另选目录并由后端授权。
 每个正式 Run 冻结授权身份，撤销后不能通过重新授权继承旧 Run 权限。
 Python 依赖锁包含 WorkspaceAuthority 使用的 `psycopg[binary]`；首次安装仍使用下述带 hash 的锁文件。
@@ -127,7 +127,7 @@ uploads、固定配置和 DPAPI 密文，生成逐文件 SHA-256。要求相同 
 ```
 
 这些探针调用真实 Memurai 和生产 Lua coordinator / 正式 HTTP API；不能替代实际桌面
-操作。本轮证据和剩余限制见 [N03 实施报告](../../../../../docs/开发记录/PR-N03-Windows-Persistent-Native-实施与验收.md)。
+操作。本轮证据和剩余限制见 [N01A ~ N03 运行链合并记录](../../../../../docs/开发记录/PR-N01A-N03-Windows原生运行链-合并记录.md)。
 
 ## 桌面壳（Electron 单壳）
 

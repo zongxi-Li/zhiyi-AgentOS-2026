@@ -4,7 +4,7 @@
 > 当前入口的 `-Desktop` 启动 Electron；动态工作区必须在 Electron 中选择候选目录，
 > 再由登录用户通过 WorkspaceAuthority 授权。目录选择 IPC 本身不签发 Grant。
 > Electron、动态授权、正式 ACG 开发及冷重启的本次证据见
-> [M2B 验收记录](../../../../../docs/开发记录/PR-EX-M2B-动态工作区ACG-Hands端到端验收.md)。
+> [M2B 验收记录](../../../../../docs/开发记录/PR-EX-M1-M2B-执行闭环与工作区授权-合并记录.md)。
 
 沿用 [N03 环境](README-N03.md) 的 PostgreSQL、Memurai、DPAPI、Workflow SQLite、Java 和 Python 服务。
 Hands 是独立 Node.js 服务，源代码仅从本仓 `apps/hands` 加载；不读取原 zhi-xing 仓库。

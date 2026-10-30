@@ -66,4 +66,4 @@ npm run dist            # NSIS 安装包（release/*-Setup.exe）
 ## 历史
 
 Tauri 2 宿主曾是默认桌面入口，已随桌面入口切换整体移除；如需回看其实现，
-见 git 历史与 `docs/开发记录/PR-EL-01-Electron桌面宿主迁移报告.md`。
+见 git 历史与 `docs/开发记录/PR-EL-01-Electron桌面宿主-合并记录.md`。

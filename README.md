@@ -284,9 +284,8 @@ Memurai RDB/AOF、SQLite Store、uploads、workspace、Electron 用户数据与 
 | [ACG 引擎技术设计](docs/架构设计/05-ACG动态群体智能引擎技术设计.md)                                      | ACG 引擎深度设计                   |
 | [律师 AgentOS 设计](docs/架构设计/06-知弈律师AgentOS技术设计文档.md)                                     | 合同审查验证场景                   |
 | [N03 原生运行说明](ops/scripts/infra/windows/native/README-N03.md)                                       | 依赖、启停、数据布局与冷备份       |
-| [N03 实施与验收报告](docs/开发记录/PR-N03-Windows-Persistent-Native-实施与验收.md)                        | 零 Docker 原生运行形态的验收证据   |
-| [完全放弃 Docker 迁移与清除记录](docs/开发记录/PR-DOCKER-REMOVAL-完全放弃Docker-实施与验收.md)             | 数据迁移、仓库清零与本机收尾证据   |
-| [Prompt Runtime 改造记录](<docs/开发记录/Prompt%20Runtime%20提示词权威与审计改造实施记录-2026-09-18.md>) | 提示词权威、信任封装与审计身份     |
+| [Windows 原生运行链（N01A ~ N03 + 移除 Docker）](docs/开发记录/PR-N01A-N03-Windows原生运行链-合并记录.md)  | 零 Docker 原生形态与移除 Docker 的证据 |
+| [PromptRuntime 与系统提示词清单](docs/开发记录/PromptRuntime与系统提示词清单-合并记录.md)                 | 提示词权威、信任封装与审计身份     |
 | [WKN-C4-Milan 稳定集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md) | 三线收束证据                       |
 | [Docker 基础设施 RFC（历史，已废弃）](docs/架构设计/07-Docker基础设施重构RFC-v1.1.md)                     | 旧容器部署底座的冻结设计，仅作历史 |
 
