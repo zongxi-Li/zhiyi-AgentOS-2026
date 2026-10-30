@@ -14,6 +14,9 @@ class LocalApiPathFilterTest {
     @ParameterizedTest
     @CsvSource({
             "/api/auth/login,/auth/login",
+            "/api/ai/chat/approvals/approval-test,/ai/chat/approvals/approval-test",
+            "/api/ai/chat/text/cancel,/ai/chat/text/cancel",
+            "/api/ai-other/chat,/api/ai-other/chat",
             "/api/chat/quality,/chat/quality",
             "/api/health/ready,/health/ready",
             "/api/files/upload,/files/upload",

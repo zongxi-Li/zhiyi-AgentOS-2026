@@ -25,7 +25,7 @@ import java.util.Set;
 public class LocalApiPathFilter extends OncePerRequestFilter {
 
     private static final Set<String> LEGACY_ROOTS = Set.of(
-            "auth", "chat", "conversations", "files", "health", "metrics", "rag",
+            "ai", "auth", "chat", "conversations", "files", "health", "metrics", "rag",
             "recommendations", "roles", "search", "statistics", "users", "profile", "voice");
 
     @Override
