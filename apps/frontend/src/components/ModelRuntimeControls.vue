@@ -3,106 +3,118 @@
     v-if="composer"
     placement="top-end"
     trigger="click"
-    :width="332"
+    :width="336"
+    :offset="10"
+    :show-arrow="false"
     popper-class="composer-model-popover"
     @show="handleComposerOpen"
+    @hide="providerMenuOpen = false"
   >
     <template #reference>
-      <button class="composer-model-trigger" type="button" aria-label="选择模型与思考强度" aria-haspopup="dialog" :title="settings.selectedModel">
-        <span class="composer-model-copy">
-          <span class="composer-model-effort">{{ activeReasoningShortLabel }}</span>
-          <span class="composer-model-separator" aria-hidden="true">·</span>
-          <span class="composer-model-name">{{ settings.selectedModel || '选择模型' }}</span>
-        </span>
+      <button
+        class="composer-model-trigger"
+        type="button"
+        :style="{ '--effort-color': activeReasoningColor }"
+        :aria-label="triggerTitle"
+        aria-haspopup="dialog"
+        :title="triggerTitle"
+      >
+        <span class="composer-model-name">{{ settings.selectedModel || '选择模型' }}</span>
+        <span v-if="settings.selectedModel" class="composer-model-effort">{{ activeReasoningShortLabel }}</span>
         <el-icon><ArrowDown /></el-icon>
       </button>
     </template>
-    <div class="composer-model-panel">
-      <div class="composer-model-panel__heading">
-        <span class="composer-model-panel__icon"><el-icon><Opportunity /></el-icon></span>
-        <div class="composer-model-panel__hero">
-          <div class="composer-model-panel__effort">{{ activeReasoningLabel }} <el-icon><ArrowRight /></el-icon></div>
-          <div class="composer-model-panel__model">{{ settings.selectedModel || '尚未选择模型' }}</div>
+
+    <div class="model-menu" role="dialog" aria-label="模型与思考强度" :style="{ '--effort-color': activeReasoningColor }">
+      <div class="model-menu__head">
+        <span class="model-menu__label">模型</span>
+        <div class="model-menu__provider">
+          <button
+            class="model-menu__provider-trigger"
+            type="button"
+            :title="providerTitle"
+            aria-haspopup="listbox"
+            :aria-expanded="providerMenuOpen"
+            @click="providerMenuOpen = !providerMenuOpen"
+          >
+            {{ compactProviderLabel(settings.provider) }}
+            <el-icon><ArrowDown /></el-icon>
+          </button>
+          <Transition name="model-menu-pop">
+            <div v-if="providerMenuOpen" class="model-menu__provider-list" role="listbox" aria-label="模型服务商">
+              <button
+                v-for="provider in modelProviderPresets"
+                :key="provider.id"
+                class="model-menu__provider-option"
+                :class="{ 'is-selected': provider.id === settings.provider }"
+                type="button"
+                role="option"
+                :aria-selected="provider.id === settings.provider"
+                @click="chooseProvider(provider.id)"
+              >
+                <span>{{ provider.name }}</span>
+                <el-icon v-if="provider.id === settings.provider"><Check /></el-icon>
+              </button>
+            </div>
+          </Transition>
         </div>
       </div>
 
-      <div class="reasoning-battery" :class="{ 'is-disabled': reasoningOptions.length < 2 }">
-        <div class="reasoning-battery__meter">
-          <span class="reasoning-battery__cap" aria-hidden="true"></span>
-          <div class="reasoning-battery__case">
-            <div class="reasoning-battery__cells" aria-hidden="true">
-              <span
-                v-for="(option, index) in batteryOptions"
-                :key="option.value"
-                class="reasoning-battery__segment"
-                :class="{ active: index < batteryActiveCount }"
-              ></span>
-            </div>
-            <input
-              class="reasoning-battery__input"
-              type="range"
-              :min="0"
-              :max="Math.max(reasoningOptions.length - 1, 0)"
-              step="1"
-              :value="reasoningIndex"
-              :aria-valuetext="activeReasoningLabel"
-              aria-label="调整思考强度"
-              :disabled="reasoningOptions.length < 2"
-              @input="updateReasoningFromSlider"
-              @change="persistSettings"
-            >
-          </div>
-        </div>
-        <div class="reasoning-battery__options" role="radiogroup" aria-label="思考强度档位">
-          <span
-            v-for="option in displayReasoningOptions"
-            :key="`label-${option.value}`"
-            class="reasoning-battery__option"
-            :class="{ active: isSelectedReasoningOption(option) }"
+      <div class="model-menu__list" role="listbox" aria-label="选择模型">
+        <button
+          v-for="model in availableModels"
+          :key="model"
+          class="model-menu__model"
+          :class="{ 'is-selected': model === settings.selectedModel }"
+          type="button"
+          role="option"
+          :aria-selected="model === settings.selectedModel"
+          @click="selectModel(model)"
+        >
+          <span class="model-menu__model-name">{{ model }}</span>
+          <el-icon v-if="model === settings.selectedModel" class="model-menu__check"><Check /></el-icon>
+        </button>
+        <p v-if="modelsLoading" class="model-menu__empty">正在加载模型…</p>
+        <p v-else-if="!availableModels.length" class="model-menu__empty">暂无可用模型</p>
+      </div>
+
+      <div class="model-menu__divider" role="separator"></div>
+
+      <div class="model-menu__effort">
+        <span class="model-menu__label">思考强度</span>
+        <div
+          class="model-menu__segments"
+          role="radiogroup"
+          aria-label="思考强度"
+          :style="{
+            '--segment-index': String(reasoningIndex),
+            '--segment-count': String(Math.max(reasoningOptions.length, 1))
+          }"
+        >
+          <span class="model-menu__segment-thumb" aria-hidden="true"></span>
+          <button
+            v-for="option in reasoningOptions"
+            :key="option.value"
+            class="model-menu__segment"
+            :class="{ 'is-selected': isSelectedReasoningOption(option) }"
+            :style="{ '--segment-color': reasoningColor(option.value) }"
+            type="button"
             role="radio"
             :aria-checked="isSelectedReasoningOption(option)"
-            tabindex="0"
             @click="selectReasoningOption(option.value)"
-            @keydown.enter.prevent="selectReasoningOption(option.value)"
-            @keydown.space.prevent="selectReasoningOption(option.value)"
           >
-            <span class="reasoning-battery__option-dot" aria-hidden="true"></span>
-            <span class="reasoning-battery__option-copy">
-              <strong>{{ reasoningShortLabel(option) }}</strong>
-              <small>{{ reasoningDescription(option.value) }}</small>
-            </span>
-            <el-icon v-if="isSelectedReasoningOption(option)" class="reasoning-battery__option-check"><Check /></el-icon>
-          </span>
+            <span class="model-menu__segment-dot" aria-hidden="true"></span>
+            {{ reasoningShortLabel(option) }}
+          </button>
         </div>
-      </div>
-
-      <div class="composer-model-panel__controls">
-        <el-select
-          :model-value="settings.provider"
-          class="provider-select"
-          :title="providerTitle"
-          aria-label="选择模型服务商"
-          @change="selectProvider"
-        >
-          <template #prefix><el-icon><Connection /></el-icon></template>
-          <el-option
-            v-for="provider in modelProviderPresets"
-            :key="provider.id"
-            :label="compactProviderLabel(provider.id)"
-            :value="provider.id"
-          />
-        </el-select>
-        <el-select
-          v-model="settings.selectedModel"
-          class="model-select"
-          :loading="modelsLoading"
-          placeholder="默认模型"
-          aria-label="选择模型"
-          @change="persistSettings"
-        >
-          <template #prefix><el-icon><Cpu /></el-icon></template>
-          <el-option v-for="model in availableModels" :key="model" :label="model" :value="model" />
-        </el-select>
+        <div class="model-menu__hint-slot">
+          <Transition name="model-menu-hint" mode="out-in">
+            <p class="model-menu__hint" :key="String(selectedReasoningOption?.value)">
+              <span class="model-menu__hint-dot" aria-hidden="true"></span>
+              {{ reasoningHint }}
+            </p>
+          </Transition>
+        </div>
       </div>
     </div>
   </el-popover>
@@ -159,7 +171,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ArrowDown, ArrowRight, Check, Connection, Cpu, Opportunity } from '@element-plus/icons-vue'
+import { ArrowDown, Check, Connection, Cpu, Opportunity } from '@element-plus/icons-vue'
 import { apiUrl } from '@/platform'
 import {
   MODEL_SETTINGS_EVENT,
@@ -180,10 +192,11 @@ import {
   type ThinkingMode
 } from '@/config/modelSettings'
 
-const props = withDefaults(defineProps<{ compact?: boolean; composer?: boolean }>(), { compact: false, composer: false })
+withDefaults(defineProps<{ compact?: boolean; composer?: boolean }>(), { compact: false, composer: false })
 
 const settings = ref(loadModelSettings())
 const modelsLoading = ref(false)
+const providerMenuOpen = ref(false)
 let systemModelsRequest = 0
 const availableModels = computed(() => settings.value.models)
 const modelCapability = ref<ModelCapability | null>(null)
@@ -220,19 +233,15 @@ const selectedReasoningOption = computed(() => {
   const selected = reasoningOptions.value.find(option => String(option.value) === String(reasoningSelection.value))
   return selected || reasoningOptions.value[0]
 })
-const reasoningIndex = computed(() => {
-  const selected = selectedReasoningOption.value
-  const index = selected ? reasoningOptions.value.indexOf(selected) : 0
-  return Math.max(0, index)
+const reasoningHint = computed(() => {
+  const option = selectedReasoningOption.value
+  return option ? reasoningDescription(option.value) : '按模型能力调整推理深度'
 })
-const batteryOptions = computed(() => reasoningOptions.value.filter(option => option.value !== 'disabled'))
-const displayReasoningOptions = computed(() => [...reasoningOptions.value].reverse())
-const batteryActiveCount = computed(() => {
-  const selected = selectedReasoningOption.value
-  const total = batteryOptions.value.length
-  if (!total || !selected || selected.value === 'disabled') return 0
-  const index = batteryOptions.value.findIndex(option => String(option.value) === String(selected.value))
-  return index < 0 ? 0 : index + 1
+const reasoningIndex = computed(() => {
+  const option = selectedReasoningOption.value
+  if (!option) return 0
+  const index = reasoningOptions.value.findIndex(item => String(item.value) === String(option.value))
+  return Math.max(0, index)
 })
 const REASONING_LABELS: Record<string, string> = {
   disabled: '关闭',
@@ -264,6 +273,17 @@ const REASONING_DESCRIPTIONS: Record<string, string> = {
   xhigh: '为复杂任务保留更多推理',
   max: '适合最复杂的任务'
 }
+// 档位颜色沿用语义色板：越往上越“重”，关档保持中性。
+const REASONING_COLORS: Record<string, string> = {
+  disabled: 'var(--text-secondary)',
+  low: 'var(--sem-flow)',
+  standard: 'var(--sem-running)',
+  medium: 'var(--sem-running)',
+  high: 'var(--sem-waiting)',
+  deep: 'var(--sem-artifact)',
+  xhigh: 'var(--sem-artifact)',
+  max: 'var(--sem-artifact)'
+}
 const activeReasoningLabel = computed(() => {
   const option = selectedReasoningOption.value
   return option ? reasoningLabel(option.value) : '标准'
@@ -271,6 +291,14 @@ const activeReasoningLabel = computed(() => {
 const activeReasoningShortLabel = computed(() => {
   const option = selectedReasoningOption.value
   return option ? reasoningShortLabel(option) : '标准'
+})
+const activeReasoningColor = computed(() => {
+  const option = selectedReasoningOption.value
+  return reasoningColor(option ? option.value : 'standard')
+})
+const triggerTitle = computed(() => {
+  const model = settings.value.selectedModel || '选择模型'
+  return `${model} · 思考强度：${activeReasoningLabel.value}`
 })
 const providerTitle = computed(() => {
   const provider = modelProviderPresets.find(item => item.id === settings.value.provider)
@@ -293,7 +321,12 @@ function reasoningDescription(value: ThinkingMode | ReasoningEffort): string {
   return REASONING_DESCRIPTIONS[String(value)] || '按模型能力调整推理深度'
 }
 
+function reasoningColor(value: ThinkingMode | ReasoningEffort): string {
+  return REASONING_COLORS[String(value)] || 'var(--text-secondary)'
+}
+
 function selectReasoningOption(value: ThinkingMode | ReasoningEffort): void {
+  providerMenuOpen.value = false
   reasoningSelection.value = value
   persistSettings()
 }
@@ -302,10 +335,16 @@ function isSelectedReasoningOption(option: { value: ThinkingMode | ReasoningEffo
   return String(option.value) === String(selectedReasoningOption.value?.value)
 }
 
-function updateReasoningFromSlider(event: Event): void {
-  const index = Number((event.target as HTMLInputElement).value)
-  const option = reasoningOptions.value[index]
-  if (option) reasoningSelection.value = option.value
+function selectModel(model: string): void {
+  providerMenuOpen.value = false
+  if (model === settings.value.selectedModel) return
+  settings.value.selectedModel = model
+  persistSettings()
+}
+
+function chooseProvider(provider: ModelProviderId): void {
+  providerMenuOpen.value = false
+  if (provider !== settings.value.provider) selectProvider(provider)
 }
 
 function compactProviderLabel(provider: ModelProviderId): string {
@@ -406,6 +445,7 @@ onMounted(() => {
 onUnmounted(() => window.removeEventListener(MODEL_SETTINGS_EVENT, syncSettings))
 
 function handleComposerOpen(): void {
+  providerMenuOpen.value = false
   if (settings.value.provider === 'system' && !availableModels.value.length) void loadSystemModels()
 }
 </script>
@@ -414,108 +454,268 @@ function handleComposerOpen(): void {
 .composer-model-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  max-width: 230px;
-  min-height: 30px;
-  padding: 5px 8px;
+  gap: 6px;
+  max-width: 240px;
+  min-height: 28px;
+  padding: 4px 7px 4px 9px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 12px;
+  line-height: 1;
   cursor: pointer;
-  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+  transition: background-color 160ms ease, color 160ms ease;
 }
-.composer-model-trigger:hover { background: color-mix(in srgb, var(--text-primary) 7%, transparent); color: var(--text-primary); }
-.composer-model-trigger:active { transform: translateY(1px); }
-.composer-model-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-.composer-model-copy { display: inline-flex; align-items: baseline; min-width: 0; gap: 5px; }
-.composer-model-effort { color: var(--text-primary); font-size: 11px; font-weight: 700; white-space: nowrap; }
-.composer-model-separator { color: var(--text-muted); }
+.composer-model-trigger:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.composer-model-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
 .composer-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-model-trigger .el-icon { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
-.composer-model-panel { display: grid; gap: 4px; }
-.composer-model-panel__heading { display: flex; align-items: center; gap: 8px; padding: 0; }
-.composer-model-panel__icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 8px; background: color-mix(in srgb, var(--primary-color) 14%, transparent); color: var(--primary-color); }
-.composer-model-panel__icon .el-icon { font-size: 14px; }
-.composer-model-panel__hero { min-width: 0; }
-.composer-model-panel__effort { display: inline-flex; align-items: center; gap: 3px; color: var(--primary-color); font-size: 14px; font-weight: 700; letter-spacing: .01em; line-height: 1.1; }
-.composer-model-panel__effort .el-icon { font-size: 13px; opacity: .78; }
-.composer-model-panel__model { overflow: hidden; margin-top: 2px; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.composer-model-panel__controls { display: flex; align-items: center; gap: 6px; min-width: 0; padding-top: 2px; }
-.composer-model-panel__controls .provider-select { width: 100px; flex: 0 0 100px; }
-.composer-model-panel__controls .model-select { width: auto; flex: 1 1 auto; min-width: 0; }
-.composer-model-panel__controls :deep(.el-select) { min-width: 0; }
-.composer-model-panel__controls :deep(.el-select__wrapper) { min-height: 28px; padding: 0 5px; border: 0 !important; border-radius: 7px; background: transparent !important; box-shadow: none !important; }
-.composer-model-panel__controls :deep(.el-select__selected-item),
-.composer-model-panel__controls :deep(.el-select__placeholder) { font-size: 11px; }
-.composer-model-panel__controls :deep(.el-select__prefix),
-.composer-model-panel__controls :deep(.el-select__suffix) { font-size: 12px; }
-.composer-model-panel__controls :deep(.el-select__wrapper:hover),
-.composer-model-panel__controls :deep(.el-select__wrapper.is-focused) { background: color-mix(in srgb, var(--text-primary) 6%, transparent) !important; box-shadow: none !important; }
-
-.reasoning-battery { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 102px; padding: 0 5px 1px 11px; }
-.reasoning-battery.is-disabled { opacity: .58; }
-.reasoning-battery__meter { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; }
-.reasoning-battery__cap {
-  width: 12px; height: 5px; border-radius: 2px 2px 1px 1px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 40%, var(--bg-panel)), color-mix(in srgb, var(--text-primary) 16%, var(--bg-panel)));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 1px 1px rgba(0, 0, 0, .4);
+.composer-model-effort { flex: 0 0 auto; color: color-mix(in srgb, var(--effort-color) 66%, var(--text-secondary)); font-size: 11px; transition: color 200ms ease; }
+.composer-model-trigger:hover .composer-model-effort { color: color-mix(in srgb, var(--effort-color) 72%, var(--text-primary)); }
+.composer-model-trigger .el-icon { flex: 0 0 auto; font-size: 10px; color: var(--text-muted); }
+.model-menu { display: grid; gap: 2px; }
+.model-menu__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 2px; }
+.model-menu__label { color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; line-height: 16px; }
+.model-menu__provider { position: relative; }
+.model-menu__provider-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
 }
-.reasoning-battery__case {
-  position: relative; width: 28px; height: 84px; padding: 3px;
-  border-radius: 9px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--text-primary) 18%, var(--bg-panel)), color-mix(in srgb, var(--text-primary) 7%, var(--bg-panel)));
+.model-menu__provider-trigger:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.model-menu__provider-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
+.model-menu__provider-trigger .el-icon { font-size: 9px; transition: transform 140ms ease; }
+.model-menu__provider-trigger[aria-expanded="true"] .el-icon { transform: rotate(180deg); }
+.model-menu__provider-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 3;
+  display: grid;
+  gap: 1px;
+  width: 172px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 80%, transparent);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md);
+}
+.model-menu__provider-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.model-menu__provider-option:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.model-menu__provider-option.is-selected { color: var(--text-primary); }
+.model-menu__provider-option .el-icon { flex: 0 0 auto; font-size: 12px; color: var(--text-secondary); }
+.model-menu__list {
+  display: grid;
+  gap: 1px;
+  max-height: 202px;
+  padding: 2px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent;
+}
+.model-menu__list::-webkit-scrollbar { width: 6px; }
+.model-menu__list::-webkit-scrollbar-thumb { border-radius: 999px; background: color-mix(in srgb, var(--text-primary) 16%, transparent); }
+.model-menu__model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-regular);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.model-menu__model:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
+.model-menu__model:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+.model-menu__model.is-selected { color: var(--text-primary); }
+.model-menu__model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu__check { flex: 0 0 auto; margin-left: auto; font-size: 12px; color: var(--text-secondary); }
+.model-menu__empty { margin: 0; padding: 10px 8px; color: var(--text-muted); font-size: 11px; text-align: center; }
+.model-menu__divider { height: 1px; margin: 6px 5px; background: color-mix(in srgb, var(--border-light) 62%, transparent); }
+.model-menu__effort { display: grid; gap: 6px; padding: 2px 8px 6px; }
+.model-menu__segments {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  isolation: isolate;
+}
+.model-menu__segment-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px - (var(--segment-count) - 1) * 2px) / var(--segment-count));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--effort-color) 18%, transparent);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .22),
-    inset 0 -1px 1px rgba(0, 0, 0, .35),
-    0 2px 5px rgba(0, 0, 0, .32);
+    inset 0 0 0 1px color-mix(in srgb, var(--effort-color) 34%, transparent),
+    0 2px 12px color-mix(in srgb, var(--effort-color) 16%, transparent);
+  transform: translateX(calc(var(--segment-index) * (100% + 2px)));
+  transition:
+    transform 300ms cubic-bezier(.22, 1, .36, 1),
+    background-color 240ms ease,
+    box-shadow 240ms ease;
+  pointer-events: none;
 }
-.reasoning-battery__cells {
-  position: relative; display: flex; flex-direction: column-reverse; gap: 3px; width: 100%; height: 100%; padding: 2px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--text-primary) 9%, var(--bg-panel));
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5), inset 0 -1px 0 rgba(255, 255, 255, .06);
+.model-menu__segment {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 200ms ease, background-color 160ms ease, transform 160ms ease;
 }
-.reasoning-battery__segment {
-  position: relative; flex: 1 1 0; min-height: 0; border-radius: 3px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, .32), rgba(0, 0, 0, .1));
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45), inset 0 -1px 0 rgba(255, 255, 255, .05);
-  transition: background 180ms ease, box-shadow 180ms ease;
+.model-menu__segment:hover {
+  background: color-mix(in srgb, var(--segment-color) 9%, transparent);
+  color: color-mix(in srgb, var(--segment-color) 70%, var(--text-primary));
 }
-.reasoning-battery__segment::after {
-  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .02) 50%, rgba(255, 255, 255, 0) 80%);
+.model-menu__segment:active { transform: scale(.97); }
+.model-menu__segment.is-selected {
+  color: var(--segment-color);
+  font-weight: 600;
 }
-.reasoning-battery__segment.active {
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent-color) 52%, #fff) 0%,
-    var(--accent-color) 40%,
-    color-mix(in srgb, var(--accent-color) 60%, #000) 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .5),
-    inset 0 -2px 3px color-mix(in srgb, var(--accent-color) 45%, #000),
-    0 0 9px color-mix(in srgb, var(--accent-color) 38%, transparent);
+.model-menu__segment:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 0; }
+.model-menu__segment-dot {
+  position: relative;
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--segment-color) 52%, transparent);
+  transition: background-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
-.reasoning-battery__input { position: absolute; top: 50%; left: 50%; width: 84px; height: 28px; margin: 0; opacity: 0; cursor: pointer; transform: translate(-50%, -50%) rotate(-90deg); z-index: 2; }
-.reasoning-battery__case:focus-within .reasoning-battery__cells { outline: 2px solid color-mix(in srgb, var(--primary-color) 70%, transparent); outline-offset: 3px; }
-.reasoning-battery__options { display: grid; align-content: center; gap: 4px; min-width: 0; }
-.reasoning-battery__option { display: flex; align-items: center; gap: 7px; min-height: 28px; padding: 3px 6px; border-radius: 8px; color: var(--text-secondary); cursor: pointer; transition: background 160ms ease, color 160ms ease; }
-.reasoning-battery__option:hover,
-.reasoning-battery__option:focus-visible { outline: none; background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
-.reasoning-battery__option.active { background: color-mix(in srgb, var(--primary-color) 10%, transparent); color: var(--primary-color); }
-.reasoning-battery__option-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: color-mix(in srgb, var(--text-primary) 26%, transparent); }
-.reasoning-battery__option.active .reasoning-battery__option-dot { background: var(--accent-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 14%, transparent); }
-.reasoning-battery__option-copy { display: grid; min-width: 0; gap: 1px; }
-.reasoning-battery__option-copy strong { font-size: 11px; font-weight: 600; line-height: 1.1; }
-.reasoning-battery__option-copy small { overflow: hidden; color: var(--text-muted); font-size: 8px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
-.reasoning-battery__option-check { margin-left: auto; flex: 0 0 auto; font-size: 12px; }
+.model-menu__segment.is-selected .model-menu__segment-dot {
+  background: var(--segment-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--segment-color) 22%, transparent);
+  transform: scale(1.12);
+}
+.model-menu__segment-dot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--segment-color) 42%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.model-menu__segment.is-selected .model-menu__segment-dot::after {
+  animation: model-menu-dot-ring 460ms cubic-bezier(.2, .8, .2, 1) both;
+}
+@keyframes model-menu-dot-ring {
+  0% { opacity: .5; transform: scale(.45); }
+  70% { opacity: .16; }
+  100% { opacity: 0; transform: scale(1.75); }
+}
+.model-menu__hint-slot { display: flex; align-items: center; min-height: 16px; }
+.model-menu__hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--effort-color) 38%, var(--text-secondary));
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-menu__hint-dot {
+  width: 4px;
+  height: 4px;
+  flex: 0 0 4px;
+  border-radius: 50%;
+  background: var(--effort-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--effort-color) 12%, transparent);
+  transition: background-color 240ms ease, box-shadow 240ms ease;
+  animation: model-menu-hint-dot-in 260ms cubic-bezier(.2, .8, .2, 1) both;
+}
+@keyframes model-menu-hint-dot-in {
+  from { opacity: 0; transform: scale(.4); }
+  to { opacity: 1; transform: scale(1); }
+}
+.model-menu__check { animation: model-menu-check-in 200ms cubic-bezier(.2, .9, .3, 1.35) both; }
+@keyframes model-menu-check-in {
+  from { opacity: 0; transform: scale(.55); }
+  to { opacity: 1; transform: scale(1); }
+}
+.model-menu-hint-enter-active { transition: opacity 140ms ease, transform 140ms ease; }
+.model-menu-hint-leave-active { transition: opacity 90ms ease, transform 90ms ease; }
+.model-menu-hint-enter-from { opacity: 0; transform: translateY(3px); }
+.model-menu-hint-leave-to { opacity: 0; transform: translateY(-3px); }
+.model-menu-pop-enter-active,
+.model-menu-pop-leave-active { transition: opacity 120ms ease, transform 120ms ease; }
+.model-menu-pop-enter-from,
+.model-menu-pop-leave-to { opacity: 0; transform: translateY(-3px) scale(.98); }
 
 @media (max-width: 620px) {
-  .composer-model-trigger { max-width: 160px; font-size: 11px; padding-inline: 4px; }
-  .composer-model-panel__controls .provider-select { width: 96px; flex-basis: 96px; }
+  .composer-model-trigger { max-width: 168px; padding-inline: 5px; font-size: 11px; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .model-menu__segment-thumb,
+  .model-menu__segment,
+  .model-menu__segment-dot,
+  .model-menu__hint-dot,
+  .model-menu__check { animation: none; transition: none; }
+  .model-menu__segment.is-selected .model-menu__segment-dot::after { animation: none; opacity: 0; }
+  .model-menu-hint-enter-active,
+  .model-menu-hint-leave-active,
+  .model-menu-pop-enter-active,
+  .model-menu-pop-leave-active { transition: none; }
+}
+
 .model-runtime-controls {
   display: inline-flex;
   align-items: center;
@@ -597,22 +797,21 @@ function handleComposerOpen(): void {
 
 <style>
 .composer-model-popover.el-popover.el-popper {
-  width: min(366px, calc(100vw - 24px)) !important;
+  width: min(336px, calc(100vw - 24px)) !important;
   max-width: calc(100vw - 24px);
-  background: color-mix(in srgb, var(--bg-card) 98%, var(--bg-panel));
-  border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 74%, transparent);
   border-radius: 16px;
-  padding: 14px;
-  box-shadow: 0 20px 46px rgba(0, 0, 0, .34), 0 0 0 1px rgba(255, 255, 255, .02) inset;
-  animation: composer-model-popover-in 160ms cubic-bezier(.2,.8,.2,1);
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-panel));
+  box-shadow: var(--shadow-lg), 0 0 0 1px color-mix(in srgb, var(--text-primary) 3%, transparent) inset;
+  animation: composer-model-popover-in 140ms cubic-bezier(.2, .8, .2, 1);
 }
-.composer-model-popover.el-popper .el-popper__arrow::before { background: var(--bg-card); border-color: var(--border-color); }
+.composer-model-popover .el-popper__arrow { display: none; }
 @keyframes composer-model-popover-in {
-  from { opacity: 0; transform: translateY(5px) scale(.98); }
+  from { opacity: 0; transform: translateY(4px) scale(.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .composer-model-popover.el-popover.el-popper,
-  .reasoning-battery__segment { animation: none; transition: none; }
+  .composer-model-popover.el-popover.el-popper { animation: none; }
 }
 </style>
