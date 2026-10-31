@@ -198,6 +198,31 @@ class Settings(BaseSettings):
         # 从环境变量读取（load_dotenv已经加载了.env文件到环境变量）
         env_file_encoding = 'utf-8'
 
+def _llm_profile_store_path():
+    """供应商档案存储路径；与 app.llm.profiles 的解析保持一致（避免循环导入，此处轻量复算）。"""
+    from app.paths import APP_DATA_DIR
+    override = (os.getenv("AGENTOS_LLM_PROFILES_FILE") or "").strip()
+    return Path(override) if override else APP_DATA_DIR / "llm_profiles.json"
+
+
+def _llm_profile_store_exists() -> bool:
+    try:
+        return _llm_profile_store_path().is_file()
+    except OSError:
+        return False
+
+
+def _llm_profile_inline_key_count() -> int:
+    """档案里已内联保存 Key 的数量（发行版 Settings 配置路径）；文件缺失/损坏按 0 处理。"""
+    try:
+        import json
+        raw = json.loads(_llm_profile_store_path().read_text(encoding="utf-8"))
+        items = raw.get("profiles") or [] if isinstance(raw, dict) else []
+        return sum(1 for item in items if isinstance(item, dict) and str(item.get("api_key") or "").strip())
+    except (OSError, UnicodeError, ValueError):
+        return 0
+
+
 # 初始化配置
 try:
     settings = Settings(**_secret_file_values)
@@ -207,17 +232,30 @@ try:
         json_format=settings.ENVIRONMENT.strip().lower() in {"prod", "production"},
         level=logging.INFO,
     )
-    
+
     # 验证关键配置项是否加载（在Settings初始化后检查）
     if not settings.DEEPSEEK_API_KEY and not settings.GLM_API_KEY and not settings.DASHSCOPE_API_KEY and not settings.QWEN_API_KEY:
         import logging
         _warn_logger = logging.getLogger(__name__)
-        _warn_logger.warning("未配置可用的模型 API Key")
-        if _env_file_path:
-            _warn_logger.warning(f"   配置文件路径: {_env_file_path}")
-        _warn_logger.warning(f"   请在.env文件中添加以下配置项之一:")
-        _warn_logger.warning("   请通过对应 Secret 文件配置模型 API Key")
-        _warn_logger.warning(f"   获取API密钥: https://dashscope.aliyuncs.com/")
+        _inline_keys = _llm_profile_inline_key_count()
+        if _inline_keys:
+            # 发行版路径：Key 由用户在 设置 → 模型供应商 内联配置并激活，不走环境变量；
+            # 此时 env 缺 Key 是预期状态，按事实提示而不是刷屏误导排障。
+            _warn_logger.info(
+                f"环境变量未配置模型 API Key；检测到供应商档案内联密钥（{_inline_keys} 个），"
+                "模型调用将按 Settings 激活档案进行"
+            )
+        elif _llm_profile_store_exists():
+            _warn_logger.warning(
+                "环境变量未配置模型 API Key；请在 设置 → 模型供应商 填入 Key 并激活（保存后需重启服务生效）"
+            )
+        else:
+            _warn_logger.warning("未配置可用的模型 API Key")
+            if _env_file_path:
+                _warn_logger.warning(f"   配置文件路径: {_env_file_path}")
+            _warn_logger.warning(f"   请在.env文件中添加以下配置项之一:")
+            _warn_logger.warning("   请通过对应 Secret 文件配置模型 API Key")
+            _warn_logger.warning(f"   获取API密钥: https://dashscope.aliyuncs.com/")
     else:
         import logging
         _info_logger = logging.getLogger(__name__)
@@ -319,8 +357,19 @@ if _api_key_configured:
     # 配置正常时不输出详细信息，只在未配置时输出警告
     pass
 else:
-    _logger.warning("通义千问API密钥未配置")
-    _logger.warning(f"   配置文件路径: {_env_file_path_correct}")
-    _logger.warning("   请通过对应 Secret 文件配置模型 API Key")
-    _logger.warning(f"   获取API密钥: https://dashscope.aliyuncs.com/")
-    _logger.warning(f"   提示: 运行 'python debug_config.py' 可以诊断配置问题")
+    _inline_keys = _llm_profile_inline_key_count()
+    if _inline_keys:
+        _logger.info(
+            f"环境变量未配置模型 API Key；检测到供应商档案内联密钥（{_inline_keys} 个），"
+            "模型调用将按 Settings 激活档案进行"
+        )
+    elif _llm_profile_store_exists():
+        _logger.warning(
+            "环境变量未配置模型 API Key；请在 设置 → 模型供应商 填入 Key 并激活（保存后需重启服务生效）"
+        )
+    else:
+        _logger.warning("通义千问API密钥未配置")
+        _logger.warning(f"   配置文件路径: {_env_file_path_correct}")
+        _logger.warning("   请通过对应 Secret 文件配置模型 API Key")
+        _logger.warning(f"   获取API密钥: https://dashscope.aliyuncs.com/")
+        _logger.warning(f"   提示: 运行 'python debug_config.py' 可以诊断配置问题")

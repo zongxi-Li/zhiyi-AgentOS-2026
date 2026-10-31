@@ -558,3 +558,91 @@ D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip    548 MB
 D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip   548 MB
 sha256 40ABFDB6CAD535F2901F833D99A3ACC3D7BF9C1CEEF1FBB649B81F9D9DF1D812
 ```
+
+---
+
+## 14. 第六轮：交付后修复——CSP 拦截 vue-i18n 与启动告警误导（2026-10-31 18:30–19:15）
+
+> 触发：交付后用户反馈"打包出现了一些问题"。对交付包本体做全链路取证后确认两处缺陷并修复，重出包。
+
+### 14.1 取证方法与过程
+
+- zip 本体：条目 19908、CRC 逐项通过、指纹与 §13.3 一致 → 包结构无损。
+- 用户 17:23 实跑痕迹：`data-home` 完整、PG 会话表 3 行（自动登录成功）、无 Key 配置/对话/任务记录 → 首启链路本身是通的。
+- 复开窗口实验（`start.cmd` 重开 + CDP 附着）：抓到每次启动 **3 条 EvalError**——`script-src 'self'` 拦截 `new Function`，调用点定位为 **vue-i18n 运行时消息编译器**（`__INTLIFY_JIT_COMPILATION__` / format message part），相关组件被错误边界兜住、界面区域渲染缺失。Tauri 时代桌面 CSP 本就带 `unsafe-eval`，Electron 打包壳收紧过度。
+- 期间一次"重开卡在登录页"观察（18:45，无登录请求、无 main.log warn）：连做 3 轮复开循环均自愈进 `#/chat`，判定为一次性竞态（与强制杀进程留下的脏 localStorage 相关），**未作为缺陷修复**，列为后续观察项（见 14.4）。
+
+### 14.2 修复内容（两处外科手术，不动并行修正轮的任务链路代码）
+
+| 文件 | 改动 |
+| :-- | :-- |
+| `apps/desktop/electron/src/lib/app-assets.ts` | `buildCsp` 的 `script-src` 加回 `'unsafe-eval'`，注释写明 vue-i18n 依赖；测试断言同步反转 |
+| `apps/desktop/electron/test/app-assets.test.ts` | 断言改为必须含 `script-src 'self' 'unsafe-eval'` |
+| `apps/agent/app/config.py` | 启动期"未配置 Key"告警改为档案感知三态：有内联密钥→INFO 确认；有档案库→指引"设置 → 模型供应商 填 Key 并激活（重启生效）"；两者皆无→保留原 env/Secret 指引。第二处"通义千问API密钥未配置"块同口径 |
+
+验证：Electron 单测 **42/42** 通过；`tsc` 通过；config.py `py_compile` 通过。
+
+### 14.3 换包与复验（全部实跑）
+
+1. `npm run pack` 重建壳 → 新 `win-unpacked` 的 app/ 文件清单与原包**逐项一致**（extra=0/missing=0）。
+2. 镜像替换发行包 `app/`；包内 `apps/agent/app/config.py` 与 HEAD 逐字节一致，整文件替换为修复版。
+3. `restart.cmd` 全栈重启，CDP 抓启动控制台：**EvalError 0 条**（修复前每启必现 ×3）；自动登录直达 `#/chat`；截图确认问候语/侧栏/输入区/右侧会话面板全部渲染。
+4. ai.log 新会话：两处告警均变为"请在 设置 → 模型供应商 填入 Key 并激活（保存后需重启服务生效）"，dashscope/.env 刷屏消失；注入临时内联 Key 实测第三分支输出 INFO"检测到供应商档案内联密钥（1 个）"后还原。
+5. 重压 zip：排除 `data-home` 与 `__pycache__`（顺带剔除旧包携带的 401 个陈旧 `.pyc`，其中 config 的 pyc 已失效）；条目 19507、CRC 全过、非 ASCII 文件名 0、与上一版相比零多余零缺失（仅上述差异）。
+
+### 14.4 当前交付指纹（第六轮）
+
+```
+D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip   545 MB
+sha256 DC61495308135BE63F3DC9ACAAF235E5429F5AD520488B478194E37C6D0CD06F
+上一版备份：D:\build-test\ZhiyiAgentOS-1.0.0-internal-prev-1708.zip（验收通过后可删）
+```
+
+### 14.5 遗留与后续
+
+1. **重开窗口偶发卡登录页**（一次性观察，未复现）：桌面壳内 ensure 失败后渲染层无重试无提示，用户会停在无出口的登录页。待任务修正轮合并后在渲染层补"重试 + 明确提示"（涉及 router/session，属渲染层改动，本轮刻意不碰）。
+2. **vue-i18n 预编译**（P2 债务）：构建期预编译消息即可再次移除 `unsafe-eval`，需动 vite 配置与渲染层构建，本轮不碰。
+3. 未配置 Key 时创建 Mission 仍只显示"ACG 工作流执行失败"（§11.1），改进项涉及 CreateMissionView 等**并行修正轮正在改的文件**，本轮不碰。
+4. `package.json` 缺 `author`、未签名两条构建告警维持原状（§1.1 已登记）。
+
+### 14.6 追加发现：设置页「模型与 API」在包内不可达（发行阻断，随下一包修复）
+
+用户实测反馈"找不到配置 API 的地方"，取证确认两处 UI 缺陷：
+
+1. **侧栏缺入口**：`SettingsView.vue` 的 `tabs` 数组含 `model`（模型与 API），但渲染侧栏的 `settingsSections` 数组漏了该项（「导入」项 id 还错挂 `'general'`，点击等于回常规页）。全应用 grep 零处引用 `tab=model`——打包壳无地址栏、无 DevTools，深链 `#/settings?tab=model` 只有发布者能灌入，**终端用户不可达 = 配 Key 主流程阻断**。
+2. **服务端供应商面板藏得深**：该面板挂在「当前连接」选择的 `v-else` 上——只有选中第一张「系统默认」卡片才渲染；且已有档案卡片不支持直接填 Key，须「新增供应商」**同名覆盖**（ProfileStore.upsert 按名替换）再点卡片激活。
+
+处置：
+- 仓库修复（已改，未提交）：`settingsSections` 工作区组补「模型与 API」项（`SettingsView.vue`，不在并行修正轮文件集内）；vue-tsc 确认无新增错误（既有 TS2882 为 CSS 副作用导入声明问题，与本次无关）。
+- **本包（DC614953…）不改渲染层**：重打包渲染器会吸收并行修正轮的中间态任务代码，明确不做；以清单「常见问题」如实登记缺陷与临时路径。
+- 下一包（任务修正轮合并后重出）自动带上侧栏修复；届时建议顺手复核「系统默认才显示服务端面板」的交互是否要改为常显。
+
+> 本轮修正前面报告的一个口径：此前答复"直接在供应商卡片里填 Key"不成立——卡片只支持切换激活与测试，内联 Key 只能经「新增供应商」表单写入。
+
+### 14.7 第七轮：包内热修侧栏「模型与 API」入口（不动仓库、不重建渲染层）
+
+用户裁定：直接在包内修，本地版本（含并行会话工作区）一概不动。故放弃"重建渲染层"路线，改为对发行包做外科手术式补丁：
+
+**方法**（全程零仓库写操作；`@electron/asar` 仅从仓库 node_modules 只读调用）：
+
+1. 对包内 `app/resources/app.asar` 解包，定位渲染层懒加载 chunk `renderer/assets/SettingsView-CLzithap.js`（31,423 B）。该 build 的扁平导航数组 `S` 本就含 model 项（`icon:Tl` = Cpu 在本模块的最小化变量），只有侧栏分组数组 `I` 的「工作区」组是错挂的「导入」项。
+2. 字节级替换恰好 1 处对象字面量：`{id:"general",label:"导入",icon:Ll,…}` → `{id:"model",label:"模型与 API",icon:Tl,description:"配置当前浏览器使用的模型连接。"}`（所有字节串复用文件内已有内容，无新增字面量；`导入` 项全文件归零）。node `--check` 语法通过。
+3. `asar pack` 重打包；436 项条目排序比对与原 asar 完全一致；全树 `diff -rq` 仅该 1 文件不同；roundtrip 回读哈希与补丁文件一致。
+4. 对壳主进程发 `CloseMainWindow()`（等价点 ×，服务不停）→ 换入 asar → `start.cmd` 重开窗口。
+
+**实测**（CDP 19351，`up` 返回 status UP）：侧栏 6 项含「模型与 API」；点击后面板出现 系统默认/供应商/API Key/模型目录 全部标记、active 态正确；挂载后新增 console 错误 = 0；截图存档。实测后已关闭取证窗口并以无调试端口方式重开干净窗口交还用户。
+
+**重要工程事实**：本包 exe（electron-builder 26 + Electron 45）**未启用 asar 完整性熔断**——换入重打包的 asar 后正常启动。今后包内壳补丁可走同路线；若未来开启 integrity fuse，此路线即失效。
+
+**当前交付指纹（第七轮）**
+
+```
+D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip   545 MB (571,487,058 B)
+sha256 BFFC4EF7BF5084FA358B64A6875783862A49908C89EAB18B3B31A54940BC2F7B
+条目 21528 = 19507 文件 + 2021 目录项；CRC 全过；非 ASCII 文件名 0；
+与 prev-dc61 条目集合完全一致，内容差异恰为 app.asar 一项
+上一版备份：D:\build-test\ZhiyiAgentOS-1.0.0-internal-prev-dc61.zip（DC614953…）
+更早版本：…-prev-1708.zip（40ABFDB6…，验收通过后两个备份都可删）
+```
+
+注：仓库 `SettingsView.vue` 的源码修复（上一轮所改）保持未提交原样，本轮未再触碰；其 diff 中混有并行会话的样式重构条目，提交时需按行归属拆分。包内补丁与仓库修复的行为差异仅在文案（包内沿用该 build 自身的"配置当前浏览器使用的模型连接"描述）与并行会话的样式项，入口行为一致。

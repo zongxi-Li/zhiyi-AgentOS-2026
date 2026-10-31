@@ -108,11 +108,12 @@ const routes: RouteRecordRaw[] = [
     name: 'Settings',
     // Settings is the main route used to recover identity and client state.
     // It should remain available even when a deployed lazy chunk is stale.
+    // 不挂 hideNavigation：设置页公用 AppTopBar（无边框窗口的拖拽区与窗口控件都在顶栏），
+    // 页面内自建拖拽区实测无效，顶栏是唯一可靠拖拽面。
     component: () => import('@/views/SettingsView.vue'),
     meta: {
       title: '设置',
-      requiresAuth: true,
-      hideNavigation: true
+      requiresAuth: true
     }
   },
   {

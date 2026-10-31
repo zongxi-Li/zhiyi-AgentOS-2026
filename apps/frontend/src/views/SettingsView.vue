@@ -410,8 +410,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { apiUrl } from '@/platform/api'
-import UserAvatar from '@/components/UserAvatar.vue'
-import { ArrowLeft, Brush, ChatDotRound, Check, Cpu, Download, InfoFilled, Key, Lock, Microphone, Search, Setting } from '@element-plus/icons-vue'
+import { ArrowLeft, Brush, ChatDotRound, Check, Cpu, InfoFilled, Key, Lock, Microphone, Search, Setting } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { UI_ZOOM_BASE, UI_ZOOM_MAX_LEVEL, UI_ZOOM_MIN_LEVEL, UI_ZOOM_STORAGE_KEY, setUiZoomLevel, uiZoomPercentage, uiZoomState } from '@/composables/useUiZoom'
 import { colorSchemes, type ColorSchemeId } from '@/themes/presets'
@@ -429,7 +428,6 @@ type NavigationItem = {
   id: TabId
   label: string
   icon: Component
-  description?: string
   route?: string
 }
 
@@ -472,17 +470,17 @@ const settingsSections: Array<{ label: string; items: NavigationItem[] }> = [
   {
     label: '偏好',
     items: [
-      { id: 'general', label: '常规', icon: Setting, description: '管理工作区权限、默认目录与基础偏好。' },
-      { id: 'appearance', label: '外观', icon: Brush, description: '调整主题、密度与界面显示方式。' },
-      { id: 'voice', label: '语音', icon: Microphone, description: '管理语音讲解的声音与播放参数。' },
-      { id: 'privacy', label: '隐私', icon: Key, description: '控制数据存储、历史记录与敏感设置。' }
+      { id: 'general', label: '常规', icon: Setting },
+      { id: 'appearance', label: '外观', icon: Brush },
+      { id: 'voice', label: '语音', icon: Microphone },
+      { id: 'privacy', label: '隐私', icon: Key }
     ]
   },
   {
     label: '工作区',
     items: [
-      { id: 'chat', label: '对话', icon: ChatDotRound, description: '管理消息发送与历史对话体验。' },
-      { id: 'general', label: '导入', icon: Download, description: '管理工作区权限、默认目录与基础偏好。' }
+      { id: 'chat', label: '对话', icon: ChatDotRound },
+      { id: 'model', label: '模型与 API', icon: Cpu }
     ]
   }
 ]
@@ -556,9 +554,6 @@ const visibleSections = computed(() => {
     }))
     .filter((section) => section.items.length)
 })
-const accountName = computed(() => userStore.currentUser?.username || '我的账户')
-const accountInitial = computed(() => accountName.value.slice(0, 1).toUpperCase())
-
 const lastSavedText = computed(() => {
   if (!lastSaved.value) return '尚未保存'
   return lastSaved.value.toLocaleTimeString('zh-CN', { hour12: false })
@@ -858,7 +853,6 @@ function ensureSelectedModel(models: string[]): void {
 }
 
 .back-to-app,
-.rail-account,
 .settings-nav-item {
   border: 1px solid transparent;
   background: transparent;
@@ -969,14 +963,16 @@ function ensureSelectedModel(models: string[]): void {
   color: var(--primary-color);
 }
 
+/* 选中态 = VS Code 列表选中式：柔和中性圆角底 + 文字提亮，无强调色、无竖条 */
 .settings-nav-item.active {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-card));
-  box-shadow: inset 2px 0 0 var(--primary-color);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  box-shadow: none;
 }
 
 .settings-nav-item.active .el-icon {
-  color: var(--primary-color);
+  color: var(--text-primary);
 }
 
 .settings-nav-item .item-arrow {
@@ -992,71 +988,12 @@ function ensureSelectedModel(models: string[]): void {
   font-size: 12px;
 }
 
-.rail-account {
-  width: 100%;
-  min-height: 54px;
-  padding: 8px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  border-top: 1px solid var(--border-light);
-  border-radius: 0;
-  text-align: left;
-}
-
-.rail-account:hover,
-.rail-account:focus-visible {
-  background: var(--bg-input);
-}
-
-.rail-avatar {
-  flex: 0 0 auto;
-  background: var(--primary-color);
-  color: var(--on-primary);
-  font-weight: 700;
-}
-
-.rail-account-copy {
-  min-width: 0;
-  flex: 1;
-  display: grid;
-  gap: 1px;
-}
-
-.rail-account-copy strong,
-.rail-account-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-account-copy strong {
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.rail-account-copy small {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.rail-account > .el-icon {
-  color: var(--text-muted);
-  font-size: 13px;
-  transform: rotate(180deg);
-}
-
 .settings-content {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 42px clamp(24px, 5vw, 76px) 56px;
-}
-
-.settings-content.account-mode {
-  padding: 0;
-  overflow: hidden;
 }
 
 .settings-header,
@@ -1597,7 +1534,6 @@ function ensureSelectedModel(models: string[]): void {
   .settings-nav-section h2 { display: none; }
   .settings-nav-item { width: auto; min-height: 32px; padding: 0 9px; white-space: nowrap; }
   .settings-nav-item .item-arrow { display: none; }
-  .rail-account { display: none; }
   .settings-search { margin: 12px 0 10px; }
   .settings-content { height: auto; overflow: visible; padding: 26px 16px 36px; }
   .settings-header { align-items: flex-start; flex-direction: column; gap: 18px; }
