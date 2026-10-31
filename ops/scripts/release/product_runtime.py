@@ -98,6 +98,23 @@ def validate_home(home: Path) -> None:
             fail(f"home 不能经过重解析目录: {part}")
 
 
+def ensure_ascii_paths(root: Path, home: Path) -> None:
+    """PostgreSQL 在 Windows 上不支持非 ASCII 路径（程序目录和数据目录都不行）。
+
+    实测：路径含中文时 initdb 直接以 `invalid byte sequence for encoding "UTF8"` 失败；
+    纯 ASCII 但带空格则正常。这里提前给出可执行的提示，而不是让用户看 initdb 的报错。
+    """
+    for label, path in (("程序目录", root), ("数据目录", home)):
+        try:
+            str(path).encode("ascii")
+        except UnicodeEncodeError:
+            fail(
+                f"{label}包含中文或其它非 ASCII 字符：{path}\n"
+                "PostgreSQL 不支持这种路径。请把发行包解压到纯英文目录"
+                "（例如 D:\\ZhiyiAgentOS，可以带空格），再重新启动。"
+            )
+
+
 def ensure_layout() -> None:
     missing = [name for name, path in PATHS.items() if not path.exists()]
     if missing:
@@ -274,11 +291,17 @@ def start_postgres(home: Path, info: dict, creds: dict, session: str, state: dic
     logdir.mkdir(parents=True, exist_ok=True)
     if not (pgdata / "PG_VERSION").exists():
         password_file.write_text(creds["pgadmin"], encoding="utf-8")
-        with (logdir / "initdb.log").open("ab") as log:
-            subprocess.run([str(PATHS["postgres_bin"] / "initdb.exe"), "-D", str(pgdata),
-                            "-U", "zhiyi_admin", "--encoding=UTF8", "--locale=C",
-                            "--auth=scram-sha-256", "--pwfile=" + str(password_file)],
-                           stdout=log, stderr=log, check=True)
+        try:
+            with (logdir / "initdb.log").open("ab") as log:
+                subprocess.run([str(PATHS["postgres_bin"] / "initdb.exe"), "-D", str(pgdata),
+                                "-U", "zhiyi_admin", "--encoding=UTF8", "--locale=C",
+                                "--auth=scram-sha-256", "--pwfile=" + str(password_file)],
+                               stdout=log, stderr=log, check=True)
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(
+                "PostgreSQL 初始化失败；日志见 data-home\\logs\\<会话>\\initdb.log。"
+                "最常见原因是安装路径或数据目录包含中文（PostgreSQL 不支持非 ASCII 路径）。"
+            ) from error
         password_file.unlink(missing_ok=True)
         with (pgdata / "postgresql.conf").open("a", encoding="utf-8") as file:
             file.write(f"\nlisten_addresses='127.0.0.1'\nport={persistent.ports(info)['postgres']}\n"
@@ -485,12 +508,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    prepare_environment()
-    ensure_layout()
-    home = home_for(args.home)
-    validate_home(home)
-
     try:
+        prepare_environment()
+        ensure_layout()
+        home = home_for(args.home)
+        validate_home(home)
+        ensure_ascii_paths(PRODUCT_ROOT, home)
+
         if args.action == "init":
             result = initialize(home)
         elif args.action in {"up", "restart"}:

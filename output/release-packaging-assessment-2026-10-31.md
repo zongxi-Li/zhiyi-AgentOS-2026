@@ -432,3 +432,60 @@ D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip    553 MB
 3. **架构门禁仍是红的**（`test_electron_host_does_not_embed_execution_authority`）：你们需要先决定是放宽门禁口径还是把 LSP/搜索/Git 挪回 Runtime；这条不影响运行，但影响"可提交/可发布"的整洁性。
 4. **登录代码保留但未删除**：用 `KINLIN_AUTH_MODE=local` 语义隔离，将来恢复账号体系不需要返工。
 5. **小瑕疵**：AI 服务启动日志仍会打印"未配置可用的模型 API Key"（它只查环境变量，不查供应商档案），对排障有干扰，建议后续改成查档案。
+
+---
+
+## 11. 第三轮：任务链路定位与会话自愈验证（2026-10-31 16:20–16:40）
+
+这一轮补上"配好 Key 之后任务能不能跑"和"会话过期会不会卡住"两个尚未证实的点。
+
+### 11.1 无 Key 时 Mission 的真实失败形态
+
+在发行包里用与 UI 完全一致的载荷创建任务（`POST /api/agentos/v2/missions`，含 `clientRequestId` / `semantics` / 完整 `input`）：
+
+| 场景 | 结果 |
+| :-- | :-- |
+| 发行版，未配置 Key | 202 受理 → **0.2–0.6 秒内 run 变 failed**，`lifecycleMessage="ACG 工作流执行失败"`，`failureCode=null`；AI 日志为 `Planning Commit rejected: STALE_STRATEGY` |
+| N03 开发栈，有真实 Key | 202 受理 → run 进入 `planning`，持续调用真实模型（>60 秒仍在规划），`failureCode=null` |
+| 两侧载荷 | 完全相同（同一份 `buildWorkbenchStartRequest` 形状） |
+
+结论：**失败原因是"没有可用模型"，不是打包缺陷**。机制是 `initial_planning_sources.capture_initial_sources()` 在快照捕获异常时退化成 `initial-source-unavailable-v1` 指纹，随后 `planning_commit` 比对冻结来源失败 → `STALE_STRATEGY`。
+
+> 这是产品体验问题，不是本次发行版的阻断项：**用户先配 Key、再重启、再建任务**就是正常路径。但要如实说明：忘记配 Key 时界面只显示"ACG 工作流执行失败"，看不出原因。建议后续在创建任务页或失败横幅里，按 `/ai/llm/profiles` 的 `source=env` 且无可用档案时给出"尚未配置模型 API Key，请到设置配置后重启"的提示。
+
+### 11.2 会话过期自愈（已验证）
+
+| 步骤 | 结果 |
+| :-- | :-- |
+| 把 `localStorage.token` 改成无效值，再导航到受保护路由 `#/chat` | ✅ 守卫判定无效 → 清空 → 调用 Main 的 `session.ensure()` 重新登录 → 停留 `#/chat`，`/auth/verify` 返回 `valid=true` |
+| 同样的动作在非保护路由（如 `#/missions` 列表） | ⚠️ 守卫不校验，靠接口 401 触发清理；会先弹一次"登录状态已过期，请重新登录"的提示再自愈 |
+
+也就是说：**长时间开着窗口，JWT 过期不会把用户卡在登录页**；只有提示语对"免登录版"不合适（建议后续在桌面壳内抑制这条提示，静默重登）。
+
+### 11.3 对照测试留下的痕迹（已清理）
+
+- 在 N03 开发栈上注册了临时账号 `release_smoke_fixed`（`/auth/register` 是公开端点），用于验证"有 Key 时任务能进 planning"。
+- 该账号下的 2 个测试任务已 `cancel` + `DELETE`，没有残留运行。临时账号本身仍在开发库里（如需清理请手动删除该用户）。
+- 发行版一侧的 `data-home` 已整体删除，交付 zip 仍是初始状态。
+
+### 11.4 给真机冒烟的预期
+
+1. 填 Key 后必须 `restart.cmd`，否则 Planner/执行链路仍用旧配置（这是 §8 就确定的行为）。
+2. 任务创建后**会有较长时间停在"正在规划 ACG 执行路径"**（真实模型规划 1 分钟级别很正常），不是卡死。
+3. 若创建任务立刻失败并提示"ACG 工作流执行失败"，第一件事查设置页的供应商是否已激活、Key 是否有效。
+4. Java→AI 之间偶发一次 `503 AGENTOS_UPSTREAM_UNAVAILABLE`（本次对照中出现过 1 次、重试即成功），属重试可恢复，不是安装问题。
+
+### 11.5 中文路径问题（已修复，重要）
+
+实测发现 **PostgreSQL 不支持非 ASCII 路径**，程序目录和数据目录都算：
+
+| 场景 | initdb 结果 |
+| :-- | :-- |
+| `D:\build-test\ZhiyiAgentOS-1.0.0`（ASCII） | ✅ 成功 |
+| `D:\agent os test\...`（ASCII + 空格） | ✅ 成功 |
+| `D:\发行测试\...`（中文程序目录） | ❌ `invalid byte sequence for encoding "UTF8": 0xb7` |
+| ASCII 程序目录 + 中文数据目录 | ❌ 同上 |
+
+处置：启动器在动手前先校验 `程序目录` 与 `数据目录` 是否为纯 ASCII，不是就直接给出可执行提示
+（"请把发行包解压到纯英文目录，例如 D:\ZhiyiAgentOS，可以带空格"），不再把 initdb 的原始报错抛给用户；
+`README-内部版.md` 的「使用」与「已知限制」两处都写明了这条要求。

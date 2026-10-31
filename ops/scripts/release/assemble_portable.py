@@ -342,10 +342,11 @@ README_TEMPLATE = """# 知弈 AgentOS（内部版 {version}）
 
 ## 使用
 
-1. 双击 `start.cmd`：首次会初始化本地数据目录 `data-home\\`，然后拉起全部服务并打开窗口。
-2. 首次进入后到 **设置 → 模型供应商** 填你自己的 API Key 并激活。
-3. 回到桌面运行 `restart.cmd`（或在托盘/命令行 `stop.cmd` 后 `start.cmd`），让新配置对规划与执行链路生效。
-4. 之后每次直接 `start.cmd`；数据、账号与配置都保留在 `data-home\\`。
+1. **解压到纯英文路径**（可以带空格，例如 `D:\\ZhiyiAgentOS 1.0`）。中文路径会让 PostgreSQL 初始化失败——它不支持非 ASCII 路径，启动器会直接提示而不是给出难懂的报错。
+2. 双击 `start.cmd`：首次会初始化本地数据目录 `data-home\\`，然后拉起全部服务并打开窗口。
+3. 首次进入后到 **设置 → 模型供应商** 填你自己的 API Key 并激活。
+4. 回到桌面运行 `restart.cmd`（或 `stop.cmd` 后 `start.cmd`），让新配置对规划与执行链路生效。
+5. 之后每次直接 `start.cmd`；数据、账号与配置都保留在 `data-home\\`。
 
 | 文件 | 作用 |
 | :-- | :-- |
@@ -356,6 +357,8 @@ README_TEMPLATE = """# 知弈 AgentOS（内部版 {version}）
 
 ## 已知限制
 
+- **路径必须是纯 ASCII**：PostgreSQL 不支持中文/非 ASCII 路径（程序目录与数据目录都算），
+  含中文时启动器会直接报错并提示换路径，而不是抛出 initdb 的原始错误。
 - **免登录**：首启自动创建一个本地账号，凭据保存在当前 Windows 用户的 DPAPI 里；
   界面不提供注册/登录。换机器或换 Windows 用户需要重新初始化 `data-home\\`。
 - **Memurai（Redis 兼容层）为 Developer 版**：仅限开发测试用途，连续运行最长 10 天；
