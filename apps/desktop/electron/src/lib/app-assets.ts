@@ -67,7 +67,9 @@ export function contentTypeFor(filePath: string): string {
 }
 
 /**
- * 生产 CSP：script-src 不含 'unsafe-eval'，
+ * 生产 CSP：script-src 需要保留 'unsafe-eval'——渲染层 vue-i18n 用运行时
+ * 消息编译器（new Function 编译翻译串），收紧到 'self' 会令相关组件在
+ * 启动期被错误边界拦截（EvalError: Evaluating a string as JavaScript）。
  * 桌面产物无 HMR 需求。connect 显式放行本机 Java 后端的 HTTP/WS 与
  * 上层 HTTPS/WSS；origin 由 Main 启动参数注入（默认 18080）。
  */
@@ -76,7 +78,7 @@ export function buildCsp(apiOrigin: string): string {
   const wsOrigin = origin.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:')
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: ${origin} https:`,
     `media-src 'self' blob: data: https:`,

@@ -36,7 +36,9 @@ test('contentTypeFor 常见映射与未知回退', () => {
 test('buildCsp 严格且不含通配符', () => {
   const csp = buildCsp('http://127.0.0.1:18080')
   assert.ok(csp.includes("script-src 'self'"), 'script-src 只允许 self')
-  assert.ok(!csp.includes('unsafe-eval'), '生产桌面无 HMR，不允许 eval')
+  // vue-i18n 运行时消息编译需要 new Function：收紧到无 eval 会让相关组件被
+  // 错误边界拦截（发行包实测 EvalError ×3），故保留 'unsafe-eval'。
+  assert.ok(csp.includes("script-src 'self' 'unsafe-eval'"), 'script-src 允许 eval（vue-i18n 运行时编译）')
   assert.ok(!csp.includes('*'), '不出现任何通配符来源')
   assert.ok(csp.includes('connect-src') && csp.includes('http://127.0.0.1:18080') && csp.includes('ws://127.0.0.1:18080'))
   assert.ok(csp.includes('https:') && csp.includes('wss:'), '保留上层 HTTPS/WSS 出口')
