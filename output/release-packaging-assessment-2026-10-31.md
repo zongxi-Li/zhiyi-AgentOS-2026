@@ -489,3 +489,35 @@ D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip    553 MB
 处置：启动器在动手前先校验 `程序目录` 与 `数据目录` 是否为纯 ASCII，不是就直接给出可执行提示
 （"请把发行包解压到纯英文目录，例如 D:\ZhiyiAgentOS，可以带空格"），不再把 initdb 的原始报错抛给用户；
 `README-内部版.md` 的「使用」与「已知限制」两处都写明了这条要求。
+
+---
+
+## 12. 第四轮：崩溃恢复与覆盖升级（2026-10-31 16:50–17:00）
+
+发行包到手后最容易出事的两个场景，都在真实发行包上跑过了。
+
+### 12.1 异常崩溃后恢复
+
+| 步骤 | 结果 |
+| :-- | :-- |
+| 正常启动，记录 userId `9d962a25-…` | 页面 `#/chat`，`status` 为 UP |
+| 任务管理器式强杀：Electron + postgres + memurai + java + node + python 全部 `-Force` | 全部进程归零，18082 不再监听 |
+| 再次双击 `start.cmd` | ✅ **36 秒恢复**：PostgreSQL 从残留 `postmaster.pid` 自恢复，schema 只读检查通过，AI/Java 就绪，窗口重新打开；端口仍为 offset 2（配置未漂移） |
+
+### 12.2 覆盖升级（内部发新版本的标准动作）
+
+| 步骤 | 结果 |
+| :-- | :-- |
+| 基线：`users=1`，活跃会话 `3` | `data-home` 已建立 |
+| `stop.cmd` → 用同一个 zip **覆盖解压**到原目录 | `data-home\environment.json` 与 PG 集群完好（zip 里不含数据目录） |
+| `up --no-window` | ✅ `status=UP`，`users=1`，活跃会话仍为 `3`（数据与账号未受影响） |
+
+### 12.3 顺带确认的两条行为
+
+- **关窗 ≠ 停服务**：手动关掉窗口后，6 个端口仍在监听、`status` 仍为 UP；再点 `start.cmd` 走的是"只重开窗口"分支（秒级）。这是刻意设计，避免用户误以为要重新初始化。
+- **桌面壳日志位置**：`data-home\electron\logs\main.log`（`data-home\logs\<会话>\desktop.log` 只有 Electron 自身 stdout）。排障时先看这两个。
+
+### 12.4 新增交付物
+
+[`output/release-acceptance-checklist-internal.md`](release-acceptance-checklist-internal.md)：
+给内测同事的一页清单——前置要求、首启 5 步、13 条验收项（带勾选框）、运维速查（命令/日志/端口表）、常见问题、已知限制。
