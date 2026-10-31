@@ -554,6 +554,7 @@ import WorkbenchBottomPanel from '@/components/workbench/WorkbenchBottomPanel.vu
 import WorkbenchVerticalSplit from '@/components/workbench/WorkbenchVerticalSplit.vue'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
+import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
 import type { ThinkingMode } from '@/config/modelSettings'
 import { fileApi } from '@/services/api/file'
 import { buildAcgAuditCsv, buildAcgAuditExport } from '@/utils/acgAuditExport'
@@ -1511,6 +1512,7 @@ const exportAudit = (format: 'json' | 'csv') => {
   ElMessage.success(`ACG 审计 ${format.toUpperCase()} 已导出`)
 }
 
+const missionLaunchAttempt = createMissionLaunchAttempt()
 const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
   if (isSubmitting.value) return
   if (!taskName.value.trim()) {
@@ -1544,7 +1546,7 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
   activeRunId.value = ''
   terminalNotificationRunId = null
   try {
-    const clientRequestId = createClientRequestId()
+    const clientRequestId = rerunReason ? createClientRequestId() : ''
     const request = buildWorkbenchStartRequest(draft, draftExtensions.value, clientRequestId)
     const requestInput: Record<string, unknown> = {
       ...request.input,
@@ -1554,7 +1556,7 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
     }
     request.input = requestInput
     const material = String(request.input.materialText || '')
-    if (material) {
+    if (material && rerunReason) {
       const manifest = await workflowApi.createMaterial(material, 'text/plain')
       request.materialRefs = [manifest.manifestId]
       delete request.input.materialText
@@ -1570,7 +1572,7 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
           sourceRunId,
           rerunReason
         }, { signal: submitController.signal })
-      : await workflowApi.startWorkflowAsync(request, { signal: submitController.signal })
+      : (await missionLaunchAttempt.launch(request, { signal: submitController.signal })).run
     activeRunId.value = res.runId
     ensureEditorTab(res.runId, request.title, res.status)
     draftEditorTabOpen.value = false

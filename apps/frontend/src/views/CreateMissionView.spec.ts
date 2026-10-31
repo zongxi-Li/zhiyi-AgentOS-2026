@@ -26,6 +26,7 @@ describe('CreateMissionView', () => {
   afterEach(() => vi.resetAllMocks())
 
   it('retries creation with the same request identity and complete semantic payload', async () => {
+    vi.mocked(workflowApi.createMaterial).mockResolvedValue({ manifestId: 'sealed_material' } as any)
     vi.mocked(workflowApi.startWorkflowAsync).mockRejectedValueOnce(new Error('lost response')).mockResolvedValueOnce({
       missionId: 'mission_recovered', runId: 'run_recovered', status: 'pending'
     } as any)
@@ -37,6 +38,7 @@ describe('CreateMissionView', () => {
     await router.isReady()
     const wrapper = mount(CreateMissionView, { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } })
     await wrapper.find('#mission-goal').setValue('明确的新目标')
+    ;(wrapper.vm as any).draft.materialText = '不可重复创建的材料'
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     const first = vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0]
@@ -45,7 +47,29 @@ describe('CreateMissionView', () => {
     expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[1][0]).toEqual(first)
     expect(first.semantics?.objective).toBe('明确的新目标')
     expect(first.clientRequestId).toBeTruthy()
+    expect(first.materialRefs).toEqual(['sealed_material'])
+    expect(first.input).not.toHaveProperty('materialText')
+    expect(workflowApi.createMaterial).toHaveBeenCalledTimes(1)
     expect(router.currentRoute.value.params.missionId).toBe('mission_recovered')
+    wrapper.unmount()
+  })
+
+  it('does not create another Mission when the Composer is submitted twice while acceptance is pending', async () => {
+    let accept: (value: any) => void
+    vi.mocked(workflowApi.startWorkflowAsync).mockImplementation(() => new Promise(resolve => { accept = resolve }))
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/new', name: 'CreateMission', component: CreateMissionView },
+      { path: '/missions/:missionId', name: 'MissionWorkspace', component: { template: '<div />' } }
+    ] })
+    await router.push('/new'); await router.isReady()
+    const wrapper = mount(CreateMissionView, { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } })
+    await wrapper.find('#mission-goal').setValue('唯一启动意图')
+    await wrapper.find('form').trigger('submit')
+    await wrapper.find('form').trigger('submit')
+    expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1)
+    accept!({ missionId: 'mission_unique', runId: 'run_unique', status: 'pending' })
+    await flushPromises()
+    expect(router.currentRoute.value.params.missionId).toBe('mission_unique')
     wrapper.unmount()
   })
 

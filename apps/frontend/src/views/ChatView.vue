@@ -721,6 +721,7 @@ import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { plainMissionTitle } from '@/utils/missionTitle'
+import { conversationLaunchRequestId, clearConversationLaunchIdentity } from '@/features/mission/conversationLaunchIdentity'
 import { loadModelSettings } from '@/config/modelSettings'
 
 const { t } = useI18n()
@@ -739,7 +740,6 @@ const createClientRequestId = (): string => {
 type WorkspaceMode = 'agent' | 'chat'
 const WORKSPACE_MODE_KEY = 'layout.workspace_mode'
 const DRAFT_CONVERSATION_KEY = 'chat.workflow_draft_conversation_id'
-const WORKFLOW_SUBMISSION_KEY_PREFIX = 'chat.workflow_submission.'
 const draftConversationId = ref(
   localStorage.getItem(DRAFT_CONVERSATION_KEY) || `draft:${createClientRequestId()}`
 )
@@ -1552,7 +1552,7 @@ const isWorkflowUpgradeDisabled = computed(() =>
 
 const resetWorkspace = async () => {
   const previousConversationId = currentConversationId.value
-  sessionStorage.removeItem(workflowSubmissionStorageKey(previousConversationId))
+  clearConversationLaunchIdentity(sessionStorage, previousConversationId)
   chatStore.clearMessages()
   draftConversationId.value = `draft:${createClientRequestId()}`
   localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
@@ -1688,34 +1688,6 @@ const sendMessage = async () => {
   }
 }
 
-interface PendingWorkflowSubmission {
-  conversationId: string
-  text: string
-  clientRequestId: string
-}
-
-const workflowSubmissionStorageKey = (conversationId: string) =>
-  `${WORKFLOW_SUBMISSION_KEY_PREFIX}${conversationId}`
-
-const getWorkflowClientRequestId = (conversationId: string, text: string) => {
-  try {
-    const raw = sessionStorage.getItem(workflowSubmissionStorageKey(conversationId))
-    const pending = raw ? JSON.parse(raw) as PendingWorkflowSubmission : null
-    if (pending?.conversationId === conversationId && pending.text === text && pending.clientRequestId) {
-      return pending.clientRequestId
-    }
-  } catch {
-    // A malformed pending submission is replaced by a new explicit operation.
-  }
-  const clientRequestId = createClientRequestId()
-  sessionStorage.setItem(workflowSubmissionStorageKey(conversationId), JSON.stringify({
-    conversationId,
-    text,
-    clientRequestId
-  } satisfies PendingWorkflowSubmission))
-  return clientRequestId
-}
-
 const activateWorkflowRun = async (
   runId: string,
   binding: ChatWorkflowBinding | null,
@@ -1753,7 +1725,7 @@ const upgradeChatToWorkflow = async () => {
   }
 
   const conversationId = currentConversationId.value
-  const clientRequestId = getWorkflowClientRequestId(conversationId, userText)
+  const clientRequestId = conversationLaunchRequestId(sessionStorage, conversationId, userText)
   isSubmittingWorkflow.value = true
   workflowStartError.value = null
   inputText.value = ''
@@ -1764,10 +1736,14 @@ const upgradeChatToWorkflow = async () => {
       intent: 'general',
       reviewMode: 'auto',
       conversationId,
-      clientRequestId
+      clientRequestId,
+      execution: {
+        thinkingMode: loadModelSettings().thinkingMode,
+        reasoningEffort: loadModelSettings().reasoningEffort
+      }
     })
     if (result) {
-      sessionStorage.removeItem(workflowSubmissionStorageKey(conversationId))
+      clearConversationLaunchIdentity(sessionStorage, conversationId)
       await activateWorkflowRun(result.binding.runId, result.binding, true)
       ElMessage.success(`已创建 WorkflowRun：${result.binding.runId}`)
     }
@@ -1776,7 +1752,7 @@ const upgradeChatToWorkflow = async () => {
     inputText.value = userText
     workflowStartError.value = workflowStartErrorMessage(error)
     if (axios.isAxiosError(error) && error.response?.status === 409) {
-      sessionStorage.removeItem(workflowSubmissionStorageKey(conversationId))
+      clearConversationLaunchIdentity(sessionStorage, conversationId)
     }
   } finally {
     isSubmittingWorkflow.value = false

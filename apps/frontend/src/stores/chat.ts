@@ -2,7 +2,10 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { chatStreamErrorMessage, parseChatStreamFrame, type ChatStreamEvent } from '@/utils/sse'
 import { apiUrl } from '@/platform'
-import { workflowApi, type AsyncWorkflowStartResponse } from '@/services/api/workflow'
+import type { AsyncWorkflowStartResponse } from '@/services/api/workflow'
+import { buildConversationLaunchRequest, type ConversationLaunchContext } from '@/features/mission/request'
+import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
+import type { MissionLaunchResult } from '@/features/mission/launch'
 import { chatApi, type ChatRequest } from '@/services/api/chat'
 import { loadModelSettings, toModelRequestSettings, type ModelSettings } from '@/config/modelSettings'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
@@ -116,6 +119,7 @@ export interface ChatWorkflowBinding {
 export interface ChatWorkflowStartResult {
   response: AsyncWorkflowStartResponse
   binding: ChatWorkflowBinding
+  launch: MissionLaunchResult
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -686,75 +690,69 @@ export const useChatStore = defineStore('chat', () => {
     conversationId: string
     clientRequestId: string
     enabledPluginIds?: string[]
+    execution?: ConversationLaunchContext['execution']
   }
 
+  const pendingConversationStarts = new Map<string, Promise<ChatWorkflowStartResult | undefined>>()
   const startConversationWorkflow = async (
     text: string,
     options: ConversationWorkflowOptions,
     source: 'agent' | 'chat'
   ): Promise<ChatWorkflowStartResult | undefined> => {
     if (!text.trim()) return undefined
+    const pending = pendingConversationStarts.get(options.conversationId)
+    if (pending) return pending
+    const operation = Promise.resolve().then(async () => {
 
-    const userMessage = messages.value.find(message =>
-      message.role === 'user' && message.workflowClientRequestId === options.clientRequestId
-    ) || pushUserMessage(text)
-    userMessage.workflowClientRequestId = options.clientRequestId
+      const userMessage = messages.value.find(message =>
+        message.role === 'user' && message.workflowClientRequestId === options.clientRequestId
+      ) || pushUserMessage(text)
+      userMessage.workflowClientRequestId = options.clientRequestId
 
-    const context = messages.value
-      .slice(-8)
-      .filter(message => message.content)
-      .map(message => ({ role: message.role, content: message.content }))
+      const request = buildConversationLaunchRequest({
+        ...options, goal: text, source, chatContextId: contextId.value,
+        chatRoleId: currentRoleId.value, messages: messages.value
+      }, options.clientRequestId)
+      const attempt = createMissionLaunchAttempt({
+        storage: sessionStorage, key: `mission.launch.request.v1:${options.conversationId}:${options.clientRequestId}`
+      })
+      const launch = await attempt.launch(request)
+      const response = launch.run
 
-    const response = await workflowApi.startWorkflowAsync({
-      title: options.title || `${source === 'agent' ? 'Agent' : 'Chat'} ACG：${text.slice(0, 40)}`,
-      domain: options.domain || 'legal',
-      intent: options.intent || 'case_analysis',
-      workflowId: options.workflowId,
-      reviewMode: options.reviewMode || 'human_in_loop',
-      clientRequestId: options.clientRequestId,
-      enabledPluginIds: options.enabledPluginIds,
-      input: {
+      const acgTaskId = response.runId
+      const binding: ChatWorkflowBinding = {
+        conversationId: options.conversationId,
+        messageId: String(userMessage.id),
+        missionId: response.missionId,
+        acgTaskId,
+        runId: acgTaskId,
+        workflowId: response.workflowId || options.workflowId,
         source,
-        ...(source === 'agent'
-          ? { userIntent: text, taskGoal: text }
-          : { caseText: text, chatText: text }),
-        chatContextId: contextId.value,
-        chatRoleId: currentRoleId.value,
-        chatContext: context
+        clientRequestId: options.clientRequestId,
+        createdAt: new Date().toISOString(),
+        status: response.status
       }
-    })
+      addWorkflowBinding(binding)
 
-    const acgTaskId = response.runId
-    const binding: ChatWorkflowBinding = {
-      conversationId: options.conversationId,
-      messageId: String(userMessage.id),
-      missionId: response.missionId,
-      acgTaskId,
-      runId: acgTaskId,
-      workflowId: response.workflowId || options.workflowId,
-      source,
-      clientRequestId: options.clientRequestId,
-      createdAt: new Date().toISOString(),
-      status: response.status
-    }
-    addWorkflowBinding(binding)
-
-    messages.value.push({
-      id: Date.now() + 1,
-      role: 'assistant',
-      content: '已创建 ACG 运行任务',
-      createdAt: new Date(),
-      modelInfo: 'AgentOS Workflow',
-      agentMode: 'default',
-      acgTaskId: binding.acgTaskId,
-      workflowMissionId: binding.missionId,
-      workflowRunId: binding.runId,
-      workflowId: binding.workflowId,
-      workflowStatus: binding.status,
-      workflowClientRequestId: binding.clientRequestId
-    })
-    emitHistoryRefresh()
-    return { response, binding }
+      messages.value.push({
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: '已创建 ACG 运行任务',
+        createdAt: new Date(),
+        modelInfo: 'AgentOS Workflow',
+        agentMode: 'default',
+        acgTaskId: binding.acgTaskId,
+        workflowMissionId: binding.missionId,
+        workflowRunId: binding.runId,
+        workflowId: binding.workflowId,
+        workflowStatus: binding.status,
+        workflowClientRequestId: binding.clientRequestId
+      })
+      emitHistoryRefresh()
+      return { response, binding, launch }
+    }).finally(() => pendingConversationStarts.delete(options.conversationId))
+    pendingConversationStarts.set(options.conversationId, operation)
+    return operation
   }
 
   const upgradeToWorkflow = (

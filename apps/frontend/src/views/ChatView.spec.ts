@@ -351,6 +351,17 @@ describe('ChatView ACG progress integration', () => {
     wrapper.unmount()
   })
 
+  it('keeps ordinary Chat messages on sendMessageStream without launching a Mission', async () => {
+    const { wrapper } = await mountPage('?workspace=chat')
+    await wrapper.get('.composer-card textarea').setValue('普通对话')
+    await wrapper.get('.composer-send').trigger('click')
+    await flushPromises()
+    expect(chatStoreMock.sendMessageStream).toHaveBeenCalledWith('普通对话', 'default', expect.any(Object), 'chat')
+    expect(chatStoreMock.upgradeToWorkflow).not.toHaveBeenCalled()
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()

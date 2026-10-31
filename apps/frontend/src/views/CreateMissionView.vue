@@ -201,7 +201,9 @@ import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import PluginExtensionHost from '@/features/acg/PluginExtensionHost.vue'
 import { workflowApi } from '@/services/api/workflow'
 import type { InputAttachment } from '@/services/api/agentos'
-import { buildWorkbenchStartRequest, createNativeWorkbenchDraft, type WorkbenchDraft } from '@/features/acg/workbench'
+import { createNativeWorkbenchDraft, type WorkbenchDraft } from '@/features/acg/workbench'
+import { buildWorkbenchLaunchRequest } from '@/features/mission/request'
+import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
 import { pluginUiExtensions } from '@/plugins'
 import { apiUrl } from '@/platform'
 import { renderMarkdown } from '@/utils/markdown'
@@ -521,7 +523,7 @@ const handleDrop = (event: DragEvent) => { attachmentDragging.value = false; add
 const retryAttachment = async (item: AttachmentDraft) => { if (item.attachment) { try { await workflowApi.deleteAttachment(item.attachment.attachmentId) } catch {} item.attachment = undefined }; await uploadAttachment(item) }
 const removeAttachment = async (item: AttachmentDraft) => { attachments.value = attachments.value.filter(candidate => candidate.localId !== item.localId); if (item.attachment) { try { await workflowApi.deleteAttachment(item.attachment.attachmentId) } catch { ElMessage.error('附件删除失败') } } }
 
-let creationRetry: { signature: string; request: ReturnType<typeof buildWorkbenchStartRequest> } | null = null
+const launchAttempt = createMissionLaunchAttempt()
 const submit = async () => {
   if (submitting.value) return
   if (!draft.value.taskGoal.trim()) { errorMessage.value = '请输入 Objective'; return }
@@ -538,32 +540,18 @@ const submit = async () => {
   controller?.abort()
   controller = new AbortController()
   try {
-    let request = buildWorkbenchStartRequest(
+    const request = buildWorkbenchLaunchRequest(
       { ...draft.value, title: draft.value.title.trim() || automaticMissionTitle(draft.value.taskGoal) },
       draftExtensions.value,
-      ''
-    )
-    request.attachmentIds = attachments.value.map(item => item.attachment?.attachmentId).filter((item): item is string => Boolean(item))
-    request.input = {
-      ...request.input,
-      debugTrace: debugTraceEnabled.value,
-      lowEntropyOptions: provenanceEnabled.value ? ['trace_provenance'] : []
-    }
-    const signature = JSON.stringify(request)
-    if (creationRetry?.signature === signature) {
-      request = creationRetry.request
-    } else {
-      request.clientRequestId = createClientRequestId()
-      if (draft.value.materialText.trim()) {
-        const manifest = await workflowApi.createMaterial(draft.value.materialText.trim(), 'text/plain')
-        request.materialRefs = [manifest.manifestId]
-        delete request.input.materialText
+      '',
+      {
+        attachmentIds: attachments.value.map(item => item.attachment?.attachmentId).filter((item): item is string => Boolean(item)),
+        input: { debugTrace: debugTraceEnabled.value, lowEntropyOptions: provenanceEnabled.value ? ['trace_provenance'] : [] }
       }
-      creationRetry = { signature, request: JSON.parse(JSON.stringify(request)) }
-    }
+    )
     // Once sent, a failed response can still mean the Mission owns these files.
     attachmentsCommitted.value = true
-    const run = await workflowApi.startWorkflowAsync(request, { signal: controller.signal })
+    const run = await launchAttempt.launch(request, { signal: controller.signal })
     await router.replace({ name: 'MissionWorkspace', params: { missionId: run.missionId }, query: { runId: run.runId } })
   } catch (error: any) {
     if (error?.name === 'CanceledError' || error?.name === 'AbortError') return
