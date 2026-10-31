@@ -723,6 +723,7 @@ import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { plainMissionTitle } from '@/utils/missionTitle'
 import { loadModelSettings } from '@/config/modelSettings'
+import { contextQuery, conversationBindings, isTerminalRunStatus, runMatchesSelection, selectSessionRun } from '@/features/workspace/session'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -741,9 +742,13 @@ type WorkspaceMode = 'agent' | 'chat'
 const WORKSPACE_MODE_KEY = 'layout.workspace_mode'
 const DRAFT_CONVERSATION_KEY = 'chat.workflow_draft_conversation_id'
 const draftConversationId = ref(
-  localStorage.getItem(DRAFT_CONVERSATION_KEY) || `draft:${createClientRequestId()}`
+  localStorage.getItem(DRAFT_CONVERSATION_KEY) || (route.query.contextId || route.query.runId || route.query.missionId || chatStore.contextId ? '' : `draft:${createClientRequestId()}`)
 )
-localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
+if (draftConversationId.value) localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
+let sendingDraftId: string | null = null
+let selectedConversationId = ''
+// A single read result is handed to the existing detail loader, avoiding a second GET on restoration.
+let restoredRunDetail: WorkflowRun | null = null
 const workspaceMode = ref<WorkspaceMode>(
   route.query.workspace === 'agent' || localStorage.getItem(WORKSPACE_MODE_KEY) === 'agent'
     ? 'agent'
@@ -1278,7 +1283,9 @@ const loadActiveAcgView = (runId = activeWorkflowRunId.value, force = false): Pr
   workflowResultError.value = null
 
   const pending = (async () => {
-    const runPromise = agentosApi.getWorkflowRun(runId, { signal })
+    const runPromise = restoredRunDetail?.runId === runId
+      ? Promise.resolve(restoredRunDetail) : agentosApi.getWorkflowRun(runId, { signal })
+    restoredRunDetail = null
     const [runResult, viewResult] = await Promise.allSettled([
       runPromise,
       agentosApi.getAcgView(runId, { signal, run: runPromise })
@@ -1286,6 +1293,17 @@ const loadActiveAcgView = (runId = activeWorkflowRunId.value, force = false): Pr
     if (requestGeneration !== workflowResultGeneration || runId !== activeWorkflowRunId.value) return false
 
     if (runResult.status === 'fulfilled') {
+      const expectedMission = typeof route.query.missionId === 'string' ? route.query.missionId
+        : activeWorkflowBinding.value?.missionId
+      if (!runMatchesSelection(runResult.value, runId, expectedMission)) {
+        workflowProgressState.reset()
+        activeWorkflowRunId.value = ''
+        activeWorkflowBinding.value = null
+        activeWorkflowRun.value = null
+        activeAcgView.value = null
+        workflowStartError.value = '运行记录与指定任务不匹配，未恢复关联'
+        return false
+      }
       activeWorkflowRun.value = runResult.value
       syncWorkflowMessageStatus(runResult.value.runId, runResult.value.status)
     }
@@ -1536,10 +1554,8 @@ const hasAgentActivity = computed(() => {
 const showScrollToBottom = computed(() => !isNearBottom.value && chatStore.messages.length > 0)
 const isSendDisabled = computed(() => loading.value || (!inputText.value.trim() && !isRecording.value))
 const isWorkflowTerminal = computed(() => {
-  const phase = workflowProgressState.progress.value?.phase
   const status = workflowProgressState.progress.value?.status || activeWorkflowBinding.value?.status
-  const terminal = ['completed', 'failed', 'cancelled']
-  return terminal.includes(phase || '') || terminal.includes(status || '')
+  return isTerminalRunStatus(status)
 })
 const isWorkflowUnavailable = computed(() =>
   workflowProgressState.syncError.value === '该运行记录不存在或当前账户无权访问'
@@ -1673,6 +1689,8 @@ const sendMessage = async () => {
     : undefined
 
   try {
+    sendingDraftId = !chatStore.contextId && !route.query.contextId && currentConversationId.value.startsWith('draft:')
+      ? currentConversationId.value : null
     const sendPromise = chatStore.sendMessageStream(userText, 'default', loadModelSettings(), workspaceMode.value)
     if (composerStartRect) {
       await animateComposerToConversation(composerStartRect)
@@ -1683,6 +1701,7 @@ const sendMessage = async () => {
     if (!wasErrorUserNotified(err)) ElMessage.error(err.message || '发送消息失败')
     inputText.value = userText
   } finally {
+    sendingDraftId = null
     loading.value = false
   }
 }
@@ -1696,6 +1715,7 @@ const activateWorkflowRun = async (
   workflowProgressState.reset()
   invalidateWorkflowResultRequest()
   activeWorkflowRunId.value = runId
+  selectedConversationId = currentConversationId.value
   activeWorkflowBinding.value = binding
   activeWorkflowRun.value = null
   activeAcgView.value = null
@@ -1823,7 +1843,9 @@ const handleFileSelected = async (file: any) => {
     : undefined
 
   try {
-    const sendPromise = chatStore.sendMessage('', fileUrl, loadModelSettings())
+    sendingDraftId = !chatStore.contextId && !route.query.contextId && currentConversationId.value.startsWith('draft:')
+      ? currentConversationId.value : null
+    const sendPromise = chatStore.sendMessage('', fileUrl, loadModelSettings(), workspaceMode.value)
     if (composerStartRect) {
       await animateComposerToConversation(composerStartRect)
     }
@@ -1833,6 +1855,7 @@ const handleFileSelected = async (file: any) => {
   } catch (error: any) {
     ElMessage.error(error.message || '发送文件失败')
   } finally {
+    sendingDraftId = null
     loading.value = false
   }
 }
@@ -2080,14 +2103,21 @@ watch(
 
 const restoreWorkflowForConversation = async () => {
   const conversationId = currentConversationId.value
-  const binding = chatStore.getActiveWorkflowBinding(conversationId)
+  const bindings = conversationBindings(chatStore.workflowBindings, conversationId)
+  const selectedRunId = selectedConversationId === conversationId ? activeWorkflowRun.value?.runId : undefined
+  const selectedBinding = selectedConversationId === conversationId && activeWorkflowRun.value
+    ? activeWorkflowBinding.value : null
+  let binding = selectedBinding || chatStore.getActiveWorkflowBinding(conversationId)
     || chatStore.getLatestWorkflowBinding(conversationId)
   const routeRunId = typeof route.query.runId === 'string' ? route.query.runId.trim() : ''
-  const runId = routeRunId || binding?.runId || ''
+  const missionId = typeof route.query.missionId === 'string' ? route.query.missionId.trim() : ''
+  let runId = routeRunId || (selectedConversationId === conversationId ? activeWorkflowRun.value?.runId : '') || binding?.runId || ''
 
-  if (runId && runId === activeWorkflowRunId.value && workflowProgressState.runId.value === runId) return
+  if (runId && runId === activeWorkflowRunId.value && workflowProgressState.runId.value === runId
+    && (!missionId || activeWorkflowRun.value?.missionId === missionId)) return
 
   const restoreGeneration = ++conversationGeneration
+  restoredRunDetail = null
   workflowProgressState.reset()
   invalidateWorkflowResultRequest()
   activeWorkflowRunId.value = ''
@@ -2095,13 +2125,51 @@ const restoreWorkflowForConversation = async () => {
   activeWorkflowRun.value = null
   activeAcgView.value = null
   workflowStartError.value = null
+  if (missionId && !routeRunId) {
+    // Resolve the canonical Mission projection without creating a Run or replacing explicit history.
+    try {
+      const workspace = await agentosApi.getMissionWorkspace(missionId)
+      if (restoreGeneration !== conversationGeneration) return
+      runId = workspace.mission.missionId === missionId ? workspace.activeRun?.runId || '' : ''
+      binding = binding?.runId === runId && binding.missionId === missionId ? binding : undefined
+    } catch {
+      if (restoreGeneration === conversationGeneration) workflowStartError.value = '任务关联暂时未能恢复'
+      return
+    }
+  }
   if (!runId) return
 
+  const candidateIds = routeRunId || missionId ? [runId]
+    : [...new Set([selectedRunId, ...bindings.filter(item => !item.invalidAt).map(item => item.runId)].filter((id): id is string => Boolean(id)))]
+  const results = await Promise.allSettled(candidateIds.map(id => agentosApi.getWorkflowRun(id)))
+  if (restoreGeneration !== conversationGeneration) return
+  const verified = results.flatMap((result, i) => {
+    if (result.status !== 'fulfilled') return []
+    const expectedMission = missionId || bindings.find(item => item.runId === candidateIds[i])?.missionId
+    return runMatchesSelection(result.value, candidateIds[i], expectedMission) ? [result.value] : []
+  })
+  const resolved = selectSessionRun({
+    explicitRunId: routeRunId || (missionId ? runId : undefined), explicitMissionId: missionId || undefined,
+    selectedRunId, verified, bindings,
+    historicalRunId: [...bindings].reverse().find(item => !item.invalidAt && verified.some(run => run.runId === item.runId))?.runId
+  })
+  if (resolved) {
+    runId = resolved.runId
+    binding = bindings.find(item => item.runId === runId) || undefined
+    restoredRunDetail = resolved
+  } else if (!(routeRunId && results[0]?.status === 'rejected')) {
+    workflowStartError.value = '运行记录与指定任务不匹配或不可访问，未恢复关联'
+    return
+  }
+  // An explicit unavailable history ID may show the existing retry UI, but is never a verified binding.
+  if (!resolved) binding = undefined
+
   activeWorkflowRunId.value = runId
+  selectedConversationId = conversationId
   activeWorkflowBinding.value = binding?.runId === runId ? binding : null
   const cachedResult = workflowResultCache.get(runId)
-  if (cachedResult) {
-    activeWorkflowRun.value = cachedResult.run || null
+  if (cachedResult && resolved) {
+    activeWorkflowRun.value = resolved
     activeAcgView.value = cachedResult.view || null
     workflowResultState.value = cachedResult.run && cachedResult.view ? 'ready' : 'partial'
   }
@@ -2110,22 +2178,32 @@ const restoreWorkflowForConversation = async () => {
   if ((!activeWorkflowRun.value || !activeAcgView.value) && !isLoadingWorkflowResult.value) {
     await loadActiveAcgView(runId)
   }
-  if (!routeRunId && binding) {
+  if (restoreGeneration !== conversationGeneration || runId !== activeWorkflowRunId.value) return
+  if (!routeRunId && resolved) {
     await router.replace({ query: { ...route.query, runId } })
   }
 }
 
 watch(
-  [currentConversationId, () => route.query.runId],
+  [currentConversationId, () => route.query.runId, () => route.query.missionId],
   () => { void restoreWorkflowForConversation() },
   { immediate: true }
 )
 
 watch(
   () => chatStore.contextId,
-  contextId => {
-    if (contextId) setConversationWorkspace(contextId, workspaceMode.value)
-  }
+  (contextId, previous) => {
+    if (!contextId || contextId.startsWith('draft:') || chatStore.isLoadingConversation) return
+    // Only a context emitted by this draft's first send proves ownership. A saved draft key is insufficient.
+    if (!previous && sendingDraftId && !route.query.contextId && sendingDraftId === draftConversationId.value) {
+      chatStore.migrateDraftBindings(sendingDraftId, contextId)
+    }
+    if (!previous && !route.query.contextId) {
+      setConversationWorkspace(contextId, chatStore.conversationWorkspaceMode || workspaceMode.value)
+      void router.replace({ query: contextQuery(route.query, contextId) })
+    }
+  },
+  { flush: 'sync' }
 )
 
 watch(

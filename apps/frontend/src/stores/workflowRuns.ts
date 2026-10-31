@@ -6,6 +6,7 @@ import {
   type WorkflowRunSummary
 } from '@/services/api/workflow'
 import { ACG_HISTORY_SOURCES } from '@/utils/acgHistoryFilter'
+import { ACTIVE_RUN_STATUSES, belongsToConversation, isActiveRunStatus } from '@/features/workspace/session'
 
 export type WorkflowRunSource = 'agent' | 'chat' | 'acg' | 'legacy_agent_chat' | 'console' | 'restored'
 
@@ -14,6 +15,7 @@ export interface WorkflowRunReference {
   missionId?: string
   workflowId?: string
   conversationId?: string
+  conversationAliases?: string[]
   messageId?: string
   source: WorkflowRunSource
   status?: string
@@ -26,6 +28,7 @@ export interface WorkflowRunReference {
 
 interface ChatWorkflowBindingLike {
   conversationId: string
+  conversationAliases?: string[]
   messageId?: string
   missionId?: string
   runId: string
@@ -38,8 +41,7 @@ interface ChatWorkflowBindingLike {
 
 const STORAGE_KEY = 'workflow.run.references.v1'
 const CHAT_BINDINGS_KEY = 'chat.workflow_bindings.v1'
-const NON_TERMINAL_STATUSES = ['pending', 'planning', 'running', 'retrying', 'waiting_review']
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+const NON_TERMINAL_STATUSES = ACTIVE_RUN_STATUSES
 const PROGRESS_PHASES = new Set<WorkflowProgressPhase>([
   'understanding', 'planning', 'graph_building', 'executing', 'recovery',
   'review', 'completed', 'failed', 'cancelled'
@@ -73,6 +75,7 @@ const normalizeReference = (value: unknown): WorkflowRunReference | null => {
     missionId: typeof item.missionId === 'string' ? item.missionId : undefined,
     workflowId: typeof item.workflowId === 'string' ? item.workflowId : undefined,
     conversationId: typeof item.conversationId === 'string' ? item.conversationId : undefined,
+    conversationAliases: Array.isArray(item.conversationAliases) ? item.conversationAliases.filter((key): key is string => typeof key === 'string') : undefined,
     messageId: typeof item.messageId === 'string' ? item.messageId : undefined,
     source: normalizeSource(item.source),
     status: typeof item.status === 'string' ? item.status : undefined,
@@ -102,6 +105,7 @@ const loadReferences = (): Record<string, WorkflowRunReference> => {
         missionId: item.missionId,
         workflowId: item.workflowId,
         conversationId: item.conversationId,
+        conversationAliases: item.conversationAliases,
         messageId: item.messageId,
         source: item.source === 'agent' ? 'agent' : 'chat',
         status: item.status,
@@ -147,6 +151,7 @@ export const useWorkflowRunsStore = defineStore('workflowRuns', () => {
       missionId: binding.missionId,
       workflowId: binding.workflowId,
       conversationId: binding.conversationId,
+      conversationAliases: binding.conversationAliases,
       messageId: binding.messageId,
       source: binding.source === 'agent' ? 'agent' : 'chat',
       status: binding.status,
@@ -214,12 +219,20 @@ export const useWorkflowRunsStore = defineStore('workflowRuns', () => {
   }
 
   const getReference = (runId: string) => references.value[runId]
+  const reassociateConversation = (draft: string, contextId: string, runIds: readonly string[]) => {
+    if (!draft.startsWith('draft:') || !contextId || contextId.startsWith('draft:')) return
+    references.value = Object.fromEntries(Object.entries(references.value).map(([id, item]) => [id,
+      runIds.includes(item.runId) && (item.conversationId === draft || item.conversationId === contextId) ? { ...item, conversationId: contextId,
+        conversationAliases: [...new Set([...(item.conversationAliases || []), draft])] } : item
+    ]))
+    persist()
+  }
   const getByConversation = (conversationId: string) => Object.values(references.value)
-    .filter(item => item.conversationId === conversationId && !item.invalid)
+    .filter(item => belongsToConversation({ ...item, conversationId: item.conversationId || '' }, conversationId) && !item.invalid)
     .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
 
   const activeReferences = computed(() => Object.values(references.value).filter(item =>
-    !item.invalid && item.status && !TERMINAL_STATUSES.has(item.status)
+    !item.invalid && isActiveRunStatus(item.status)
   ))
 
   const bootstrap = () => {
@@ -245,7 +258,7 @@ export const useWorkflowRunsStore = defineStore('workflowRuns', () => {
           const next = { ...references.value }
           let changed = false
           for (const item of Object.values(next)) {
-            if (item.status && !TERMINAL_STATUSES.has(item.status) && !visible.has(item.runId)) {
+            if (isActiveRunStatus(item.status) && !visible.has(item.runId)) {
               next[item.runId] = { ...item, invalid: true }
               changed = true
             }
@@ -273,6 +286,7 @@ export const useWorkflowRunsStore = defineStore('workflowRuns', () => {
     syncError,
     register,
     registerChatBinding,
+    reassociateConversation,
     mergeSummaries,
     updateObservedState,
     markInvalid,

@@ -34,6 +34,7 @@ vi.mock('@/services/api/workflow', async (importOriginal) => {
 
 const binding = (conversationId: string, runId: string, status = 'pending') => ({
   conversationId,
+  missionId: `mission_${runId}`,
   messageId: `message_${runId}`,
   taskId: `task_${runId}`,
   acgTaskId: runId,
@@ -53,6 +54,8 @@ function createChatStoreMock() {
     isStreaming: false,
     isLoadingConversation: false,
     contextId: null as string | null,
+    conversationWorkspaceMode: null as 'agent' | 'chat' | null,
+    migrateDraftBindings: vi.fn(),
     contextUsedTokens: null as number | null,
     contextWindowTokens: null as number | null,
     contextModel: null as string | null,
@@ -90,7 +93,7 @@ const progress = (overrides: Partial<WorkflowProgress> = {}): WorkflowProgress =
 })
 
 const run = (runId = 'run_1'): WorkflowRun => ({
-  runId, taskId: `task_${runId}`, workflowId: 'legal_case_analysis_v1', domain: 'legal',
+  runId, missionId: `mission_${runId}`, taskId: `task_${runId}`, workflowId: 'legal_case_analysis_v1', domain: 'legal',
   status: 'completed', reviewMode: 'human_in_loop', input: {}, output: {}, steps: [], checkpoints: [], trace: []
 })
 
@@ -173,7 +176,7 @@ describe('ChatView ACG progress integration', () => {
     })
     HTMLElement.prototype.scrollTo = vi.fn()
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress())
-    vi.spyOn(agentosApi, 'getWorkflowRun').mockResolvedValue(run())
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockImplementation(async id => run(id))
     vi.spyOn(agentosApi, 'getAcgView').mockResolvedValue(acg())
     chatStoreMock.startAgentRun.mockResolvedValue({
       response: {
@@ -184,6 +187,86 @@ describe('ChatView ACG progress integration', () => {
       },
       binding: binding('conversation_1', 'run_1')
     })
+  })
+
+  it('writes the first chat context into the URL, preserving queries, without reloading its messages', async () => {
+    chatStoreMock.sendMessageStream.mockImplementation(async () => {
+      chatStoreMock.messages.push({ id: 'reply', role: 'assistant', content: 'original reply' })
+      chatStoreMock.contextId = 'ctx-first'
+    })
+    const { wrapper, router } = await mountPage('?workspace=chat&keep=value')
+    await wrapper.get('.composer-card textarea').setValue('hello')
+    await wrapper.get('.composer-send').trigger('click'); await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'chat', keep: 'value', contextId: 'ctx-first' })
+    expect(chatStoreMock.messages[0].content).toBe('original reply')
+    expect(chatStoreMock.loadHistory).not.toHaveBeenCalled()
+    expect(chatStoreMock.migrateDraftBindings).toHaveBeenCalledWith(expect.stringMatching(/^draft:/), 'ctx-first')
+    wrapper.unmount()
+  })
+
+  it('restores the same context on refresh without merging a persisted unrelated draft or launching anything', async () => {
+    localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:unproven')
+    const uuid = vi.spyOn(crypto, 'randomUUID')
+    const { wrapper, router } = await mountPage('?workspace=chat&contextId=ctx-original&keep=value')
+    expect(chatStoreMock.loadHistory).toHaveBeenCalledTimes(1)
+    expect(chatStoreMock.loadHistory).toHaveBeenCalledWith('ctx-original')
+    expect(router.currentRoute.value.query.contextId).toBe('ctx-original')
+    expect(chatStoreMock.migrateDraftBindings).not.toHaveBeenCalled()
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    expect(chatStoreMock.upgradeToWorkflow).not.toHaveBeenCalled()
+    expect(chatStoreMock.sendMessageStream).not.toHaveBeenCalled()
+    expect(uuid).not.toHaveBeenCalled()
+    uuid.mockRestore(); wrapper.unmount()
+  })
+
+  it('rejects an explicit Run from another Mission without falling back or creating a binding', async () => {
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'fallback')]
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({ ...run('selected'), missionId: 'other-mission' })
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=conversation_1&missionId=expected&runId=selected')
+    expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
+    expect(agentosApi.getAcgView).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.query.runId).toBe('selected')
+    expect(chatStoreMock.workflowBindings.conversation_1).toHaveLength(1)
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps the explicitly selected superseded Run while a successor binding exists', async () => {
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'old', 'superseded'), binding('conversation_1', 'latest', 'running')]
+    vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({ ...run('old'), status: 'superseded', lineage: { supersededByRunId: 'latest' } })
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('old'))
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({ runId: 'old', status: 'superseded' }))
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=conversation_1&runId=old')
+    expect(router.currentRoute.value.query.runId).toBe('old')
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledTimes(1)
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('old', expect.any(Object))
+    expect(agentosApi.getWorkflowRun).toHaveBeenCalledTimes(1)
+    expect(agentosApi.getWorkflowRun).toHaveBeenCalledWith('old')
+    wrapper.unmount()
+  })
+
+  it('selects a backend-verified active binding before a newer terminal binding', async () => {
+    chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'active', 'running'), binding('conversation_1', 'terminal', 'succeeded')]
+    vi.mocked(agentosApi.getWorkflowRun).mockImplementation(async id => ({ ...run(id), status: id === 'active' ? 'waiting_review' : 'succeeded' }))
+    vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress({ runId: 'active', status: 'waiting_review' }))
+    vi.mocked(agentosApi.getAcgView).mockResolvedValue(acg('active'))
+    const { wrapper, router } = await mountPage()
+    expect(router.currentRoute.value.query.runId).toBe('active')
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('active', expect.any(Object))
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('resolves an explicit Mission using its existing projection and pins the verified Run in the URL', async () => {
+    const workspace = vi.spyOn(agentosApi, 'getMissionWorkspace').mockResolvedValue({
+      mission: { missionId: 'mission_run_1' }, activeRun: { runId: 'run_1' }
+    } as any)
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=conversation_1&missionId=mission_run_1&keep=value')
+    expect(workspace).toHaveBeenCalledWith('mission_run_1')
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'agent', contextId: 'conversation_1', missionId: 'mission_run_1', keep: 'value', runId: 'run_1' })
+    expect(chatStoreMock.workflowBindings.conversation_1).toBeUndefined()
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount(); workspace.mockRestore()
   })
 
   it('keeps Agent idle state centered until the first message starts the session', async () => {

@@ -80,6 +80,8 @@ const statusLabel = (status: WorkflowStatus) => {
     retrying: '重试中',
     failed: '失败',
     completed: '已完成',
+    succeeded: '已完成',
+    superseded: '已被后续运行替代',
     cancelled: '已取消',
     skipped_by_condition: '条件跳过'
   }

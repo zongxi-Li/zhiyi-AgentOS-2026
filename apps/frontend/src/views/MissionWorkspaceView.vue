@@ -219,6 +219,7 @@ import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
+import { isActiveRunStatus, isTerminalRunStatus } from '@/features/workspace/session'
 
 const route = useRoute()
 const router = useRouter()
@@ -357,16 +358,14 @@ const inspectorGraphNode = computed<WorkspaceGraphNode | null>(() => {
 const isHistorical = computed(() => Boolean(
   projection.value?.activeRun && currentRunId.value && projection.value.activeRun.runId !== currentRunId.value
 ))
-const terminalRunStatuses = new Set(['completed', 'succeeded', 'failed', 'cancelled', 'superseded'])
-const cancellableRunStatuses = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
 const canRerunSelectedRun = computed(() => Boolean(
-  projection.value?.activeRun?.runId && terminalRunStatuses.has(projection.value.activeRun.status || '')
+  projection.value?.activeRun?.runId && isTerminalRunStatus(projection.value.activeRun.status)
 ))
 const shouldResumeSelectedRun = computed(() => projection.value?.activeRun?.status === 'failed')
 const canCancelActiveRun = computed(() => Boolean(
   projection.value?.activeRun?.runId
   && !isHistorical.value
-  && cancellableRunStatuses.has(projection.value.activeRun.status || '')
+  && isActiveRunStatus(projection.value.activeRun.status)
   && !cancelPending.value
 ))
 const rerunDisabledReason = computed(() => {

@@ -83,6 +83,8 @@ export function useChatWorkflowPresentation({
     retrying: '正在重试',
     failed: '运行失败',
     completed: '运行完成',
+    succeeded: '运行完成',
+    superseded: '已被后续运行替代',
     cancelled: '已取消'
   }[activeWorkflowStatus.value] || activeWorkflowStatus.value))
   const contextTabs = computed(() => [

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from './chat'
 import type { ModelSettings } from '@/config/modelSettings'
 import { chatApi } from '@/services/api/chat'
+import { conversationApi } from '@/services/api/conversation'
 
 const settings: ModelSettings = {
   provider: 'system', selectedModel: 'deepseek-flash', models: ['deepseek-flash'],
@@ -92,6 +93,7 @@ describe('Chat stream termination', () => {
   })
 
   it('restores an interrupted reply from the existing history summary', async () => {
+    vi.spyOn(conversationApi, 'getConversation').mockResolvedValue({ contextId: 'ctx-history' } as any)
     vi.spyOn(chatApi, 'getHistory').mockResolvedValue([{
       id:'reply',role:'ASSISTANT',content:'部分正文',metadata:{thinkingEnabled:true,
         executionSummary:[{stage:'chat_stream',status:'failed',description:'模型连接中断，请重试'}]}

@@ -43,6 +43,22 @@ describe('useWorkflowProgress', () => {
     vi.restoreAllMocks()
   })
 
+  it.each(['completed', 'succeeded', 'failed', 'cancelled', 'superseded'])('stops polling for Run status %s independently of phase', async status => {
+    const request = vi.fn().mockResolvedValue(progress({ status, phase: 'planning' }))
+    const scope = effectScope(); const tracker = scope.run(() => useWorkflowProgress({ request }))!
+    await tracker.start('run_1'); await vi.advanceTimersByTimeAsync(4000)
+    expect(tracker.isTerminal.value).toBe(true); expect(request).toHaveBeenCalledTimes(1)
+    scope.stop()
+  })
+
+  it.each(['waiting_review', 'retrying'])('continues polling %s even if a stale phase says failed', async status => {
+    const request = vi.fn().mockResolvedValue(progress({ status, phase: 'failed' }))
+    const scope = effectScope(); const tracker = scope.run(() => useWorkflowProgress({ request }))!
+    await tracker.start('run_1'); await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.isTerminal.value).toBe(false); expect(request).toHaveBeenCalledTimes(2)
+    scope.stop()
+  })
+
   it('queries immediately, then polls every two seconds with real backend values', async () => {
     const onProgressChanged = vi.fn()
     const request = vi.fn().mockResolvedValueOnce(progress()).mockResolvedValueOnce(progress({

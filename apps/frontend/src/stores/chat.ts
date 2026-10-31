@@ -10,6 +10,9 @@ import type { MissionLaunchResult } from '@/features/mission/launch'
 import { chatApi, type ChatRequest } from '@/services/api/chat'
 import { loadModelSettings, toModelRequestSettings, type ModelSettings } from '@/config/modelSettings'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
+import { conversationApi } from '@/services/api/conversation'
+import { getConversationWorkspace, setConversationWorkspace, type ConversationWorkspaceMode } from '@/utils/conversationWorkspace'
+import { conversationBindings, mergeDraftBindings, isActiveRunStatus } from '@/features/workspace/session'
 
 export interface TerminalExecution {
   command: string
@@ -105,6 +108,7 @@ export interface Message {
 
 export interface ChatWorkflowBinding {
   conversationId: string
+  conversationAliases?: string[]
   messageId?: string
   missionId: string
   acgTaskId: string
@@ -125,7 +129,6 @@ export interface ChatWorkflowStartResult {
 
 export const useChatStore = defineStore('chat', () => {
   const WORKFLOW_BINDINGS_KEY = 'chat.workflow_bindings.v1'
-  const TERMINAL_WORKFLOW_STATUSES = new Set(['completed', 'failed', 'cancelled'])
   const loadWorkflowBindings = (): Record<string, ChatWorkflowBinding[]> => {
     try {
       const parsed = JSON.parse(localStorage.getItem(WORKFLOW_BINDINGS_KEY) || '{}')
@@ -137,6 +140,8 @@ export const useChatStore = defineStore('chat', () => {
             .filter(item => item && typeof item.runId === 'string' && item.runId.trim())
             .map(item => ({
               ...item,
+              conversationAliases: Array.isArray(item.conversationAliases)
+                ? item.conversationAliases.filter((key: unknown) => typeof key === 'string') : undefined,
               acgTaskId: typeof item.acgTaskId === 'string' && item.acgTaskId.trim()
                 ? item.acgTaskId.trim()
                 : item.runId.trim(),
@@ -158,6 +163,9 @@ export const useChatStore = defineStore('chat', () => {
   let activeRequestId: string | null = null
   const contextId = ref<string | null>(null)
   const currentRoleId = ref<string | null>(null)
+  const historyError = ref<string | null>(null)
+  const conversationWorkspaceMode = ref<ConversationWorkspaceMode | null>(null)
+  let historyGeneration = 0
   // Context window usage for the composer indicator: tokens consumed by the
   // latest exchange (input + output ≈ what the next request will carry) and
   // the resolved model context window.
@@ -220,6 +228,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const addWorkflowBinding = (binding: ChatWorkflowBinding) => {
+    const associated = conversationBindings(workflowBindings.value, binding.conversationId)
+      .find(item => item.runId === binding.runId)
+    if (associated) binding = { ...binding, conversationId: associated.conversationId,
+      conversationAliases: associated.conversationAliases }
     const existing = workflowBindings.value[binding.conversationId] || []
     workflowBindings.value = {
       ...workflowBindings.value,
@@ -230,18 +242,29 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const getLatestWorkflowBinding = (conversationId: string) => {
-    const bindings = workflowBindings.value[conversationId] || []
+    const bindings = conversationBindings(workflowBindings.value, conversationId)
     return [...bindings].reverse().find(binding => !binding.invalidAt)
   }
 
   const getActiveWorkflowBinding = (conversationId: string) => {
-    const bindings = workflowBindings.value[conversationId] || []
+    const bindings = conversationBindings(workflowBindings.value, conversationId)
     return [...bindings].reverse().find(binding =>
-      !binding.invalidAt && !TERMINAL_WORKFLOW_STATUSES.has(binding.status)
+      !binding.invalidAt && isActiveRunStatus(binding.status)
     )
   }
 
+  const migrateDraftBindings = (draft: string, targetContextId: string) => {
+    if (contextId.value !== targetContextId || isLoadingConversation.value) return
+    const sourceRuns = (workflowBindings.value[draft] || []).map(item => item.runId)
+    const next = mergeDraftBindings(workflowBindings.value, draft, targetContextId)
+    if (next === workflowBindings.value) return
+    workflowBindings.value = next
+    persistWorkflowBindings()
+    workflowRunsStore.reassociateConversation(draft, targetContextId, sourceRuns)
+  }
+
   const updateWorkflowBindingStatus = (conversationId: string, runId: string, status: string) => {
+    conversationId = conversationBindings(workflowBindings.value, conversationId).find(item => item.runId === runId)?.conversationId || conversationId
     const bindings = workflowBindings.value[conversationId] || []
     if (!bindings.some(binding => binding.runId === runId)) return
     workflowBindings.value = {
@@ -255,6 +278,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const markWorkflowBindingInvalid = (conversationId: string, runId: string) => {
+    conversationId = conversationBindings(workflowBindings.value, conversationId).find(item => item.runId === runId)?.conversationId || conversationId
     const bindings = workflowBindings.value[conversationId] || []
     if (!bindings.some(binding => binding.runId === runId)) return
     workflowBindings.value = {
@@ -280,6 +304,7 @@ export const useChatStore = defineStore('chat', () => {
     workspaceMode: 'agent' | 'chat' = 'chat'
   ) => {
     if ((!text.trim() && !fileUrl) || loading.value) return
+    if (historyError.value) throw new Error(historyError.value)
 
     pushUserMessage(text, fileUrl)
 
@@ -289,7 +314,7 @@ export const useChatStore = defineStore('chat', () => {
         text: text || '',
         roleId: currentRoleId.value || undefined,
         contextId: contextId.value || undefined,
-        workspaceMode,
+        workspaceMode: contextId.value ? conversationWorkspaceMode.value || workspaceMode : workspaceMode,
         fileUrl: fileUrl || undefined,
         ...toModelRequestSettings(runtimeSettings || loadModelSettings())
       }
@@ -335,6 +360,7 @@ export const useChatStore = defineStore('chat', () => {
     workspaceMode: 'agent' | 'chat' = 'chat'
   ) => {
     if ((!text.trim()) || loading.value) return
+    if (historyError.value) throw new Error(historyError.value)
 
     const modelRequestSettings = toModelRequestSettings(runtimeSettings)
 
@@ -607,7 +633,7 @@ export const useChatStore = defineStore('chat', () => {
           reasoning_effort: modelRequestSettings.reasoningEffort,
           tool_mode: 'auto',
           context_id: contextId.value || undefined,
-          workspace_mode: workspaceMode
+          workspace_mode: contextId.value ? conversationWorkspaceMode.value || workspaceMode : workspaceMode
         })
       })
 
@@ -777,12 +803,32 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const loadHistory = async (targetContextId: string) => {
-    if (!targetContextId) return
-
+    if (!targetContextId || targetContextId.startsWith('draft:')) return
+    const generation = ++historyGeneration
     loading.value = true
     isLoadingConversation.value = true
+    contextId.value = targetContextId
+    messages.value = []
+    currentRoleId.value = null
+    historyError.value = null
+    conversationWorkspaceMode.value = getConversationWorkspace(targetContextId,
+      new Set(conversationBindings(workflowBindings.value, targetContextId).filter(item => item.source === 'agent').map(() => targetContextId)))
+
     try {
-      const history = await chatApi.getHistory(targetContextId)
+      const [history, metadata] = await Promise.all([
+        chatApi.getHistory(targetContextId),
+        conversationApi.getConversation(targetContextId).catch(() => null)
+      ])
+      if (generation !== historyGeneration || contextId.value !== targetContextId) return
+      if (metadata?.contextId === targetContextId) {
+        currentRoleId.value = metadata.roleId || null
+        if (metadata.workspaceMode === 'agent' || metadata.workspaceMode === 'chat') {
+          conversationWorkspaceMode.value = metadata.workspaceMode
+          setConversationWorkspace(targetContextId, metadata.workspaceMode)
+        }
+      } else {
+        historyError.value = '会话元数据未能恢复，请重试后继续发送'
+      }
 
       messages.value = history.map((msg: any) => ({
         id: msg.id || Date.now() + Math.random(),
@@ -829,19 +875,28 @@ export const useChatStore = defineStore('chat', () => {
         contextUsedTokens.value = null
       }
     } catch (error: any) {
+      if (generation !== historyGeneration || contextId.value !== targetContextId) return
       console.error('加载对话历史失败:', error)
       messages.value = []
+      historyError.value = '加载对话历史失败'
     } finally {
-      isLoadingConversation.value = false
-      loading.value = false
+      if (generation === historyGeneration && contextId.value === targetContextId) {
+        isLoadingConversation.value = false
+        loading.value = false
+      }
     }
   }
 
   const setContextId = (id: string | null) => {
-    contextId.value = id
     if (id) {
-      loadHistory(id)
+      return loadHistory(id)
     } else {
+      ++historyGeneration
+      contextId.value = null
+      conversationWorkspaceMode.value = null
+      historyError.value = null
+      isLoadingConversation.value = false
+      loading.value = false
       messages.value = []
       contextUsedTokens.value = null
       contextWindowTokens.value = null
@@ -868,6 +923,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const clearMessages = () => {
+    ++historyGeneration
+    conversationWorkspaceMode.value = null
+    historyError.value = null
+    isLoadingConversation.value = false
+    if (!isStreaming.value) loading.value = false
     messages.value = []
     contextId.value = null
     contextUsedTokens.value = null
@@ -882,6 +942,9 @@ export const useChatStore = defineStore('chat', () => {
     workflowBindings,
     contextId,
     currentRoleId,
+    conversationWorkspaceMode,
+    historyError,
+    migrateDraftBindings,
     contextUsedTokens,
     contextWindowTokens,
     contextModel,

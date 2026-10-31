@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, readonly, ref } from 'vue'
 import { workflowApi, type WorkflowProgress } from '@/services/api/workflow'
+import { isTerminalRunStatus } from '@/features/workspace/session'
 
 type PollingState =
   | 'idle'
@@ -27,8 +28,6 @@ export interface UseWorkflowProgressOptions {
   ) => Promise<WorkflowProgress>
 }
 
-const TERMINAL_PHASES = new Set(['completed', 'failed', 'cancelled'])
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
 const httpStatusOf = (error: unknown): number | undefined => {
   if (!error || typeof error !== 'object' || !('response' in error)) return undefined
@@ -71,7 +70,7 @@ export function useWorkflowProgress(options: UseWorkflowProgressOptions = {}) {
   }
 
   const isTerminalProgress = (value: WorkflowProgress) =>
-    TERMINAL_PHASES.has(value.phase) || TERMINAL_STATUSES.has(value.status)
+    isTerminalRunStatus(value.status)
 
   const schedule = (delayMs: number, expectedGeneration: number) => {
     clearTimer()

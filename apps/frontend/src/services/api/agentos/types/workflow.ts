@@ -8,6 +8,8 @@ export type WorkflowStatus =
   | 'retrying'
   | 'failed'
   | 'completed'
+  | 'succeeded'
+  | 'superseded'
   | 'cancelled'
   | 'skipped_by_condition'
 export type WorkflowProgressPhase =
