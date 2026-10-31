@@ -226,6 +226,19 @@ def start_hands(home, info, creds, state, env, start):
         keys.unlink(missing_ok=True)
 
 
+def record_port_takeover(home, released):
+    """Persist which processes were stopped to take over the runtime ports.
+
+    The launcher console closes on success, so this file is the only trace.
+    Command lines are intentionally dropped: they may carry tokens.
+    """
+    native.write_json(home/'port-takeover.json', {
+        'at': datetime.now(timezone.utc).isoformat(),
+        'released': [{'port': item['port'], 'pid': item['pid'],
+                      'executable': (item.get('process') or {}).get('executable'),
+                      'outcome': item.get('outcome')} for item in released]})
+
+
 def up(home, use_desktop):
     info, creds, state = manifest(home), native.credentials(home), state_for(home)
     workspace = Path(info['workspace'])
@@ -233,10 +246,17 @@ def up(home, use_desktop):
         raise RuntimeError('Startup-issued workspace root changed; refusing to reissue authority')
     if any(alive(record) for record in state['processes'].values()):
         raise RuntimeError('This persistent environment already owns running processes; use status or recover')
-    for port in list(ports(info).values()) if use_desktop else list(ports(info).values())[:-1]: native.port_free(port)
     backend_jar = Path(info.get('backendJar',str(ROOT/'apps/backend/target/kinlin-backend-1.0.0.jar')))
     if not backend_jar.is_file():
         raise RuntimeError('Build the Java backend first: mvn -DskipTests package')
+    # A leftover dev server or an orphaned service from an earlier session must
+    # not block startup: stop whatever still listens, then bind the runtime's own
+    # ports. The runtime itself, its ancestors and Windows session processes are
+    # always refused (see native.release_port).
+    target_ports = list(ports(info).values()) if use_desktop else list(ports(info).values())[:-1]
+    released = native.release_ports(target_ports)
+    if released:
+        record_port_takeover(home, released)
     session = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')+'-'+secrets.token_hex(2)
     logdir = home/'logs'/session
     logdir.mkdir()
@@ -377,7 +397,7 @@ def open_desktop(home):
         if not windows:
             raise RuntimeError('Desktop process exists but has no window; inspect its log')
         return dict(current, desktopWindows=windows)
-    native.port_free(ports(info)['debug'])
+    native.release_port(ports(info)['debug'])
     # Only OS/frontend variables reach the desktop; no DPAPI credentials are inherited.
     appenv = {key: value for key, value in os.environ.items() if key.upper() in {
         'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATH', 'PATHEXT', 'USERPROFILE', 'APPDATA',

@@ -9,6 +9,10 @@ param(
   [switch]$Recover
 )
 
+# 启动前会先接管运行时端口：占用 15432/16379/18761/18765/18080/15200/18766/19222
+# 的残留进程（上一次的 dev server、孤儿服务等）会被停掉，然后绑定知弈自己的服务。
+# 启动器自身、其父进程、不可检查的进程与 Windows 会话关键进程会被拒绝而不是强杀。
+
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $python = Join-Path $env:LOCALAPPDATA 'ZhiyiNative\python\Scripts\python.exe'

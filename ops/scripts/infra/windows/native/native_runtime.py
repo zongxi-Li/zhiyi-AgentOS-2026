@@ -315,6 +315,160 @@ def port_free(port):
         listener.bind(('127.0.0.1', port))
 
 
+# Processes that own the session (or the machine) are never traded for a port:
+# stopping them logs the user out instead of releasing one stray server.
+PROTECTED_PROCESSES = frozenset({
+    'system', 'registry', 'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe',
+    'services.exe', 'lsass.exe', 'svchost.exe', 'explorer.exe', 'dwm.exe', 'fontdrvhost.exe'
+})
+
+
+def port_owners(port):
+    """PIDs listening on 127.0.0.1:<port>. psutil is exact; netstat is the fallback."""
+    import psutil
+    owners = set()
+    try:
+        for connection in psutil.net_connections(kind='tcp4'):
+            address = connection.laddr
+            if connection.pid and connection.status == psutil.CONN_LISTEN and address and address.port == port:
+                owners.add(connection.pid)
+    except (psutil.AccessDenied, OSError):
+        pass
+    if owners:
+        return sorted(owners)
+    try:
+        listing = subprocess.run(['netstat', '-ano', '-p', 'tcp'], capture_output=True, text=True, timeout=15,
+                                 creationflags=subprocess.CREATE_NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[0].upper() != 'TCP':
+            continue
+        if fields[1].endswith(f':{port}') and fields[4].isdigit():
+            owners.add(int(fields[4]))
+    return sorted(owners)
+
+
+def describe(pid):
+    import psutil
+    try:
+        return identity(psutil.Process(pid))
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+def _wait_gone(process, descendants, seconds):
+    import psutil
+    try:
+        process.wait(seconds)
+    except psutil.Error:
+        return False
+    for child in descendants:
+        try:
+            child.wait(3)
+        except psutil.Error:
+            pass
+    return True
+
+
+def stop_external(record):
+    """Stop a process this runtime did not spawn, trusting nothing about it.
+
+    Console applications (vite, java, python) exit cleanly on CTRL_C; GUI
+    processes have no console, so the helper is allowed to fail and the tree
+    escalates exactly like an owned service would.
+    """
+    import psutil
+    try:
+        process = psutil.Process(record['pid'])
+        if identity(process) != record:
+            raise RuntimeError('Process identity changed; refusing to signal it')
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+    try:
+        descendants = process.children(recursive=True)
+    except psutil.Error:
+        descendants = []
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).resolve()), '_signal', str(process.pid)],
+                       check=False, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if _wait_gone(process, descendants, 8):
+        return 'graceful'
+    for member in [*reversed(descendants), process]:
+        try:
+            member.terminate()
+        except psutil.Error:
+            pass
+    if _wait_gone(process, descendants, 8):
+        return 'terminated'
+    for member in [*reversed(descendants), process]:
+        try:
+            member.kill()
+        except psutil.Error:
+            pass
+    _wait_gone(process, descendants, 5)
+    return 'killed'
+
+
+def _parents():
+    import psutil
+    try:
+        return psutil.Process().parents()
+    except psutil.Error:
+        return []
+
+
+def release_port(port):
+    """Stop whatever still listens on <port> so a fresh start can bind it.
+
+    A leftover dev server from an earlier session must never block the desktop
+    launcher. The runtime refuses only what it must: itself, its ancestors,
+    protected Windows processes and processes the user cannot inspect.
+    """
+    try:
+        port_free(port)
+        return None
+    except OSError as busy:
+        failure = busy
+    owners = port_owners(port)
+    if not owners:
+        raise RuntimeError(f'Port {port} is in use but its owner could not be identified') from failure
+    protected = {os.getpid(), *(parent.pid for parent in _parents())}
+    released = []
+    for pid in owners:
+        if pid in protected:
+            raise RuntimeError(f'Port {port} is held by the launcher itself (PID {pid}); refusing to stop it')
+        if pid <= 4:
+            raise RuntimeError(f'Port {port} is held by a Windows kernel process (PID {pid})')
+        record = describe(pid)
+        if record is None:
+            raise RuntimeError(f'Port {port} is held by PID {pid}, which this user cannot inspect')
+        name = Path(record['executable'] or '').name.lower() or f'PID {pid}'
+        if name in PROTECTED_PROCESSES:
+            raise RuntimeError(f'Port {port} is held by Windows process {name} (PID {pid}); close it manually')
+        print(f'Port {port} is held by {name} (PID {pid}); stopping it to start Zhiyi AgentOS',
+              file=sys.stderr, flush=True)
+        released.append({'port': port, 'pid': pid, 'process': record, 'outcome': stop_external(record)})
+    try:
+        port_free(port)
+    except OSError as still_busy:
+        raise RuntimeError(f'Port {port} is still in use after stopping PID(s) {owners}') from still_busy
+    return released
+
+
+def release_ports(ports_to_free):
+    """Release every port a fresh startup needs; returns what had to be stopped."""
+    released = []
+    for port in ports_to_free:
+        stopped = release_port(port)
+        if stopped:
+            released.extend(stopped)
+    return released
+
+
 def preflight(run, ai_port, host_port):
     import importlib.metadata as metadata
     if os.name != 'nt' or sys.version_info[:2] != (3, 14):
