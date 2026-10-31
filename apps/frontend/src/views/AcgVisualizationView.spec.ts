@@ -12,6 +12,9 @@ import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 import AcgVisualizationView from './AcgVisualizationView.vue'
 import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
+import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
+import { legacyAcgLaunchCommand } from '@/features/mission/command'
+import { createNativeWorkbenchDraft } from '@/features/acg/workbench'
 
 vi.mock('@/utils/retryModeChoice', () => ({
   chooseFailedRunRetryMode: vi.fn().mockResolvedValue('successor_run')
@@ -24,6 +27,7 @@ vi.mock('@/services/api/workflow', async importOriginal => {
     workflowApi: {
       ...actual.workflowApi,
       startWorkflowAsync: vi.fn(),
+      reconcileMissionLaunch: vi.fn(),
       rerunWorkflowAsync: vi.fn(),
       retryWorkflowStepAsync: vi.fn(),
       getWorkflowProgress: vi.fn(),
@@ -160,6 +164,7 @@ const mountPage = async (query = ''): Promise<{ wrapper: VueWrapper; router: Rou
 describe('AcgVisualizationView 执行运行时 page wiring', () => {
   beforeEach(() => {
     localStorage.clear()
+    sessionStorage.clear()
     vi.clearAllMocks()
     vi.mocked(workflowApi.getWorkflowProgress).mockResolvedValue(progress())
     vi.mocked(workflowApi.getRun).mockResolvedValue(run())
@@ -169,6 +174,7 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     })
     vi.mocked(workflowApi.getRunResourceUsage).mockResolvedValue(null as never)
     vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue(run({ status: 'pending', lifecyclePhase: 'planning' }))
+    vi.mocked(workflowApi.reconcileMissionLaunch).mockResolvedValue({ status: 'NOT_FOUND' })
     vi.mocked(workflowApi.rerunWorkflowAsync).mockResolvedValue(run({
       runId: 'run_2', missionId: 'mission_1', status: 'pending', lifecyclePhase: 'planning'
     }))
@@ -320,6 +326,22 @@ describe('AcgVisualizationView 执行运行时 page wiring', () => {
     )
     expect(router.currentRoute.value.query.runId).toBe('run_1')
     expect(wrapper.findComponent(WorkflowProgressBar).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('restores a Legacy ACG submission and reconciles its accepted result without another create', async () => {
+    const attempt = createMissionLaunchAttempt({ slot: 'legacy-acg' })
+    vi.mocked(workflowApi.startWorkflowAsync).mockRejectedValueOnce(new Error('lost acceptance'))
+    await expect(attempt.launch(legacyAcgLaunchCommand({ ...createNativeWorkbenchDraft(), title: '原任务', taskGoal: '原目标' }, []))).rejects.toThrow()
+    const accepted = run({ status: 'pending', lifecyclePhase: 'planning' })
+    vi.mocked(workflowApi.reconcileMissionLaunch).mockResolvedValue({ status: 'CREATED', missionId: accepted.missionId, runId: accepted.runId, run: accepted })
+    const { wrapper, router } = await mountPage()
+    expect((wrapper.vm as any).draft.taskGoal).toBe('原目标')
+    await wrapper.findAll('button').find(button => button.text() === '核对并恢复原提交')!.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.runId).toBe(accepted.runId)
+    expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1)
+    expect(attempt.pending()).toBeNull()
     wrapper.unmount()
   })
 

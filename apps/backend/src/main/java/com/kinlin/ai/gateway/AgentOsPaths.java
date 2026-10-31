@@ -23,6 +23,10 @@ public final class AgentOsPaths {
     /** Upstream root served by the Python AgentOS core. */
     public static final String UPSTREAM_ROOT = "/ai/agentos/v2";
 
+    public static String missionLaunchReconciliation() {
+        return UPSTREAM_ROOT + "/mission-launches/reconcile";
+    }
+
     private AgentOsPaths() {
     }
 

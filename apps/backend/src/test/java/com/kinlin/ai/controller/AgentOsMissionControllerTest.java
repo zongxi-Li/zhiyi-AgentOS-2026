@@ -59,6 +59,20 @@ class AgentOsMissionControllerTest {
     }
 
     @Test
+    void reconcilesOriginalCreationIdentityWithoutStartingAnotherMission() throws Exception {
+        gateway.postResponses.put("/ai/agentos/v2/mission-launches/reconcile",
+                RecordingAgentOsGateway.response(200, Map.of("status", "CREATING", "missionId", "mission_001")));
+        mockMvc.perform(post("/api/agentos/v2/mission-launches/reconcile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"task\",\"clientRequestId\":\"original-operation\",\"input\":{}}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CREATING"))
+                .andExpect(jsonPath("$.missionId").value("mission_001"))
+                .andExpect(jsonPath("$._httpStatus").doesNotExist());
+        assertEquals("/ai/agentos/v2/mission-launches/reconcile", gateway.lastPostPath);
+        assertEquals("original-operation", ((AgentOsMissionCreateRequest) gateway.lastPostBody).clientRequestId());
+    }
+
+    @Test
     void createMissionForwardsOnlyTheV2ContractAndPreservesAccepted() throws Exception {
         gateway.postResponses.put("/ai/agentos/v2/missions", RecordingAgentOsGateway.response(202, Map.of(
                 "runId", "run_001", "status", "pending", "executionState", Map.of("outputRefs", Map.of())

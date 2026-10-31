@@ -119,4 +119,20 @@ class AgentOsGatewayServiceTest {
         ));
         return new AgentOsGatewayService(builder.clone().baseUrl("http://agentos").build(), properties);
     }
+
+    @Test
+    void relaysOnlyAllowlistedMissionConflictCodesWithoutSensitiveDetails() {
+        for (String code : java.util.List.of("ATTACHMENT_NOT_READY", "CLIENT_REQUEST_ID_CONFLICT", "MISSION_SEMANTIC_CONFLICT", "UNTRUSTED")) {
+            AgentProperties properties = new AgentProperties();
+            properties.setEnabled(true);
+            WebClient client = WebClient.builder().exchangeFunction(request -> Mono.just(
+                    ClientResponse.create(HttpStatus.CONFLICT).header("X-Mission-Launch-Conflict", code)
+                            .body("{\"detail\":\"PRIVATE REQUEST\"}").build())).build();
+            var result = new AgentOsGatewayService(client, properties).postTyped(
+                    "/ai/agentos/v2/missions", Map.of(), AgentOsMissionResponse.class);
+            assertEquals(409, result.status());
+            assertEquals(code.equals("UNTRUSTED") ? "AGENTOS_REQUEST_REJECTED" : code, result.error().code());
+            assertFalse(result.error().toString().contains("PRIVATE"));
+        }
+    }
 }

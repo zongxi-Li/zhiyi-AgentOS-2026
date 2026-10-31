@@ -199,6 +199,11 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         return task.model_copy(deep=True)
 
     @_mission_locked
+    def find_mission_by_creation_key(self, creation_key: str) -> RuntimeMissionRecord | None:
+        existing = next((m for m in self._tasks.values() if m.creation_key == creation_key), None)
+        return existing.model_copy(deep=True) if existing is not None else None
+
+    @_mission_locked
     def save_prepared_run_once(self, run: RuntimeRunRecord) -> RuntimeRunRecord:
         existing = self.find_run_by_idempotency_key(run.idempotency_key) if run.idempotency_key else None
         if existing is not None:

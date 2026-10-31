@@ -123,6 +123,10 @@ export const workflowApi = {
     return agentosApi.startWorkflow(payload)
   },
 
+  reconcileMissionLaunch(payload: AsyncWorkflowStartRequest, options: { signal?: AbortSignal } = {}) {
+    return agentosApi.reconcileMissionLaunch(payload, options)
+  },
+
   startWorkflowAsync(
     payload: AsyncWorkflowStartRequest,
     options: { signal?: AbortSignal } = {}

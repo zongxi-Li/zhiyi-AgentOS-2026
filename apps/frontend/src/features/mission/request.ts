@@ -1,5 +1,6 @@
 import type { AsyncWorkflowStartRequest } from '@/services/api/workflow'
 import { buildWorkbenchStartRequest, createNativeWorkbenchDraft, type PluginUiExtension, type WorkbenchDraft } from '@/features/acg/workbench'
+import { resolveMissionLaunchPolicy } from './policy'
 
 export interface LaunchMaterials {
   attachmentIds?: string[]
@@ -28,12 +29,13 @@ export interface ConversationLaunchContext extends LaunchMaterials {
   chatRoleId: string | null
   messages: ReadonlyArray<{ role: string; content: string }>
   source: 'chat' | 'agent'
+  policyProfile?: 'conversation-workspace'
   title?: string
   domain?: string
   intent?: string
   workflowId?: string
   reviewMode?: string
-  enabledPluginIds?: string[]
+  enabledPluginIds?: string[] | null
   // Only execution settings, never model credentials/connections.
   execution?: { thinkingMode?: WorkbenchDraft['thinkingMode']; reasoningEffort?: string; webSearchEnabled?: boolean }
 }
@@ -47,12 +49,12 @@ export function buildConversationLaunchRequest(
   draft.title = context.title || `${context.source === 'agent' ? 'Agent' : 'Chat'} ACG：${context.goal.slice(0, 40)}`
   draft.enabledPluginIds = [...(context.enabledPluginIds || [])]
   const request = buildWorkbenchLaunchRequest(draft, [], clientRequestId, context)
-  request.domain = context.domain || 'legal'
-  request.intent = context.intent || 'case_analysis'
-  request.workflowId = context.workflowId
-  request.reviewMode = context.reviewMode || 'human_in_loop'
-  // Preserve the historical omitted-scope behavior of Conversation launches.
-  request.enabledPluginIds = context.enabledPluginIds ? [...context.enabledPluginIds] : undefined
+  const policy = resolveMissionLaunchPolicy({ entry: 'conversation', explicit: context, profile: context.policyProfile })
+  request.domain = policy.domain
+  request.intent = policy.intent
+  request.workflowId = policy.workflowId
+  request.reviewMode = policy.reviewMode
+  request.enabledPluginIds = Array.isArray(policy.enabledPluginIds) ? [...policy.enabledPluginIds] : policy.enabledPluginIds
   request.input = {
     ...request.input,
     source: context.source,

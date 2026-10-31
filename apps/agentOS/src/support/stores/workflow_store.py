@@ -270,6 +270,10 @@ class WorkflowStore(ABC):
         """Atomically insert/replay by creation key and fingerprint; never overwrite a Mission."""
         raise NotImplementedError
 
+    def find_mission_by_creation_key(self, creation_key: str) -> RuntimeMissionRecord | None:
+        """Read the existing creation anchor without creating or modifying a Mission."""
+        raise NotImplementedError
+
     def save_prepared_run_once(self, run: RuntimeRunRecord) -> RuntimeRunRecord:
         """Atomically deduplicate initial Run persistence by idempotency key."""
         raise NotImplementedError

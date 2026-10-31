@@ -247,6 +247,10 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                                 "mission.created", task.mission_id, payload)
             return task.model_copy(deep=True)
 
+    def find_mission_by_creation_key(self, creation_key: str) -> RuntimeMissionRecord | None:
+        row = self._fetch_one("SELECT payload FROM tasks WHERE json_extract(payload, '$.creationKey')=?", (creation_key,))
+        return RuntimeMissionRecord.model_validate_json(row["payload"]) if row is not None else None
+
     def save_prepared_run_once(self, run: RuntimeRunRecord) -> RuntimeRunRecord:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

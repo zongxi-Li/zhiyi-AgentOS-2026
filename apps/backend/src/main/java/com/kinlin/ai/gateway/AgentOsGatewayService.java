@@ -91,7 +91,9 @@ public class AgentOsGatewayService implements AgentOsClient {
                     .exchangeToMono(response -> typedResponse(
                             response.statusCode().value(),
                             response.bodyToMono(String.class),
-                            responseType
+                            responseType,
+                            AgentOsPaths.missions().equals(path)
+                                    ? response.headers().asHttpHeaders().getFirst("X-Mission-Launch-Conflict") : null
                     ))
                     .timeout(Duration.ofMillis(postTimeoutMs(path)))
                     .onErrorResume(failure -> Mono.just(typedUnavailable(path, failure)))
@@ -251,9 +253,13 @@ public class AgentOsGatewayService implements AgentOsClient {
     private <T extends AgentOsApiResponse> Mono<AgentOsClient.TypedResponse<T>> typedResponse(
             int upstreamStatus,
             Mono<String> responseBody,
-            Class<T> responseType
+            Class<T> responseType,
+            String launchConflictCode
     ) {
         return responseBody.defaultIfEmpty("").map(body -> {
+            if (upstreamStatus == 409 && java.util.Set.of("ATTACHMENT_NOT_READY", "CLIENT_REQUEST_ID_CONFLICT", "MISSION_SEMANTIC_CONFLICT").contains(launchConflictCode == null ? "" : launchConflictCode)) {
+                return typedError(409, launchConflictCode, "Mission launch requires reconciliation.", null);
+            }
             if (upstreamStatus >= 200 && upstreamStatus < 300) {
                 try {
                     return new AgentOsClient.TypedResponse<>(

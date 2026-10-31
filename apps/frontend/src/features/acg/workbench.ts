@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 import type { AsyncWorkflowStartRequest } from '@/services/api/workflow'
 import type { ReasoningEffort } from '@/config/modelSettings'
+import { resolveMissionLaunchPolicy } from '@/features/mission/policy'
 
 export type WorkbenchPlanningMode = 'dynamic' | 'template_preferred'
 export type PlanningDiversity = 'stable' | 'balanced' | 'exploratory'
@@ -147,10 +148,7 @@ export const buildWorkbenchStartRequest = (
   extensions: PluginUiExtension[],
   clientRequestId: string
 ): AsyncWorkflowStartRequest => {
-  let domain = 'general'
-  let intent = 'general'
-  let workflowId: string | undefined
-  let reviewMode = draft.reviewMode
+  const { domain, intent, workflowId, reviewMode, input: policyInput } = resolveMissionLaunchPolicy({ entry: 'workbench', draft, extensions })
   let input: Record<string, unknown> = {
     source: 'acg',
     userIntent: draft.taskGoal,
@@ -170,17 +168,7 @@ export const buildWorkbenchStartRequest = (
     pluginData: clonePluginData(draft.pluginData)
   }
 
-  for (const extension of extensions) {
-    const contribution = extension.buildStartRequest?.(draft)
-    if (!contribution) continue
-    if (contribution.domain) domain = contribution.domain
-    if (contribution.intent) intent = contribution.intent
-    if (contribution.workflowId !== undefined) workflowId = contribution.workflowId
-    if (contribution.reviewMode === 'auto' || contribution.reviewMode === 'human_in_loop') {
-      reviewMode = contribution.reviewMode
-    }
-    input = mergeInput(input, contribution.input)
-  }
+  input = mergeInput(input, policyInput)
 
   // The user's privacy/network choice is authoritative across every plugin.
   input.webSearchEnabled = draft.webSearchEnabled

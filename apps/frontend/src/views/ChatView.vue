@@ -338,6 +338,7 @@
           </div>
 
           <div class="composer-missions" :class="{ 'is-conversation': !showHeroMode }">
+            <button v-if="pendingLaunchForView" type="button" :disabled="isSubmittingWorkflow" @click="resumePendingConversationLaunch">核对并恢复原提交</button>
             <NativeWorkspacePicker class="composer-missions__workspace" />
           </div>
 
@@ -721,7 +722,6 @@ import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
 import { wasErrorUserNotified } from '@/utils/request'
 import { plainMissionTitle } from '@/utils/missionTitle'
-import { conversationLaunchRequestId, clearConversationLaunchIdentity } from '@/features/mission/conversationLaunchIdentity'
 import { loadModelSettings } from '@/config/modelSettings'
 
 const { t } = useI18n()
@@ -1552,7 +1552,6 @@ const isWorkflowUpgradeDisabled = computed(() =>
 
 const resetWorkspace = async () => {
   const previousConversationId = currentConversationId.value
-  clearConversationLaunchIdentity(sessionStorage, previousConversationId)
   chatStore.clearMessages()
   draftConversationId.value = `draft:${createClientRequestId()}`
   localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
@@ -1707,12 +1706,13 @@ const activateWorkflowRun = async (
 
 const workflowStartErrorMessage = (error: unknown) => {
   if (axios.isAxiosError(error)) {
-    if (error.response?.status === 409) return '本次请求标识与原任务参数冲突，请重新发起'
+    if (error.response?.status === 409) return '本次提交发生冲突，已保留原身份；请核对创建结果'
     if (error.response?.status === 503 || !error.response) return 'ACG 任务暂时不可用，请稍后重试'
   }
   if (error instanceof Error && error.name === 'WorkflowApiContractError') {
     return 'ACG 启动响应契约无效'
   }
+  if (error instanceof Error && error.name === 'MissionLaunchStateError') return error.message
   return 'ACG 任务未能启动'
 }
 
@@ -1725,25 +1725,20 @@ const upgradeChatToWorkflow = async () => {
   }
 
   const conversationId = currentConversationId.value
-  const clientRequestId = conversationLaunchRequestId(sessionStorage, conversationId, userText)
   isSubmittingWorkflow.value = true
   workflowStartError.value = null
   inputText.value = ''
   try {
     const startWorkflow = isAgentMode.value ? chatStore.startAgentRun : chatStore.upgradeToWorkflow
     const result = await startWorkflow(userText, {
-      domain: 'general',
-      intent: 'general',
-      reviewMode: 'auto',
+      policyProfile: 'conversation-workspace',
       conversationId,
-      clientRequestId,
       execution: {
         thinkingMode: loadModelSettings().thinkingMode,
         reasoningEffort: loadModelSettings().reasoningEffort
       }
     })
     if (result) {
-      clearConversationLaunchIdentity(sessionStorage, conversationId)
       await activateWorkflowRun(result.binding.runId, result.binding, true)
       ElMessage.success(`已创建 WorkflowRun：${result.binding.runId}`)
     }
@@ -1751,13 +1746,31 @@ const upgradeChatToWorkflow = async () => {
   } catch (error: unknown) {
     inputText.value = userText
     workflowStartError.value = workflowStartErrorMessage(error)
-    if (axios.isAxiosError(error) && error.response?.status === 409) {
-      clearConversationLaunchIdentity(sessionStorage, conversationId)
-    }
+    pendingLaunchForView.value = chatStore.pendingMissionLaunch(conversationId)
   } finally {
     isSubmittingWorkflow.value = false
   }
 }
+
+const pendingLaunchForView = ref<ReturnType<typeof chatStore.pendingMissionLaunch>>(null)
+const resumePendingConversationLaunch = async () => {
+  if (isSubmittingWorkflow.value) return
+  isSubmittingWorkflow.value = true
+  try {
+    const result = await chatStore.resumeMissionLaunch(currentConversationId.value)
+    if (result) {
+      pendingLaunchForView.value = null
+      await activateWorkflowRun(result.binding.runId, result.binding, true)
+    }
+  } catch (error) { workflowStartError.value = workflowStartErrorMessage(error) }
+  finally { isSubmittingWorkflow.value = false }
+}
+watch(currentConversationId, id => {
+  try {
+    pendingLaunchForView.value = chatStore.pendingMissionLaunch(id)
+    if (pendingLaunchForView.value && !inputText.value) inputText.value = pendingLaunchForView.value.commandSnapshot.semantics?.objective || ''
+  } catch (error) { workflowStartError.value = workflowStartErrorMessage(error) }
+}, { immediate: true })
 
 const startVoiceInput = () => {
   isRecording.value = true

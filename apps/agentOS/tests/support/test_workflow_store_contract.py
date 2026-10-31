@@ -20,6 +20,18 @@ from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
+@pytest.mark.parametrize("store_factory", [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "launch.db")])
+def test_creation_key_lookup_reads_the_original_anchor_without_mutating_it(store_factory, tmp_path):
+    store = store_factory(tmp_path)
+    assert store.find_mission_by_creation_key("missing") is None
+    mission = RuntimeMissionRecord(title="original", creationKey="launch-key", creationFingerprint="fingerprint")
+    store.create_mission_once(mission)
+    restored = store.find_mission_by_creation_key("launch-key")
+    assert restored.mission_id == mission.mission_id
+    restored.title = "caller changed a returned copy"
+    assert store.get_mission(mission.mission_id).title == "original"
+
+
 @pytest.mark.parametrize(
     "store_factory",
     [

@@ -4,6 +4,9 @@ import { WorkflowApiContractError } from '../types'
 import type { MissionSemanticEditRequest, MissionSemanticResult } from '../types'
 
 export const createMissionApi = () => ({
+  async reconcileMissionLaunch(payload: AsyncWorkflowStartRequest, options: { signal?: AbortSignal } = {}): Promise<MissionLaunchReconciliation> {
+    return (await agentosRequest.post<MissionLaunchReconciliation>('/mission-launches/reconcile', payload, options)).data
+  },
   async getRunRevision(missionId: string, runId: string): Promise<MissionRunRevision> {
     return (await agentosRequest.get<MissionRunRevision>(revisionPath(missionId, runId))).data
   },
@@ -105,6 +108,10 @@ export const createMissionApi = () => ({
 })
 
 const revisionPath = (missionId: string, runId: string) => `/missions/${encodeURIComponent(missionId)}/runs/${encodeURIComponent(runId)}/revision`
+export type MissionLaunchReconciliation =
+  | { status: 'NOT_FOUND' }
+  | { status: 'CREATING' | 'CONFLICT' | 'REQUIRES_REVIEW'; missionId?: string }
+  | { status: 'CREATED'; missionId: string; runId: string; run: WorkflowRun }
 export interface MissionRunRevisionDecision {
   operationId: string
   sourceRevision: number

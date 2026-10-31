@@ -3,8 +3,9 @@ import { ref } from 'vue'
 import { chatStreamErrorMessage, parseChatStreamFrame, type ChatStreamEvent } from '@/utils/sse'
 import { apiUrl } from '@/platform'
 import type { AsyncWorkflowStartResponse } from '@/services/api/workflow'
-import { buildConversationLaunchRequest, type ConversationLaunchContext } from '@/features/mission/request'
-import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
+import type { ConversationLaunchContext } from '@/features/mission/request'
+import { conversationLaunchCommand, matchesConversationLaunchContext } from '@/features/mission/command'
+import { createMissionLaunchAttempt, MissionLaunchStateError } from '@/features/mission/launchAttempt'
 import type { MissionLaunchResult } from '@/features/mission/launch'
 import { chatApi, type ChatRequest } from '@/services/api/chat'
 import { loadModelSettings, toModelRequestSettings, type ModelSettings } from '@/config/modelSettings'
@@ -688,70 +689,59 @@ export const useChatStore = defineStore('chat', () => {
     reviewMode?: string
     title?: string
     conversationId: string
-    clientRequestId: string
-    enabledPluginIds?: string[]
+    clientRequestId?: string
+    enabledPluginIds?: string[] | null
     execution?: ConversationLaunchContext['execution']
+    policyProfile?: ConversationLaunchContext['policyProfile']
   }
 
   const pendingConversationStarts = new Map<string, Promise<ChatWorkflowStartResult | undefined>>()
+  const pendingMissionLaunch = (conversationId: string) => createMissionLaunchAttempt({ slot: `conversation:${conversationId}` }).pending()
   const startConversationWorkflow = async (
-    text: string,
-    options: ConversationWorkflowOptions,
-    source: 'agent' | 'chat'
+    text: string, options: ConversationWorkflowOptions, source: 'agent' | 'chat'
   ): Promise<ChatWorkflowStartResult | undefined> => {
     if (!text.trim()) return undefined
-    const pending = pendingConversationStarts.get(options.conversationId)
+    const attempt = createMissionLaunchAttempt({ slot: `conversation:${options.conversationId}` })
+    let identity = attempt.pending()
+    if (identity) {
+      if ((options.clientRequestId && options.clientRequestId !== identity.operationId)
+        || !matchesConversationLaunchContext(identity.commandSnapshot, { ...options, goal: text, source })) {
+        throw new MissionLaunchStateError('BUSY', '会话已有另一个待确认提交，请先恢复原操作。')
+      }
+    } else {
+      const command = conversationLaunchCommand({
+        ...options, goal: text, source, chatContextId: contextId.value, chatRoleId: currentRoleId.value,
+        messages: [...messages.value, { role: 'user', content: text }]
+      })
+      identity = attempt.begin(command, options.clientRequestId)
+    }
+    const operationId = identity.operationId
+    const pending = pendingConversationStarts.get(operationId)
     if (pending) return pending
     const operation = Promise.resolve().then(async () => {
-
-      const userMessage = messages.value.find(message =>
-        message.role === 'user' && message.workflowClientRequestId === options.clientRequestId
-      ) || pushUserMessage(text)
-      userMessage.workflowClientRequestId = options.clientRequestId
-
-      const request = buildConversationLaunchRequest({
-        ...options, goal: text, source, chatContextId: contextId.value,
-        chatRoleId: currentRoleId.value, messages: messages.value
-      }, options.clientRequestId)
-      const attempt = createMissionLaunchAttempt({
-        storage: sessionStorage, key: `mission.launch.request.v1:${options.conversationId}:${options.clientRequestId}`
-      })
-      const launch = await attempt.launch(request)
+      const userMessage = messages.value.find(message => message.role === 'user' && message.workflowClientRequestId === operationId) || pushUserMessage(text)
+      userMessage.workflowClientRequestId = operationId
+      const launch = await attempt.resume(operationId)
       const response = launch.run
-
-      const acgTaskId = response.runId
       const binding: ChatWorkflowBinding = {
-        conversationId: options.conversationId,
-        messageId: String(userMessage.id),
-        missionId: response.missionId,
-        acgTaskId,
-        runId: acgTaskId,
-        workflowId: response.workflowId || options.workflowId,
-        source,
-        clientRequestId: options.clientRequestId,
-        createdAt: new Date().toISOString(),
-        status: response.status
+        conversationId: options.conversationId, messageId: String(userMessage.id), missionId: response.missionId,
+        acgTaskId: response.runId, runId: response.runId, workflowId: response.workflowId || options.workflowId,
+        source, clientRequestId: launch.clientRequestId, createdAt: new Date().toISOString(), status: response.status
       }
       addWorkflowBinding(binding)
-
-      messages.value.push({
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: '已创建 ACG 运行任务',
-        createdAt: new Date(),
-        modelInfo: 'AgentOS Workflow',
-        agentMode: 'default',
-        acgTaskId: binding.acgTaskId,
-        workflowMissionId: binding.missionId,
-        workflowRunId: binding.runId,
-        workflowId: binding.workflowId,
-        workflowStatus: binding.status,
-        workflowClientRequestId: binding.clientRequestId
-      })
+      if (!messages.value.some(message => message.workflowRunId === binding.runId && message.workflowClientRequestId === operationId)) {
+        messages.value.push({
+          id: Date.now() + 1, role: 'assistant', content: '已创建 ACG 运行任务', createdAt: new Date(),
+          modelInfo: 'AgentOS Workflow', agentMode: 'default', acgTaskId: binding.acgTaskId,
+          workflowMissionId: binding.missionId, workflowRunId: binding.runId, workflowId: binding.workflowId,
+          workflowStatus: binding.status, workflowClientRequestId: operationId
+        })
+      }
       emitHistoryRefresh()
+      attempt.complete(operationId)
       return { response, binding, launch }
-    }).finally(() => pendingConversationStarts.delete(options.conversationId))
-    pendingConversationStarts.set(options.conversationId, operation)
+    }).finally(() => pendingConversationStarts.delete(operationId))
+    pendingConversationStarts.set(operationId, operation)
     return operation
   }
 
@@ -764,6 +754,13 @@ export const useChatStore = defineStore('chat', () => {
     text: string,
     options: ConversationWorkflowOptions
   ) => startConversationWorkflow(text, options, 'agent')
+
+  const resumeMissionLaunch = (conversationId: string) => {
+    const identity = pendingMissionLaunch(conversationId)
+    if (!identity) throw new MissionLaunchStateError('RECONCILIATION_REQUIRED', '没有可恢复的会话提交。')
+    return startConversationWorkflow(identity.commandSnapshot.semantics!.objective,
+      { conversationId, clientRequestId: identity.operationId }, identity.commandSnapshot.input?.source === 'agent' ? 'agent' : 'chat')
+  }
 
   const clearHistory = async () => {
     if (contextId.value) {
@@ -895,6 +892,8 @@ export const useChatStore = defineStore('chat', () => {
     cancelMessageStream,
     upgradeToWorkflow,
     startAgentRun,
+    pendingMissionLaunch,
+    resumeMissionLaunch,
     addWorkflowBinding,
     getLatestWorkflowBinding,
     getActiveWorkflowBinding,

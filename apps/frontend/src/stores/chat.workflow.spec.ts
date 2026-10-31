@@ -10,7 +10,8 @@ vi.mock('@/services/api/workflow', async (importOriginal) => {
     workflowApi: {
       ...actual.workflowApi,
       startWorkflow: vi.fn(),
-      startWorkflowAsync: vi.fn()
+      startWorkflowAsync: vi.fn(),
+      reconcileMissionLaunch: vi.fn()
     }
   }
 })
@@ -29,8 +30,9 @@ describe('chat workflow binding', () => {
     localStorage.clear()
     sessionStorage.clear()
     setActivePinia(createPinia())
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     vi.mocked(workflowApi.startWorkflowAsync).mockResolvedValue(acceptedResponse)
+    vi.mocked(workflowApi.reconcileMissionLaunch).mockResolvedValue({ status: 'NOT_FOUND' })
   })
 
   it('starts asynchronously and persists the conversation/message/run binding', async () => {
@@ -155,36 +157,53 @@ describe('chat workflow binding', () => {
     setActivePinia(createPinia())
     const reloaded = useChatStore()
     reloaded.contextId = 'changed-context'
-    const result = await reloaded.upgradeToWorkflow('正式目标', { ...options, execution: { thinkingMode: 'disabled' } })
+    await expect(reloaded.upgradeToWorkflow('正式目标', { ...options, execution: { thinkingMode: 'disabled' } })).rejects.toMatchObject({ code: 'BUSY' })
+    const result = await reloaded.upgradeToWorkflow('正式目标', options)
     expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[1][0]).toEqual(first)
     expect(result?.launch).toEqual({ missionId: acceptedResponse.missionId, runId: acceptedResponse.runId,
       run: acceptedResponse, clientRequestId: 'operation' })
     expect(result?.binding.conversationId).toBe('local-conversation')
   })
 
-  it('coalesces concurrent Chat and Legacy Agent starts before constructing requests or messages', async () => {
+  it('coalesces the same operation but refuses a different Chat/Agent intent in the same Conversation', async () => {
     let resolve: (value: any) => void
     vi.mocked(workflowApi.startWorkflowAsync).mockImplementation(() => new Promise(r => { resolve = r }))
     const store = useChatStore()
     const options = { conversationId: 'conversation', clientRequestId: 'operation' }
     const chat = store.upgradeToWorkflow('目标', options)
-    const agent = store.startAgentRun('目标', options)
+    const repeat = store.upgradeToWorkflow('目标', options)
+    await expect(store.startAgentRun('目标', { ...options, clientRequestId: 'other-operation' })).rejects.toMatchObject({ code: 'BUSY' })
     await vi.waitFor(() => expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1))
     resolve!(acceptedResponse)
-    expect(await chat).toEqual(await agent)
+    expect(await chat).toEqual(await repeat)
     expect(store.messages.filter(m => m.role === 'user')).toHaveLength(1)
     expect(store.messages.filter(m => m.workflowRunId)).toHaveLength(1)
     expect(store.workflowBindings.conversation).toHaveLength(1)
   })
 
-  it('preserves 409 and allows an explicitly new identity without synchronous fallback or a false binding', async () => {
+  it('preserves 409 and blocks new identity until the original operation is reconciled', async () => {
     const error = { response: { status: 409 } }
     vi.mocked(workflowApi.startWorkflowAsync).mockRejectedValueOnce(error).mockResolvedValueOnce(acceptedResponse)
     const store = useChatStore()
     await expect(store.startAgentRun('目标', { conversationId: 'conversation', clientRequestId: 'old' })).rejects.toBe(error)
     expect(store.getLatestWorkflowBinding('conversation')).toBeUndefined()
-    await store.startAgentRun('目标', { conversationId: 'conversation', clientRequestId: 'new' })
-    expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls.map(call => call[0].clientRequestId)).toEqual(['old', 'new'])
+    await expect(store.startAgentRun('目标', { conversationId: 'conversation', clientRequestId: 'new' })).rejects.toMatchObject({ code: 'BUSY' })
+    vi.mocked(workflowApi.reconcileMissionLaunch).mockResolvedValue({ status: 'CREATED', missionId: acceptedResponse.missionId, runId: acceptedResponse.runId, run: acceptedResponse })
+    await store.startAgentRun('目标', { conversationId: 'conversation', clientRequestId: 'old' })
+    expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls.map(call => call[0].clientRequestId)).toEqual(['old'])
     expect(workflowApi.startWorkflow).not.toHaveBeenCalled()
+  })
+  it('refuses policy changes under an unconfirmed Conversation operation, including omitted versus empty scope', async () => {
+    vi.mocked(workflowApi.startWorkflowAsync).mockRejectedValueOnce(new Error('lost'))
+    const store = useChatStore()
+    const options = { conversationId: 'conversation', clientRequestId: 'operation' }
+    await expect(store.upgradeToWorkflow('goal', options)).rejects.toThrow('lost')
+    for (const changed of [{ domain: 'general' }, { reviewMode: 'auto' }, { workflowId: '' }, { enabledPluginIds: [] }, { enabledPluginIds: null }]) {
+      await expect(store.upgradeToWorkflow('goal', { ...options, ...changed })).rejects.toMatchObject({ code: 'BUSY' })
+    }
+    expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1)
+    const result = await store.resumeMissionLaunch('conversation')
+    expect(result?.launch.clientRequestId).toBe('operation')
+    expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[1][0]).toEqual(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0])
   })
 })

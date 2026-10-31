@@ -2424,6 +2424,46 @@ def create_router(
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="semantic access denied") from exc
 
+    @router.post("/mission-launches/reconcile")
+    async def reconcile_mission_launch(request: MissionCreateRequest):
+        """Read caller-scoped creation anchors, including Mission-without-Run.
+
+        The original wire body is hashed by the same server authority as POST
+        missions. No client fingerprint, request contents or other owner's IDs
+        are returned. This endpoint never submits or repairs an execution.
+        """
+        actor = current_trusted_user()
+        if actor is None:
+            raise HTTPException(status_code=401, detail="trusted user context required")
+        if not request.client_request_id or not request.client_request_id.strip():
+            raise HTTPException(status_code=422, detail="clientRequestId is required")
+        key, fingerprint = _idempotency(request)
+        task = runtime.workflow_store.find_mission_by_creation_key(key)
+        run = runtime.workflow_store.find_run_by_idempotency_key(key)
+        # Missing ownership is not an implicit grant for this new lookup API.
+        for record in (task, run):
+            if record is not None and (
+                str(record.input.get("authenticatedUserId") or "") != actor.user_id
+                or str(record.input.get("authenticatedTenantId") or "") != (actor.tenant_id or "")
+            ):
+                return {"status": "NOT_FOUND"}
+        if task is None:
+            return {"status": "REQUIRES_REVIEW" if run is not None else "NOT_FOUND"}
+        if task.creation_fingerprint != fingerprint or (run is not None and run.idempotency_fingerprint != fingerprint):
+            return {"status": "CONFLICT", "missionId": task.mission_id}
+        if task.record_state is not MissionRecordState.ACTIVE or (run is not None and (
+            run.mission_id != task.mission_id or run.record_state is RunRecordState.DELETED
+        )):
+            return {"status": "REQUIRES_REVIEW", "missionId": task.mission_id}
+        if run is None:
+            if request.semantics is not None and getattr(runtime, "mission_semantic_service", None) is not None:
+                receipt = runtime.workflow_store.get_semantic_receipt(task.mission_id, "create:" + key)
+                if receipt is not None and receipt.result.status not in {"COMMITTED", "NO_OP"}:
+                    return {"status": "REQUIRES_REVIEW", "missionId": task.mission_id}
+            return {"status": "CREATING", "missionId": task.mission_id}
+        return {"status": "CREATED", "missionId": task.mission_id, "runId": run.run_id,
+                "run": project_control_run(run)}
+
     @router.post(
         "/missions",
         status_code=status.HTTP_202_ACCEPTED,
@@ -2446,7 +2486,8 @@ def create_router(
                 if existing.record_state is RunRecordState.DELETED:
                     raise HTTPException(status_code=404, detail="run not found")
                 if existing.idempotency_fingerprint != fingerprint:
-                    raise HTTPException(status_code=409, detail="clientRequestId conflict")
+                    raise HTTPException(status_code=409, detail="clientRequestId conflict",
+                                        headers={"X-Mission-Launch-Conflict": "CLIENT_REQUEST_ID_CONFLICT"})
                 if service is not None:
                     require_visible_semantic_mission(service, current_semantic_principal(), existing.mission_id)
                 try:
@@ -2477,7 +2518,8 @@ def create_router(
                     missionId=task.mission_id, operationId="create:" + key,
                     expectedMissionRevision=0, **request.semantics.model_dump()))
                 if result.status not in {"COMMITTED", "NO_OP"}:
-                    raise HTTPException(status_code=409, detail=result.model_dump(by_alias=True, mode="json"))
+                    raise HTTPException(status_code=409, detail=result.model_dump(by_alias=True, mode="json"),
+                                        headers={"X-Mission-Launch-Conflict": "MISSION_SEMANTIC_CONFLICT"})
             _, run = runtime.prepare_run(
                 task.mission_id,
                 semantic_principal=current_semantic_principal(),
@@ -2494,12 +2536,14 @@ def create_router(
             raise HTTPException(
                 status_code=exc.status_code,
                 detail={"code": exc.code, "message": str(exc)},
+                headers={"X-Mission-Launch-Conflict": exc.code} if exc.status_code == 409 else None,
             ) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except (KeyError, ValueError) as exc:
             if str(exc) == "mission creation request conflict":
-                raise HTTPException(status_code=409, detail="clientRequestId conflict") from exc
+                raise HTTPException(status_code=409, detail="clientRequestId conflict",
+                                    headers={"X-Mission-Launch-Conflict": "CLIENT_REQUEST_ID_CONFLICT"}) from exc
             logger.exception(
                 "mission_start_rejected",
                 extra={"errorType": type(exc).__name__},

@@ -16,6 +16,10 @@
           </header>
 
           <form class="create-mission__form" @submit.prevent="submit">
+          <div v-if="pendingLaunch" role="status">
+            已恢复待确认提交；恢复时使用原始目标、材料及附件引用。
+            <button type="button" :disabled="submitting" @click="resumePendingLaunch">核对并恢复原提交</button>
+          </div>
           <div class="create-mission__workspace-body">
           <section class="mission-pane" aria-labelledby="mission-section-title">
             <div class="workspace-pane__heading">
@@ -201,8 +205,8 @@ import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import PluginExtensionHost from '@/features/acg/PluginExtensionHost.vue'
 import { workflowApi } from '@/services/api/workflow'
 import type { InputAttachment } from '@/services/api/agentos'
-import { createNativeWorkbenchDraft, type WorkbenchDraft } from '@/features/acg/workbench'
-import { buildWorkbenchLaunchRequest } from '@/features/mission/request'
+import { createNativeWorkbenchDraft, restoreWorkbenchDraft, type WorkbenchDraft } from '@/features/acg/workbench'
+import { workbenchLaunchCommand } from '@/features/mission/command'
 import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
 import { pluginUiExtensions } from '@/plugins'
 import { apiUrl } from '@/platform'
@@ -523,7 +527,26 @@ const handleDrop = (event: DragEvent) => { attachmentDragging.value = false; add
 const retryAttachment = async (item: AttachmentDraft) => { if (item.attachment) { try { await workflowApi.deleteAttachment(item.attachment.attachmentId) } catch {} item.attachment = undefined }; await uploadAttachment(item) }
 const removeAttachment = async (item: AttachmentDraft) => { attachments.value = attachments.value.filter(candidate => candidate.localId !== item.localId); if (item.attachment) { try { await workflowApi.deleteAttachment(item.attachment.attachmentId) } catch { ElMessage.error('附件删除失败') } } }
 
-const launchAttempt = createMissionLaunchAttempt()
+const launchAttempt = createMissionLaunchAttempt({ slot: 'workbench' })
+const restoredLaunch = launchAttempt.pending()
+const pendingLaunch = ref(restoredLaunch)
+if (restoredLaunch) restoreWorkbenchDraft(draft.value, {
+  runId: '', title: restoredLaunch.commandSnapshot.title,
+  reviewMode: restoredLaunch.commandSnapshot.reviewMode,
+  enabledPluginIds: restoredLaunch.commandSnapshot.enabledPluginIds || [],
+  input: restoredLaunch.commandSnapshot.input
+}, [])
+const resumePendingLaunch = async () => {
+  if (submitting.value || !pendingLaunch.value) return
+  submitting.value = true
+  try {
+    const result = await launchAttempt.resume(pendingLaunch.value.operationId)
+    await router.replace({ name: 'MissionWorkspace', params: { missionId: result.missionId }, query: { runId: result.runId } })
+    launchAttempt.complete(result.clientRequestId)
+    pendingLaunch.value = null
+  } catch (error: any) { errorMessage.value = error?.message || '原提交核对失败，身份已保留。' }
+  finally { submitting.value = false }
+}
 const submit = async () => {
   if (submitting.value) return
   if (!draft.value.taskGoal.trim()) { errorMessage.value = '请输入 Objective'; return }
@@ -540,22 +563,23 @@ const submit = async () => {
   controller?.abort()
   controller = new AbortController()
   try {
-    const request = buildWorkbenchLaunchRequest(
+    const command = workbenchLaunchCommand(
       { ...draft.value, title: draft.value.title.trim() || automaticMissionTitle(draft.value.taskGoal) },
       draftExtensions.value,
-      '',
       {
-        attachmentIds: attachments.value.map(item => item.attachment?.attachmentId).filter((item): item is string => Boolean(item)),
+        attachmentIds: [...(restoredLaunch?.commandSnapshot.attachmentIds || []), ...attachments.value.map(item => item.attachment?.attachmentId).filter((item): item is string => Boolean(item))],
         input: { debugTrace: debugTraceEnabled.value, lowEntropyOptions: provenanceEnabled.value ? ['trace_provenance'] : [] }
       }
     )
     // Once sent, a failed response can still mean the Mission owns these files.
     attachmentsCommitted.value = true
-    const run = await launchAttempt.launch(request, { signal: controller.signal })
+    const run = await launchAttempt.launch(command, { signal: controller.signal })
     await router.replace({ name: 'MissionWorkspace', params: { missionId: run.missionId }, query: { runId: run.runId } })
+    launchAttempt.complete(run.clientRequestId)
   } catch (error: any) {
     if (error?.name === 'CanceledError' || error?.name === 'AbortError') return
     const detail = error?.response?.data?.detail
+    pendingLaunch.value = launchAttempt.pending()
     errorMessage.value = (typeof detail === 'string' ? detail : error?.response?.data?.message) || error?.message || 'Mission 创建失败，请稍后重试。'
     ElMessage.error(errorMessage.value)
   } finally {

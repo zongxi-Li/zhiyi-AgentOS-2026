@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { workflowApi } from '@/services/api/workflow'
 import CreateMissionView from './CreateMissionView.vue'
 
@@ -13,7 +13,8 @@ vi.mock('@/services/api/workflow', async importOriginal => {
       createMaterial: vi.fn(),
       uploadAttachment: vi.fn(),
       deleteAttachment: vi.fn(),
-      startWorkflowAsync: vi.fn()
+      startWorkflowAsync: vi.fn(),
+      reconcileMissionLaunch: vi.fn()
     }
   }
 })
@@ -23,6 +24,10 @@ const workbenchLayoutStub = {
 }
 
 describe('CreateMissionView', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    vi.mocked(workflowApi.reconcileMissionLaunch).mockResolvedValue({ status: 'NOT_FOUND' })
+  })
   afterEach(() => vi.resetAllMocks())
 
   it('retries creation with the same request identity and complete semantic payload', async () => {
@@ -71,6 +76,32 @@ describe('CreateMissionView', () => {
     await flushPromises()
     expect(router.currentRoute.value.params.missionId).toBe('mission_unique')
     wrapper.unmount()
+  })
+
+  it('restores an unknown submission after unmount and reuses its Material and exact wire snapshot', async () => {
+    vi.mocked(workflowApi.createMaterial).mockResolvedValue({ manifestId: 'original-material' } as any)
+    vi.mocked(workflowApi.startWorkflowAsync).mockRejectedValueOnce(new Error('lost acceptance')).mockResolvedValueOnce({ missionId: 'restored-mission', runId: 'restored-run', status: 'pending' } as any)
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/new', name: 'CreateMission', component: CreateMissionView },
+      { path: '/missions/:missionId', name: 'MissionWorkspace', component: { template: '<div />' } }
+    ] })
+    await router.push('/new'); await router.isReady()
+    const options = { global: { plugins: [router], stubs: { WorkbenchLayout: workbenchLayoutStub, PluginExtensionHost: true } } }
+    const first = mount(CreateMissionView, options)
+    await first.find('#mission-goal').setValue('恢复原始提交')
+    ;(first.vm as any).draft.materialText = '必须复用的材料'
+    await first.find('form').trigger('submit'); await flushPromises()
+    const original = vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0]
+    first.unmount()
+    const restored = mount(CreateMissionView, options)
+    expect((restored.find('#mission-goal').element as HTMLTextAreaElement).value).toBe('恢复原始提交')
+    await restored.findAll('button').find(button => button.text() === '核对并恢复原提交')!.trigger('click')
+    await flushPromises()
+    expect(workflowApi.reconcileMissionLaunch).toHaveBeenCalledWith(original, undefined)
+    expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[1][0]).toEqual(original)
+    expect(workflowApi.createMaterial).toHaveBeenCalledTimes(1)
+    expect(router.currentRoute.value.params.missionId).toBe('restored-mission')
+    restored.unmount()
   })
 
   it('renders the mission launcher arrangement and restores runtime settings', async () => {

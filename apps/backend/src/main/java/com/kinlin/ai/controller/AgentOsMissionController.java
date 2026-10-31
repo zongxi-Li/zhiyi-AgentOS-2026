@@ -46,6 +46,12 @@ public class AgentOsMissionController {
         ));
     }
 
+    @PostMapping("/mission-launches/reconcile")
+    public ResponseEntity<Map<String, Object>> reconcileMissionLaunch(
+            @Valid @RequestBody AgentOsMissionCreateRequest body) {
+        return AgentOsControllerSupport.response(gateway.post(AgentOsPaths.missionLaunchReconciliation(), body));
+    }
+
     @PostMapping("/missions/{missionId}/workspace/file")
     public ResponseEntity<Map<String, Object>> saveWorkspaceFile(
             @PathVariable String missionId, @RequestBody Map<String, Object> body) {

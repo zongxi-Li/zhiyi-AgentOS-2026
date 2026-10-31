@@ -22,6 +22,7 @@
         </div>
       </div>
       <div class="hero-right">
+        <button v-if="pendingInitialLaunch" type="button" :disabled="isSubmitting" @click="resumeInitialLaunch">核对并恢复原提交</button>
         <span v-if="displayedMissionId" class="hero-run-chip" :title="`任务 ID: ${displayedMissionId}`">
           <span>任务 ID</span>
           <code>{{ displayedMissionId }}</code>
@@ -555,6 +556,7 @@ import WorkbenchVerticalSplit from '@/components/workbench/WorkbenchVerticalSpli
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { createMissionLaunchAttempt } from '@/features/mission/launchAttempt'
+import { legacyAcgLaunchCommand } from '@/features/mission/command'
 import type { ThinkingMode } from '@/config/modelSettings'
 import { fileApi } from '@/services/api/file'
 import { buildAcgAuditCsv, buildAcgAuditExport } from '@/utils/acgAuditExport'
@@ -1512,7 +1514,25 @@ const exportAudit = (format: 'json' | 'csv') => {
   ElMessage.success(`ACG 审计 ${format.toUpperCase()} 已导出`)
 }
 
-const missionLaunchAttempt = createMissionLaunchAttempt()
+const missionLaunchAttempt = createMissionLaunchAttempt({ slot: 'legacy-acg' })
+const restoredInitialLaunch = missionLaunchAttempt.pending()
+const pendingInitialLaunch = ref(restoredInitialLaunch)
+if (restoredInitialLaunch && !route.query.runId) restoreWorkbenchDraft(draft, {
+  runId: '', title: restoredInitialLaunch.commandSnapshot.title,
+  reviewMode: restoredInitialLaunch.commandSnapshot.reviewMode,
+  enabledPluginIds: restoredInitialLaunch.commandSnapshot.enabledPluginIds || [], input: restoredInitialLaunch.commandSnapshot.input
+}, [])
+const resumeInitialLaunch = async () => {
+  if (isSubmitting.value || !pendingInitialLaunch.value) return
+  isSubmitting.value = true
+  try {
+    const result = await missionLaunchAttempt.resume(pendingInitialLaunch.value.operationId)
+    await router.replace({ query: { ...route.query, runId: result.runId } })
+    missionLaunchAttempt.complete(result.clientRequestId)
+    pendingInitialLaunch.value = null
+  } catch (error) { startError.value = startErrorMessage(error) }
+  finally { isSubmitting.value = false }
+}
 const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
   if (isSubmitting.value) return
   if (!taskName.value.trim()) {
@@ -1547,14 +1567,19 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
   terminalNotificationRunId = null
   try {
     const clientRequestId = rerunReason ? createClientRequestId() : ''
-    const request = buildWorkbenchStartRequest(draft, draftExtensions.value, clientRequestId)
+    const initialCommand = rerunReason ? null : legacyAcgLaunchCommand(draft, draftExtensions.value, {
+      attachmentIds: restoredInitialLaunch?.commandSnapshot.attachmentIds,
+      materialRefs: restoredInitialLaunch?.commandSnapshot.materialRefs,
+      input: { taskName: taskName.value.trim(), debugTrace: debugTraceEnabled.value, lowEntropyOptions: [...lowEntropyOptions.value] }
+    })
+    const request = initialCommand?.request || buildWorkbenchStartRequest(draft, draftExtensions.value, clientRequestId)
     const requestInput: Record<string, unknown> = {
       ...request.input,
       taskName: taskName.value.trim(),
       debugTrace: debugTraceEnabled.value,
       lowEntropyOptions: [...lowEntropyOptions.value]
     }
-    request.input = requestInput
+    if (rerunReason) request.input = requestInput
     const material = String(request.input.materialText || '')
     if (material && rerunReason) {
       const manifest = await workflowApi.createMaterial(material, 'text/plain')
@@ -1572,7 +1597,7 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
           sourceRunId,
           rerunReason
         }, { signal: submitController.signal })
-      : (await missionLaunchAttempt.launch(request, { signal: submitController.signal })).run
+      : (await missionLaunchAttempt.launch(initialCommand!, { signal: submitController.signal })).run
     activeRunId.value = res.runId
     ensureEditorTab(res.runId, request.title, res.status)
     draftEditorTabOpen.value = false
@@ -1592,8 +1617,13 @@ const startRun = async (rerunReason?: WorkflowRerunRequest['rerunReason']) => {
     // 提交成功立即拉取一次图与资源详情，运行中再由进度 watcher 按 8s 节奏续刷。
     void refreshAcgForRun(res.runId, true)
     await router.replace({ query: { ...route.query, runId: res.runId } })
+    if (!rerunReason) {
+      const pending = missionLaunchAttempt.pending()
+      if (pending) missionLaunchAttempt.complete(pending.operationId)
+    }
   } catch (error: unknown) {
     if (axios.isCancel(error)) return
+    pendingInitialLaunch.value = missionLaunchAttempt.pending()
     startError.value = startErrorMessage(error)
   } finally {
     isSubmitting.value = false

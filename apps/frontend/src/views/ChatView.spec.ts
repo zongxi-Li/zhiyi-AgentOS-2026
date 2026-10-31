@@ -60,6 +60,8 @@ function createChatStoreMock() {
     workflowBindings: bindings,
     upgradeToWorkflow: vi.fn(),
     startAgentRun: vi.fn(),
+    pendingMissionLaunch: vi.fn(() => null),
+    resumeMissionLaunch: vi.fn(),
     getActiveWorkflowBinding: vi.fn((conversationId: string) =>
       [...(bindings[conversationId] || [])].reverse().find(item => !['completed', 'failed', 'cancelled'].includes(item.status))
     ),
@@ -343,9 +345,7 @@ describe('ChatView ACG progress integration', () => {
     expect(chatStoreMock.startAgentRun).toHaveBeenCalledWith(
       '制定一个跨部门产品发布计划',
       expect.objectContaining({
-        domain: 'general',
-        intent: 'general',
-        reviewMode: 'auto'
+        policyProfile: 'conversation-workspace'
       })
     )
     wrapper.unmount()
@@ -361,6 +361,18 @@ describe('ChatView ACG progress integration', () => {
     expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+  it('restores a pending Conversation goal and explicitly resumes through the Store without inventing an operation ID', async () => {
+    chatStoreMock.pendingMissionLaunch.mockReturnValue({ operationId: 'original', commandSnapshot: { semantics: { objective: '恢复原需求' } } } as any)
+    chatStoreMock.resumeMissionLaunch.mockResolvedValue({ binding: binding('conversation_1', 'run_1') })
+    const { wrapper, router } = await mountPage()
+    expect((wrapper.get('.composer-card textarea').element as HTMLTextAreaElement).value).toBe('恢复原需求')
+    await wrapper.findAll('button').find(button => button.text() === '核对并恢复原提交')!.trigger('click')
+    await flushPromises()
+    expect(chatStoreMock.resumeMissionLaunch).toHaveBeenCalledWith('conversation_1')
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.query.runId).toBe('run_1')
+    wrapper.unmount()
+  })
 
   afterEach(() => {
     vi.restoreAllMocks()
@@ -372,8 +384,7 @@ describe('ChatView ACG progress integration', () => {
     await setInputAndUpgrade(wrapper)
 
     expect(chatStoreMock.startAgentRun).toHaveBeenCalledWith('请升级为 ACG', expect.objectContaining({
-      conversationId: 'conversation_1',
-      clientRequestId: expect.any(String)
+      conversationId: 'conversation_1'
     }))
     expect(workflowApi.startWorkflow).not.toHaveBeenCalled()
     expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run_1', expect.objectContaining({ signal: expect.any(AbortSignal) }))
@@ -431,13 +442,13 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage()
     await setInputAndUpgrade(wrapper)
 
-    expect(wrapper.text()).toContain('本次请求标识与原任务参数冲突')
+    expect(wrapper.text()).toContain('本次提交发生冲突，已保留原身份')
     expect(workflowApi.startWorkflow).not.toHaveBeenCalled()
     expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('reuses clientRequestId when a temporarily unavailable submission is retried', async () => {
+  it('delegates identity management to the Store when a temporarily unavailable submission is retried', async () => {
     chatStoreMock.startAgentRun
       .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503 } })
       .mockResolvedValueOnce({
@@ -456,7 +467,9 @@ describe('ChatView ACG progress integration', () => {
 
     await setInputAndUpgrade(wrapper, '可恢复提交')
     const secondRequestId = chatStoreMock.startAgentRun.mock.calls[1][1].clientRequestId
-    expect(secondRequestId).toBe(firstRequestId)
+    expect(secondRequestId).toBeUndefined()
+    expect(firstRequestId).toBeUndefined()
+    expect(chatStoreMock.startAgentRun).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 
