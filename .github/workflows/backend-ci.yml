@@ -18,7 +18,7 @@ concurrency:
 jobs:
   backend-gate:
     name: backend test + package gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -37,14 +37,21 @@ jobs:
       # runner 只需要本机二进制（不再使用 Testcontainers / Docker daemon）。
       - name: Install native PostgreSQL/Redis test services
         run: |
+          # 保留 PostgreSQL 15.x 测试合同；不用发行版默认 major 或最高版本目录。
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          sudo apt-get install -y postgresql redis-server
-          PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n1)"
+          sudo apt-get install -y postgresql-15 postgresql-client-15 redis-server
+          PG_BIN=/usr/lib/postgresql/15/bin
           test -x "$PG_BIN/initdb"
           test -x "$PG_BIN/postgres"
           test -x "$(command -v redis-server)"
           echo "ZHIYI_PG_BIN=$PG_BIN" >> "$GITHUB_ENV"
-          "$PG_BIN/initdb" --version
+          for tool in initdb postgres pg_ctl; do
+            "$PG_BIN/$tool" --version | grep -E '\(PostgreSQL\) 15\.'
+          done
+          apt-cache policy postgresql-15 postgresql-client-15 redis-server
           redis-server --version
 
       # Required test gate：unit + architecture guard + 自管 PostgreSQL/Redis

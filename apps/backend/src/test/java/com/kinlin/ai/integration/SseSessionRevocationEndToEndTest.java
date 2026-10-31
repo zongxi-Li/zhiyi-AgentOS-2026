@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,8 +34,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
+import reactor.core.publisher.SignalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * INT-2F-4B：真实网络 SSE 会话撤销端到端（生产参数 3s/1s/5s）。
@@ -51,6 +57,8 @@ class SseSessionRevocationEndToEndTest {
     private static HttpServer upstream;
     private static ExecutorService upstreamExecutor;
     private static final AtomicLong SEQUENCE = new AtomicLong();
+    private static final Map<String, CountDownLatch> UPSTREAM_CLOSED = new ConcurrentHashMap<>();
+    private final List<StreamSubscription> openedStreams = new CopyOnWriteArrayList<>();
 
     @LocalServerPort
     private int port;
@@ -68,6 +76,8 @@ class SseSessionRevocationEndToEndTest {
         upstream.setExecutor(upstreamExecutor);
         // 受控事件源：每 200ms 一条带唯一序号的受保护事件（持续到客户端断开）
         upstream.createContext("/", exchange -> {
+            CountDownLatch closed = UPSTREAM_CLOSED.computeIfAbsent(
+                    exchange.getRequestURI().getPath(), ignored -> new CountDownLatch(1));
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, 0);
             try (OutputStream out = exchange.getResponseBody()) {
@@ -80,6 +90,8 @@ class SseSessionRevocationEndToEndTest {
                 }
             } catch (Exception disconnect) {
                 // Java 网关撤销后取消上游订阅：正常断开
+            } finally {
+                closed.countDown();
             }
         });
         upstream.start();
@@ -126,26 +138,82 @@ class SseSessionRevocationEndToEndTest {
     private record StreamSubscription(
             List<ServerSentEvent<String>> received,
             CountDownLatch invalidated,
+            CountDownLatch terminated,
+            AtomicReference<SignalType> terminalSignal,
+            AtomicReference<Throwable> failure,
+            String upstreamPath,
             Disposable subscription) {
     }
 
     /** 打开真实 SSE 流并持续收集事件；invalidated latch 在收到终止事件时放开。 */
-    private StreamSubscription openStream(Account account, String runId) {
+    private StreamSubscription openStream(Account account, String runId) throws InterruptedException {
         List<ServerSentEvent<String>> received = new CopyOnWriteArrayList<>();
         CountDownLatch invalidated = new CountDownLatch(1);
+        CountDownLatch connected = new CountDownLatch(1);
+        CountDownLatch terminated = new CountDownLatch(1);
+        AtomicReference<SignalType> terminalSignal = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        String upstreamPath = "/ai/agentos/v2/runs/" + runId + "/events";
+        UPSTREAM_CLOSED.put(upstreamPath, new CountDownLatch(1));
         Disposable subscription = client().get()
                 .uri("/api/agentos/v2/runs/" + runId + "/events")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + account.token())
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .retrieve()
                 .bodyToFlux(new org.springframework.core.ParameterizedTypeReference<ServerSentEvent<String>>() { })
+                .doFinally(signal -> {
+                    terminalSignal.set(signal);
+                    terminated.countDown();
+                    connected.countDown();
+                })
                 .subscribe(event -> {
                     received.add(event);
+                    if ("model.output.delta".equals(event.event())) {
+                        connected.countDown();
+                    }
                     if ("auth.invalidated".equals(event.event())) {
                         invalidated.countDown();
                     }
-                });
-        return new StreamSubscription(received, invalidated, subscription);
+                }, failure::set);
+        StreamSubscription stream = new StreamSubscription(received, invalidated, terminated,
+                terminalSignal, failure, upstreamPath, subscription);
+        openedStreams.add(stream);
+        assertThat(connected.await(10, TimeUnit.SECONDS)).as("必须先建立真实 SSE 并交付受保护事件").isTrue();
+        assertThat(failure.get()).as("建连不得被 401 或其它错误替代").isNull();
+        assertThat(received).anyMatch(event -> "model.output.delta".equals(event.event()));
+        return stream;
+    }
+
+    @AfterEach
+    void closeEveryOpenedStreamAndAwaitGatewayRelease() throws InterruptedException {
+        openedStreams.forEach(stream -> stream.subscription().dispose());
+        for (StreamSubscription stream : openedStreams) {
+            assertThat(stream.terminated().await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(stream.failure().get()).isNull();
+        }
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            assertThat(activeStreams()).isZero();
+            assertThat(counter("opened")).isEqualTo(counter("completed") + counter("cancelled"));
+        });
+        for (StreamSubscription stream : openedStreams) {
+            assertThat(UPSTREAM_CLOSED.remove(stream.upstreamPath()).await(5, TimeUnit.SECONDS))
+                    .as("网关结束后必须关闭对应上游 HTTP 流").isTrue();
+        }
+    }
+
+    private double activeStreams() {
+        return meterRegistry.get("kinlin.sse.streams.active").gauge().value();
+    }
+
+    private double counter(String suffix) {
+        return meterRegistry.find("kinlin.sse.streams." + suffix).counters()
+                .stream().mapToDouble(counter -> counter.count()).sum();
+    }
+
+    private void awaitCompletion(StreamSubscription stream) throws InterruptedException {
+        assertThat(stream.terminated().await(10, TimeUnit.SECONDS)).as("终止事件之后必须完成 HTTP 流").isTrue();
+        assertThat(stream.failure().get()).isNull();
+        assertThat(stream.terminalSignal().get()).isEqualTo(SignalType.ON_COMPLETE);
     }
 
     private static String lastEventName(List<ServerSentEvent<String>> received) {
@@ -158,10 +226,8 @@ class SseSessionRevocationEndToEndTest {
         StreamSubscription stream = openStream(account, UUID.randomUUID().toString());
 
         // 撤销前：真实受保护事件持续交付
-        long deadline = System.currentTimeMillis() + 10_000;
-        while (stream.received().size() < 3 && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50);
-        }
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(stream.received()).hasSizeGreaterThanOrEqualTo(3));
         assertThat(stream.received()).hasSizeGreaterThanOrEqualTo(3);
 
         long logoutStartedAt = System.nanoTime();
@@ -172,8 +238,7 @@ class SseSessionRevocationEndToEndTest {
                 .as("撤销后必须收到终止事件").isTrue();
         long elapsedMs = (System.nanoTime() - logoutStartedAt) / 1_000_000;
         int invalidatedIndex = stream.received().size() - 1;
-        Thread.sleep(500); // 宽限一个事件周期，确认没有新受保护事件跟上
-        stream.subscription().dispose();
+        awaitCompletion(stream);
 
         assertThat(elapsedMs).as("撤销→终止真实耗时必须 ≤5000ms").isLessThanOrEqualTo(5_000);
         System.out.println("[INT-2F-4B] real-network revocation→invalidated elapsedMs=" + elapsedMs);
@@ -209,11 +274,6 @@ class SseSessionRevocationEndToEndTest {
         StreamSubscription aliceStream = openStream(alice, UUID.randomUUID().toString());
         StreamSubscription bobStream = openStream(bob, UUID.randomUUID().toString());
 
-        long deadline = System.currentTimeMillis() + 10_000;
-        while ((aliceStream.received().isEmpty() || bobStream.received().isEmpty())
-                && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50);
-        }
         assertThat(aliceStream.received()).isNotEmpty();
         assertThat(bobStream.received()).isNotEmpty();
         int bobBefore = bobStream.received().size();
@@ -221,7 +281,10 @@ class SseSessionRevocationEndToEndTest {
         logout(alice);
 
         assertThat(aliceStream.invalidated().await(15, TimeUnit.SECONDS)).isTrue();
-        Thread.sleep(1_500); // 覆盖一个复核周期：Bob 的流必须继续交付
+        awaitCompletion(aliceStream);
+        // 等待至少 8 条实际事件（源每 200ms 一条），而不是固定休眠后猜测连接状态。
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(bobStream.received().size()).isGreaterThanOrEqualTo(bobBefore + 8));
         int bobAfter = bobStream.received().size();
         aliceStream.subscription().dispose();
         bobStream.subscription().dispose();
@@ -233,22 +296,37 @@ class SseSessionRevocationEndToEndTest {
     @Test
     void repeatedCancelsAndClosesDoNotLeakActiveStreams() throws Exception {
         Account account = register();
-        double activeBefore = meterRegistry.find("kinlin.sse.streams.active").gauge() == null
-                ? 0.0 : meterRegistry.find("kinlin.sse.streams.active").gauge().value();
+        double activeBefore = activeStreams();
+        assertThat(activeBefore).isZero();
+        double openedBefore = counter("opened");
+        double completedBefore = counter("completed");
+        double cancelledBefore = counter("cancelled");
 
         StreamSubscription first = openStream(account, UUID.randomUUID().toString());
         StreamSubscription second = openStream(account, UUID.randomUUID().toString());
         StreamSubscription third = openStream(account, UUID.randomUUID().toString());
+        assertThat(activeStreams()).isEqualTo(activeBefore + 3);
+        assertThat(counter("opened")).isEqualTo(openedBefore + 3);
 
         // 多种终止方式：客户端 cancel ×2 + 服务端撤销 ×1
         first.subscription().dispose();
+        first.subscription().dispose();
         second.subscription().dispose();
+        second.subscription().dispose();
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            assertThat(counter("cancelled")).isEqualTo(cancelledBefore + 2);
+            assertThat(activeStreams()).isEqualTo(activeBefore + 1);
+        });
         logout(account);
         assertThat(third.invalidated().await(15, TimeUnit.SECONDS)).isTrue();
-        Thread.sleep(300);
+        awaitCompletion(third);
 
-        double activeAfter = meterRegistry.find("kinlin.sse.streams.active").gauge().value();
         // 所有流终结后 active gauge 必须回落（订阅/信号双路径不重复扣减、不残留）
-        assertThat(activeAfter).as("active streams 应回到撤销前水位").isLessThanOrEqualTo(activeBefore);
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            assertThat(activeStreams()).as("active streams 应精确回到撤销前水位").isEqualTo(activeBefore);
+            assertThat(counter("completed")).isEqualTo(completedBefore + 1);
+            assertThat(counter("cancelled")).isEqualTo(cancelledBefore + 2);
+        });
+        assertThat(third.received()).filteredOn(event -> "auth.invalidated".equals(event.event())).hasSize(1);
     }
 }

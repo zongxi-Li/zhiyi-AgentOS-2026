@@ -3,9 +3,11 @@ package com.kinlin.ai.integration;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.ServerSocket;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -18,6 +20,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.regex.Pattern;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
@@ -63,46 +66,61 @@ public final class NativePostgres implements AutoCloseable {
     }
 
     public static NativePostgres start(String database, String username, String password) {
+        return start(database, username, password, null);
+    }
+
+    /** 测试可把临时实例放在独立父目录，仍只创建/删除本方法自己的随机子目录。 */
+    static NativePostgres start(String database, String username, String password, Path temporaryParent) {
         Path bin;
         try {
             bin = locateBin();
+            verifyBinaryVersions(bin);
         } catch (RuntimeException failure) {
             throw new IllegalStateException(
                     "BLOCKED_BY_PG: 找不到 PostgreSQL 15.x 本机二进制（测试自管临时实例）。"
                             + "设置 ZHIYI_PG_BIN 指向 bin 目录，或运行 prepare_persistent_dependencies.py / "
-                            + "在 CI 安装 postgresql。原因: " + failure.getMessage(),
+                            + "在 CI 安装 postgresql-15。原因: " + failure.getMessage(),
                     failure);
         }
         Path root;
         try {
-            root = Files.createTempDirectory("kinlin-pg-it-");
+            root = temporaryParent == null ? Files.createTempDirectory("kinlin-pg-it-")
+                    : Files.createTempDirectory(temporaryParent, "kinlin-pg-it-");
         } catch (IOException failure) {
             throw new IllegalStateException("BLOCKED_BY_PG: 无法创建 PostgreSQL 临时目录", failure);
         }
-        int port = freePort();
         NativePostgres instance = null;
         try {
+            int port = freePort();
             initdb(bin, root, username);
             Process process = startServer(bin, root, port);
             instance = new NativePostgres(bin, root, port, username, password, database, process);
             instance.awaitReady();
+            instance.serverVersion = instance.queryPostgresVersion();
+            requirePostgres15(instance.serverVersion);
             instance.createDatabase(database);
             Runtime.getRuntime().addShutdownHook(
                     new Thread(instance::closeQuietly, "native-pg-test-cluster-stop"));
             return instance;
         } catch (IOException failure) {
-            if (instance != null) {
-                instance.close();
-            }
-            deleteRecursively(root);
+            cleanupFailedStart(instance, root, failure);
             throw new IllegalStateException("BLOCKED_BY_PG: PostgreSQL 临时实例启动失败: "
                     + failure.getMessage(), failure);
         } catch (RuntimeException failure) {
+            cleanupFailedStart(instance, root, failure);
+            throw failure;
+        }
+    }
+
+    private static void cleanupFailedStart(NativePostgres instance, Path root, Exception failure) {
+        try {
             if (instance != null) {
                 instance.close();
+            } else {
+                deleteRecursively(root);
             }
-            deleteRecursively(root);
-            throw failure;
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
         }
     }
 
@@ -194,36 +212,41 @@ public final class NativePostgres implements AutoCloseable {
         try (Connection connection = DriverManager.getConnection(jdbcUrl("postgres"), username, password);
              Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("SHOW server_version")) {
-            return result.next() ? result.getString(1) : "15.x";
+            if (!result.next()) {
+                throw new IllegalStateException("BLOCKED_BY_PG: 未获得真实 server_version");
+            }
+            return result.getString(1);
         } catch (SQLException failure) {
-            return "15.x";
+            throw new IllegalStateException("BLOCKED_BY_PG: 无法验证真实 server_version", failure);
         }
     }
 
     private void stopServer() {
         Path pgCtl = executable(bin, "pg_ctl");
+        Process stop = null;
         try {
-            Process stop = new ProcessBuilder(pgCtl.toString(), "-D", root.resolve("data").toString(),
+            stop = new ProcessBuilder(pgCtl.toString(), "-D", root.resolve("data").toString(),
                     "stop", "-m", "fast", "-w", "-t", "30")
                     .redirectErrorStream(true)
                     .redirectOutput(root.resolve("stop.log").toFile())
                     .start();
-            stop.waitFor();
+            stop.waitFor(35, TimeUnit.SECONDS);
         } catch (IOException | InterruptedException ignored) {
             if (ignored instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
+        } finally {
+            if (stop != null && stop.isAlive()) {
+                terminateOwnedProcess(stop);
+            }
         }
         try {
             if (!process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) {
-                process.destroy();
-                if (!process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                }
+                terminateOwnedProcess(process);
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            process.destroyForcibly();
+            terminateOwnedProcess(process);
         }
     }
 
@@ -243,28 +266,48 @@ public final class NativePostgres implements AutoCloseable {
                 .redirectOutput(log.toFile())
                 .start();
         try {
-            if (initdb.waitFor() != 0) {
+            if (!initdb.waitFor(STARTUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IOException("initdb 启动超时。\n" + tail(log));
+            }
+            if (initdb.exitValue() != 0) {
                 throw new IOException("initdb 退出码 " + initdb.exitValue() + "。\n" + tail(log));
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IOException("initdb 被中断", interrupted);
+        } finally {
+            if (initdb.isAlive()) {
+                terminateOwnedProcess(initdb);
+            }
         }
     }
 
     private static Process startServer(Path bin, Path root, int port) throws IOException {
-        List<String> command = List.of(
+        if (!WINDOWS) {
+            Files.createDirectory(root.resolve("socket"),
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        }
+        return new ProcessBuilder(serverCommand(bin, root, port, WINDOWS))
+                .redirectErrorStream(true)
+                .redirectOutput(root.resolve("postgres.log").toFile())
+                .start();
+    }
+
+    static List<String> serverCommand(Path bin, Path root, int port, boolean windows) {
+        List<String> command = new ArrayList<>(List.of(
                 executable(bin, "postgres").toString(),
                 "-D", root.resolve("data").toString(),
                 "-p", Integer.toString(port),
                 "-c", "listen_addresses=127.0.0.1",
                 "-c", "fsync=off",
                 "-c", "synchronous_commit=off",
-                "-c", "full_page_writes=off");
-        return new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .redirectOutput(root.resolve("postgres.log").toFile())
-                .start();
+                "-c", "full_page_writes=off"));
+        if (!windows) {
+            // GUC 列表中的双引号保护临时父路径中的空格、逗号。
+            String socket = root.resolve("socket").toAbsolutePath().toString().replace("\"", "\"\"");
+            command.addAll(List.of("-c", "unix_socket_directories=\"" + socket + "\""));
+        }
+        return command;
     }
 
     /**
@@ -287,34 +330,75 @@ public final class NativePostgres implements AutoCloseable {
         String localAppData = System.getenv("LOCALAPPDATA");
         if (WINDOWS && localAppData != null && !localAppData.isBlank()) {
             Path dependencies = Path.of(localAppData, "ZhiyiNative", "dependencies");
-            Path found = newestChild(dependencies, "postgresql-").map(path -> path.resolve("pgsql").resolve("bin"))
+            Path found = newestChild(dependencies, "postgresql-15.").map(path -> path.resolve("pgsql").resolve("bin"))
                     .filter(NativePostgres::isUsableBin).orElse(null);
             if (found != null) {
                 return found.toAbsolutePath();
             }
         }
 
-        Path aptRoot = Path.of("/usr/lib/postgresql");
-        if (Files.isDirectory(aptRoot)) {
-            try (Stream<Path> versions = Files.list(aptRoot)) {
-                Optional<Path> found = versions.filter(Files::isDirectory)
-                        .sorted(Comparator.comparing((Path path) -> path.getFileName().toString()).reversed())
-                        .map(path -> path.resolve("bin"))
-                        .filter(NativePostgres::isUsableBin)
-                        .findFirst();
-                if (found.isPresent()) {
-                    return found.get().toAbsolutePath();
-                }
-            } catch (IOException ignored) {
-                // fall through to PATH
-            }
+        Path aptRoot = Path.of("/usr/lib/postgresql/15/bin");
+        if (isUsableBin(aptRoot)) {
+            return aptRoot.toAbsolutePath();
         }
-
+        // 不从其它 major 目录回退到“最高版本”；PATH 候选仍需验证真实版本。
         Path onPath = findOnPath(executableName("postgres"));
         if (onPath != null && isUsableBin(onPath.getParent())) {
             return onPath.getParent().toAbsolutePath();
         }
-        throw new IllegalStateException("未发现 PostgreSQL bin 目录（检查 ZHIYI_PG_BIN 或安装 postgresql）");
+        throw new IllegalStateException("未发现 PostgreSQL 15.x bin 目录（检查 ZHIYI_PG_BIN 或安装 postgresql-15）");
+    }
+
+    static void requirePostgres15(String version) {
+        var match = Pattern.compile("(?:\\(PostgreSQL\\)\\s+|^)(\\d+)\\.").matcher(version);
+        if (!match.find() || !"15".equals(match.group(1))) {
+            throw new IllegalStateException("BLOCKED_BY_PG: 需要 PostgreSQL 15.x，实际版本: " + version);
+        }
+    }
+
+    private static void verifyBinaryVersions(Path bin) {
+        for (String tool : List.of("initdb", "postgres", "pg_ctl")) {
+            Process version = null;
+            try {
+                version = new ProcessBuilder(executable(bin, tool).toString(), "--version")
+                        .redirectErrorStream(true).start();
+                if (!version.waitFor(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("BLOCKED_BY_PG: " + tool + " --version 超时");
+                }
+                String output = new String(version.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (version.exitValue() != 0) {
+                    throw new IllegalStateException("BLOCKED_BY_PG: " + tool + " --version 失败: " + output);
+                }
+                requirePostgres15(output);
+            } catch (IOException failure) {
+                throw new UncheckedIOException(failure);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("BLOCKED_BY_PG: 版本检查被中断", interrupted);
+            } finally {
+                if (version != null && version.isAlive()) {
+                    terminateOwnedProcess(version);
+                }
+            }
+        }
+    }
+
+    private static void terminateOwnedProcess(Process process) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            process.descendants().forEach(child -> child.destroyForcibly());
+            process.destroyForcibly();
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("BLOCKED_BY_PG: 测试子进程未能终止，pid=" + process.pid());
+            }
+        } catch (InterruptedException failure) {
+            interrupted = true;
+            throw new IllegalStateException("BLOCKED_BY_PG: 等待测试子进程终止被中断", failure);
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static Optional<Path> newestChild(Path directory, String prefix) {
@@ -363,8 +447,9 @@ public final class NativePostgres implements AutoCloseable {
     }
 
     private static int freePort() {
-        try (ServerSocket socket = new ServerSocket(0)) {
+        try (ServerSocket socket = new ServerSocket()) {
             socket.setReuseAddress(false);
+            socket.bind(new InetSocketAddress("127.0.0.1", 0));
             return socket.getLocalPort();
         } catch (IOException failure) {
             throw new IllegalStateException("BLOCKED_BY_PG: 无法分配 loopback 端口", failure);

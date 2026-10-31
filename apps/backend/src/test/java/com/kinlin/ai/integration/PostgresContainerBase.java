@@ -29,7 +29,7 @@ public abstract class PostgresContainerBase {
             throw new IllegalStateException(
                     "BLOCKED_BY_PG: PostgreSQL 持久化契约测试需要本机 PostgreSQL 15.x 真实例"
                             + "（测试自管临时实例，已移除容器化测试基座）。请设置 ZHIYI_PG_BIN 指向 PostgreSQL bin 目录，"
-                            + "或运行 prepare_persistent_dependencies.py 准备 N03 同源依赖包 / 在 CI 安装 postgresql。"
+                            + "或运行 prepare_persistent_dependencies.py 准备 N03 同源依赖包 / 在 CI 安装 postgresql-15。"
                             + "本失败是显式失败，不是静默 skip。原因: " + failure.getMessage(),
                     failure);
         }
