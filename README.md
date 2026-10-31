@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brand/wreath-light.png" width="220" alt="知弈 AgentOS 花环标识">
+  <img src="docs/assets/brand/logo.png" width="220" alt="知弈 AgentOS 花环标识">
 </p>
 
 <p align="center">
