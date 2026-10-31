@@ -1,7 +1,8 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { createWebHistory, createRouter, type Router } from 'vue-router'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppTopBar from './AppTopBar.vue'
+import { installCommandKeybindings } from '@/workbench/core/commands'
 
 const platformState = vi.hoisted(() => ({ desktop: false }))
 
@@ -57,6 +58,16 @@ const mountTopBar = async (props: Record<string, unknown> = {}): Promise<{ wrapp
 }
 
 describe('AppTopBar', () => {
+  let disposeKeybindings: (() => void) | null = null
+  beforeEach(() => {
+    // Ctrl/Cmd+K 由命令表派发，组件只负责注册命令。
+    disposeKeybindings = installCommandKeybindings()
+  })
+  afterEach(() => {
+    disposeKeybindings?.()
+    disposeKeybindings = null
+  })
+
   it('renders the shell context and command center', async () => {
     const { wrapper } = await mountTopBar()
 

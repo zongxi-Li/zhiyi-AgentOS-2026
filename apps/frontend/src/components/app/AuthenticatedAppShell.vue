@@ -358,6 +358,7 @@
           </el-container>
         </el-container>
       </el-container>
+    <KeyboardShortcutsDialog v-model="shortcutsDialogVisible" />
     <Teleport to="body">
       <div
         v-if="sidebarActionMenu.target"
@@ -433,6 +434,8 @@ import {
 import { isDesktop } from '@/platform'
 import { plainMissionTitle } from '@/utils/missionTitle'
 import { DOCK_LEFT_DEFAULT, useDockedWorkspaceGeometry } from '@/composables/useDockedWorkspaceGeometry'
+import KeyboardShortcutsDialog from '@/components/app/KeyboardShortcutsDialog.vue'
+import { initAppKeyboardShortcuts } from '@/composables/useAppKeyboardShortcuts'
 
 const route = useRoute()
 const router = useRouter()
@@ -440,6 +443,8 @@ const chatStore = useChatStore()
 const workflowRunsStore = useWorkflowRunsStore()
 const userStore = useUserStore()
 const simpleNavOpen = ref(false)
+const shortcutsDialogVisible = ref(false)
+let disposeAppKeyboardShortcuts: (() => void) | null = null
 type WorkspaceMode = 'agent' | 'chat'
 const WORKSPACE_MODE_KEY = 'layout.workspace_mode'
 const workspaceMode = ref<WorkspaceMode>(localStorage.getItem(WORKSPACE_MODE_KEY) === 'agent' ? 'agent' : 'chat')
@@ -1179,6 +1184,14 @@ onMounted(() => {
   window.addEventListener('drop', guardNativeFileDrop)
   document.addEventListener('mousedown', handleSidebarActionMenuOutside)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
+  // 应用级全局快捷键（Ctrl+B / Ctrl+R / Alt+方向 / F1），窗口级 F11/F12 在 Electron Main。
+  disposeAppKeyboardShortcuts = initAppKeyboardShortcuts({
+    desktop: isDesktop(),
+    toggleSidebar,
+    historyBack: () => router.back(),
+    historyForward: () => router.forward(),
+    onShowShortcuts: () => { shortcutsDialogVisible.value = true }
+  })
   if (chatNavOpen.value) void loadRecentConversations()
   if (localStorage.getItem('userId')) void userStore.loadCurrentUser()
   void workflowRunsStore.bootstrap()
@@ -1188,6 +1201,8 @@ onUnmounted(() => {
   conversationLoadController?.abort()
   stopSidebarResize()
   stopChatPanelResize()
+  disposeAppKeyboardShortcuts?.()
+  disposeAppKeyboardShortcuts = null
   window.removeEventListener('history-refresh', handleHistoryRefresh)
   window.removeEventListener('acg-runs-refresh', handleHistoryRefresh)
   window.removeEventListener('conversation-workspace-change', handleConversationWorkspaceChange)

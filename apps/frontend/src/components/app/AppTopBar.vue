@@ -214,8 +214,23 @@
     </div>
 
     <div class="app-topbar__right" v-bind="dragRegionProps">
-      <button v-if="desktopShell" class="app-topbar__terminal" type="button" aria-label="切换内置终端" title="终端 · Ctrl+`" @click="toggleDesktopTerminal">
-        <span aria-hidden="true">›_</span><span>终端</span>
+      <button
+        v-if="desktopShell"
+        class="app-topbar__terminal"
+        :class="{ 'is-active': terminalVisible }"
+        type="button"
+        :aria-pressed="terminalVisible"
+        aria-label="切换内置终端"
+        title="切换内置终端 · Ctrl+`"
+        @click="toggleDesktopTerminal"
+      >
+        <span class="app-topbar__terminal-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m4 17 6-6-6-6" />
+            <path d="M12 19h8" />
+          </svg>
+        </span>
+        <span class="app-topbar__terminal-label">终端</span>
       </button>
       <DesktopWindowControls v-if="desktopShell" />
     </div>
@@ -239,7 +254,8 @@ import DesktopWindowControls from '@window-controls'
 import { isDesktop, platform } from '@/platform'
 import { agentosApi, type MissionListItem } from '@/services/api/agentos'
 import { plainMissionTitle } from '@/utils/missionTitle'
-import { toggleDesktopTerminal } from '@/composables/useDesktopTerminal'
+import { terminalVisible, toggleDesktopTerminal } from '@/composables/useDesktopTerminal'
+import { commands as commandRegistry } from '@/workbench/core/commands'
 
 // Desktop 构建下本栏即窗口标题栏（decorations:false）：
 // 空白区域承担拖拽与双击最大化，右侧挂窗口控制；
@@ -509,18 +525,18 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
     projectsMenuOpen.value = false
     moreOpen.value = false
     recentSubmenuOpen.value = false
-    return
   }
-  if (event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return
-  if (event.key.toLowerCase() !== 'k') return
+}
 
-  event.preventDefault()
+// Ctrl/Cmd+K 注册为工作台命令：派发、速查浮层与后续命令面板共用同一份定义。
+const toggleCommandPalette = () => {
   if (commandFocused.value) {
     clearCommand()
   } else {
     focusCommand()
   }
 }
+let disposeCommandPalette: (() => void) | null = null
 
 watch(query, () => {
   selectedCommandIndex.value = 0
@@ -576,10 +592,24 @@ onMounted(() => {
   }
   window.addEventListener('keydown', handleGlobalKeydown, { capture: true })
   window.addEventListener('pointerdown', handleGlobalPointerdown, { capture: true })
+  disposeCommandPalette = commandRegistry.register({
+    id: 'app.commandPalette.toggle',
+    title: '命令中心',
+    category: '通用',
+    order: 10,
+    keys: ['mod+k'],
+    // 顶栏有自己的输入框：命令中心在输入焦点下仍可切换，浏览器里也一样。
+    editableSafe: true,
+    // 终端聚焦时仍允许切到命令中心（与旧实现一致：旧监听没有终端让位）。
+    terminalSafe: true,
+    run: toggleCommandPalette
+  })
 })
 onBeforeUnmount(() => {
   topBarDisposed = true
   stopTrackingHistory()
+  disposeCommandPalette?.()
+  disposeCommandPalette = null
   menuResizeObserver?.disconnect()
   menuResizeObserver = null
   recentMissionsController?.abort()
@@ -1135,8 +1165,14 @@ onBeforeUnmount(() => {
 .app-command-center.is-focused {
   box-shadow: 0 0 0 3px var(--app-topbar-focus-ring), 0 2px 8px rgba(0, 0, 0, 0.26);
 }
-.app-topbar__terminal { display:inline-flex; align-items:center; gap:6px; height:26px; margin-right:8px; padding:0 8px; border:0; border-radius:3px; background:transparent; color:var(--text-secondary,#a1a1aa); font:11px var(--font-sans,system-ui,sans-serif); cursor:pointer; -webkit-app-region:no-drag; }
-.app-topbar__terminal > span:first-child { font:14px Consolas,monospace; }
-.app-topbar__terminal:hover { color:var(--text-primary,#e4e4e7); background:var(--bg-tertiary,#303038); }
-.app-topbar__terminal:focus-visible { outline:1px solid var(--wb-accent,#7aa2d7); outline-offset:1px; }
+.app-topbar__terminal { display:inline-flex; align-self:center; align-items:center; gap:6px; flex:0 0 auto; height:26px; margin:0 8px 0 4px; padding:0 7px 0 5px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--app-topbar-muted,#858585); font:11px/1 var(--font-sans,system-ui,sans-serif); letter-spacing:.01em; white-space:nowrap; cursor:pointer; -webkit-app-region:no-drag; transition:background-color 160ms var(--ease-out,ease),border-color 160ms var(--ease-out,ease),color 160ms var(--ease-out,ease); }
+.app-topbar__terminal-icon { display:grid; place-items:center; width:17px; height:17px; border:1px solid color-mix(in srgb,currentColor 9%,transparent); border-radius:5px; background:color-mix(in srgb,currentColor 7%,transparent); transition:background-color 160ms var(--ease-out,ease),border-color 160ms var(--ease-out,ease); }
+.app-topbar__terminal-icon svg { width:10px; height:10px; }
+.app-topbar__terminal-label { font-weight:500; }
+.app-topbar__terminal:hover { color:var(--app-topbar-text,#ccc); background:var(--app-topbar-hover,#2a2d2e); border-color:color-mix(in srgb,var(--app-topbar-text,#ccc) 8%,transparent); }
+.app-topbar__terminal:hover .app-topbar__terminal-icon { background:color-mix(in srgb,currentColor 11%,transparent); }
+.app-topbar__terminal.is-active { color:var(--app-topbar-text,#ccc); background:color-mix(in srgb,var(--sem-running,#6ea8fe) 8%,transparent); border-color:color-mix(in srgb,var(--sem-running,#6ea8fe) 20%,transparent); }
+.app-topbar__terminal.is-active .app-topbar__terminal-icon { color:var(--sem-running,#6ea8fe); background:color-mix(in srgb,var(--sem-running,#6ea8fe) 12%,transparent); border-color:color-mix(in srgb,var(--sem-running,#6ea8fe) 24%,transparent); }
+.app-topbar__terminal:focus-visible { outline:2px solid var(--app-topbar-focus-ring,rgba(79,193,255,.34)); outline-offset:1px; }
+@media(prefers-reduced-motion:reduce) { .app-topbar__terminal,.app-topbar__terminal-icon { transition:none; } }
 </style>
