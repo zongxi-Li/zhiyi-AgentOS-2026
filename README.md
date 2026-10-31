@@ -1,9 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brand/logo.png" width="220" alt="知弈 AgentOS 花环标识">
-</p>
-
-<p align="center">
-  <img src="docs/assets/brand/wordmark.png" width="420" alt="知弈 AgentOS">
+  <img src="docs/assets/brand/show.png">
 </p>
 
 <p align="center">
