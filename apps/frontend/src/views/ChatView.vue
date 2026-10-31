@@ -837,6 +837,7 @@ const workflowResultState = ref<WorkflowResultState>('idle')
 const workflowResultError = ref<string | null>(null)
 const workflowStartError = ref<string | null>(null)
 const currentConversationId = computed(() => {
+  if (route.query.newConversation === '1') return ''
   const routeContextId = typeof route.query.contextId === 'string' ? route.query.contextId.trim() : ''
   return routeContextId || chatStore.contextId || draftConversationId.value
 })
@@ -1567,7 +1568,6 @@ const isWorkflowUpgradeDisabled = computed(() =>
 )
 
 const resetWorkspace = async () => {
-  const previousConversationId = currentConversationId.value
   chatStore.clearMessages()
   draftConversationId.value = `draft:${createClientRequestId()}`
   localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
@@ -1575,6 +1575,8 @@ const resetWorkspace = async () => {
   conversationGeneration += 1
   workflowProgressState.reset()
   invalidateWorkflowResultRequest()
+  selectedConversationId = ''
+  restoredRunDetail = null
   activeWorkflowRunId.value = ''
   activeWorkflowBinding.value = null
   activeWorkflowRun.value = null
@@ -1582,7 +1584,13 @@ const resetWorkspace = async () => {
   workflowStartError.value = null
   pendingMessageCount.value = 0
 
-  const { runId: _runId, contextId: _contextId, ...remainingQuery } = route.query
+  const {
+    runId: _runId,
+    missionId: _missionId,
+    contextId: _contextId,
+    newConversation: _newConversation,
+    ...remainingQuery
+  } = route.query
   await router.replace({
     path: '/chat',
     query: { ...remainingQuery, workspace: workspaceMode.value }
@@ -1592,6 +1600,16 @@ const resetWorkspace = async () => {
 const handleNewAgentTask = () => {
   void resetWorkspace()
 }
+
+// Shell sends this route intent even when ChatView is not mounted (for example,
+// when the user starts a conversation from History). It is consumed exactly once.
+watch(
+  () => route.query.newConversation,
+  intent => {
+    if (intent === '1') void resetWorkspace()
+  },
+  { immediate: true }
+)
 
 const composerToolsAnchorRef = ref<HTMLElement | null>(null)
 const composerToolsOpen = ref(false)
@@ -2091,6 +2109,7 @@ const bindMessagesScroll = () => {
 watch(
   () => route.query.contextId,
   async contextId => {
+    if (route.query.newConversation === '1') return
     const targetContextId = typeof contextId === 'string' ? contextId.trim() : ''
     if (!targetContextId) return
     if (chatStore.contextId === targetContextId) return
@@ -2102,6 +2121,7 @@ watch(
 )
 
 const restoreWorkflowForConversation = async () => {
+  if (route.query.newConversation === '1') return
   const conversationId = currentConversationId.value
   const bindings = conversationBindings(chatStore.workflowBindings, conversationId)
   const selectedRunId = selectedConversationId === conversationId ? activeWorkflowRun.value?.runId : undefined

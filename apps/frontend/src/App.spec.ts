@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { reactive } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
@@ -8,10 +9,38 @@ import { workflowApi } from '@/services/api/workflow'
 
 const clearMessages = vi.fn()
 const bootstrap = vi.fn()
-const useChatStore = vi.fn(() => ({
-  workflowBindings: {},
-  clearMessages
-}))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+const chatStoreState = reactive({
+  workflowBindings: {} as Record<string, any[]>,
+  messages: [] as Array<Record<string, unknown>>,
+  contextId: null as string | null,
+  conversationWorkspaceMode: null as 'agent' | 'chat' | null,
+  contextUsedTokens: null as number | null,
+  contextWindowTokens: null as number | null,
+  contextModel: null as string | null,
+  contextModels: {} as Record<string, number>,
+  isStreaming: false,
+  isLoadingConversation: false,
+  clearMessages,
+  fetchContextWindows: vi.fn(async () => {}),
+  getActiveWorkflowBinding: vi.fn((id: string) => [...(chatStoreState.workflowBindings[id] || [])].reverse().find(item => !item.invalidAt)),
+  getLatestWorkflowBinding: vi.fn((id: string) => [...(chatStoreState.workflowBindings[id] || [])].reverse()[0]),
+  pendingMissionLaunch: vi.fn(() => null),
+  resumeMissionLaunch: vi.fn(),
+  migrateDraftBindings: vi.fn(),
+  loadHistory: vi.fn(async (id: string) => { chatStoreState.contextId = id }),
+  updateWorkflowBindingStatus: vi.fn(),
+  markWorkflowBindingInvalid: vi.fn(),
+  startAgentRun: vi.fn(),
+  upgradeToWorkflow: vi.fn(),
+  sendMessage: vi.fn(),
+  sendMessageStream: vi.fn()
+})
+clearMessages.mockImplementation(() => {
+  chatStoreState.messages = []
+  chatStoreState.contextId = null
+})
+const useChatStore = vi.fn(() => chatStoreState)
 
 vi.mock('@/stores/chat', () => ({
   useChatStore
@@ -42,13 +71,30 @@ vi.mock('@/services/api/conversation', () => ({
 
 vi.mock('@/services/api/agentos', () => ({
   agentosApi: {
-    listMissions: vi.fn()
+    listMissions: vi.fn(),
+    getWorkflowRun: vi.fn(async (runId: string) => ({
+      runId, missionId: 'mission-old', workflowId: 'workflow', domain: 'general', status: 'completed',
+      steps: [], input: {}, output: {}, checkpoints: [], trace: []
+    })),
+    getAcgView: vi.fn(async (runId: string) => ({
+      runId, status: 'completed', engine: 'acg', completedStepIds: [], activeStepIds: [], stepStates: [],
+      provenance: { productions: [], consumptions: [], interactions: [] }, interactions: [], contractViolations: [],
+      recoveryTrace: [], scheduleTrace: [], deliverables: [], finalReport: null,
+      lowEntropyMetrics: { averageSavingRatio: 0, effectiveSavingRatio: 0, tokensAvailable: 0, tokensDelivered: 0,
+        tokensSaved: 0, recoveryCount: 0, interactionCount: 0, contractViolationCount: 0, integrityStatus: 'valid' }
+    }))
   }
 }))
 
 vi.mock('@/services/api/workflow', () => ({
   workflowApi: {
-    listRuns: vi.fn()
+    listRuns: vi.fn(),
+    getWorkflowProgress: vi.fn(async (runId: string) => ({
+      taskId: `task_${runId}`, runId, workflowId: 'workflow', status: 'completed', phase: 'completed',
+      message: '', percent: 100, totalSteps: 0, pendingSteps: 0, runningSteps: 0, waitingReviewSteps: 0,
+      retryingSteps: 0, failedSteps: 0, completedSteps: 0, cancelledSteps: 0, currentStepId: null,
+      activeStepIds: [], completedStepIds: [], startedAt: null, updatedAt: null, progress: 100, percentage: 100
+    }))
   }
 }))
 
@@ -69,6 +115,10 @@ const missions = [
 describe('App Agent project sidebar', () => {
   beforeEach(() => {
     localStorage.clear()
+    chatStoreState.workflowBindings = {}
+    chatStoreState.messages = []
+    chatStoreState.contextId = null
+    clearMessages.mockClear()
     localStorage.setItem('layout.workspace_mode', 'agent')
     localStorage.setItem('layout.chat_nav_open', '1')
     Object.defineProperty(window, 'matchMedia', {
@@ -252,6 +302,149 @@ describe('App Agent project sidebar', () => {
     expect(router.currentRoute.value.query).toMatchObject({ tab: 'acg', source: 'agent' })
 
     wrapper.unmount()
+  })
+
+  it.each(['chat', 'agent'] as const)('Shell starts a fresh %s conversation without clearing chat state itself', async mode => {
+    localStorage.setItem('layout.workspace_mode', mode)
+    localStorage.setItem('layout.chat_nav_open', '1')
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/chat', component: { template: '<div />' } },
+        { path: '/history', component: { template: '<div />' } }
+      ]
+    })
+    await router.push(`/history?workspace=${mode}`)
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [router],
+        mocks: { $t: (key: string) => key },
+        stubs: {
+          AppTopBar: passthrough,
+          DesktopRuntimeStatus: passthrough,
+          UserAvatar: passthrough,
+          ErrorBoundary: passthrough,
+          'el-container': passthrough,
+          'el-aside': passthrough,
+          'el-main': passthrough,
+          'el-menu': passthrough,
+          'el-menu-item': passthrough,
+          'el-drawer': passthrough,
+          'el-alert': passthrough,
+          'el-icon': iconStub
+        }
+      }
+    })
+    await vi.dynamicImportSettled()
+    await flushPromises()
+    clearMessages.mockClear()
+
+    await wrapper.find('.primary-sidebar .chat-nav-trigger').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.new-chat-action').exists()).toBe(true)
+    await wrapper.find('.new-chat-action').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/chat')
+    expect(router.currentRoute.value.query).toEqual({ workspace: mode, newConversation: '1' })
+    expect(clearMessages).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('Shell mode changes request one fresh conversation and leave clearing to ChatView', async () => {
+    localStorage.setItem('layout.workspace_mode', 'agent')
+    localStorage.setItem('layout.chat_nav_open', '1')
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/chat', component: { template: '<div />' } },
+        { path: '/history', component: { template: '<div />' } }
+      ]
+    })
+    await router.push('/chat?workspace=agent&contextId=old-context&runId=old-run')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: {
+        plugins: [router],
+        mocks: { $t: (key: string) => key },
+        stubs: {
+          AppTopBar: passthrough, DesktopRuntimeStatus: passthrough, UserAvatar: passthrough,
+          ErrorBoundary: passthrough, 'el-container': passthrough, 'el-aside': passthrough,
+          'el-main': passthrough, 'el-menu': passthrough, 'el-menu-item': passthrough,
+          'el-drawer': passthrough, 'el-alert': passthrough, 'el-icon': iconStub
+        }
+      }
+    })
+    await vi.dynamicImportSettled(); await flushPromises(); clearMessages.mockClear()
+    await wrapper.find('.workspace-switch-btn[aria-selected="false"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/chat')
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'chat', newConversation: '1' })
+    expect(clearMessages).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it.each(['chat', 'agent'] as const)('runs the %s Shell new-chat intent through the actual ChatView and allocates an isolated draft', async (mode) => {
+    const { default: ChatView } = await import('@/views/ChatView.vue')
+    localStorage.setItem('layout.workspace_mode', mode)
+    localStorage.setItem('layout.chat_nav_open', '1')
+    localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:old')
+    chatStoreState.contextId = 'ctx-old'
+    chatStoreState.messages = [{ id: 'old-message', role: 'assistant', content: 'old' }]
+    const oldBinding = {
+      conversationId: 'ctx-old', missionId: 'mission-old', runId: 'run-old',
+      status: 'completed', source: 'chat', createdAt: '2026-10-31T00:00:00Z',
+      clientRequestId: 'request-old', acgTaskId: 'run-old', conversationAliases: ['draft:old']
+    }
+    chatStoreState.workflowBindings = { 'ctx-old': [oldBinding] }
+    vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
+    HTMLElement.prototype.scrollTo = vi.fn()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/chat', component: ChatView },
+        { path: '/history', component: { template: '<div />' } }
+      ]
+    })
+    await router.push(`/chat?workspace=${mode}&contextId=ctx-old&runId=run-old`)
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [router],
+        mocks: { $t: (key: string) => key },
+        stubs: {
+          AppTopBar: passthrough, DesktopRuntimeStatus: passthrough, UserAvatar: passthrough,
+          ErrorBoundary: passthrough, 'el-container': passthrough, 'el-aside': passthrough,
+          'el-main': passthrough, 'el-menu': passthrough, 'el-menu-item': passthrough,
+          'el-drawer': passthrough, 'el-alert': passthrough, 'el-icon': iconStub,
+          PermissionSelector: false, AcgRunInspector: true, GenericArtifactPanel: true,
+          WorkflowProgressBar: true, MessageBubble: true, ModelRuntimeControls: true,
+          NativeWorkspacePicker: true, AgentOsRunSummaryCard: true, RuntimeAuditTimeline: true,
+          FileManager: true, WorkflowReviewPanel: true, 'el-button': true, 'el-input': true,
+          'el-dialog': true, 'el-select': true, 'el-option': true,
+          'el-tag': true, 'el-collapse': true, 'el-collapse-item': true, 'el-avatar': true
+        }
+      }
+    })
+    await vi.dynamicImportSettled(); await flushPromises()
+    clearMessages.mockClear()
+    expect(wrapper.find('.new-chat-action').exists()).toBe(true)
+    await wrapper.find('.new-chat-action').trigger('click')
+    await vi.dynamicImportSettled(); await flushPromises()
+
+    const nextDraft = localStorage.getItem('chat.workflow_draft_conversation_id')
+    expect(nextDraft).toMatch(/^draft:/)
+    expect(nextDraft).not.toBe('draft:old')
+    expect(clearMessages).toHaveBeenCalledTimes(1)
+    expect(chatStoreState.messages).toEqual([])
+    expect(chatStoreState.workflowBindings['ctx-old']).toEqual([oldBinding])
+    expect(router.currentRoute.value.query).toEqual({ workspace: mode })
+    expect(chatStoreState.getActiveWorkflowBinding(nextDraft!)).toBeUndefined()
+    wrapper.unmount()
+    vi.unstubAllGlobals()
   })
 
   it('exposes edit and delete actions for Chat conversations', async () => {

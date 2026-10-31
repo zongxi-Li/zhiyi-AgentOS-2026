@@ -219,6 +219,96 @@ describe('ChatView ACG progress integration', () => {
     uuid.mockRestore(); wrapper.unmount()
   })
 
+  it.each(['chat', 'agent'] as const)('consumes the Shell new-conversation route intent in %s mode exactly once', async mode => {
+    localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:old')
+    chatStoreMock.contextId = 'ctx-old'
+    chatStoreMock.messages.push({ id: 'old-message', role: 'assistant', content: 'old' })
+    chatStoreMock.workflowBindings['ctx-old'] = [binding('ctx-old', 'run-old')]
+    const oldDraftBinding = { ...binding('ctx-old', 'run-old-draft'), conversationAliases: ['draft:old'] }
+    chatStoreMock.workflowBindings['ctx-old'].push(oldDraftBinding)
+
+    const { wrapper, router } = await mountPage(`?workspace=${mode}&contextId=ctx-old&missionId=mission-old&runId=run-old&newConversation=1&keep=value`)
+    const newDraftId = localStorage.getItem('chat.workflow_draft_conversation_id')
+
+    expect(newDraftId).toMatch(/^draft:/)
+    expect(newDraftId).not.toBe('draft:old')
+    expect(chatStoreMock.clearMessages).toHaveBeenCalledTimes(1)
+    expect(chatStoreMock.workflowBindings['ctx-old']).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        conversationId: 'ctx-old', runId: 'run-old-draft', conversationAliases: ['draft:old']
+      })
+    ]))
+    expect(router.currentRoute.value.query).toEqual({ workspace: mode, keep: 'value' })
+    expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('resets a reused ChatView when Shell changes workspace mode and does not clear twice', async () => {
+    localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:before-mode')
+    chatStoreMock.contextId = 'ctx-before-mode'
+    const { wrapper, router } = await mountPage('?workspace=chat&contextId=ctx-before-mode')
+    const before = localStorage.getItem('chat.workflow_draft_conversation_id')
+    chatStoreMock.clearMessages.mockClear()
+
+    window.dispatchEvent(new CustomEvent('workspace-mode-change', { detail: { mode: 'agent' } }))
+    await router.replace({ path: '/chat', query: { workspace: 'agent', newConversation: '1', keep: 'value' } })
+    await flushPromises()
+
+    expect(localStorage.getItem('chat.workflow_draft_conversation_id')).not.toBe(before)
+    expect(chatStoreMock.clearMessages).toHaveBeenCalledTimes(1)
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'agent', keep: 'value' })
+    wrapper.unmount()
+  })
+
+  it('consumes a same-mode Shell new-chat route marker in an already mounted ChatView', async () => {
+    localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:previous')
+    chatStoreMock.contextId = 'ctx-previous'
+    const { wrapper, router } = await mountPage('?workspace=chat&contextId=ctx-previous')
+    const previousDraft = localStorage.getItem('chat.workflow_draft_conversation_id')
+    chatStoreMock.clearMessages.mockClear()
+
+    await router.push({ path: '/chat', query: { workspace: 'chat', newConversation: '1' } })
+    await flushPromises()
+
+    expect(localStorage.getItem('chat.workflow_draft_conversation_id')).not.toBe(previousDraft)
+    expect(chatStoreMock.clearMessages).toHaveBeenCalledTimes(1)
+    expect(router.currentRoute.value.query).toEqual({ workspace: 'chat' })
+    wrapper.unmount()
+  })
+
+  it('restores only the new draft task and still resolves the old task through its original context', async () => {
+    localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:old')
+    chatStoreMock.contextId = 'ctx-old'
+    chatStoreMock.workflowBindings['ctx-old'] = [{
+      ...binding('ctx-old', 'run-old'), missionId: 'mission_run-old',
+      conversationAliases: ['draft:old']
+    }]
+    const { wrapper, router } = await mountPage('?workspace=agent&contextId=ctx-old')
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run-old', expect.any(Object))
+    chatStoreMock.clearMessages()
+    chatStoreMock.migrateDraftBindings.mockClear()
+    await router.push({ path: '/chat', query: { workspace: 'agent', newConversation: '1' } })
+    await flushPromises()
+    const newDraft = localStorage.getItem('chat.workflow_draft_conversation_id')!
+    expect(newDraft).not.toBe('draft:old')
+    chatStoreMock.workflowBindings[newDraft] = [
+      { ...binding(newDraft, 'run-new'), missionId: 'mission_run-new' }
+    ]
+    await router.push({ path: '/chat', query: { workspace: 'agent', missionId: 'mission_run-new', runId: 'run-new' } })
+    await flushPromises()
+    expect(chatStoreMock.getActiveWorkflowBinding).toHaveBeenCalledWith(newDraft)
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run-new', expect.any(Object))
+    expect(router.currentRoute.value.query.runId).toBe('run-new')
+
+    vi.mocked(workflowApi.getWorkflowProgress).mockClear()
+    await router.push({ path: '/chat', query: { workspace: 'agent', contextId: 'ctx-old' } })
+    await flushPromises()
+    expect(workflowApi.getWorkflowProgress).toHaveBeenCalledWith('run-old', expect.any(Object))
+    expect(workflowApi.getWorkflowProgress).not.toHaveBeenCalledWith('run-new', expect.any(Object))
+    expect(chatStoreMock.getActiveWorkflowBinding).toHaveBeenCalledWith('ctx-old')
+    wrapper.unmount()
+  })
+
   it('rejects an explicit Run from another Mission without falling back or creating a binding', async () => {
     chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'fallback')]
     vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({ ...run('selected'), missionId: 'other-mission' })

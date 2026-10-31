@@ -635,11 +635,7 @@ const handleAcgNavToggle = () => {
 }
 
 const startNewChat = async () => {
-  chatStore.clearMessages()
-  if (workspaceMode.value === 'agent') {
-    window.dispatchEvent(new Event('agent-new-task'))
-  }
-  await router.push({ path: '/chat', query: { workspace: workspaceMode.value } })
+  await router.push({ path: '/chat', query: { workspace: workspaceMode.value, newConversation: '1' } })
 }
 
 const openWorkspaceHistory = () => {
@@ -911,12 +907,11 @@ const selectWorkspaceMode = (mode: WorkspaceMode) => {
   closeSidebarActionMenu()
   workspaceMode.value = mode
   localStorage.setItem(WORKSPACE_MODE_KEY, mode)
-  chatStore.clearMessages()
   window.dispatchEvent(new CustomEvent('workspace-mode-change', { detail: { mode } }))
   void loadRecentConversations()
   void router.replace({
     path: '/chat',
-    query: { workspace: mode }
+    query: { workspace: mode, newConversation: '1' }
   })
 }
 

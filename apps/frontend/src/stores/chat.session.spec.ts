@@ -130,4 +130,22 @@ describe('Conversation history continuity', () => {
     expect(useChatStore().getLatestWorkflowBinding('draft:D')?.runId).toBe('3')
     expect(useWorkflowRunsStore().getByConversation('draft:D')).toHaveLength(3)
   })
+
+  it('keeps a new draft conversation separate from a migrated conversation alias', () => {
+    const store = useChatStore()
+    const binding = (conversationId: string, missionId: string, runId: string, conversationAliases?: string[]) => ({
+      conversationId, conversationAliases, missionId, runId, acgTaskId: runId, source: 'chat' as const,
+      clientRequestId: `request-${runId}`, createdAt: runId, status: 'running'
+    })
+    store.addWorkflowBinding(binding('draft:old', 'mission-old', 'run-old'))
+    store.contextId = 'ctx-old'
+    store.migrateDraftBindings('draft:old', 'ctx-old')
+    store.addWorkflowBinding(binding('draft:new', 'mission-new', 'run-new'))
+
+    expect(store.getActiveWorkflowBinding('ctx-old')?.runId).toBe('run-old')
+    expect(store.getActiveWorkflowBinding('draft:old')?.runId).toBe('run-old')
+    expect(store.getActiveWorkflowBinding('draft:new')?.runId).toBe('run-new')
+    expect(store.getLatestWorkflowBinding('draft:new')?.conversationAliases).toBeUndefined()
+    expect(store.getLatestWorkflowBinding('ctx-old')?.conversationAliases).toContain('draft:old')
+  })
 })
