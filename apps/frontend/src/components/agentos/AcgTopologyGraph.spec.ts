@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, h, KeepAlive, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GraphProjection } from '@/services/api/agentos'
 import AcgTopologyGraph from './AcgTopologyGraph.vue'
@@ -62,6 +63,27 @@ beforeEach(() => { vi.useFakeTimers(); networks.length = 0; vi.clearAllMocks() }
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
 describe('execution flow integration', () => {
+  it('retains the topology renderer and camera when its Workbench is cached', async () => {
+    const visible = ref(true)
+    const phases = ref<Record<string, string>>({})
+    const host = defineComponent({ setup: () => () => h(KeepAlive, null, { default: () => visible.value
+      ? h(AcgTopologyGraph, { blueprint, workbench: true, observeResize: true, runtimePhases: phases.value }) : null }) })
+    const wrapper = mount(host, { global: { stubs: { ElIcon: true } } }); wrappers.push(wrapper)
+    await flushPromises()
+    await click(wrapper, '完整拓扑')
+    const uid = wrapper.findComponent(AcgTopologyGraph).vm.$.uid
+    const network = networks[0]
+    network.getScale = () => 1.7; network.getViewPosition = () => ({ x: 80, y: 120 })
+    network.moveTo.mockClear()
+    visible.value = false; await nextTick()
+    phases.value.n3 = 'running'
+    await vi.advanceTimersByTimeAsync(150)
+    visible.value = true; await nextTick(); await flushPromises()
+    expect(wrapper.findComponent(AcgTopologyGraph).vm.$.uid).toBe(uid)
+    expect(networks).toHaveLength(1); expect(network.destroy).not.toHaveBeenCalled()
+    expect(network.getScale()).toBe(1.7); expect(network.getViewPosition()).toEqual({ x: 80, y: 120 })
+    expect(network.moveTo).not.toHaveBeenCalled()
+  })
   it('renders the running neighborhood with Vue Flow without creating a canvas network', async () => {
     const wrapper = await setup()
     await vi.advanceTimersByTimeAsync(150)

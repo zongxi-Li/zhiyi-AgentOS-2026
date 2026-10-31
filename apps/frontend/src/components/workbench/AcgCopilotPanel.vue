@@ -114,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, Share } from '@element-plus/icons-vue'
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage } from '@/services/api/agentos'
 import type { CopilotPermission, CopilotState, CopilotAction, CopilotActionKind } from '@/services/api/agentos/api/copilot'
@@ -161,6 +161,8 @@ const permissionOptions = [
 ]
 const modelCalls = ref<ModelCallUsage[]>([]), callCursor = ref<string | null>(null), callError = ref(''), callsLoading = ref(false)
 let generation = 0, timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
+let viewActive = true
+let viewSuspended = false
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
 const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
 const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
@@ -307,7 +309,7 @@ async function confirmAction(proposalId: string, action: CopilotAction, sourceRu
 }
 watch(() => props.graphNode?.acgNodeId || props.entry?.acgNodeId, id => { operationStep.value = id || '' }, { immediate: true })
 function onKeydown(e: KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send() } }
-function poll() { const token = generation; const terminal = ['completed', 'failed', 'cancelled', 'superseded'].includes(state.value?.status || ''); timer = setTimeout(async () => { if (!busy.value && !loading.value && props.runId && !document.hidden) await refresh(true); if (token === generation) poll() }, document.hidden ? 30000 : terminal ? 15000 : 3000) }
+function poll() { clearTimeout(timer); if (!viewActive) return; const token = generation; const terminal = ['completed', 'failed', 'cancelled', 'superseded'].includes(state.value?.status || ''); timer = setTimeout(async () => { if (viewActive && !busy.value && !loading.value && props.runId && !document.hidden) await refresh(true); if (token === generation && viewActive) poll() }, document.hidden ? 30000 : terminal ? 15000 : 3000) }
 function saveSession(id = props.runId) { if (id && state.value) saveCopilotSession(id, { state: state.value, draft: draft.value, model: selectedModel.value, permission: permission.value, effort: reasoningEffort.value, operation: requestKey }, sessionOwnerToken) }
 watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
@@ -326,6 +328,8 @@ watch(reasoningOptions, options => { if (!options.includes(reasoningEffort.value
 watch(draft, () => void nextTick(() => { const e = composerInput.value; if (e) { e.style.height = 'auto'; e.style.height = `${Math.min(180, Math.max(76, e.scrollHeight))}px` } }))
 function closePickers(e: PointerEvent) { if (!composerRoot.value?.contains(e.target as Node)) openMenu.value = null }
 onMounted(() => document.addEventListener('pointerdown', closePickers))
+onDeactivated(() => { viewActive = false; viewSuspended = true; clearTimeout(timer); document.removeEventListener('pointerdown', closePickers) })
+onActivated(() => { if (!viewSuspended) return; viewSuspended = false; viewActive = true; document.addEventListener('pointerdown', closePickers); if (!busy.value && !loading.value) void refresh(true); poll() })
 onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); clearTimeout(timer); document.removeEventListener('pointerdown', closePickers) })
 </script>
 

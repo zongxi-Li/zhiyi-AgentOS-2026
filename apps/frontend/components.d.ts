@@ -173,6 +173,7 @@ declare module 'vue' {
     WorkspaceGitView: typeof import('./src/components/workbench/WorkspaceGitView.vue')['default']
     WorkspacePageHero: typeof import('./src/components/app/WorkspacePageHero.vue')['default']
     WorkspaceSearchView: typeof import('./src/components/workbench/WorkspaceSearchView.vue')['default']
+    WorkspaceViewHost: typeof import('./src/components/app/WorkspaceViewHost.vue')['default']
     ZoomIndicator: typeof import('./src/components/desktop/ZoomIndicator.vue')['default']
   }
   export interface GlobalDirectives {

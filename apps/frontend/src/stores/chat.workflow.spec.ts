@@ -88,6 +88,24 @@ describe('chat workflow binding', () => {
     }))
   })
 
+  it.each(['before-request', 'pending-response'])('keeps a late launch binding with its original Conversation without writing new messages (%s)', async phase => {
+    let deliver!: (value: any) => void
+    vi.mocked(workflowApi.startWorkflowAsync).mockReturnValue(new Promise(ok => { deliver = ok }))
+    const store = useChatStore()
+    const pending = store.startAgentRun('original goal', { conversationId: 'original', clientRequestId: 'original-operation' })
+    if (phase === 'pending-response') await vi.waitFor(() => expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1))
+    store.clearMessages(); store.contextId = 'new-context'
+    store.addMessage({ id: 'new', role: 'user', content: 'new Conversation' })
+    deliver(acceptedResponse)
+    const result = await pending
+    expect(result?.binding.conversationId).toBe('original')
+    expect(store.getLatestWorkflowBinding('original')?.runId).toBe('run_chat_1')
+    expect(store.contextId).toBe('new-context')
+    expect(store.messages.map(item => item.content)).toEqual(['new Conversation'])
+    expect(workflowApi.startWorkflowAsync).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(workflowApi.startWorkflowAsync).mock.calls[0][0].clientRequestId).toBe('original-operation')
+  })
+
   it('keeps workflow submission independent while Chat is streaming', async () => {
     const store = useChatStore()
     store.loading = true

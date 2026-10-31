@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, h, KeepAlive, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AcgCopilotPanel from './AcgCopilotPanel.vue'
 import { agentosApi } from '@/services/api/agentos'
@@ -49,6 +50,26 @@ async function panel(props = {}) {
 beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.setCopilotPermission).mockImplementation(async (_, permission) => ({ missionId: 'mission-1', taskPermission: permission })); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.useRealTimers() })
 describe('task Copilot', () => {
+  it('pauses cached-view polling and resumes one loop while retaining its unsent draft', async () => {
+    vi.useFakeTimers()
+    const visible = ref(true)
+    const host = defineComponent({ setup: () => () => h(KeepAlive, null, { default: () => visible.value ? h(AcgCopilotPanel, { runId: 'run-1' }) : null }) })
+    const w = mount(host, { global: { stubs: { ElIcon: true } } }); wrappers.push(w)
+    await flushPromises()
+    await w.get('textarea').setValue('unsent Copilot draft')
+    const before = vi.mocked(agentosApi.getCopilot).mock.calls.length
+    visible.value = false; await nextTick()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before)
+    visible.value = true; await nextTick(); await flushPromises()
+    expect((w.get('textarea').element as HTMLTextAreaElement).value).toBe('unsent Copilot draft')
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 1)
+    await vi.advanceTimersByTimeAsync(3000); await flushPromises()
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 2)
+    w.unmount(); wrappers.splice(wrappers.indexOf(w), 1)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 2)
+  })
   it('owns formal controls and forwards refresh/cancel without issuing commands on mount', async () => {
     const run = {runId:'run-1',missionId:'mission-1',status:'pending',steps:[],formalControl:{status:'PLANNING_ACCEPTED'}}
     const w = await panel({missionId:'mission-1',canCancel:true,runtimeObservation:{runId:'run-1',run,traces:[]}})

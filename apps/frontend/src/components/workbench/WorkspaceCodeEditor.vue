@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { Annotation, Compartment, EditorState } from '@codemirror/state'
 import {
   EditorView,
@@ -64,6 +64,7 @@ let unsubscribeReveal: (() => void) | null = null
 let languageRequest = 0
 let diagnosticsTimer: number | undefined
 let diagnosticsSignature = ''
+let viewActive = true
 
 const readOnlyExtensions = (readOnly: boolean) => [
   EditorState.readOnly.of(readOnly),
@@ -113,6 +114,7 @@ const baseExtensions = () => [
     ? lspExtension({
         root: props.workspaceRoot,
         path: props.filePath,
+        active: () => viewActive,
         onDefinition: location => emit('definition', location)
       })
     : []),
@@ -176,7 +178,7 @@ onMounted(() => {
     void lspOpen(props.workspaceRoot, props.filePath, props.document.getText())
       .then(result => {
         if (!result.languageId || !view) return
-        forceLinting(view)
+        if (viewActive) forceLinting(view)
         startDiagnosticsPolling()
       })
       .catch(() => undefined)
@@ -186,19 +188,22 @@ onMounted(() => {
 /** 语言服务的诊断是异步的：轮询比对签名，有新结果就让 linter 重新取一次。 */
 function startDiagnosticsPolling(): void {
   window.clearInterval(diagnosticsTimer)
+  if (!viewActive) return
   diagnosticsTimer = window.setInterval(async () => {
     if (!view) return
     const items = await lspDiagnostics(props.workspaceRoot).catch(() => [])
     const signature = JSON.stringify(items.filter(item => item.path === props.filePath))
     if (signature === diagnosticsSignature) return
     diagnosticsSignature = signature
-    if (view) forceLinting(view)
+    if (viewActive && view) forceLinting(view)
   }, 2500)
 }
 
 watch(() => props.readOnly, value => {
   view?.dispatch({ effects: readOnlyCompartment.reconfigure(readOnlyExtensions(value)) })
 })
+onDeactivated(() => { viewActive = false; window.clearInterval(diagnosticsTimer); diagnosticsTimer = undefined })
+onActivated(() => { if (viewActive) return; viewActive = true; view?.requestMeasure(); if (lspAvailable()) startDiagnosticsPolling() })
 
 onBeforeUnmount(() => {
   unsubscribe?.()

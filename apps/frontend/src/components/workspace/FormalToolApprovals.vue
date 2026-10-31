@@ -13,16 +13,23 @@
   </section>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue'
 import { agentosRequest } from '@/services/api/agentos/client'
 const props = defineProps<{runId: string; active: boolean}>()
 const items = ref<any[]>([])
 const busy = ref(false)
 const error = ref('')
 let timer: ReturnType<typeof setInterval> | undefined
+let viewActive = true
+let generation = 0
 async function refresh() {
+  if (!viewActive) return
   if (!props.active || !props.runId) { items.value = []; return }
-  try { items.value = (await agentosRequest.get(`/runs/${encodeURIComponent(props.runId)}/tool-approvals`)).data.items }
+  const token = generation, runId = props.runId
+  try {
+    const response = await agentosRequest.get(`/runs/${encodeURIComponent(runId)}/tool-approvals`)
+    if (viewActive && token === generation && runId === props.runId) items.value = response.data.items
+  }
   catch { /* existing Runtime status reports disconnects; never auto-approve */ }
 }
 async function resolve(id: string, decision: string) {
@@ -34,9 +41,13 @@ async function resolve(id: string, decision: string) {
   } catch { error.value = '操作审批失败，请刷新状态。' }
   finally { busy.value = false }
 }
-onMounted(() => { void refresh(); timer = setInterval(() => void refresh(), 1000) })
-onUnmounted(() => { if (timer) clearInterval(timer) })
-watch(() => [props.runId,props.active], () => void refresh())
+const start = () => { if (timer) clearInterval(timer); void refresh(); timer = setInterval(() => void refresh(), 1000) }
+const stop = () => { ++generation; if (timer) clearInterval(timer); timer = undefined }
+onMounted(start)
+onDeactivated(() => { viewActive = false; stop() })
+onActivated(() => { if (viewActive) return; viewActive = true; start() })
+onUnmounted(stop)
+watch(() => [props.runId,props.active], () => { ++generation; void refresh() })
 </script>
 <style scoped>
 article { margin: 8px 0; padding: 10px; border: 1px solid var(--wb-border-soft); border-radius: 6px; }

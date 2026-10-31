@@ -309,6 +309,27 @@ describe('ChatView ACG progress integration', () => {
     wrapper.unmount()
   })
 
+  it.each(['chat', 'agent'] as const)('does not let an obsolete %s composer failure restore old input or unlock a newer send', async mode => {
+    let failOld!: (error: Error) => void
+    let finishNew!: () => void
+    const send = mode === 'chat' ? chatStoreMock.sendMessageStream : chatStoreMock.startAgentRun
+    send
+      .mockImplementationOnce(() => new Promise<void>((_ok, fail) => { failOld = fail }))
+      .mockImplementationOnce(() => new Promise<void>(ok => { finishNew = ok }))
+    const { wrapper, router } = await mountPage(`?workspace=${mode}`)
+    await wrapper.get('.composer-card textarea').setValue('old input')
+    await wrapper.get('.composer-send').trigger('click')
+    await router.push(`/chat?workspace=${mode}&newConversation=1`); await flushPromises()
+    await wrapper.get('.composer-card textarea').setValue('new input')
+    await wrapper.get('.composer-send').trigger('click')
+    failOld(new Error('obsolete failure')); await flushPromises()
+    expect((wrapper.get('.composer-card textarea').element as HTMLTextAreaElement).value).toBe('')
+    await wrapper.get('.composer-card textarea').setValue('third input')
+    await wrapper.get('.composer-send').trigger('click')
+    expect(send).toHaveBeenCalledTimes(2)
+    finishNew(); await flushPromises(); wrapper.unmount()
+  })
+
   it('rejects an explicit Run from another Mission without falling back or creating a binding', async () => {
     chatStoreMock.workflowBindings.conversation_1 = [binding('conversation_1', 'fallback')]
     vi.mocked(agentosApi.getWorkflowRun).mockResolvedValue({ ...run('selected'), missionId: 'other-mission' })

@@ -339,12 +339,8 @@
             <el-main class="app-main" :class="{ 'route-scrollable': isRouteScrollable }">
               <Suspense>
                 <template #default>
-                  <router-view v-slot="{ Component }">
-                    <Transition
-                      :name="isDockedWorkspaceRoute ? 'dock-column' : 'shell-route'"
-                    >
-                      <component :is="Component" :key="route.path" />
-                    </Transition>
+                  <router-view v-slot="{ Component, route: viewRoute }">
+                    <WorkspaceViewHost v-if="Component" :view="Component" :view-route="viewRoute" />
                   </router-view>
                 </template>
                 <template #fallback>
@@ -407,7 +403,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ChatDotRound, ChatLineRound, Delete, Edit, EditPen, FolderAdd, MoreFilled,
@@ -435,11 +431,16 @@ import { isDesktop } from '@/platform'
 import { plainMissionTitle } from '@/utils/missionTitle'
 import { DOCK_LEFT_DEFAULT, useDockedWorkspaceGeometry } from '@/composables/useDockedWorkspaceGeometry'
 import KeyboardShortcutsDialog from '@/components/app/KeyboardShortcutsDialog.vue'
+import WorkspaceViewHost from '@/components/app/WorkspaceViewHost.vue'
+import { conversationBindingKey, conversationWorkbenchTarget, isConversationForWorkbench, workbenchConversationTarget } from '@/features/workspace/navigation'
+import { conversationBindings } from '@/features/workspace/session'
 import { initAppKeyboardShortcuts } from '@/composables/useAppKeyboardShortcuts'
 
 const route = useRoute()
 const router = useRouter()
 const chatStore = useChatStore()
+provide(conversationBindingKey, (contextId, missionId, runId) =>
+  isConversationForWorkbench(chatStore.workflowBindings, contextId, missionId, runId))
 const workflowRunsStore = useWorkflowRunsStore()
 const userStore = useUserStore()
 const simpleNavOpen = ref(false)
@@ -603,13 +604,44 @@ const loadRecentConversations = (): Promise<void> => {
   return pending
 }
 
-const handleChatNavToggle = () => {
+let navigationGeneration = 0
+const handleChatNavToggle = async () => {
   if (acgNavOpen.value) closeAcgPanel()
   chatNavOpen.value = route.path.startsWith('/chat') ? !chatNavOpen.value : true
   localStorage.setItem(CHAT_NAV_OPEN_KEY, chatNavOpen.value ? '1' : '0')
   if (chatNavOpen.value) void loadRecentConversations()
   if (!route.path.startsWith('/chat')) {
-    void router.push(lastChatRoute.value)
+    const generation = ++navigationGeneration
+    const source = route.fullPath
+    const target = isMissionWorkspacePath(route.path) ? await workbenchConversationTarget({
+      index: chatStore.workflowBindings,
+      missionId: String(route.params.missionId || ''),
+      runId: typeof route.query.runId === 'string' ? route.query.runId : '',
+      draftId: localStorage.getItem('chat.workflow_draft_conversation_id'),
+      currentContextId: chatStore.contextId,
+      readRun: id => agentosApi.getWorkflowRun(id),
+      readConversation: id => conversationApi.getConversation(id)
+    }) : null
+    if (generation !== navigationGeneration || source !== route.fullPath) return
+    if (!target && isMissionWorkspacePath(route.path)) {
+      ElMessage.warning('当前没有可恢复的关联对话')
+      const associated = Object.values(chatStore.workflowBindings).flat().some(item => !item.invalidAt
+        && item.missionId === String(route.params.missionId || '') && item.runId === route.query.runId)
+      if (associated) return // a denied/mismatched association must never fall back to the same cached history
+      const fallback = router.resolve(lastChatRoute.value)
+      const { runId: _run, missionId: _mission, ...query } = fallback.query
+      const contextId = typeof query.contextId === 'string' ? query.contextId : chatStore.contextId
+      if (contextId) {
+        try {
+          const conversation = await conversationApi.getConversation(contextId)
+          if (generation !== navigationGeneration || source !== route.fullPath || conversation.contextId !== contextId) return
+          query.contextId = contextId
+        } catch { return }
+      }
+      await router.push({ path: '/chat', query })
+      return
+    }
+    await router.push(target || lastChatRoute.value)
   }
 }
 
@@ -623,14 +655,26 @@ const closeAcgPanel = () => {
   localStorage.setItem(ACG_NAV_OPEN_KEY, '0')
 }
 
-const handleAcgNavToggle = () => {
+const handleAcgNavToggle = async () => {
   if (chatNavOpen.value) closeChatPanel()
   acgNavOpen.value = !acgNavOpen.value
   localStorage.setItem(ACG_NAV_OPEN_KEY, acgNavOpen.value ? '1' : '0')
   if (!isAcgPath(route.path)) {
     acgNavOpen.value = true
     localStorage.setItem(ACG_NAV_OPEN_KEY, '1')
-    void router.push(lastMissionWorkspacePath.value || '/agentos/acg')
+    const generation = ++navigationGeneration
+    const source = route.fullPath
+    const conversationId = typeof route.query.contextId === 'string' ? route.query.contextId
+      : chatStore.contextId || localStorage.getItem('chat.workflow_draft_conversation_id') || ''
+    const target = isChatRoute.value ? await conversationWorkbenchTarget(chatStore.workflowBindings, conversationId,
+      typeof route.query.runId === 'string' ? route.query.runId : undefined,
+      id => agentosApi.getWorkflowRun(id)) : null
+    if (generation !== navigationGeneration || source !== route.fullPath) return
+    if (!target && isChatRoute.value) {
+      ElMessage.warning('当前对话没有可验证的关联任务')
+      if (conversationBindings(chatStore.workflowBindings, conversationId).some(item => !item.invalidAt)) return
+    }
+    await router.push(target || lastMissionWorkspacePath.value || '/agentos/acg')
   }
 }
 

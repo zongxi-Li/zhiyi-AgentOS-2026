@@ -197,9 +197,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
 import WorkbenchLayout from '@/components/workbench/WorkbenchLayout.vue'
 import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/EditorGroup.vue'
@@ -220,9 +220,14 @@ import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjecti
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
 import { chooseFailedRunRetryMode } from '@/utils/retryModeChoice'
 import { isActiveRunStatus, isTerminalRunStatus } from '@/features/workspace/session'
+import { conversationBindingKey } from '@/features/workspace/navigation'
 
 const route = useRoute()
 const router = useRouter()
+const hasConversationBinding = inject(conversationBindingKey, () => false)
+let viewActive = true
+let suspended = false
+const isWorkspaceVisible = () => viewActive && router.currentRoute.value.path === route.path
 const emit = defineEmits<{
   'open-workspace-file': [request: WorkspaceFileOpenRequest]
 }>()
@@ -635,15 +640,17 @@ const projectionActive = (projection: MissionWorkspaceProjection) => (
 
 const scheduleProjectionRefresh = () => {
   stopProjectionRefresh()
+  if (!isWorkspaceVisible()) return
   projectionRefreshTimer = setTimeout(async () => {
     projectionRefreshTimer = null
-    if (loading.value) return
+    if (!viewActive || loading.value) return
     const projectionSnapshot = projection.value
     if (projectionSnapshot && projectionActive(projectionSnapshot)) await loadWorkspace(selectedRunId.value)
   }, PROJECTION_REFRESH_MS)
 }
 
 const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgress?: boolean } = {}) => {
+  if (!isWorkspaceVisible()) return
   if (!missionId.value) {
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
     return
@@ -670,8 +677,11 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   loadError.value = ''
   try {
     const nextProjection = await requestWorkspaceProjection(runId, requestController.signal)
+    if (!isWorkspaceVisible() || controller !== requestController || requestController.signal.aborted) return
+    if (nextProjection.mission.missionId !== missionId.value
+      || (runId && nextProjection.activeRun?.runId !== runId)) throw new Error('Workspace identity mismatch')
     projection.value = nextProjection
-    currentRunId.value ||= defaultRunId(nextProjection.runs)
+    currentRunId.value = defaultRunId(nextProjection.runs)
     selectedRunId.value = nextProjection.activeRun?.runId || runId || null
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     syncProgressEditorIdentity(nextProjection, runId)
@@ -698,14 +708,16 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
       // Give the foreground document the first read slot. Inspector/Trace
       // requests start when its read finishes, including failures.
       const opened = activeOpened.value
-      if (!runtimeObservation.value && opened?.available && opened.entry.kind === 'artifact'
+      if (!preserveRenderedWorkspace && !runtimeObservation.value && opened?.available && opened.entry.kind === 'artifact'
         && (opened.entry.contentRef || opened.entry.artifactId)) {
         pendingObservation = { runId: nextRunId, start: startObservation }
       } else startObservation()
     }
     // 降级投影等待 identity 注册：活跃 Run 期间周期重拉，直到 PLANNING_PROJECTION_PENDING 消失。
     if (projectionActive(nextProjection)) scheduleProjectionRefresh()
+    if (!route.query.runId && selectedRunId.value) void persistRunInUrl(selectedRunId.value)
   } catch (error: unknown) {
+    if (!viewActive || controller !== requestController || requestController.signal.aborted) return
     if (isAbortError(error)) return
     // 重试梯子耗尽才到这里：活跃 Run 期间继续周期重拉，抖动恢复后错误条自动
     // 消失；一次网关抖动不应把报错钉在右上角并让工作台停止自愈。
@@ -719,6 +731,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
 }
 
 const persistRunInUrl = async (runId: string | null) => {
+  if (!isWorkspaceVisible()) return
   const query = { ...route.query }
   if (runId) query.runId = runId
   else delete query.runId
@@ -726,7 +739,7 @@ const persistRunInUrl = async (runId: string | null) => {
 }
 
 const selectRun = async (runId: string) => {
-  if (runId === projection.value?.activeRun?.runId && projection.value) {
+  if (runId === selectedRunId.value && runId === projection.value?.activeRun?.runId && projection.value && !loading.value) {
     const progress = entriesWithProgress.value.find(entry => entry.kind === 'progress')
     if (progress) openEntry(progress)
     return
@@ -939,8 +952,17 @@ const openEntry = (entry: WorkspaceEntry) => {
 
 const confirmFileNavigation = () => !openEntries.value.some(item => item.entry.metadata?.dirty)
   || window.confirm('文件尚未保存，离开将放弃修改。是否继续？')
-onBeforeRouteLeave(confirmFileNavigation)
-onBeforeRouteUpdate((to, from) => to.params.missionId === from.params.missionId || confirmFileNavigation())
+// This guard also protects a dirty Mission while it is hidden in the cache.
+// A second Mission replaces that cache slot; cancellation must happen first.
+const removeFileNavigationGuard = router.beforeEach(to => {
+  if (to.path === `/agentos/missions/${encodeURIComponent(missionId.value)}/workspace`) return true
+  const context = typeof to.query.contextId === 'string' ? to.query.contextId
+    : localStorage.getItem('chat.workflow_draft_conversation_id') || ''
+  if (to.path === '/chat' && to.query.newConversation !== '1'
+    && to.query.missionId === missionId.value && to.query.runId === selectedRunId.value
+    && hasConversationBinding(context, missionId.value, selectedRunId.value)) return true
+  return confirmFileNavigation()
+})
 
 const closeEditor = (entryId: string) => {
   if (entryCache.value[entryId]?.metadata?.dirty && !window.confirm('文件尚未保存，确定关闭并放弃修改？')) return
@@ -1028,6 +1050,12 @@ const locateGraph = (entry: WorkspaceEntry) => {
 }
 
 void loadWorkspace()
+watch(() => route.query.runId, value => {
+  const runId = typeof value === 'string' ? value : null
+  if (!viewActive || runId === selectedRunId.value) return
+  if (runId) void selectRun(runId)
+  else { selectedRunId.value = null; void loadWorkspace(null) }
+})
 watch(activeEditorId, () => {
   if (activeOpened.value?.entry.kind !== 'artifact') finishForegroundContent(selectedRunId.value)
 })
@@ -1036,13 +1064,30 @@ let unregisterOpenFile: (() => void) | null = null
 onMounted(() => {
   unregisterOpenFile = registerOpenFile(openWorkspaceFile)
 })
-onBeforeUnmount(() => {
+const suspendWorkspace = () => {
+  viewActive = false
   unregisterOpenFile?.()
   unregisterOpenFile = null
   pendingObservation = null
   controller?.abort()
   runtimeObservationAdapter.stop()
   stopProjectionRefresh()
+  // Runtime output is transient and cannot be replayed. The cached Mission owns
+  // its one shared SSE reference even while hidden; only polling is suspended.
+  loading.value = false
+}
+onDeactivated(() => { suspended = true; suspendWorkspace() })
+onActivated(() => {
+  if (!suspended) return
+  suspended = false
+  viewActive = true
+  unregisterOpenFile = registerOpenFile(openWorkspaceFile)
+  const routeRunId = typeof route.query.runId === 'string' ? route.query.runId : selectedRunId.value
+  void loadWorkspace(routeRunId)
+})
+onBeforeUnmount(() => {
+  removeFileNavigationGuard()
+  suspendWorkspace()
   releaseRunRuntimeStore(runtimeStoreRunId, runtimeStore.value)
   runtimeStore.value = null
   runtimeStoreRunId = null

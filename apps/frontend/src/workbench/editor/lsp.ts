@@ -13,6 +13,7 @@ export interface LspExtensionOptions {
   /** 工作区相对路径 */
   path: string
   onDefinition: (location: LspLocationItem) => void
+  active?: () => boolean
 }
 
 /** LSP 的行列是 1 基；映射到 CodeMirror 偏移时对越界值做收敛。 */
@@ -46,6 +47,7 @@ export const lspExtension = (options: LspExtensionOptions): Extension[] => {
   return [
     lintGutter(),
     linter(async view => {
+      if (options.active?.() === false) return []
       // 只在文本真的变化时同步，避免轮询触发的 lint 反复把同一份文本推给语言服务。
       const text = view.state.doc.toString()
       if (text !== lastSent) {
@@ -54,7 +56,9 @@ export const lspExtension = (options: LspExtensionOptions): Extension[] => {
       }
       // 语言服务异步计算诊断：短暂轮询，避免第一次拿到空结果就再也不刷新。
       for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (options.active?.() === false) return []
         const items = await lspDiagnostics(options.root).catch(() => [] as LspDiagnosticItem[])
+        if (options.active?.() === false) return []
         if (items.length) return toDiagnostics(view.state, items, options.path)
         await new Promise(resolve => setTimeout(resolve, 250))
       }

@@ -675,7 +675,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DOCK_RIGHT_DEFAULT, useDockedWorkspaceGeometry } from '@/composables/useDockedWorkspaceGeometry'
 import axios from 'axios'
 import { useI18n } from 'vue-i18n'
@@ -746,6 +746,11 @@ const draftConversationId = ref(
 )
 if (draftConversationId.value) localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
 let sendingDraftId: string | null = null
+let composerGeneration = 0
+let viewActive = true
+let viewSuspended = false
+let savedScrollTop = 0
+const isConversationVisible = () => viewActive && router.currentRoute.value.path === '/chat'
 let selectedConversationId = ''
 // A single read result is handed to the existing detail loader, avoiding a second GET on restoration.
 let restoredRunDetail: WorkflowRun | null = null
@@ -1242,7 +1247,7 @@ const handleContextPanelResizeKeydown = (event: KeyboardEvent) => {
   persistContextPanelHeight()
 }
 
-const invalidateWorkflowResultRequest = () => {
+const invalidateWorkflowResultRequest = (preserveResult = false) => {
   workflowResultGeneration += 1
   workflowResultController?.abort()
   workflowResultController = null
@@ -1251,8 +1256,10 @@ const invalidateWorkflowResultRequest = () => {
   workflowResultRetryTimer = null
   workflowResultRetryCount = 0
   isLoadingWorkflowResult.value = false
-  workflowResultState.value = 'idle'
-  workflowResultError.value = null
+  if (!preserveResult) {
+    workflowResultState.value = 'idle'
+    workflowResultError.value = null
+  }
 }
 
 const scheduleWorkflowResultRetry = (runId: string) => {
@@ -1265,6 +1272,7 @@ const scheduleWorkflowResultRetry = (runId: string) => {
 }
 
 const loadActiveAcgView = (runId = activeWorkflowRunId.value, force = false): Promise<boolean> => {
+  if (!viewActive) return Promise.resolve(false)
   if (!runId || runId !== activeWorkflowRunId.value) return Promise.resolve(false)
   if (workflowResultInFlight?.runId === runId) {
     const inFlight = workflowResultInFlight.promise
@@ -1459,6 +1467,7 @@ let conversationMetaController: AbortController | null = null
 let conversationMetaTimer: number | null = null
 
 const loadConversationMeta = async () => {
+  if (!viewActive) return
   if (isAgentMode.value) {
     conversationMeta.value = null
     return
@@ -1485,6 +1494,7 @@ watch(
   [currentConversationId, () => chatStore.messages.length],
   () => {
     if (conversationMetaTimer) window.clearTimeout(conversationMetaTimer)
+    if (!viewActive) return
     // 标题由后端在首轮回复后生成，留出短暂窗口再刷新
     conversationMetaTimer = window.setTimeout(() => { void loadConversationMeta() }, 600)
   },
@@ -1568,6 +1578,10 @@ const isWorkflowUpgradeDisabled = computed(() =>
 )
 
 const resetWorkspace = async () => {
+  ++composerGeneration
+  sendingDraftId = null
+  loading.value = false
+  isSubmittingWorkflow.value = false
   chatStore.clearMessages()
   draftConversationId.value = `draft:${createClientRequestId()}`
   localStorage.setItem(DRAFT_CONVERSATION_KEY, draftConversationId.value)
@@ -1673,6 +1687,7 @@ const sendAgentWorkspaceMessage = async () => {
   if (!userText) return
 
   loading.value = true
+  const generation = ++composerGeneration
   const composerStartRect = chatStore.messages.length === 0
     ? composerRef.value?.getBoundingClientRect()
     : undefined
@@ -1680,13 +1695,15 @@ const sendAgentWorkspaceMessage = async () => {
   try {
     inputText.value = userText
     await upgradeChatToWorkflow()
+    if (generation !== composerGeneration) return
     if (composerStartRect) await animateComposerToConversation(composerStartRect)
     scrollToBottom()
   } catch (error: any) {
+    if (generation !== composerGeneration) return
     inputText.value = userText
     if (!wasErrorUserNotified(error)) ElMessage.error(error?.message || 'Send failed')
   } finally {
-    loading.value = false
+    if (generation === composerGeneration) loading.value = false
   }
 }
 
@@ -1700,6 +1717,7 @@ const sendMessage = async () => {
   }
 
   loading.value = true
+  const generation = ++composerGeneration
   const userText = inputText.value.trim()
   inputText.value = ''
   const composerStartRect = chatStore.messages.length === 0
@@ -1714,13 +1732,17 @@ const sendMessage = async () => {
       await animateComposerToConversation(composerStartRect)
     }
     await sendPromise
+    if (generation !== composerGeneration) return
     scrollToBottom()
   } catch (err: any) {
+    if (generation !== composerGeneration) return
     if (!wasErrorUserNotified(err)) ElMessage.error(err.message || '发送消息失败')
     inputText.value = userText
   } finally {
-    sendingDraftId = null
-    loading.value = false
+    if (generation === composerGeneration) {
+      sendingDraftId = null
+      loading.value = false
+    }
   }
 }
 
@@ -1738,8 +1760,10 @@ const activateWorkflowRun = async (
   activeWorkflowRun.value = null
   activeAcgView.value = null
   workflowStartError.value = null
-  void workflowProgressState.start(runId, { fresh })
-  await router.replace({ query: { ...route.query, runId } })
+  if (isConversationVisible()) {
+    void workflowProgressState.start(runId, { fresh })
+    await router.replace({ path: '/chat', query: { ...route.query, runId } })
+  }
 }
 
 const workflowStartErrorMessage = (error: unknown) => {
@@ -1763,6 +1787,7 @@ const upgradeChatToWorkflow = async () => {
   }
 
   const conversationId = currentConversationId.value
+  const generation = composerGeneration
   isSubmittingWorkflow.value = true
   workflowStartError.value = null
   inputText.value = ''
@@ -1776,32 +1801,36 @@ const upgradeChatToWorkflow = async () => {
         reasoningEffort: loadModelSettings().reasoningEffort
       }
     })
+    if (generation !== composerGeneration) return
     if (result) {
       await activateWorkflowRun(result.binding.runId, result.binding, true)
       ElMessage.success(`已创建 WorkflowRun：${result.binding.runId}`)
     }
     scrollToBottom()
   } catch (error: unknown) {
+    if (generation !== composerGeneration) return
     inputText.value = userText
     workflowStartError.value = workflowStartErrorMessage(error)
     pendingLaunchForView.value = chatStore.pendingMissionLaunch(conversationId)
   } finally {
-    isSubmittingWorkflow.value = false
+    if (generation === composerGeneration) isSubmittingWorkflow.value = false
   }
 }
 
 const pendingLaunchForView = ref<ReturnType<typeof chatStore.pendingMissionLaunch>>(null)
 const resumePendingConversationLaunch = async () => {
   if (isSubmittingWorkflow.value) return
+  const generation = composerGeneration
   isSubmittingWorkflow.value = true
   try {
     const result = await chatStore.resumeMissionLaunch(currentConversationId.value)
+    if (generation !== composerGeneration) return
     if (result) {
       pendingLaunchForView.value = null
       await activateWorkflowRun(result.binding.runId, result.binding, true)
     }
-  } catch (error) { workflowStartError.value = workflowStartErrorMessage(error) }
-  finally { isSubmittingWorkflow.value = false }
+  } catch (error) { if (generation === composerGeneration) workflowStartError.value = workflowStartErrorMessage(error) }
+  finally { if (generation === composerGeneration) isSubmittingWorkflow.value = false }
 }
 watch(currentConversationId, id => {
   try {
@@ -1856,6 +1885,7 @@ const handleFileSelected = async (file: any) => {
 
   showFileManager.value = false
   loading.value = true
+  const generation = ++composerGeneration
   const composerStartRect = chatStore.messages.length === 0
     ? composerRef.value?.getBoundingClientRect()
     : undefined
@@ -1868,13 +1898,17 @@ const handleFileSelected = async (file: any) => {
       await animateComposerToConversation(composerStartRect)
     }
     await sendPromise
+    if (generation !== composerGeneration) return
     scrollToBottom()
     ElMessage.success(`已发送文件: ${file.name}`)
   } catch (error: any) {
+    if (generation !== composerGeneration) return
     ElMessage.error(error.message || '发送文件失败')
   } finally {
-    sendingDraftId = null
-    loading.value = false
+    if (generation === composerGeneration) {
+      sendingDraftId = null
+      loading.value = false
+    }
   }
 }
 
@@ -2003,7 +2037,7 @@ watch(
 )
 
 const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
-  if (!messagesRef.value) return
+  if (!viewActive || !messagesRef.value) return
 
   if (pendingScrollFrame !== null) {
     window.cancelAnimationFrame(pendingScrollFrame)
@@ -2013,7 +2047,7 @@ const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
     pendingScrollFrame = null
     void nextTick(() => {
       const messagesElement = messagesRef.value
-      if (!messagesElement) return
+      if (!viewActive || !messagesElement) return
 
       messagesElement.scrollTo({
         top: messagesElement.scrollHeight,
@@ -2109,19 +2143,23 @@ const bindMessagesScroll = () => {
 watch(
   () => route.query.contextId,
   async contextId => {
-    if (route.query.newConversation === '1') return
+    if (!viewActive || route.query.newConversation === '1') return
     const targetContextId = typeof contextId === 'string' ? contextId.trim() : ''
     if (!targetContextId) return
     if (chatStore.contextId === targetContextId) return
 
+    ++composerGeneration
+    sendingDraftId = null
+    loading.value = false
+    isSubmittingWorkflow.value = false
     await chatStore.loadHistory(targetContextId)
     scrollToBottom()
   },
   { immediate: true }
 )
 
-const restoreWorkflowForConversation = async () => {
-  if (route.query.newConversation === '1') return
+const restoreWorkflowForConversation = async (resume = false) => {
+  if (!isConversationVisible() || route.query.newConversation === '1') return
   const conversationId = currentConversationId.value
   const bindings = conversationBindings(chatStore.workflowBindings, conversationId)
   const selectedRunId = selectedConversationId === conversationId ? activeWorkflowRun.value?.runId : undefined
@@ -2134,7 +2172,13 @@ const restoreWorkflowForConversation = async () => {
   let runId = routeRunId || (selectedConversationId === conversationId ? activeWorkflowRun.value?.runId : '') || binding?.runId || ''
 
   if (runId && runId === activeWorkflowRunId.value && workflowProgressState.runId.value === runId
-    && (!missionId || activeWorkflowRun.value?.missionId === missionId)) return
+    && (!missionId || activeWorkflowRun.value?.missionId === missionId)) {
+    if (resume) {
+      await workflowProgressState.refresh()
+      await loadActiveAcgView(runId, true)
+    }
+    return
+  }
 
   const restoreGeneration = ++conversationGeneration
   restoredRunDetail = null
@@ -2218,7 +2262,7 @@ watch(
     if (!previous && sendingDraftId && !route.query.contextId && sendingDraftId === draftConversationId.value) {
       chatStore.migrateDraftBindings(sendingDraftId, contextId)
     }
-    if (!previous && !route.query.contextId) {
+    if (isConversationVisible() && !previous && !route.query.contextId) {
       setConversationWorkspace(contextId, chatStore.conversationWorkspaceMode || workspaceMode.value)
       void router.replace({ query: contextQuery(route.query, contextId) })
     }
@@ -2298,13 +2342,23 @@ onUnmounted(() => {
   }
 })
 
-onMounted(async () => {
-  heroLogoMotion.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const attachViewEvents = () => {
   window.addEventListener('workspace-mode-change', handleWorkspaceModeChange)
   window.addEventListener('agent-new-task', handleNewAgentTask)
   window.addEventListener('resize', handleWorkflowPanelViewportResize)
   window.addEventListener('resize', handleChatInfoViewportResize)
   window.addEventListener('pointerdown', handleComposerOutsideClick)
+}
+const detachViewEvents = () => {
+  window.removeEventListener('workspace-mode-change', handleWorkspaceModeChange)
+  window.removeEventListener('agent-new-task', handleNewAgentTask)
+  window.removeEventListener('resize', handleWorkflowPanelViewportResize)
+  window.removeEventListener('resize', handleChatInfoViewportResize)
+  window.removeEventListener('pointerdown', handleComposerOutsideClick)
+}
+onMounted(async () => {
+  heroLogoMotion.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  attachViewEvents()
   if (showHeroMode.value) {
     setContextPanelOpen(false)
     setWorkflowPanelOpen(false)
@@ -2336,12 +2390,50 @@ onMounted(async () => {
   bindMessagesScroll()
 })
 
+onDeactivated(() => {
+  viewActive = false
+  viewSuspended = true
+  savedScrollTop = messagesRef.value?.scrollTop || 0
+  detachViewEvents()
+  conversationGeneration += 1
+  workflowProgressState.stop()
+  invalidateWorkflowResultRequest(true)
+  conversationMetaController?.abort()
+  if (conversationMetaTimer !== null) window.clearTimeout(conversationMetaTimer)
+  conversationMetaTimer = null
+  chatInfoResizeObserver?.disconnect()
+  composerResizeObserver?.disconnect()
+  stopChatInfoResize()
+  stopAgentPanelResize()
+  stopWorkflowPanelResize()
+  stopContextPanelResize()
+  if (pendingScrollFrame !== null) window.cancelAnimationFrame(pendingScrollFrame)
+  pendingScrollFrame = null
+  if (heroLogoMotion.frame !== null) window.cancelAnimationFrame(heroLogoMotion.frame)
+  heroLogoMotion.frame = null
+  cancelAnimationFrame(heroSettleFrame)
+  if (heroSettleTimer) clearTimeout(heroSettleTimer)
+})
+onActivated(async () => {
+  if (!viewSuspended) return
+  viewSuspended = false
+  viewActive = true
+  attachViewEvents()
+  if (chatMainRef.value) chatInfoResizeObserver?.observe(chatMainRef.value)
+  if (composerRef.value) composerResizeObserver?.observe(composerRef.value)
+  if (chatStore.contextId && !route.query.contextId) {
+    await router.replace({ path: '/chat', query: contextQuery(route.query, chatStore.contextId) })
+  }
+  void restoreWorkflowForConversation(true)
+  void loadConversationMeta()
+  await nextTick()
+  if (messagesRef.value) messagesRef.value.scrollTop = savedScrollTop
+  if (showHeroMode.value) startHeroSettleCheck()
+})
 onUnmounted(() => {
-  window.removeEventListener('workspace-mode-change', handleWorkspaceModeChange)
-  window.removeEventListener('agent-new-task', handleNewAgentTask)
-  window.removeEventListener('resize', handleWorkflowPanelViewportResize)
-  window.removeEventListener('resize', handleChatInfoViewportResize)
-  window.removeEventListener('pointerdown', handleComposerOutsideClick)
+  ++composerGeneration
+  viewActive = false
+  detachViewEvents()
   stopChatInfoResize()
   chatInfoResizeObserver?.disconnect()
   chatInfoResizeObserver = null

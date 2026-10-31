@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
 import type { GraphProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { WorkbenchContributionRegistry } from '@/workbench/registry'
 import InspectorFrame from '@/components/workbench/InspectorFrame.vue'
@@ -193,6 +193,7 @@ const props = defineProps<{
 }>()
 const ownedRuntimeStore = shallowRef<RunRuntimeStore | null>(null)
 const ownedRunId = ref<string | null>(null)
+let viewActive = true
 const runtimeStore = computed(() => props.runtimeStore || ownedRuntimeStore.value)
 const liveNode = computed(() => props.graphNode?.acgNodeId ? runtimeStore.value?.nodes[props.graphNode.acgNodeId] || null : null)
 const safeLiveOutput = computed(() => {
@@ -201,6 +202,7 @@ const safeLiveOutput = computed(() => {
   return safeStructuredOutput(liveNode.value?.outputBuffer)
 })
 const connectRuntime = (runId: string | null) => {
+  if (!viewActive) return
   if (props.runtimeStore) {
     releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
     ownedRuntimeStore.value = null
@@ -214,11 +216,14 @@ const connectRuntime = (runId: string | null) => {
 }
 watch([() => props.runId, () => props.runtimeStore], () => connectRuntime(props.runId))
 onMounted(() => connectRuntime(props.runId))
-onBeforeUnmount(() => {
+const disconnectRuntime = () => {
   releaseRunRuntimeStore(ownedRunId.value, ownedRuntimeStore.value)
   ownedRuntimeStore.value = null
   ownedRunId.value = null
-})
+}
+onDeactivated(() => { viewActive = false; disconnectRuntime() })
+onActivated(() => { viewActive = true; connectRuntime(props.runId) })
+onBeforeUnmount(disconnectRuntime)
 
 const emit = defineEmits<{
   locateGraph: []

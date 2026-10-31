@@ -180,7 +180,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue'
 import { runDisplayObjective, missionDocumentContent } from './missionSemanticDisplay'
 import type { MissionWorkspaceProjection, WorkspaceEntry, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
@@ -267,13 +267,17 @@ const missionTitle = computed(() => shorten(goalTitle.value, 32))
 
 const nowTick = ref(0)
 let durationTimer: ReturnType<typeof setInterval> | null = null
-watch(runState, state => {
-  if (state === 'running' && durationTimer === null) durationTimer = setInterval(() => { nowTick.value += 1 }, 1000)
-  else if (state !== 'running' && durationTimer !== null) {
+let viewActive = true
+const syncDurationTimer = () => {
+  if (viewActive && runState.value === 'running' && durationTimer === null) durationTimer = setInterval(() => { nowTick.value += 1 }, 1000)
+  else if ((!viewActive || runState.value !== 'running') && durationTimer !== null) {
     clearInterval(durationTimer)
     durationTimer = null
   }
-}, { immediate: true })
+}
+watch(runState, syncDurationTimer, { immediate: true })
+onActivated(() => { viewActive = true; syncDurationTimer() })
+onDeactivated(() => { viewActive = false; syncDurationTimer(); stopDetailResize() })
 onBeforeUnmount(() => {
   if (durationTimer !== null) clearInterval(durationTimer)
   stopDetailResize()

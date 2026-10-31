@@ -166,6 +166,16 @@ export const useChatStore = defineStore('chat', () => {
   const historyError = ref<string | null>(null)
   const conversationWorkspaceMode = ref<ConversationWorkspaceMode | null>(null)
   let historyGeneration = 0
+  let messageGeneration = 0
+  // Transport cancellation is best effort; only the current owner may write UI state.
+  const invalidateMessageRequest = () => {
+    ++messageGeneration
+    activeStreamController?.abort()
+    activeStreamController = null
+    activeRequestId = null
+    isStreaming.value = false
+    loading.value = false
+  }
   // Context window usage for the composer indicator: tokens consumed by the
   // latest exchange (input + output ≈ what the next request will carry) and
   // the resolved model context window.
@@ -306,6 +316,8 @@ export const useChatStore = defineStore('chat', () => {
     if ((!text.trim() && !fileUrl) || loading.value) return
     if (historyError.value) throw new Error(historyError.value)
 
+    const generation = ++messageGeneration
+    const isCurrent = () => generation === messageGeneration
     pushUserMessage(text, fileUrl)
 
     loading.value = true
@@ -320,6 +332,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const response = await chatApi.sendMessage(request)
+      if (!isCurrent()) return
       contextId.value = response.contextId
 
       const assistantMessage: Message = {
@@ -346,8 +359,10 @@ export const useChatStore = defineStore('chat', () => {
       emitHistoryRefresh()
 
       return response
+    } catch (error) {
+      if (isCurrent()) throw error
     } finally {
-      loading.value = false
+      if (isCurrent()) loading.value = false
     }
   }
 
@@ -362,6 +377,8 @@ export const useChatStore = defineStore('chat', () => {
     if ((!text.trim()) || loading.value) return
     if (historyError.value) throw new Error(historyError.value)
 
+    const generation = ++messageGeneration
+    const isCurrent = () => generation === messageGeneration
     const modelRequestSettings = toModelRequestSettings(runtimeSettings)
 
     pushUserMessage(text)
@@ -382,31 +399,32 @@ export const useChatStore = defineStore('chat', () => {
       agentMode
     }
     messages.value.push(streamMsg)
-    const streamIndex = messages.value.length - 1
+    const streamMessage = messages.value[messages.value.length - 1]
+    const ownedMessage = () => isCurrent() ? streamMessage : undefined
     const thinkingStartedAt = performance.now()
     let terminal: 'done' | 'error' | 'cancelled' | null = null
     const finishThinking = (state: 'complete' | 'error', durationMs?: number) => {
-      const message = messages.value[streamIndex]
+      const message = ownedMessage()
       if (!message) return
       if (!message.thinkingState && message.requestedThinkingMode === 'disabled') return
       message.thinkingState = state
       message.thinkingDurationMs = Math.max(0, durationMs ?? (performance.now() - thinkingStartedAt))
     }
     const appendStreamContent = (delta: string) => {
-      const message = messages.value[streamIndex]
+      const message = ownedMessage()
       if (message) {
         finishThinking('complete')
         message.content = (message.content || '') + delta
       }
     }
     const appendReasoningContent = (delta: string) => {
-      const message = messages.value[streamIndex]
+      const message = ownedMessage()
       if (message) message.reasoningContent = (message.reasoningContent || '') + delta
     }
     const failStream = (description: string, state: 'error' | 'cancelled' = 'error') => {
       terminal = state
       finishThinking('error')
-      const message = messages.value[streamIndex]
+      const message = ownedMessage()
       if (!message) return
       message.streamActivity = 'complete'
       message.streamPhase = state === 'cancelled' ? '已停止生成' : '请求未完成'
@@ -415,7 +433,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     const applyStreamEvent = (event: ChatStreamEvent) => {
       if (terminal === 'error' || terminal === 'cancelled') return
-      const message = messages.value[streamIndex]
+      const message = ownedMessage()
       if (!message) return
       const data = event.data || {}
       if (event.event !== 'heartbeat' && event.event !== 'done' && event.event !== 'error') {
@@ -637,6 +655,10 @@ export const useChatStore = defineStore('chat', () => {
         })
       })
 
+      if (!isCurrent()) {
+        await resp.body?.cancel().catch(() => {})
+        return
+      }
       const streamContextId = resp.headers.get('X-Chat-Context-Id')
       if (streamContextId) contextId.value = streamContextId
       if (!resp.ok) {
@@ -659,6 +681,10 @@ export const useChatStore = defineStore('chat', () => {
 
       while (true) {
         const { done, value } = await reader.read()
+        if (!isCurrent()) {
+          await reader.cancel().catch(() => {})
+          return
+        }
         if (done) break
         buffer += decoder.decode(value, { stream: true })
         const frames = buffer.split(/\r?\n\r?\n/)
@@ -684,20 +710,23 @@ export const useChatStore = defineStore('chat', () => {
         failStream('流式请求失败: ' + (e as Error).message)
       }
     } finally {
-      const message = messages.value[streamIndex]
+      const message = ownedMessage()
       if (message) message.streamActivity = 'complete'
       if (message?.thinkingState === 'thinking') {
         finishThinking(terminal === 'done' ? 'complete' : 'error')
       }
-      if (activeStreamController === streamController) activeStreamController = null
-      activeRequestId = null
-      isStreaming.value = false
-      loading.value = false
+      if (isCurrent()) {
+        if (activeStreamController === streamController) activeStreamController = null
+        activeRequestId = null
+        isStreaming.value = false
+        loading.value = false
+      }
     }
   }
 
   const cancelMessageStream = async () => {
     const requestId = activeRequestId
+    const controller = activeStreamController
     if (requestId) {
       try {
         await chatApi.cancelExecution(requestId)
@@ -705,7 +734,7 @@ export const useChatStore = defineStore('chat', () => {
         // The abort below still closes the UI stream if the control request races shutdown.
       }
     }
-    activeStreamController?.abort()
+    controller?.abort()
   }
 
   interface ConversationWorkflowOptions {
@@ -744,8 +773,11 @@ export const useChatStore = defineStore('chat', () => {
     const operationId = identity.operationId
     const pending = pendingConversationStarts.get(operationId)
     if (pending) return pending
+    const conversationOwner = historyGeneration
     const operation = Promise.resolve().then(async () => {
-      const userMessage = messages.value.find(message => message.role === 'user' && message.workflowClientRequestId === operationId) || pushUserMessage(text)
+      const userMessage = conversationOwner === historyGeneration
+        ? messages.value.find(message => message.role === 'user' && message.workflowClientRequestId === operationId) || pushUserMessage(text)
+        : { id: Date.now(), role: 'user' as const, content: text, workflowClientRequestId: operationId }
       userMessage.workflowClientRequestId = operationId
       const launch = await attempt.resume(operationId)
       const response = launch.run
@@ -755,7 +787,8 @@ export const useChatStore = defineStore('chat', () => {
         source, clientRequestId: launch.clientRequestId, createdAt: new Date().toISOString(), status: response.status
       }
       addWorkflowBinding(binding)
-      if (!messages.value.some(message => message.workflowRunId === binding.runId && message.workflowClientRequestId === operationId)) {
+      if (conversationOwner === historyGeneration
+        && !messages.value.some(message => message.workflowRunId === binding.runId && message.workflowClientRequestId === operationId)) {
         messages.value.push({
           id: Date.now() + 1, role: 'assistant', content: '已创建 ACG 运行任务', createdAt: new Date(),
           modelInfo: 'AgentOS Workflow', agentMode: 'default', acgTaskId: binding.acgTaskId,
@@ -789,13 +822,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const clearHistory = async () => {
-    if (contextId.value) {
-      await chatApi.clearHistory(contextId.value)
-    }
-    messages.value = []
-    contextId.value = null
-    contextUsedTokens.value = null
-    contextWindowTokens.value = null
+    const generation = ++historyGeneration
+    const targetContextId = contextId.value
+    invalidateMessageRequest()
+    const owner = messageGeneration
+    if (targetContextId) await chatApi.clearHistory(targetContextId)
+    if (generation === historyGeneration && owner === messageGeneration && contextId.value === targetContextId) clearMessages()
   }
 
   const setRole = (roleId: string | null) => {
@@ -804,6 +836,7 @@ export const useChatStore = defineStore('chat', () => {
 
   const loadHistory = async (targetContextId: string) => {
     if (!targetContextId || targetContextId.startsWith('draft:')) return
+    invalidateMessageRequest()
     const generation = ++historyGeneration
     loading.value = true
     isLoadingConversation.value = true
@@ -891,6 +924,7 @@ export const useChatStore = defineStore('chat', () => {
     if (id) {
       return loadHistory(id)
     } else {
+      invalidateMessageRequest()
       ++historyGeneration
       contextId.value = null
       conversationWorkspaceMode.value = null
@@ -916,6 +950,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const setMessages = (newMessages: Message[]) => {
+    invalidateMessageRequest()
     messages.value = newMessages.map(msg => ({
       ...msg,
       createdAt: msg.createdAt || (msg.timestamp ? new Date(msg.timestamp) : new Date())
@@ -923,11 +958,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const clearMessages = () => {
+    invalidateMessageRequest()
     ++historyGeneration
     conversationWorkspaceMode.value = null
     historyError.value = null
     isLoadingConversation.value = false
-    if (!isStreaming.value) loading.value = false
     messages.value = []
     contextId.value = null
     contextUsedTokens.value = null
