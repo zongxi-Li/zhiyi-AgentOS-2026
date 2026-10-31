@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/assets/brand/logo.png" width="220" alt="知弈 AgentOS 花环标识">
+  <img src="docs/assets/brand/show.png" width="240">
 </p>
 
-<p align="center">
+<!--><p align="center">
   <img src="docs/assets/brand/wordmark.png" width="420" alt="知弈 AgentOS">
-</p>
+</p> -->
 
 <p align="center">
   <strong>面向下一代 AI Agent 基础设施</strong><br>
