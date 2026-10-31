@@ -18,6 +18,9 @@
     "electron": "^45.1.0",
     "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "typescript-language-server": "^6.0.2"
   }
 }

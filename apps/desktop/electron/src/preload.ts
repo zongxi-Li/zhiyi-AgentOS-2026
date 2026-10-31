@@ -60,7 +60,23 @@ const bridge = {
     current: () => invoke(IPC.workspaceCurrent),
     list: (id: string, relative: string) => invoke(IPC.workspaceList, id, relative),
     read: (id: string, relative: string) => invoke(IPC.workspaceRead, id, relative),
-    save: (id: string, relative: string, content: string, version: string) => invoke(IPC.workspaceSave, id, relative, content, version)
+    save: (id: string, relative: string, content: string, version: string) => invoke(IPC.workspaceSave, id, relative, content, version),
+    search: (root: string, options: unknown) => invoke(IPC.workspaceSearch, root, options),
+    diagnostics: (root: string) => invoke(IPC.workspaceDiagnostics, root),
+    gitStatus: (root: string) => invoke(IPC.workspaceGitStatus, root),
+    gitDiff: (root: string, path: string, staged: boolean) => invoke(IPC.workspaceGitDiff, root, path, staged),
+    gitShow: (root: string, path: string, ref?: string) => invoke(IPC.workspaceGitShow, root, path, ref),
+    gitStage: (root: string, paths: string[]) => invoke(IPC.workspaceGitStage, root, paths),
+    gitUnstage: (root: string, paths: string[]) => invoke(IPC.workspaceGitUnstage, root, paths),
+    gitCommit: (root: string, message: string) => invoke(IPC.workspaceGitCommit, root, message)
+  },
+  lsp: {
+    open: (root: string, relativePath: string, text: string) => invoke(IPC.lspOpen, root, relativePath, text),
+    change: (root: string, relativePath: string, text: string) => invoke(IPC.lspChange, root, relativePath, text),
+    close: (root: string, relativePath: string) => invoke(IPC.lspClose, root, relativePath),
+    diagnostics: (root: string) => invoke(IPC.lspDiagnostics, root),
+    definition: (root: string, relativePath: string, line: number, column: number) =>
+      invoke(IPC.lspDefinition, root, relativePath, line, column)
   },
   terminal: {
     profiles: () => invoke(IPC.terminalProfiles),

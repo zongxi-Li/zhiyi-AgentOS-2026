@@ -16,6 +16,70 @@ export interface KinlinAppInfo {
 }
 
 export interface TerminalProfile { id: string; name: string }
+export interface WorkspaceSearchMatch {
+  path: string
+  line: number
+  text: string
+}
+export interface WorkspaceSearchResult {
+  matches: WorkspaceSearchMatch[]
+  truncated: boolean
+  engine: 'ripgrep' | 'node'
+}
+
+export interface WorkspaceDiagnosticItem {
+  path: string
+  line: number
+  column: number
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  source: string
+  code: string
+}
+
+export interface WorkspaceDiagnosticsResult {
+  diagnostics: WorkspaceDiagnosticItem[]
+  engine: 'tsc' | 'ruff' | 'none'
+  durationMs: number
+  truncated: boolean
+  message?: string
+}
+
+export interface GitFileChange {
+  path: string
+  index: string
+  worktree: string
+}
+
+export interface GitStatusResult {
+  branch: string
+  ahead: number
+  behind: number
+  files: GitFileChange[]
+}
+
+export interface LspDiagnosticItem {
+  path: string
+  line: number
+  column: number
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  source: string
+}
+
+export interface LspLocationItem {
+  path: string
+  line: number
+  column: number
+}
+
+export interface LspBridge {
+  open(root: string, relativePath: string, text: string): Promise<{ languageId: string | null }>
+  change(root: string, relativePath: string, text: string): Promise<void>
+  close(root: string, relativePath: string): Promise<void>
+  diagnostics(root: string): Promise<LspDiagnosticItem[]>
+  definition(root: string, relativePath: string, line: number, column: number): Promise<LspLocationItem[]>
+}
 export interface TerminalSession {
   id: string; profileId: string; profileName: string; cwd: string; pid: number
   state: 'running' | 'exited'; exitCode: number | null; cols: number; rows: number; createdAt: string
@@ -32,6 +96,7 @@ export interface TerminalBridge {
 
 export interface KinlinDesktopBridge {
   terminal?: TerminalBridge
+  lsp?: LspBridge
   window: {
     minimize(): void
     toggleMaximize(): void
@@ -56,6 +121,14 @@ export interface KinlinDesktopBridge {
     list(id: string, relative: string): Promise<WorkspaceFileListing>
     read(id: string, relative: string): Promise<{workspaceRoot: string; path: string; content: string; version: string}>
     save(id: string, relative: string, content: string, version: string): Promise<{path: string; version: string}>
+    search(root: string, options: { query: string; caseSensitive?: boolean; maxResults?: number }): Promise<WorkspaceSearchResult>
+    diagnostics(root: string): Promise<WorkspaceDiagnosticsResult>
+    gitStatus(root: string): Promise<GitStatusResult>
+    gitDiff(root: string, path: string, staged: boolean): Promise<string>
+    gitShow(root: string, path: string, ref?: string): Promise<string | null>
+    gitStage(root: string, paths: string[]): Promise<void>
+    gitUnstage(root: string, paths: string[]): Promise<void>
+    gitCommit(root: string, message: string): Promise<{ committed: boolean; output: string }>
   }
   notify(title: string, body?: string): void
   openExternal(url: string): Promise<void>

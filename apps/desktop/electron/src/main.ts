@@ -14,6 +14,10 @@ import * as path from 'node:path'
 import { IPC } from './lib/ipc-contract'
 import { TerminalClient } from './lib/terminal-client'
 import { WorkspaceFiles } from './lib/workspace-files'
+import { normalizeSearchOptions, searchWorkspace, validateSearchRoot } from './lib/workspace-search'
+import { runDiagnostics, validateDiagnosticsRoot } from './lib/workspace-diagnostics'
+import { LspHost } from './lib/lsp-host'
+import { gitCommit, gitDiff, gitShow, gitStage, gitStatus, gitUnstage, validateGitRoot } from './lib/workspace-git'
 import { APP_INDEX_URL, APP_SCHEME, APP_HOST, handleAppProtocol, registerAppScheme } from './lib/protocol'
 import { createFileLogger, type FileLogger } from './lib/logging'
 import {
@@ -71,6 +75,7 @@ const apiOrigin = (() => {
 registerAppScheme() // 必须发生在 app ready 之前
 
 let mainWindow: BrowserWindow | null = null
+let lspHost: LspHost | null = null
 let logger: FileLogger | null = null
 const terminalClient = new TerminalClient()
 
@@ -256,6 +261,28 @@ function registerIpcHandlers(): void {
   }
 
   const workspaceFiles = new WorkspaceFiles(path.join(app.getPath('userData'), 'workspace-folders.json'))
+  const host = new LspHost()
+  lspHost = host
+  ipcMain.handle(IPC.lspOpen, async (event, root, relativePath, text) => {
+    guard(event)
+    return host.openDocument(await validateDiagnosticsRoot(root), String(relativePath), String(text))
+  })
+  ipcMain.handle(IPC.lspChange, async (event, root, relativePath, text) => {
+    guard(event)
+    return host.changeDocument(await validateDiagnosticsRoot(root), String(relativePath), String(text))
+  })
+  ipcMain.handle(IPC.lspClose, async (event, root, relativePath) => {
+    guard(event)
+    return host.closeDocument(await validateDiagnosticsRoot(root), String(relativePath))
+  })
+  ipcMain.handle(IPC.lspDiagnostics, async (event, root) => {
+    guard(event)
+    return host.diagnostics(await validateDiagnosticsRoot(root))
+  })
+  ipcMain.handle(IPC.lspDefinition, async (event, root, relativePath, line, column) => {
+    guard(event)
+    return host.definition(await validateDiagnosticsRoot(root), String(relativePath), Number(line), Number(column))
+  })
   ipcMain.handle(IPC.terminalProfiles, event => { guard(event); return terminalClient.profiles() })
   ipcMain.handle(IPC.terminalList, event => { guard(event); return terminalClient.list() })
   ipcMain.handle(IPC.terminalCreate, (event, options) => { guard(event); return terminalClient.create(options) })
@@ -273,6 +300,39 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC.workspaceList, (event, id, relative) => { guard(event); return workspaceFiles.list(id, relative) })
   ipcMain.handle(IPC.workspaceRead, (event, id, relative) => { guard(event); return workspaceFiles.read(id, relative) })
   ipcMain.handle(IPC.workspaceSave, (event, id, relative, content, version) => { guard(event); return workspaceFiles.save(id, relative, content, version) })
+  ipcMain.handle(IPC.workspaceSearch, async (event, root, options) => {
+    guard(event)
+    const resolved = await validateSearchRoot(root)
+    return searchWorkspace(resolved, normalizeSearchOptions(options))
+  })
+  ipcMain.handle(IPC.workspaceDiagnostics, async (event, root) => {
+    guard(event)
+    return runDiagnostics(await validateDiagnosticsRoot(root))
+  })
+  ipcMain.handle(IPC.workspaceGitStatus, async (event, root) => {
+    guard(event)
+    return gitStatus(await validateGitRoot(root))
+  })
+  ipcMain.handle(IPC.workspaceGitDiff, async (event, root, filePath, staged) => {
+    guard(event)
+    return gitDiff(await validateGitRoot(root), String(filePath), staged === true)
+  })
+  ipcMain.handle(IPC.workspaceGitShow, async (event, root, filePath, ref) => {
+    guard(event)
+    return gitShow(await validateGitRoot(root), String(filePath), typeof ref === 'string' ? ref : 'HEAD')
+  })
+  ipcMain.handle(IPC.workspaceGitStage, async (event, root, paths) => {
+    guard(event)
+    return gitStage(await validateGitRoot(root), Array.isArray(paths) ? paths.map(String) : [])
+  })
+  ipcMain.handle(IPC.workspaceGitUnstage, async (event, root, paths) => {
+    guard(event)
+    return gitUnstage(await validateGitRoot(root), Array.isArray(paths) ? paths.map(String) : [])
+  })
+  ipcMain.handle(IPC.workspaceGitCommit, async (event, root, message) => {
+    guard(event)
+    return gitCommit(await validateGitRoot(root), String(message))
+  })
 
   ipcMain.handle(IPC.windowMinimize, (event) => {
     guard(event)
@@ -409,6 +469,8 @@ if (!gotSingleInstanceLock) {
     if (terminalCleanupStarted) return
     terminalCleanupStarted = true
     event.preventDefault()
+    lspHost?.dispose()
+    lspHost = null
     void terminalClient.closeAll().catch(() => undefined).finally(() => app.quit())
   })
   app.on('window-all-closed', () => {
