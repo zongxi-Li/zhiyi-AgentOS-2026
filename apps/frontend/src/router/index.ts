@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import type { RouteRecordRaw } from 'vue-router'
 import { authApi } from '@/services/api/auth'
 import { isDesktop } from '@/platform'
+import { ensureDesktopSession } from '@/platform/electron/session'
 
 const normalizeRedirect = (redirect?: string) => {
   if (!redirect) return '/chat'
@@ -274,6 +275,12 @@ const isAuthorizationFailure = (error: unknown) => {
 // Global route guard
 router.beforeEach(async (to, _from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - 知弈AgentOS` : '知弈AgentOS'
+
+  // 内部发行版：桌面壳启动即建立本地会话（账号由启动器首启自动注册），
+  // 因此登录页不会出现在界面上；拿不到会话时回落到原有登录流程。
+  if (isDesktop() && !localStorage.getItem('token')) {
+    await ensureDesktopSession()
+  }
 
   const token = localStorage.getItem('token')
   const requiresAuth = Boolean(to.meta.requiresAuth)

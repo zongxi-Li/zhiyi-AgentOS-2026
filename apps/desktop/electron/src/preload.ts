@@ -14,7 +14,22 @@ import { clampNumber } from './lib/validation'
 
 const invoke = (channel: string, ...args: unknown[]): Promise<unknown> => ipcRenderer.invoke(channel, ...args)
 
+// 构建期写死的后端地址在 product 模式下可能被启动器换端口；以 Main 同步下发的为准。
+const apiOrigin = ((): string => {
+  try {
+    const value = ipcRenderer.sendSync(IPC.appApiOrigin)
+    return typeof value === 'string' ? value : ''
+  } catch {
+    return ''
+  }
+})()
+
 const bridge = {
+  apiOrigin,
+  session: {
+    ensure: (): Promise<{ token: string; userId?: string; username?: string }> =>
+      invoke(IPC.sessionBootstrap) as Promise<{ token: string; userId?: string; username?: string }>
+  },
   window: {
     minimize: (): void => {
       void invoke(IPC.windowMinimize).catch(() => undefined)

@@ -15,7 +15,16 @@ const configuredApiOrigin = (isDesktopFamilyMode && env.DEV
   ? ''
   : env.VITE_API_BASE_URL || defaultDesktopApiOrigin
 ).trim().replace(/\/$/, '')
-const absoluteApiOrigin = /^https?:\/\//i.test(configuredApiOrigin) ? configuredApiOrigin : ''
+
+// 内部发行版：启动器可能把 Java 端口整体偏移（避免与本机其他程序冲突），
+// 渲染层以 Main 同步下发的 origin 为准，构建期常量只作兜底。
+const bridgeApiOrigin = (() => {
+  const value = (globalThis as { kinlinDesktop?: { apiOrigin?: unknown } }).kinlinDesktop?.apiOrigin
+  return typeof value === 'string' && /^https?:\/\//i.test(value) ? value.replace(/\/$/, '') : ''
+})()
+
+const absoluteApiOrigin = bridgeApiOrigin
+  || (/^https?:\/\//i.test(configuredApiOrigin) ? configuredApiOrigin : '')
 
 const normalizePath = (path: string): string => path.startsWith('/') ? path : `/${path}`
 
