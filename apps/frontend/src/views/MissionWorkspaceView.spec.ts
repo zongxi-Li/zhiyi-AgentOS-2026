@@ -170,8 +170,10 @@ describe('MissionWorkspaceView', () => {
 
     expect(wrapper.find('.secondary-sidebar').exists()).toBe(true)
     expect(wrapper.find('.auxiliary-sidebar').exists()).toBe(false)
-    expect(wrapper.findAll('.editor-auxiliary-trigger')).toHaveLength(2)
+    expect(wrapper.findAll('.editor-auxiliary-trigger')).toHaveLength(4)
     expect(wrapper.findAll('.editor-auxiliary-trigger').some(trigger => trigger.attributes('title').includes('文件'))).toBe(true)
+    expect(wrapper.findAll('.editor-auxiliary-trigger').some(trigger => trigger.attributes('title').includes('搜索'))).toBe(true)
+    expect(wrapper.findAll('.editor-auxiliary-trigger').some(trigger => trigger.attributes('title').includes('源代码管理'))).toBe(true)
     expect(copilotTrigger().attributes('aria-label')).toBe('打开 ACG Copilot')
 
     await copilotTrigger().trigger('click')

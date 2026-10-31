@@ -1,10 +1,12 @@
-import { FolderOpened } from '@element-plus/icons-vue'
+import { Files, FolderOpened, Search } from '@element-plus/icons-vue'
 import { defineAsyncComponent } from 'vue'
 import ArtifactEditor from '@/components/workspace/ArtifactEditor.vue'
 import MissionEditor from '@/components/workspace/MissionEditor.vue'
 import TaskEditor from '@/components/workspace/TaskEditor.vue'
 import WorkspaceExplorer from '@/components/workspace/WorkspaceExplorer.vue'
 import WorkspaceFileExplorer from '@/components/workbench/WorkspaceFileExplorer.vue'
+import WorkspaceSearchView from '@/components/workbench/WorkspaceSearchView.vue'
+import WorkspaceGitView from '@/components/workbench/WorkspaceGitView.vue'
 import ProblemsPanel from '@/components/workbench/ProblemsPanel.vue'
 import ProjectArtifactInspector from './ProjectArtifactInspector.vue'
 import ProjectGraphInspector from './ProjectGraphInspector.vue'
@@ -18,6 +20,7 @@ import ProjectTaskResultInspector from './ProjectTaskResultInspector.vue'
 import ProjectRunSidebarView from './ProjectRunSidebarView.vue'
 import RunSelectionInspector from './RunSelectionInspector.vue'
 import type { WorkbenchContribution } from '@/workbench/types'
+import { workspaceDiagnostics } from '@/workbench/core/diagnostics'
 
 const GraphEditor = Object.assign(defineAsyncComponent(() => import('@/components/workspace/GraphEditor.vue')), { name: 'GraphEditor' })
 const RunProgressEditor = Object.assign(defineAsyncComponent(() => import('@/components/workspace/RunProgressEditor.vue')), { name: 'RunProgressEditor' })
@@ -37,6 +40,24 @@ export const projectContribution: WorkbenchContribution = {
       order: 50,
       icon: FolderOpened,
       component: WorkspaceFileExplorer,
+      when: () => true,
+      getProps: context => ({ missionId: context.missionId })
+    },
+    {
+      id: 'project.workspace-search',
+      title: '搜索',
+      order: 51,
+      icon: Search,
+      component: WorkspaceSearchView,
+      when: () => true,
+      getProps: context => ({ missionId: context.missionId })
+    },
+    {
+      id: 'project.source-control',
+      title: '源代码管理',
+      order: 52,
+      icon: Files,
+      component: WorkspaceGitView,
       when: () => true,
       getProps: context => ({ missionId: context.missionId })
     }
@@ -153,8 +174,9 @@ export const projectContribution: WorkbenchContribution = {
       label: 'Problems',
       component: ProblemsPanel,
       tone: 'failed',
-      count: context => context.runtimeObservation?.problems.length ?? context.diagnostics.length,
-      getProps: context => ({ diagnostics: context.runtimeObservation?.problems || context.diagnostics })
+      // 角标 = Mission 投影诊断 + 最近一次静态检查结果，保证面板和底部数字一致。
+      count: context => (context.runtimeObservation?.problems.length ?? context.diagnostics.length) + workspaceDiagnostics.count.value,
+      getProps: context => ({ diagnostics: context.runtimeObservation?.problems || context.diagnostics, missionId: context.missionId })
     }
   ]
 }

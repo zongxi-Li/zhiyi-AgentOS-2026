@@ -125,6 +125,7 @@
               :contribution="resolvePanel(activeTab)"
               :component-props="panelProps(activeTab)"
               @select="selectRuntimeTarget"
+              @open-file="openWorkspaceFile"
               @close="setCollapsed(true)"
             />
           </template>
@@ -196,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
@@ -210,6 +211,7 @@ import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue'
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
 import WorkbenchAuxiliarySidebar from '@/components/workbench/WorkbenchAuxiliarySidebar.vue'
 import { createNativeWorkbenchRegistry } from '@/workbench/composition'
+import { registerOpenFile } from '@/workbench/core/openFileRequest'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
@@ -1030,7 +1032,14 @@ void loadWorkspace()
 watch(activeEditorId, () => {
   if (activeOpened.value?.entry.kind !== 'artifact') finishForegroundContent(selectedRunId.value)
 })
+// LSP 跳转定义等跨文件动作通过总线回到这里，复用同一套打开逻辑。
+let unregisterOpenFile: (() => void) | null = null
+onMounted(() => {
+  unregisterOpenFile = registerOpenFile(openWorkspaceFile)
+})
 onBeforeUnmount(() => {
+  unregisterOpenFile?.()
+  unregisterOpenFile = null
   pendingObservation = null
   controller?.abort()
   runtimeObservationAdapter.stop()

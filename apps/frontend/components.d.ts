@@ -101,6 +101,7 @@ declare module 'vue' {
     InspectorPropertyList: typeof import('./src/components/workbench/InspectorPropertyList.vue')['default']
     InspectorSection: typeof import('./src/components/workbench/InspectorSection.vue')['default']
     IntentProfileArtifact: typeof import('./src/components/workspace/IntentProfileArtifact.vue')['default']
+    KeyboardShortcutsDialog: typeof import('./src/components/app/KeyboardShortcutsDialog.vue')['default']
     KnowledgeDocumentsPanel: typeof import('./src/components/knowledge/KnowledgeDocumentsPanel.vue')['default']
     KnowledgeGraphView: typeof import('./src/components/KnowledgeGraphView.vue')['default']
     KnowledgeGraphVisualization: typeof import('./src/components/KnowledgeGraphVisualization.vue')['default']
@@ -163,11 +164,15 @@ declare module 'vue' {
     WorkflowReviewPanel: typeof import('./src/components/agentos/WorkflowReviewPanel.vue')['default']
     WorkflowRunPanel: typeof import('./src/components/agentos/WorkflowRunPanel.vue')['default']
     WorkflowStepList: typeof import('./src/components/agentos/WorkflowStepList.vue')['default']
+    WorkspaceCodeEditor: typeof import('./src/components/workbench/WorkspaceCodeEditor.vue')['default']
+    WorkspaceDiffView: typeof import('./src/components/workbench/WorkspaceDiffView.vue')['default']
     WorkspaceExplorer: typeof import('./src/components/workspace/WorkspaceExplorer.vue')['default']
     WorkspaceFileEditor: typeof import('./src/components/workbench/WorkspaceFileEditor.vue')['default']
     WorkspaceFileExplorer: typeof import('./src/components/workbench/WorkspaceFileExplorer.vue')['default']
     WorkspaceFileTreeNode: typeof import('./src/components/workbench/WorkspaceFileTreeNode.vue')['default']
+    WorkspaceGitView: typeof import('./src/components/workbench/WorkspaceGitView.vue')['default']
     WorkspacePageHero: typeof import('./src/components/app/WorkspacePageHero.vue')['default']
+    WorkspaceSearchView: typeof import('./src/components/workbench/WorkspaceSearchView.vue')['default']
     ZoomIndicator: typeof import('./src/components/desktop/ZoomIndicator.vue')['default']
   }
   export interface GlobalDirectives {

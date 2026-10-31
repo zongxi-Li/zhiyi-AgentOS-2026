@@ -145,4 +145,6 @@ export interface WorkspaceFileOpenRequest {
   workspaceRoot: string
   relativePath: string
   name: string
+  /** 打开后直接进入行内 diff（对比 HEAD 与当前内容）。 */
+  diff?: boolean
 }
