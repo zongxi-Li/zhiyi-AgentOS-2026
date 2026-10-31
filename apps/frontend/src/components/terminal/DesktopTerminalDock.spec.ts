@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import DesktopTerminalDock from './DesktopTerminalDock.vue'
 import { terminalActiveId, terminalVisible } from '@/composables/useDesktopTerminal'
+import { installCommandKeybindings } from '@/workbench/core/commands'
 import type { TerminalSession } from '@/platform/electron/bridge'
 
 const emulator = vi.hoisted(() => ({ input: null as ((data: string) => void) | null,
@@ -19,6 +20,7 @@ const sample = (id: string): TerminalSession => ({ id, profileId: 'pwsh', profil
 
 describe('DesktopTerminalDock', () => {
   let wrapper: ReturnType<typeof mount> | undefined
+  let disposeKeybindings: (() => void) | null = null
   let stored: TerminalSession[]
   let api: { profiles: ReturnType<typeof vi.fn>; list: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>;
     read: ReturnType<typeof vi.fn>; write: ReturnType<typeof vi.fn>; resize: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
@@ -36,8 +38,14 @@ describe('DesktopTerminalDock', () => {
     Object.assign(window, { kinlinDesktop: { terminal: api } })
     localStorage.setItem('token', 'test-token')
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ workspaceRoot: 'C:/chosen-project' }) })))
+    // Ctrl+` 由命令表派发（见 onMounted 注册）。
+    disposeKeybindings = installCommandKeybindings()
   })
-  afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.unstubAllGlobals(); delete window.kinlinDesktop })
+  afterEach(() => {
+    wrapper?.unmount(); wrapper = undefined
+    disposeKeybindings?.(); disposeKeybindings = null
+    vi.unstubAllGlobals(); delete window.kinlinDesktop
+  })
 
   async function open() {
     wrapper = mount(DesktopTerminalDock)
