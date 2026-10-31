@@ -271,7 +271,7 @@ def install_hands_dependencies(destination: Path) -> None:
 def copy_application_code(target: Path) -> None:
     """按产品根保留 apps/ 布局，供 native_runtime.ROOT 指过来复用启动逻辑。"""
     log("应用代码: 复制 apps/ 需要的子目录（不含前端 node_modules / 测试 / 文档）")
-    skip = ("dist", "dist-electron", "tests", "test", "docs", "tmp", "drafts")
+    skip = ("dist", "dist-electron", "tests", "test", "docs", "tmp", "drafts", "reports")
 
     def copy_app(name: str, *, keep_node_modules: bool = False) -> None:
         source = REPO / "apps" / name
@@ -284,6 +284,13 @@ def copy_application_code(target: Path) -> None:
     copy_app("local-runtime")
     copy_app("hands")
     copy_app("terminal-host", keep_node_modules=True)
+
+    # app/data、data/ 是开发机上的运行数据，运行时用的是 home\data，没必要随包分发。
+    for relative in ("apps/agent/app/data", "apps/agent/data"):
+        stale = target / relative
+        if stale.exists():
+            shutil.rmtree(stale, ignore_errors=True)
+            log(f"应用代码: 排除开发运行数据 {relative}")
 
     install_hands_dependencies(target / "apps/hands")
 
@@ -380,7 +387,39 @@ def write_entrypoints(target: Path, version: str) -> None:
         # cmd 文件保持纯 ASCII：中文 Windows 默认 936 代码页，写中文会随 chcp 变化乱码。
         (target / name).write_bytes(ENTRY_TEMPLATE.format(action=action)
                                     .replace("\n", "\r\n").encode("ascii"))
-    (target / "README-内部版.md").write_text(README_TEMPLATE.format(version=version), encoding="utf-8")
+    (target / "README-internal.md").write_text(README_TEMPLATE.format(version=version), encoding="utf-8")
+
+
+# 资源管理器内置解压会按本地代码页解释 zip 里的文件名，中文名会变成乱码；
+# 因此发行包内一律要求 ASCII 文件名，已知的中文资料在装配时改名。
+ASCII_RENAME = {
+    "README-内部版.md": "README-internal.md",
+    "教师-教育知识库.md": "education-knowledge.md",
+    "律师-法律知识库.md": "legal-knowledge.md",
+    "程序员-技术知识库.md": "programmer-knowledge.md",
+    "作家-文学知识库.md": "writer-knowledge.md",
+}
+
+
+def normalize_ascii_names(target: Path) -> None:
+    """把残留的中文文件名改成 ASCII；改不了就直接失败，避免交付里出现乱码文件。"""
+    renamed = 0
+    refused: list[str] = []
+    for root, _dirs, files in os.walk(target):
+        for name in files:
+            if name.isascii():
+                continue
+            mapped = ASCII_RENAME.get(name)
+            source = Path(root) / name
+            if mapped is None:
+                refused.append(str(source.relative_to(target)))
+                continue
+            source.rename(source.with_name(mapped))
+            renamed += 1
+    if refused:
+        raise SystemExit(f"发行包内存在未登记的非 ASCII 文件名，请先改名或加入 ASCII_RENAME: {refused[:5]}")
+    if renamed:
+        log(f"文件名: 规范化 {renamed} 个非 ASCII 名字")
 
 
 def write_product_manifest(target: Path, version: str) -> None:
@@ -530,6 +569,7 @@ def main() -> int:
     copy_application_code(target)
     copy_launcher(target)
     write_entrypoints(target, args.version)
+    normalize_ascii_names(target)
     write_product_manifest(target, args.version)
 
     missing_files = validate(target)

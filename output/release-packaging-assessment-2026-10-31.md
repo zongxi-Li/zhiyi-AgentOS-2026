@@ -379,7 +379,7 @@ D:\build-test\ZhiyiAgentOS-1.0.0\        总 1610 MB（63 秒）
 ### 10.1 产出物
 
 ```
-D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip    553 MB
+D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip    548 MB
   sha256 B5C66C1EF823417250A8A6A8C6590DE819352801E1EDDC48071ECCD2BF691FD7
   解压后 1426 MB（含 app-local VC++ 运行库）
   ZhiyiAgentOS-1.0.0\
@@ -521,3 +521,40 @@ D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip    553 MB
 
 [`output/release-acceptance-checklist-internal.md`](release-acceptance-checklist-internal.md)：
 给内测同事的一页清单——前置要求、首启 5 步、13 条验收项（带勾选框）、运维速查（命令/日志/端口表）、常见问题、已知限制。
+
+---
+
+## 13. 第五轮：交付形态本身的两个坑（2026-10-31 17:00–17:15）
+
+前四轮验的是"装起来能不能跑"，这轮验"包发出去以后会不会变形"。
+
+### 13.1 资源管理器解压会把中文文件名煮成乱码
+
+用 `Expand-Archive`（与资源管理器双击解压同一套 .NET zip 实现）解压上一版发行包：
+
+| 文件 | 解压结果 |
+| :-- | :-- |
+| `start.cmd` / `app\Zhiyi AgentOS Electron.exe` / `runtime\...` | ✅ 正常 |
+| `README-内部版.md` | ❌ 变成 `README-�ڲ���.md`（按本地代码页解释 UTF-8 名字） |
+
+处置：
+1. 说明文件改名为 `README-internal.md`（内容仍是中文）；
+2. 装配时把 4 个中文资料文件改名为 `*-knowledge.md`（`legal/education/programmer/writer`，代码里没有任何按名引用，已用 grep 确认）；
+3. 装配收尾加硬约束：**包内只要还剩非 ASCII 文件名，构建直接失败**（`normalize_ascii_names`）；
+4. 顺带排除开发机运行数据 `apps/agent/data`、`apps/hands/reports`。
+
+### 13.2 排除数据后的回归
+
+| 检查项 | 结果 |
+| :-- | :-- |
+| 重新装配 | 1416 MB → zip **548 MB** |
+| 包内非 ASCII 文件名 | **0** |
+| 资源管理器式解压 | 19908 个文件全部解出，`missing=0 / extra=0`，无大小写冲突，`README-internal.md` 正常 |
+| 首启（`up --no-window`） | `status=UP`；AI `/health/ready` → `{"status":"UP","checks":{"packsRegistered":true,...}}`（说明改名与排除数据没有影响能力包注册） |
+
+### 13.3 当前交付指纹
+
+```
+D:\build-test\ZhiyiAgentOS-1.0.0-internal.zip   548 MB
+sha256 40ABFDB6CAD535F2901F833D99A3ACC3D7BF9C1CEEF1FBB649B81F9D9DF1D812
+```
