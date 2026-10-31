@@ -61,6 +61,8 @@ if (isolatedUserData) {
   app.setPath('userData', isolatedUserData)
 }
 const openDevtools = process.argv.includes('--devtools')
+// 与 webPreferences.devTools 同源：仅开发/调试形态允许打开开发者工具（F12 依此放行）。
+const devToolsEnabled = !app.isPackaged || Boolean(devServerUrl)
 const apiOrigin = (() => {
   const configured = parseHttpUrl(process.env.KINLIN_API_ORIGIN)
   return configured ? configured.origin : DEFAULT_API_ORIGIN
@@ -116,6 +118,9 @@ function createWindow(): void {
   const state = loadWindowState()
   const win = new BrowserWindow({
     title: '知弈 AgentOS',
+    // 任务栏/Alt-Tab 用知弈图标（dist/icons 由 build.mjs 从 icons/ 拷入）；
+    // 不设则未打包运行会显示 Electron 默认原子图标。
+    icon: path.join(__dirname, 'icons', 'icon.ico'),
     width: state.width,
     height: state.height,
     minWidth: 1100,
@@ -131,13 +136,35 @@ function createWindow(): void {
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
-      devTools: !app.isPackaged || Boolean(devServerUrl)
+      devTools: devToolsEnabled
     }
   })
 
   win.once('ready-to-show', () => {
     win.show()
     if (state.isMaximized) win.maximize()
+    if (state.isFullscreen) win.setFullScreen(true)
+  })
+
+  // 窗口级快捷键在 Main 拦截：页面僵死/崩溃后 F11/F12 仍可用。
+  // 应用级快捷键（Ctrl+B、Ctrl+R、Alt+方向、F1）在渲染进程处理——
+  // 内置终端里 Ctrl+R/B 是 shell 键，需按焦点让位，Main 无法感知。
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const plain = !input.control && !input.meta && !input.alt && !input.shift
+    if (!plain) return
+    if (input.key === 'F11') {
+      event.preventDefault()
+      win.setFullScreen(!win.isFullScreen())
+      return
+    }
+    if (input.key === 'F12') {
+      // 生产包 devTools 关闭：放行不拦截，按键无反应属预期。
+      if (!devToolsEnabled) return
+      event.preventDefault()
+      if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools()
+      else win.webContents.openDevTools({ mode: 'detach' })
+    }
   })
 
   const sendMaximizeState = (): void => {
@@ -360,7 +387,8 @@ if (!gotSingleInstanceLock) {
     })
     wireGlobalErrorHandling()
 
-    // 无边框窗口的标题栏菜单没有存在意义；F12/Ctrl+R 等默认加速键一并移除。
+    // 无边框窗口的标题栏菜单没有存在意义；默认加速键一并移除，
+    // 窗口级 F11/F12 由 before-input-event 重新接管，Ctrl+R 交渲染进程（终端焦点让位）。
     Menu.setApplicationMenu(null)
     hardenSession(session.defaultSession, logger)
     wireWebContentsGuards()

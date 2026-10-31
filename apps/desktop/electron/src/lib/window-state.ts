@@ -9,9 +9,10 @@ export interface WindowState {
   x?: number
   y?: number
   isMaximized: boolean
+  isFullscreen: boolean
 }
 
-export const DEFAULT_WINDOW_STATE: WindowState = { width: 1440, height: 900, isMaximized: false }
+export const DEFAULT_WINDOW_STATE: WindowState = { width: 1440, height: 900, isMaximized: false, isFullscreen: false }
 
 const MIN_EDGE = 200
 const MAX_EDGE = 20000
@@ -35,7 +36,8 @@ export function parseWindowState(raw: string | null | undefined, fallback: Windo
   const state: WindowState = {
     width: parseEdge(record.width, fallback.width),
     height: parseEdge(record.height, fallback.height),
-    isMaximized: record.isMaximized === true
+    isMaximized: record.isMaximized === true,
+    isFullscreen: record.isFullscreen === true
   }
   if (typeof record.x === 'number' && Number.isFinite(record.x) && Math.abs(record.x) <= MAX_EDGE) {
     state.x = Math.round(record.x)
@@ -73,6 +75,6 @@ export function dropStalePosition(state: WindowState, fitsDisplay: (bounds: Wind
   if (state.x === undefined || state.y === undefined) return state
   const onScreen = fitsDisplay({ x: state.x, y: state.y, width: state.width, height: state.height })
   if (onScreen) return state
-  const next: WindowState = { width: state.width, height: state.height, isMaximized: state.isMaximized }
+  const next: WindowState = { width: state.width, height: state.height, isMaximized: state.isMaximized, isFullscreen: state.isFullscreen }
   return next
 }

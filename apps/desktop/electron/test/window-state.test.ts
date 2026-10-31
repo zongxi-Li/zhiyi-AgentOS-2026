@@ -17,7 +17,7 @@ test('parseWindowState 对空/坏输入回退默认，不抛错', () => {
 
 test('parseWindowState 字段级容错', () => {
   const state = parseWindowState(JSON.stringify({ width: 1200, height: 800, x: 40, y: 60, isMaximized: true }))
-  assert.deepEqual(state, { width: 1200, height: 800, x: 40, y: 60, isMaximized: true })
+  assert.deepEqual(state, { width: 1200, height: 800, x: 40, y: 60, isMaximized: true, isFullscreen: false })
 
   assert.equal(parseWindowState(JSON.stringify({ width: 10, height: 99999 })).width, DEFAULT_WINDOW_STATE.width)
   assert.equal(parseWindowState(JSON.stringify({ width: '1200' })).width, DEFAULT_WINDOW_STATE.width)
@@ -27,25 +27,29 @@ test('parseWindowState 字段级容错', () => {
   assert.equal(stale.width, 1200)
 })
 
-test('serializeWindowState 与 parseWindowState 往返一致', () => {
+test('serializeWindowState 与 parseWindowState 往返一致（含全屏标志）', () => {
   const raw = serializeWindowState({ x: 11, y: 22, width: 1440, height: 900 }, true, false)
   const restored = parseWindowState(raw)
-  assert.deepEqual(restored, { width: 1440, height: 900, x: 11, y: 22, isMaximized: true })
+  assert.deepEqual(restored, { width: 1440, height: 900, x: 11, y: 22, isMaximized: true, isFullscreen: false })
+
+  const fullscreenRaw = serializeWindowState({ x: 11, y: 22, width: 1440, height: 900 }, false, true)
+  assert.equal(parseWindowState(fullscreenRaw).isFullscreen, true)
 })
 
 test('dropStalePosition 保留在屏坐标，丢弃离屏坐标', () => {
   const onScreen = dropStalePosition(
-    { width: 1200, height: 800, x: 10, y: 10, isMaximized: false },
+    { width: 1200, height: 800, x: 10, y: 10, isMaximized: false, isFullscreen: false },
     () => true
   )
   assert.equal(onScreen.x, 10)
 
   const offScreen = dropStalePosition(
-    { width: 1200, height: 800, x: 5000, y: 500, isMaximized: true },
+    { width: 1200, height: 800, x: 5000, y: 500, isMaximized: true, isFullscreen: false },
     () => false
   )
   assert.equal(offScreen.x, undefined)
   assert.equal(offScreen.y, undefined)
   assert.equal(offScreen.width, 1200)
   assert.equal(offScreen.isMaximized, true)
+  assert.equal(offScreen.isFullscreen, false)
 })

@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises'
+import { copyFileSync, mkdirSync } from 'node:fs'
 import { build } from 'esbuild'
 
 // 主进程与 Preload 统一 esbuild 打包：CJS 产物、external electron、不压缩，
@@ -23,3 +24,8 @@ for (const entry of entries) {
     logLevel: 'info'
   })
 }
+
+// 窗口/任务栏图标随 dist 一起进 asar：BrowserWindow.icon 按 dist 相对路径解析，
+// electron-builder 的 files 白名单已含 dist/**，打包后同样可用。
+mkdirSync('dist/icons', { recursive: true })
+copyFileSync('icons/icon.ico', 'dist/icons/icon.ico')

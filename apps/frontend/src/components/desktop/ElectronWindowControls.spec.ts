@@ -112,7 +112,7 @@ describe('ElectronWindowControls', () => {
     expect(unlisten).toHaveBeenCalledTimes(1)
   })
 
-  it('toggles fullscreen on F11 and prevents the default browser behavior', async () => {
+  it('no longer reacts to F11 (fullscreen moved to Main before-input-event)', async () => {
     const bridge = installBridge()
     const wrapper = mount(ElectronWindowControls)
     await flushPromises()
@@ -121,9 +121,9 @@ describe('ElectronWindowControls', () => {
     window.dispatchEvent(event)
     await flushPromises()
 
-    expect(event.defaultPrevented).toBe(true)
-    expect(bridge.window.setFullscreen).toHaveBeenCalledTimes(1)
-    expect(bridge.window.setFullscreen).toHaveBeenCalledWith(true)
+    // Main 进程接管 F11 后，渲染层若再响应会双 toggle（等于没切），这里钉死不再监听。
+    expect(event.defaultPrevented).toBe(false)
+    expect(bridge.window.setFullscreen).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })
