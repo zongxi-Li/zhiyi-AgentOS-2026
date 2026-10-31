@@ -361,11 +361,21 @@ class ACGNodeRunner:
             if memory_policy["read"]
             else []
         )
+        retrieval_event = self.memory.last_retrieval_event
         memory_access = {
             "policyId": memory_policy["policyId"],
             "read": memory_policy["read"],
             "readCount": len(memories),
-            "retrievalMode": "bm25_vector_rrf" if memory_policy["read"] else "disabled",
+            "retrievalMode": (
+                retrieval_event.mode
+                if memory_policy["read"] and retrieval_event is not None
+                else "disabled"
+            ),
+            "retrievalFallbackReason": (
+                retrieval_event.fallback_reason
+                if memory_policy["read"] and retrieval_event is not None
+                else None
+            ),
             "hitRefs": [memory.memory_id for memory in memories],
             "write": memory_policy["write"],
             "written": False,

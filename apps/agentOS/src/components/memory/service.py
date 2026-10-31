@@ -10,7 +10,6 @@ from components.communicator.contracts import estimate_tokens
 from .admission import admitted
 from .algorithms import rerank_memories
 from .retrieval import (
-    DeterministicEmbeddingAdapter,
     EmbeddingAdapter,
     InMemoryVectorIndex,
     VectorIndex,
@@ -37,9 +36,16 @@ class MemoryService:
         vector_index: VectorIndex | None = None,
     ) -> None:
         self._store = store or MemoryStore()
-        self.embedding_adapter = embedding_adapter or DeterministicEmbeddingAdapter()
-        self.vector_index = vector_index or InMemoryVectorIndex()
-        self.rebuild_vector_index()
+        # The deterministic hash adapter is a test double, not a semantic model.
+        # Keep vector retrieval opt-in so a production service cannot silently add
+        # an unvalidated ranking signal to BM25.
+        self.embedding_adapter = embedding_adapter
+        self.vector_index = vector_index
+        self.last_retrieval_event: MemoryRetrievalEvent | None = None
+        if self.embedding_adapter is not None and self.vector_index is None:
+            self.vector_index = InMemoryVectorIndex()
+        if self.embedding_adapter is not None and self.vector_index is not None:
+            self.rebuild_vector_index()
 
     def remember(self, record: MemoryRecord, policy: MemoryPolicy | None = None) -> bool:
         """在 ``record`` 符合可选策略时写入并返回 ``True``。
@@ -50,15 +56,18 @@ class MemoryService:
         if not admitted(record, policy):
             return False
         self._store.put(record)
-        self.vector_index.upsert(
-            record.memory_id,
-            self.embedding_adapter.embed(record_text(record)),
-        )
+        if self.embedding_adapter is not None and self.vector_index is not None:
+            self.vector_index.upsert(
+                record.memory_id,
+                self.embedding_adapter.embed(record_text(record)),
+            )
         return True
 
     def rebuild_vector_index(self) -> int:
         """Rebuild the derived vector index completely from the authoritative store."""
         count = 0
+        if self.embedding_adapter is None or self.vector_index is None:
+            return 0
         for record in self._store.values():
             self.vector_index.upsert(
                 record.memory_id,
@@ -74,21 +83,32 @@ class MemoryService:
         token_budget: int | None = None,
     ) -> tuple[list[MemoryRecord], list[HybridMemoryHit], MemoryRetrievalEvent]:
         """Apply metadata admission before lexical/vector scoring and RRF fusion."""
+        # Admission and expiry happen before either ranker competes for slots.
+        now = datetime.now(timezone.utc)
+        candidates = [
+            record for record in self._store.values()
+            if record.expires_at is None or record.expires_at > now
+        ]
         admitted_records = retrieve(
-            self._store.values(),
-            query.model_copy(update={"limit": 100}),
+            candidates,
+            query.model_copy(update={"limit": len(candidates)}),
         )
         lexical = lexical_scores(admitted_records, query.query)
         lexical_rank = sorted(admitted_records, key=lambda item: (-lexical[item.memory_id], item.memory_id))
         fallback_reason = None
-        try:
-            vector_rows = self.vector_index.search(
-                self.embedding_adapter.embed(query.query),
-                max(query.limit * 4, query.limit),
-            )
-        except Exception:
+        vector_enabled = self.embedding_adapter is not None and self.vector_index is not None
+        if vector_enabled:
+            try:
+                vector_rows = self.vector_index.search(
+                    self.embedding_adapter.embed(query.query),
+                    max(query.limit * 4, query.limit),
+                )
+            except Exception:
+                vector_rows = []
+                fallback_reason = "VECTOR_INDEX_UNAVAILABLE"
+        else:
             vector_rows = []
-            fallback_reason = "VECTOR_INDEX_UNAVAILABLE"
+            fallback_reason = "SEMANTIC_MODEL_NOT_CONFIGURED"
         allowed_ids = {record.memory_id for record in admitted_records}
         vector_rows = [item for item in vector_rows if item[0] in allowed_ids]
         vector_rank = {memory_id: index for index, (memory_id, _) in enumerate(vector_rows, 1)}
@@ -103,7 +123,7 @@ class MemoryService:
                     1.0 / (60 + lexical_positions[record.memory_id])
                     + (
                         1.0 / (60 + vector_rank[record.memory_id])
-                        if fallback_reason is None and record.memory_id in vector_rank
+                        if vector_enabled and fallback_reason is None and record.memory_id in vector_rank
                         else 0.0
                     )
                 ),
@@ -127,11 +147,16 @@ class MemoryService:
         selected_hits = [hit for hit in hits if hit.memory_id in selected_ids]
         event = MemoryRetrievalEvent(
             scope=query.scope or "global",
-            mode="bm25_vector_rrf" if fallback_reason is None else "lexical_fallback",
+            mode=(
+                "bm25_vector_rrf"
+                if vector_enabled and fallback_reason is None
+                else ("lexical_fallback" if vector_enabled else "bm25")
+            ),
             hitRefs=[record.memory_id for record in selected],
             budget=token_budget,
             fallbackReason=fallback_reason,
         )
+        self.last_retrieval_event = event
         return selected, selected_hits, event
 
     def create_phase_capsule(
@@ -239,7 +264,7 @@ class MemoryService:
         """
         if token_budget is not None and token_budget < 0:
             raise ValueError("memory token_budget must be non-negative")
-        records, _, _ = self.hybrid_search(
+        records, _, event = self.hybrid_search(
             MemoryQuery(
                 query=query,
                 scope=run_id,
@@ -248,12 +273,8 @@ class MemoryService:
             ),
             token_budget=token_budget,
         )
-        now = datetime.now(timezone.utc)
-        live_records = [
-            record
-            for record in records
-            if record.expires_at is None or record.expires_at > now
-        ]
+        live_records = records
+        self.last_retrieval_event = event
         if token_budget is None:
             return live_records
         return live_records

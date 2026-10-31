@@ -31,7 +31,8 @@ def test_hybrid_retrieval_admits_scope_before_bm25_vector_rrf() -> None:
     assert {record.memory_id for record in records} == {"relevant", "other"}
     assert {hit.memory_id for hit in hits} == {"relevant", "other"}
     assert "foreign" not in event.hit_refs
-    assert event.mode == "bm25_vector_rrf"
+    assert event.mode == "bm25"
+    assert event.fallback_reason == "SEMANTIC_MODEL_NOT_CONFIGURED"
 
 
 def test_vector_index_can_be_rebuilt_from_authoritative_store() -> None:
