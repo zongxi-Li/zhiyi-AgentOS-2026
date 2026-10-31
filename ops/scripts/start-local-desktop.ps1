@@ -1,7 +1,12 @@
 [CmdletBinding()]
 param(
   [string]$HomeDir = "$env:LOCALAPPDATA\ZhiyiNative\default",
-  [switch]$CheckOnly
+  [switch]$CheckOnly,
+  # "open" only adds the terminal service and never restarts healthy services, so a
+  # crashed frontend dev server or a closed desktop window leaves the stack partially
+  # running and refuses to start. Use -Recover to stop the recorded stack and start it
+  # again with the same identity (data, workspace and credentials are preserved).
+  [switch]$Recover
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,10 +28,20 @@ try {
   Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
   Write-Host 'Starting local services and Electron. Please wait...' -ForegroundColor Cyan
   Write-Host "Home: $HomeDir"
-  & $python $runtime open --home $HomeDir
+  if ($Recover) {
+    Write-Host 'Recovering: stopping the recorded stack first (all data is preserved)...' -ForegroundColor Yellow
+    & $python $runtime recover --home $HomeDir --desktop
+  } else {
+    & $python $runtime open --home $HomeDir
+  }
   if ($LASTEXITCODE -ne 0) { throw "Local startup failed (exit $LASTEXITCODE). See $HomeDir\logs." }
 } catch {
   Write-Host $_.Exception.Message -ForegroundColor Red
+  if ($_.Exception.Message -like '*partially running*') {
+    Write-Host 'Only part of the local stack is running. "open" never restarts healthy services.' -ForegroundColor Yellow
+    Write-Host 'To restart the whole recorded stack (data is preserved) run:' -ForegroundColor Yellow
+    Write-Host "  & '$PSCommandPath' -Recover" -ForegroundColor Yellow
+  }
   if (-not $CheckOnly) { [void](Read-Host 'Press Enter to close this window') }
   exit 1
 }

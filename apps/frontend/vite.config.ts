@@ -8,6 +8,13 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 const DEV_PROXY_TIMEOUT_MS = 240000
 
+// 编辑器、格式化和代码代理的原子写会在源码目录留下
+// `<文件名>.<pid>.<uuid>.tmpdir\` 目录与 `*.tmp` 临时文件。chokidar 对这类
+// 瞬间消失或被占用的路径调用 fs.watch 时抛 EBUSY/ENOENT，而 Vite 没有为
+// watcher 注册 error 监听，一个临时文件就能让整个 dev server 进程退出
+// （桌面壳随即 ERR_CONNECTION_REFUSED）。这些产物不参与模块图，直接排除。
+const TEMP_ARTIFACT = /\.tmpdir([\\/]|$)|\.tmp$/i
+
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isElectron = mode === 'electron'
@@ -33,6 +40,16 @@ export default defineConfig(({ mode, command }) => {
   return {
     plugins: [
       vue(),
+      {
+        name: 'kinlin:watcher-error-guard',
+        configureServer(server) {
+          // 兜底：单个路径的监听失败只降级为警告，不终止 dev server；
+          // 已被忽略的临时产物不会走到这里。
+          server.watcher.on('error', (error) => {
+            console.warn(`[vite] watcher error ignored: ${error.message}`)
+          })
+        }
+      },
       // The running dev server owns declaration generation. Parallel production
       // builds must not contend for these tracked files on Windows.
       Components({ resolvers: [ElementPlusResolver()], dts: command === 'serve' ? 'components.d.ts' : false }),
@@ -97,7 +114,9 @@ export default defineConfig(({ mode, command }) => {
       // 源码已更新而 Vite 转换缓存永不失效，浏览器硬刷新仍拿到旧模块。
       // 需要轮询的环境显式设 CHOKIDAR_USEPOLLING=true；桌面开发使用原生监听，
       // 避免持续扫描文件。
-      watch: { usePolling: env.CHOKIDAR_USEPOLLING === 'true' || !isElectron, interval: 1000 },
+      watch: { usePolling: env.CHOKIDAR_USEPOLLING === 'true' || !isElectron, interval: 1000,
+        // 见 TEMP_ARTIFACT：临时产物永不进入监听，从源头避免 chokidar EBUSY。
+        ignored: (file: string) => TEMP_ARTIFACT.test(file) },
       proxy: {
         '/api': {
           target: BACKEND_PROXY_TARGET,
