@@ -89,7 +89,14 @@ if (!ready) {
   const viteEnv = { ...process.env, VITE_API_BASE_URL: '' }
   viteChild = spawn(
     process.execPath,
-    [viteBin, frontendDir, '--mode', 'electron', '--host', '127.0.0.1', '--port', String(devPort), '--strictPort'],
+    [
+      viteBin, frontendDir, '--mode', 'electron', '--host', '127.0.0.1',
+      '--port', String(devPort), '--strictPort',
+      // 独立缓存目录：N03 开发链的 vite（15200）与本入口（15100）共用 apps/frontend，
+      // 若同写 node_modules/.vite，双方会交替 Re-optimize 令对方的依赖哈希失效，
+      // 懒加载路由即报「页面资源加载失败」（504 Outdated Optimize Dep）。
+      '--cacheDir', path.join(frontendDir, 'node_modules', '.vite-electron-dev')
+    ],
     { cwd: frontendDir, env: viteEnv, stdio: 'inherit' }
   )
   viteChild.on('exit', (code) => {

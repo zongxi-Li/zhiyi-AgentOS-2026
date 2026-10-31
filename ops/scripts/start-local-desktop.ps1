@@ -38,7 +38,14 @@ try {
   } else {
     & $python $runtime open --home $HomeDir
   }
-  if ($LASTEXITCODE -ne 0) { throw "Local startup failed (exit $LASTEXITCODE). See $HomeDir\logs." }
+  $runtimeExitCode = $LASTEXITCODE
+  if ($runtimeExitCode -ne 0) {
+    if (-not $Recover) {
+      Write-Host 'If the error reports that local services are only partially running, inspect status/logs, then explicitly recover with:' -ForegroundColor Yellow
+      Write-Host "  & '$PSCommandPath' -Recover" -ForegroundColor Yellow
+    }
+    throw "Local startup failed (exit $runtimeExitCode). See $HomeDir\logs."
+  }
 } catch {
   Write-Host $_.Exception.Message -ForegroundColor Red
   if ($_.Exception.Message -like '*partially running*') {
