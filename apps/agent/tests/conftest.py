@@ -111,7 +111,12 @@ class _ContractReviewTestProvider:
                 "reason": "fixture decision from current state",
             }
         if {"primaryGoal", "requiredCapabilities"} <= required:
-            available = list(dict.fromkeys(re.findall(r'"capabilityId":\s*"([^"]+)"', prompt)))
+            request = json.loads(prompt)
+            available = list(dict.fromkeys(
+                str(item["capabilityId"])
+                for item in request.get("capabilityCatalog", [])
+                if isinstance(item, dict) and item.get("capabilityId")
+            ))
             native = [
                 item for item in ("task_understanding", "analysis", "artifact_generation")
                 if item in available
@@ -125,10 +130,9 @@ class _ContractReviewTestProvider:
                 "estimatedComplexity": "medium",
             }
         if {"tasks", "relations"} <= required:
-            requirements_text = prompt.split("Mission requirements: ", 1)[1].split("\nSemantic profile:", 1)[0]
-            requirements = json.loads(requirements_text)
-            profile_text = prompt.split("Semantic profile: ", 1)[1].split("\nCapability catalog:", 1)[0]
-            profile = json.loads(profile_text)
+            request = json.loads(prompt)
+            requirements = request["planningRequest"]
+            profile = request["semanticProfile"]
             capabilities = profile.get("requiredCapabilities") or [
                 "task_understanding", "analysis", "artifact_generation"
             ]
@@ -294,6 +298,36 @@ class _ReadOnlyToolTestRuntime:
             sources=[source],
             toolExecutions=[record],
         )
+
+
+@pytest.fixture
+def managed_default_runtime():
+    """Own every runtime created by a golden test, including exceptional exits."""
+    from app.execution.wiring import build_default_runtime, close_runtime
+
+    owned = []
+
+    def build(environment):
+        runtime = build_default_runtime(environment=environment)
+        owned.append(runtime)
+        return runtime
+
+    def close(runtime):
+        if runtime in owned:
+            close_runtime(runtime)
+            owned.remove(runtime)
+
+    try:
+        yield build, close
+    finally:
+        cleanup_errors = []
+        for runtime in reversed(owned):
+            try:
+                close_runtime(runtime)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
 
 @pytest.fixture(autouse=True)

@@ -101,6 +101,37 @@ def test_upsert_inline_profile_and_delete_active(profile_env, tmp_path):
     assert LLMConfig.from_env().provider == "glm"
 
 
+def test_profile_store_retries_transient_windows_replace_lock(profile_env, tmp_path, monkeypatch):
+    import app.llm.profiles as profiles_module
+
+    store = get_profile_store()
+    store.load()  # Complete bootstrap before counting the injected update writes.
+    original_replace = profiles_module.os.replace
+    attempts = 0
+
+    def transiently_locked(source, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("injected transient Windows sharing violation")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(profiles_module.os, "replace", transiently_locked)
+    monkeypatch.setattr(profiles_module.time, "sleep", lambda _seconds: None)
+
+    store.upsert(ProviderProfile(
+        name="retry-endpoint",
+        provider="openai-compatible",
+        base_url="https://api.example.com/v1",
+        model="demo-model",
+        api_key="key-inline",
+    ))
+
+    assert attempts == 3
+    assert any(profile.name == "retry-endpoint" for profile in store.list_profiles())
+    assert not list(tmp_path.glob(".llm_profiles.json.*.tmp"))
+
+
 def test_profile_api_roundtrip(profile_env):
     from app.api import llm_admin
 

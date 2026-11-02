@@ -7,7 +7,6 @@ import os
 
 from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID
 from app.execution.coordinator import RunExecutionCoordinator
-from app.execution.wiring import build_default_runtime, close_runtime
 from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowStatus
 
 
@@ -33,9 +32,12 @@ def _provenance_ids(runtime, run) -> list[str]:
     ]
 
 
-async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_path) -> None:
+async def test_golden_workflow_integration_survives_two_ai_service_restarts(
+    tmp_path, managed_default_runtime
+) -> None:
+    build_runtime, close_owned = managed_default_runtime
     environment = _environment(tmp_path)
-    first = build_default_runtime(environment=environment)
+    first = build_runtime(environment=environment)
     mission = first.create_mission(
         title="Evaluate an AgentOS release decision with cited evidence",
         domain="general",
@@ -76,9 +78,9 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
     assert len(memory_events_before) == 6
     assert any(event.payload.get("evidenceRefs") for event in memory_events_before)
     assert len(paused.execution_state["phaseCapsuleRefs"]) == 1
-    close_runtime(first)
+    close_owned(first)
 
-    second = build_default_runtime(environment=environment)
+    second = build_runtime(environment=environment)
     closed_on_first_restart = await RunExecutionCoordinator(second).startup()
     after_first = second.get_status(run_id)
     assert run_id not in closed_on_first_restart
@@ -87,9 +89,9 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
     assert after_first.completed_step_ids == completed_before
     assert after_first.execution_state["schedulingDecisions"] == scheduling_before
     assert _provenance_ids(second, after_first) == provenance_before
-    close_runtime(second)
+    close_owned(second)
 
-    third = build_default_runtime(environment=environment)
+    third = build_runtime(environment=environment)
     closed_on_second_restart = await RunExecutionCoordinator(third).startup()
     after_second = third.get_status(run_id)
     assert run_id not in closed_on_second_restart
@@ -170,4 +172,4 @@ async def test_golden_workflow_integration_survives_two_ai_service_restarts(tmp_
         for step in next_run.steps
         if "memoryPolicy" in step.input
     )
-    close_runtime(third)
+    close_owned(third)

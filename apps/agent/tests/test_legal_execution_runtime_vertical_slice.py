@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 
-from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
+from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask, TaskPlanRelation
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowStatus
 
-from app.execution.wiring import build_default_runtime, close_runtime
 from packs.legal.planning import build_contract_review_blueprint
 
 
@@ -33,11 +32,13 @@ def _output(runtime, run, step_id: str) -> dict:
     )
 
 
-async def test_legal_contract_review_restarts_and_resumes_without_replaying_commits(tmp_path):
+async def test_legal_contract_review_restarts_and_resumes_without_replaying_commits(
+    tmp_path, managed_default_runtime
+):
+    build_runtime, close_owned = managed_default_runtime
     environment = _environment(tmp_path)
-    first = build_default_runtime(environment=environment)
+    first = build_runtime(environment=environment)
     workflow = first.workflow_registry.get("legal_contract_review_v1")
-    blueprint = build_contract_review_blueprint(workflow)
     mission = first.create_mission(
         title="Legal contract review golden run",
         domain="legal",
@@ -50,29 +51,79 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
             ),
             "webSearchEnabled": True,
             "thinkingMode": "disabled",
-            "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
         },
     )
+
+    # TaskPlan is the semantic source. Pack helper steps are declared explicitly;
+    # the executable ACG is built only after this plan has been assembled.
+    task_plan_nodes = [
+        *workflow.planning_nodes,
+        PlannedTask(
+            key="helper:statute-retrieve",
+            title="Legal statute retrieval",
+            objective="Retrieve relevant legal sources through the authorized tool runtime",
+            acceptanceCriteria=("Retrieved sources have stable evidence references",),
+            metadata={"plannerStrategy": "legal_pack_explicit_plan"},
+        ),
+        PlannedTask(
+            key="helper:auto-review",
+            title="Automatic low-risk review",
+            objective="Apply the bounded automatic review path when the risk route selects it",
+            capabilityRequirements=("human_review_gate",),
+            acceptanceCriteria=("The low-risk review result is explicit",),
+            metadata={"plannerStrategy": "legal_pack_explicit_plan"},
+        ),
+    ]
+    task_plan_relations = [
+        *workflow.planning_relations,
+        TaskPlanRelation(
+            sourceKey="contract-understanding",
+            targetKey="helper:statute-retrieve",
+            relationType="depends_on",
+        ),
+        TaskPlanRelation(
+            sourceKey="helper:statute-retrieve",
+            targetKey="risk-analysis",
+            relationType="depends_on",
+        ),
+        TaskPlanRelation(
+            sourceKey="helper:statute-retrieve",
+            targetKey="legal-evidence",
+            relationType="depends_on",
+        ),
+        TaskPlanRelation(
+            sourceKey="revision-advice",
+            targetKey="helper:auto-review",
+            relationType="depends_on",
+        ),
+        TaskPlanRelation(
+            sourceKey="helper:auto-review",
+            targetKey="review-report",
+            relationType="depends_on",
+        ),
+    ]
     task_plan = TaskPlan(
         missionId=mission.mission_id,
         planVersion=1,
-        nodes=tuple(
-            PlannedTask(
-                key=f"step:{step.node_id}",
-                title=step.name or step.node_id,
-                objective=step.goal or step.description or step.node_id,
-                capabilityRequirements=((step.capability,) if step.capability else ()),
-                metadata={"plannerStrategy": "legal_pack_explicit_blueprint"},
-            )
-            for step in blueprint.step_nodes()
-        ),
+        nodes=tuple(task_plan_nodes),
+        relations=tuple(task_plan_relations),
+    )
+
+    blueprint = build_contract_review_blueprint(workflow)
+    binding_map = (
+        ("contract-understanding", "parse_contract"),
+        ("clause-classification", "classify_clauses"),
+        ("risk-analysis", "risk_detect"),
+        ("legal-evidence", "legal_evidence_match"),
+        ("revision-advice", "suggestion_generate"),
+        ("review-decision", "human_review"),
+        ("review-report", "report_generate"),
+        ("helper:statute-retrieve", "statute_retrieve"),
+        ("helper:auto-review", "auto_review"),
     )
     task_bindings = tuple(
-        TaskImplementationBinding(
-            planNodeKey=f"step:{step.node_id}",
-            acgNodeId=step.node_id,
-        )
-        for step in blueprint.step_nodes()
+        TaskImplementationBinding(planNodeKey=plan_key, acgNodeId=step_id)
+        for plan_key, step_id in binding_map
     )
     mission.input.update({
         "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
@@ -159,9 +210,9 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
             *provenance_before.interactions,
         ]
     }
-    close_runtime(first)
+    close_owned(first)
 
-    second = build_default_runtime(environment=environment)
+    second = build_runtime(environment=environment)
     resumed_calls: list[str] = []
     for agent in second.agent_registry.all():
         original = agent.run
@@ -221,11 +272,14 @@ async def test_legal_contract_review_restarts_and_resumes_without_replaying_comm
     ]
     assert len(provenance_ids_after) == len(set(provenance_ids_after))
     assert provenance_ids_before.issubset(provenance_ids_after)
-    close_runtime(second)
+    close_owned(second)
 
 
-async def test_legal_planner_uses_real_execution_capability_catalog(tmp_path):
-    runtime = build_default_runtime(environment=_environment(tmp_path))
+async def test_legal_planner_uses_real_execution_capability_catalog(
+    tmp_path, managed_default_runtime
+):
+    build_runtime, close_owned = managed_default_runtime
+    runtime = build_runtime(environment=_environment(tmp_path))
     mission = runtime.create_mission(
         title="Review a software services contract and produce a legal report",
         domain="legal",
@@ -253,4 +307,4 @@ async def test_legal_planner_uses_real_execution_capability_catalog(tmp_path):
         "Planner produced ACG" in event.observation
         for event in prepared.trace
     )
-    close_runtime(runtime)
+    close_owned(runtime)

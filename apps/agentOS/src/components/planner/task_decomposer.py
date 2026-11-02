@@ -1314,7 +1314,14 @@ class TaskDecomposer:
         # profile lists only the requested leaf capabilities.  Materialize the
         # catalog's full required-dependency closure here so the subsequent
         # topology pass never has to invent a domain-specific fallback.
-        requested_capabilities = list(profile.required_capabilities)
+        requested_capabilities = list(dict.fromkeys([
+            *profile.required_capabilities,
+            *(
+                node.capability_requirements[0]
+                for node in nodes
+                if node.capability_requirements
+            ),
+        ]))
         if profile.expected_artifacts and "artifact_generation" not in requested_capabilities:
             requested_capabilities.append("artifact_generation")
         required_capabilities = self.capability_catalog.expand_dependencies(

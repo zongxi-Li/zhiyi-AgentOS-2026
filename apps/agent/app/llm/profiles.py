@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -169,9 +171,33 @@ class ProfileStore:
 
     def _write(self, data: Dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp_path, self.path)
+        payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            dir=self.path.parent,
+        )
+        tmp_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, self.path)
+                    break
+                except PermissionError:
+                    # Windows scanners/indexers can briefly hold the destination.
+                    # Retry the atomic replace; never fall back to a non-atomic write.
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.025 * (2 ** attempt))
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # ---- 业务操作 ----
 

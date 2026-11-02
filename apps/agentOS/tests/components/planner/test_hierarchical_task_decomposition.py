@@ -861,6 +861,48 @@ def test_catalog_dependency_completion_does_not_depend_on_model_task_order() -> 
     )
 
 
+def test_model_selected_capability_materializes_its_catalog_prerequisite() -> None:
+    payload = {
+        "tasks": [
+            {
+                "key": "requirements",
+                "title": "Analyze requirements",
+                "objective": "Identify and formalize the mission requirements and acceptance conditions",
+                "capabilityId": "requirement_analysis",
+                "acceptanceCriteria": ["Requirements and acceptance conditions are explicit"],
+            },
+        ],
+        "relations": [],
+    }
+    profile = TaskSemanticProfile(
+        primaryGoal="Prepare a reliable implementation plan",
+        requiredCapabilities=[],
+        estimatedComplexity=ComplexityLevel.SIMPLE,
+    )
+
+    plan = TaskDecomposer(build_default_capability_catalog(), _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab",
+        profile=profile,
+        strategy="dynamic_generation",
+        task_input={},
+        use_llm=True,
+    )
+
+    requirement = next(
+        node for node in plan.nodes
+        if node.capability_requirements == ("requirement_analysis",)
+    )
+    understanding = next(
+        node for node in plan.nodes
+        if node.capability_requirements == ("task_understanding",)
+    )
+    assert any(
+        relation.source_key == understanding.key
+        and relation.target_key == requirement.key
+        for relation in plan.relations
+    )
+
+
 def test_model_shorthand_constraints_and_missing_capability_are_normalized() -> None:
     payload = {
         "tasks": [
