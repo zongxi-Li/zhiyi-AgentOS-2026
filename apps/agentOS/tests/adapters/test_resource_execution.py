@@ -111,6 +111,27 @@ async def test_http_adapter_marks_non_terminal_or_ambiguous_status_unknown(statu
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+async def test_http_adapter_treats_explicit_client_rejection_as_not_admitted(status: int) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"error": "request rejected"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpResourceExecutionAdapter(
+        resource_id="edge-01",
+        address="http://edge",
+        credential_provider=_Credentials(),
+        client=client,
+    )
+    try:
+        with pytest.raises(ResourceExecutionError) as error:
+            await adapter.run(_context())
+        assert error.value.outcome_unknown is False
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["SUCCEEDED", "SUCCESS", "COMPLETED", "DONE", "FINISHED"])
 async def test_http_adapter_accepts_explicit_terminal_success_state(state: str) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
