@@ -456,6 +456,16 @@ class ACGExecutionService(CollaboratorAccess):
         resource_error = self._unwrap_resource_execution_error(error)
         if resource_error is None:
             return False
+        if resource_error.outcome_unknown:
+            # The remote side may already have committed an external effect.
+            # Quarantine was applied by the attempt boundary; never rebind or
+            # replay this step until an explicit reconciliation proves its state.
+            logger.warning(
+                "ACG automatic failover blocked for unknown remote outcome: run=%s steps=%s",
+                run.run_id,
+                error.failed_step_ids,
+            )
+            return False
 
         execution_bindings = run.execution_state.get("executionBindings")
         if not isinstance(execution_bindings, dict):

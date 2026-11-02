@@ -82,10 +82,92 @@ async def test_http_adapter_reports_remote_failure_without_returning_fake_output
         client=client,
     )
 
-    with pytest.raises(ResourceExecutionError, match="REMOTE_EXECUTION_FAILED"):
+    with pytest.raises(ResourceExecutionError, match="REMOTE_EXECUTION_OUTCOME_UNKNOWN") as error:
         await adapter.run(_context())
 
+    assert error.value.outcome_unknown is True
     await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [201, 202, 302, 408, 409, 425, 429, 500, 503])
+async def test_http_adapter_marks_non_terminal_or_ambiguous_status_unknown(status: int) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"output": {"ok": True}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpResourceExecutionAdapter(
+        resource_id="edge-01",
+        address="http://edge",
+        credential_provider=_Credentials(),
+        client=client,
+    )
+    try:
+        with pytest.raises(ResourceExecutionError) as error:
+            await adapter.run(_context())
+        assert error.value.outcome_unknown is True
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"state": "RUNNING", "output": {"ok": True}},
+        {"status": "queued", "summary": "not terminal"},
+    ],
+)
+async def test_http_adapter_rejects_non_terminal_or_empty_http_200_body(body: dict) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpResourceExecutionAdapter(
+        resource_id="edge-01",
+        address="http://edge",
+        credential_provider=_Credentials(),
+        client=client,
+    )
+    try:
+        with pytest.raises(ResourceExecutionError) as error:
+            await adapter.run(_context())
+        assert error.value.outcome_unknown is True
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exception_type", "outcome_unknown"),
+    [
+        (httpx.ConnectTimeout, False),
+        (httpx.ConnectError, False),
+        (httpx.ReadTimeout, True),
+        (httpx.WriteTimeout, True),
+    ],
+)
+async def test_http_adapter_classifies_transport_failures_before_replay(
+    exception_type: type[httpx.HTTPError],
+    outcome_unknown: bool,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise exception_type("injected transport failure", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpResourceExecutionAdapter(
+        resource_id="edge-01",
+        address="http://edge",
+        credential_provider=_Credentials(),
+        client=client,
+    )
+    try:
+        with pytest.raises(ResourceExecutionError) as error:
+            await adapter.run(_context())
+        assert error.value.outcome_unknown is outcome_unknown
+    finally:
+        await client.aclose()
 
 
 class _Credentials:

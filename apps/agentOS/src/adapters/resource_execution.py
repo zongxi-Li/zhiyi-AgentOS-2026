@@ -20,7 +20,63 @@ from service.agents.base import AgentOutput, AgentRunContext, BaseAgent
 class ResourceExecutionError(RuntimeError):
     """A bound resource could not execute a step safely."""
 
-    outcome_unknown = False
+    def __init__(self, message: str, *, outcome_unknown: bool = False) -> None:
+        super().__init__(message)
+        self.outcome_unknown = outcome_unknown
+
+
+_NON_TERMINAL_REMOTE_STATES = frozenset({
+    "ACCEPTED",
+    "QUEUED",
+    "PENDING",
+    "RUNNING",
+    "STARTED",
+    "PROCESSING",
+    "IN_PROGRESS",
+    "CANCELLING",
+    "CANCELING",
+    "CANCEL_REQUESTED",
+})
+
+
+def _decode_terminal_execution_response(response: httpx.Response) -> AgentOutput:
+    """Accept only a synchronous terminal AgentOutput; ambiguity must never be replayed."""
+    status = response.status_code
+    if status != 200:
+        detail = response.text[:500]
+        definitely_rejected = (
+            400 <= status < 500 and status not in {408, 409, 425, 429}
+        )
+        outcome_unknown = not definitely_rejected
+        code = "REMOTE_EXECUTION_REJECTED" if definitely_rejected else "REMOTE_EXECUTION_OUTCOME_UNKNOWN"
+        raise ResourceExecutionError(
+            f"{code}: HTTP {status}: {detail}",
+            outcome_unknown=outcome_unknown,
+        )
+
+    try:
+        body = response.json()
+        if not isinstance(body, dict):
+            raise TypeError("response JSON must be an object")
+        if "output" not in body and "summary" not in body:
+            raise ValueError("response does not contain AgentOutput fields")
+        remote_state = body.get("state") or body.get("status")
+        if (
+            isinstance(remote_state, str)
+            and remote_state.strip().upper() in _NON_TERMINAL_REMOTE_STATES
+        ):
+            raise ResourceExecutionError(
+                f"REMOTE_EXECUTION_OUTCOME_UNKNOWN: HTTP 200 reported non-terminal state {remote_state}",
+                outcome_unknown=True,
+            )
+        return AgentOutput.model_validate(body)
+    except ResourceExecutionError:
+        raise
+    except Exception as exc:
+        raise ResourceExecutionError(
+            "REMOTE_EXECUTION_OUTCOME_UNKNOWN: HTTP 200 did not contain a valid terminal AgentOutput",
+            outcome_unknown=True,
+        ) from exc
 
 
 class ResourceExecutionAdapter(Protocol):
@@ -126,36 +182,45 @@ class HttpResourceExecutionAdapter:
             except asyncio.CancelledError:
                 # A disconnected HTTP client is not evidence of remote stop.
                 # Retain ownership until the admitted request settles.
-                results = await await_settled(asyncio.gather(request_task, return_exceptions=True), propagate_cancel=False)
+                results = await await_settled(
+                    asyncio.gather(request_task, return_exceptions=True),
+                    propagate_cancel=False,
+                )
                 result = results[0]
-                settled = False
-                if not isinstance(result, BaseException) and not result.is_error and result.status_code != 202:
-                    try:
-                        AgentOutput.model_validate(result.json())
-                        settled = True
-                    except (ValueError, TypeError):
-                        pass
-                if not settled:
-                    error = ResourceExecutionError("REMOTE_EXECUTION_OUTCOME_UNKNOWN: cancellation requires reconciliation")
-                    error.outcome_unknown = True
-                    raise error
+                if isinstance(result, BaseException):
+                    definitely_not_admitted = isinstance(
+                        result,
+                        (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError),
+                    )
+                    if definitely_not_admitted:
+                        raise ResourceExecutionError(
+                            f"REMOTE_EXECUTION_NOT_ADMITTED: {result}",
+                            outcome_unknown=False,
+                        ) from result
+                    raise ResourceExecutionError(
+                        "REMOTE_EXECUTION_OUTCOME_UNKNOWN: cancellation left the remote request unsettled",
+                        outcome_unknown=True,
+                    ) from result
+                # A valid terminal response proves the request settled, but the
+                # caller's cancellation still wins and no late result is committed.
+                _decode_terminal_execution_response(result)
                 raise
-        except httpx.TimeoutException as exc:
-            raise ResourceExecutionError("REMOTE_EXECUTION_FAILED: timeout") from exc
-        except httpx.HTTPError as exc:
-            raise ResourceExecutionError(f"REMOTE_EXECUTION_FAILED: {exc}") from exc
-        if response.is_error:
-            detail = response.text[:500]
+        except (httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ConnectError) as exc:
             raise ResourceExecutionError(
-                f"REMOTE_EXECUTION_FAILED: HTTP {response.status_code}: {detail}"
-            )
-        try:
-            body = response.json()
-            if not isinstance(body, dict):
-                raise TypeError("response JSON must be an object")
-            return AgentOutput.model_validate(body)
-        except Exception as exc:
-            raise ResourceExecutionError("REMOTE_EXECUTION_FAILED: invalid AgentOutput") from exc
+                f"REMOTE_EXECUTION_NOT_ADMITTED: {exc}",
+                outcome_unknown=False,
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise ResourceExecutionError(
+                f"REMOTE_EXECUTION_OUTCOME_UNKNOWN: transport timeout: {exc}",
+                outcome_unknown=True,
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ResourceExecutionError(
+                f"REMOTE_EXECUTION_OUTCOME_UNKNOWN: transport failure: {exc}",
+                outcome_unknown=True,
+            ) from exc
+        return _decode_terminal_execution_response(response)
 
     async def aclose(self) -> None:
         if self._owns_client:

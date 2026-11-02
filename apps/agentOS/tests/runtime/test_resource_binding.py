@@ -304,6 +304,62 @@ def test_remote_failure_marks_edge_unhealthy_and_rebinds_to_cloud() -> None:
     }
 
 
+def test_unknown_remote_outcome_blocks_automatic_failover() -> None:
+    class _UnknownEdgeAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, context):
+            self.calls += 1
+            raise ResourceExecutionError(
+                "REMOTE_EXECUTION_OUTCOME_UNKNOWN: response was lost after admission",
+                outcome_unknown=True,
+            )
+
+    class _CloudAdapter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, context):
+            self.calls += 1
+            return AgentOutput(output={"result": "cloud"}, summary="cloud complete")
+
+    plane = ResourcePlane()
+    _register_remote(plane, "edge-01", latency_ms=10.0)
+    _register_remote(plane, "cloud-01", placement=Placement.CLOUD, latency_ms=100.0)
+    edge = _UnknownEdgeAdapter()
+    cloud = _CloudAdapter()
+    agents = AgentRegistry()
+    workflows = WorkflowRegistry()
+    workflows.register(WorkflowDefinition(
+        workflowId="remote-unknown-run", name="remote", domain="general", runtimeEngine="acg",
+        steps=[WorkflowStepDefinition(stepId="infer", name="infer", agentName="remote-worker", capability="analysis")],
+    ))
+    runtime = ExecutionRuntime(
+        agent_registry=agents,
+        workflow_registry=workflows,
+        workflow_store=MemoryWorkflowStore(),
+        memory_store=MemoryStore(),
+        resource_plane=plane,
+        resource_execution_adapters={"edge-01": edge, "cloud-01": cloud},
+    )
+
+    task = runtime.create_mission("remote unknown", workflow_id="remote-unknown-run")
+    _, run = runtime.prepare_run(task.mission_id)
+
+    with pytest.raises(ACGSuperstepError) as caught:
+        asyncio.run(runtime.execute_prepared_run(run.run_id))
+
+    assert isinstance(caught.value.cause, ResourceExecutionError)
+    assert caught.value.cause.outcome_unknown is True
+    assert edge.calls == 1
+    assert cloud.calls == 0
+    failed = runtime.workflow_store.get_run(run.run_id)
+    assert failed.status.value == "failed"
+    assert not failed.execution_state.get("resourceFailoverHistory")
+    assert plane.health_monitor.health("edge-01").healthy is False
+
+
 def test_remote_failover_stops_after_all_bound_remote_runtimes_fail() -> None:
     class _FailingAdapter:
         async def run(self, context):
