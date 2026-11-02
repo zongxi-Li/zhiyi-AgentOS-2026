@@ -29,13 +29,31 @@ _NON_TERMINAL_REMOTE_STATES = frozenset({
     "ACCEPTED",
     "QUEUED",
     "PENDING",
+    "WAITING",
+    "SCHEDULED",
+    "SUBMITTED",
+    "STARTING",
     "RUNNING",
-    "STARTED",
+    "RETRYING",
     "PROCESSING",
     "IN_PROGRESS",
     "CANCELLING",
     "CANCELING",
     "CANCEL_REQUESTED",
+    "FAILED",
+    "ERROR",
+    "CANCELLED",
+    "CANCELED",
+    "ABORTED",
+    "REJECTED",
+    "EXPIRED",
+})
+_REMOTE_TERMINAL_SUCCESS_STATES = frozenset({
+    "SUCCEEDED",
+    "SUCCESS",
+    "COMPLETED",
+    "DONE",
+    "FINISHED",
 })
 
 
@@ -44,6 +62,9 @@ def _decode_terminal_execution_response(response: httpx.Response) -> AgentOutput
     status = response.status_code
     if status != 200:
         detail = response.text[:500]
+        # The synchronous endpoint contract treats ordinary 4xx responses as
+        # pre-admission rejection. Timeout/conflict/too-early/rate-limit responses
+        # can race admission and therefore remain outcome-unknown.
         definitely_rejected = (
             400 <= status < 500 and status not in {408, 409, 425, 429}
         )
@@ -60,15 +81,18 @@ def _decode_terminal_execution_response(response: httpx.Response) -> AgentOutput
             raise TypeError("response JSON must be an object")
         if "output" not in body and "summary" not in body:
             raise ValueError("response does not contain AgentOutput fields")
-        remote_state = body.get("state") or body.get("status")
-        if (
-            isinstance(remote_state, str)
-            and remote_state.strip().upper() in _NON_TERMINAL_REMOTE_STATES
-        ):
-            raise ResourceExecutionError(
-                f"REMOTE_EXECUTION_OUTCOME_UNKNOWN: HTTP 200 reported non-terminal state {remote_state}",
-                outcome_unknown=True,
-            )
+        state_key = "state" if "state" in body else "status" if "status" in body else None
+        if state_key is not None:
+            remote_state = body[state_key]
+            normalized_state = remote_state.strip().upper() if isinstance(remote_state, str) else ""
+            if (
+                normalized_state in _NON_TERMINAL_REMOTE_STATES
+                or normalized_state not in _REMOTE_TERMINAL_SUCCESS_STATES
+            ):
+                raise ResourceExecutionError(
+                    f"REMOTE_EXECUTION_OUTCOME_UNKNOWN: HTTP 200 reported non-success terminal state {remote_state}",
+                    outcome_unknown=True,
+                )
         return AgentOutput.model_validate(body)
     except ResourceExecutionError:
         raise

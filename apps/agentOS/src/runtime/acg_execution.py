@@ -446,11 +446,13 @@ class ACGExecutionService(CollaboratorAccess):
         state: ACGExecutionState,
         error: ACGSuperstepError,
     ) -> bool:
-        """Mark failed remote resources unhealthy and prepare one safe rebind.
+        """Mark a definitively failed remote resource unhealthy and prepare one safe rebind.
 
         The graph has already projected ``superstep_failed`` when this method is
-        called.  We therefore repair only nodes without a committed graph result;
-        committed nodes remain completed and are replayed from the value store.
+        called.  We repair only nodes without a committed graph result; committed
+        nodes remain completed and are replayed from the value store. An unknown
+        remote outcome is a hard stop: another resource must not replay a possibly
+        committed external side effect.
         Each step/resource pair gets at most one automatic failover attempt.
         """
         resource_error = self._unwrap_resource_execution_error(error)

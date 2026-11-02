@@ -117,6 +117,7 @@ async def test_http_adapter_marks_non_terminal_or_ambiguous_status_unknown(statu
         {},
         {"state": "RUNNING", "output": {"ok": True}},
         {"status": "queued", "summary": "not terminal"},
+        {"state": "FAILED", "output": {"partial": True}},
     ],
 )
 async def test_http_adapter_rejects_non_terminal_or_empty_http_200_body(body: dict) -> None:
