@@ -358,6 +358,7 @@ def test_unknown_remote_outcome_blocks_automatic_failover() -> None:
     assert failed.status.value == "failed"
     assert not failed.execution_state.get("resourceFailoverHistory")
     assert plane.health_monitor.health("edge-01").healthy is False
+    assert runtime.resource_binder.coordinator.active_slots("edge-01") == 1
 
 
 def test_remote_failover_stops_after_all_bound_remote_runtimes_fail() -> None:

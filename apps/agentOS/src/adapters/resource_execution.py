@@ -25,29 +25,6 @@ class ResourceExecutionError(RuntimeError):
         self.outcome_unknown = outcome_unknown
 
 
-_NON_TERMINAL_REMOTE_STATES = frozenset({
-    "ACCEPTED",
-    "QUEUED",
-    "PENDING",
-    "WAITING",
-    "SCHEDULED",
-    "SUBMITTED",
-    "STARTING",
-    "RUNNING",
-    "RETRYING",
-    "PROCESSING",
-    "IN_PROGRESS",
-    "CANCELLING",
-    "CANCELING",
-    "CANCEL_REQUESTED",
-    "FAILED",
-    "ERROR",
-    "CANCELLED",
-    "CANCELED",
-    "ABORTED",
-    "REJECTED",
-    "EXPIRED",
-})
 _REMOTE_TERMINAL_SUCCESS_STATES = frozenset({
     "SUCCEEDED",
     "SUCCESS",

@@ -111,6 +111,26 @@ async def test_http_adapter_marks_non_terminal_or_ambiguous_status_unknown(statu
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["SUCCEEDED", "SUCCESS", "COMPLETED", "DONE", "FINISHED"])
+async def test_http_adapter_accepts_explicit_terminal_success_state(state: str) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"state": state, "output": {"ok": True}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HttpResourceExecutionAdapter(
+        resource_id="edge-01",
+        address="http://edge",
+        credential_provider=_Credentials(),
+        client=client,
+    )
+    try:
+        result = await adapter.run(_context())
+        assert result.output == {"ok": True}
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body",
     [
@@ -118,6 +138,7 @@ async def test_http_adapter_marks_non_terminal_or_ambiguous_status_unknown(statu
         {"state": "RUNNING", "output": {"ok": True}},
         {"status": "queued", "summary": "not terminal"},
         {"state": "FAILED", "output": {"partial": True}},
+        {"state": "COMPLETED", "status": "RUNNING", "output": {"partial": True}},
     ],
 )
 async def test_http_adapter_rejects_non_terminal_or_empty_http_200_body(body: dict) -> None:
