@@ -248,7 +248,7 @@ npm run test
 ```text
 知弈 AgentOS
 ├── apps/
-│   ├── agentOS/                # WKN 内核 — 唯一执行真源
+│   ├── agentOS/                #   内核 — 唯一执行真源
 │   │   └── src/
 │   │       ├── runtime/        #   ExecutionRuntime / 身份生命周期
 │   │       ├── components/     #   Planner / Executor / Communicator / Recovery

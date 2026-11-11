@@ -3,7 +3,7 @@
     <WorkbenchLayout :show-left="false" :show-right="false" storage-key="zhiyi.resources.store.v2">
       <template #main>
         <main class="resource-page__main" aria-label="资源商店">
-          <WorkspacePageHero eyebrow="RESOURCE PLANE / STORE" title="资源商店" description="浏览平台本地目录，安装能力，或接入自己的本地服务。">
+          <WorkspacePageHero eyebrow="RESOURCE PLANE / STORE" title="资源商店">
             <template #actions><button class="store-custom-action" type="button" @click="customOpen = true"><el-icon aria-hidden="true"><Plus /></el-icon><span>登记本地服务</span></button></template>
           </WorkspacePageHero>
           <ResourceCenterNav active="store" />
@@ -23,13 +23,14 @@
           </div>
 
           <MarketplaceCatalogPanel v-if="activeTab === 'catalog'" :items="catalog" :installations="installations" :loading="loading" :busy="Boolean(busyJob)" @install="installItem" />
-          <MarketplaceInstalledPanel v-else :items="installations" :loading="loading" :busy-job="busyJob" @stop="stopJob" @uninstall="uninstallJob" />
+          <MarketplaceInstalledPanel v-else :items="installations" :loading="loading" :busy-job="busyJob" @stop="stopJob" @uninstall="uninstallJob" @use="toolJob = $event" />
           <p v-if="error" class="store-error" role="alert">{{ error }}</p>
           <p class="store-footnote">自定义资源仅接受本机回环地址，不会执行用户提交的命令。</p>
         </main>
       </template>
     </WorkbenchLayout>
     <CustomResourceDialog v-model="customOpen" :submitting="customSubmitting" :error="customError" @submit="registerCustom" />
+    <MarketplaceToolDialog :job="toolJob" @close="toolJob = null" />
   </div>
 </template>
 
@@ -45,6 +46,7 @@ import ResourceCenterNav from '@/components/resource-center/ResourceCenterNav.vu
 import MarketplaceCatalogPanel from '@/components/resource-center/MarketplaceCatalogPanel.vue'
 import MarketplaceInstalledPanel from '@/components/resource-center/MarketplaceInstalledPanel.vue'
 import CustomResourceDialog from '@/components/resource-center/CustomResourceDialog.vue'
+import MarketplaceToolDialog from '@/components/resource-center/MarketplaceToolDialog.vue'
 
 const catalog = ref<MarketplaceCatalogItem[]>([])
 const installations = ref<MarketplaceInstallation[]>([])
@@ -55,6 +57,7 @@ const customOpen = ref(false)
 const customSubmitting = ref(false)
 const customError = ref('')
 const busyJob = ref('')
+const toolJob = ref<MarketplaceInstallation | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let disposed = false
 
