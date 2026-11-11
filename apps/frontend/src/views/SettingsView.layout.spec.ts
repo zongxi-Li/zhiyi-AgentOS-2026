@@ -45,9 +45,9 @@ describe('SettingsView shell integration', () => {
 
 describe('SettingsView brand picker', () => {
   it('offers the three brand packs in the appearance tab and applies on click', () => {
-    // Logo 三选卡与主题卡片同构：点击即预览生效（滤镜 + favicon），保存设置统一落盘。
-    expect(settingsViewSource).toContain('const { brandOptions, setBrand } = useBrand()')
-    expect(settingsViewSource).toContain('v-for="pack in brandOptions"')
+    // Logo 三选卡与主题卡片同构：点击即预览生效（主题变体 + favicon），保存设置统一落盘。
+    expect(settingsViewSource).toContain('const { themedBrandOptions, setBrand } = useBrand()')
+    expect(settingsViewSource).toContain('v-for="pack in themedBrandOptions"')
     expect(settingsViewSource).toContain('@click="settings.brand = pack.id; applyBrand()"')
   })
 

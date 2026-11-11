@@ -200,17 +200,6 @@
   --app-topbar-input-border: rgba(71, 79, 116, 0.12);
   --app-topbar-kbd-bg: #eceef7;
   --app-topbar-logo-bg: #f5f6fb;
-
-  /* 品牌方章是深色实底 + 浅色线条；浅色主题由 useTheme 统一反相。 */
-  --brand-logo-filter: none;
-}
-
-/* 品牌标资产随主题反相（弈章需要，位图彩标由 useBrand 下发 none），保证 5 套配色下对比度一致。
-   前缀覆盖 public 根路径 (/logo*) 与三选一资产目录 (/brand/*)。
-   ACG 子系统专用标 (/acglogo.*) 是独立品牌资产，不参与主标适配。 */
-img[src^="/logo"],
-img[src^="/brand/"] {
-  filter: var(--brand-logo-filter, none);
 }
 
 /* Base Reset */

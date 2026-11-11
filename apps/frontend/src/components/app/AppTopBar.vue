@@ -681,8 +681,8 @@ onBeforeUnmount(() => {
   outline-offset: 1px;
 }
 
-/* 品牌方章自带深色圆角底，容器不再叠一层底色与边框，
-   避免浅色主题下出现「浅框套深章」的割裂感。 */
+/* 品牌标是纯识别物不承接点击；弈章为透明底位图（深浅主题各一套变体），
+   容器不再叠一层底色与边框，避免在位图外出现多余的框感。 */
 .app-topbar__logo {
   position: relative;
   display: grid;

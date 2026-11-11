@@ -167,7 +167,7 @@
         <div class="section-label">Logo</div>
         <div class="theme-grid">
           <button
-            v-for="pack in brandOptions"
+            v-for="pack in themedBrandOptions"
             :key="pack.id"
             class="theme-option brand-option"
             :class="{ active: settings.brand === pack.id }"
@@ -483,7 +483,7 @@ interface AppSettings {
 
 const { locale } = useI18n()
 const { applyColorScheme } = useTheme()
-const { brandOptions, setBrand } = useBrand()
+const { themedBrandOptions, setBrand } = useBrand()
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
@@ -1290,7 +1290,7 @@ function ensureSelectedModel(models: string[]): void {
 .theme-option-footer strong { color: var(--text-primary); font-weight: 600; }
 .theme-option-footer .el-icon { color: var(--primary-color); }
 
-/* Logo 三选卡：预览区居中展示各标的 main 资产，滤镜走全局 --brand-logo-filter（与实际显示一致）。 */
+/* Logo 三选卡：预览区居中展示各标的 main 资产（弈章随当前主题换用深浅变体，与实际显示一致）。 */
 .brand-preview {
   height: 116px;
   display: grid;

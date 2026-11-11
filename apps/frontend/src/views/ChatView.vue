@@ -27,7 +27,7 @@
             <div
               ref="heroLogoFieldRef"
               class="hero-logo-field"
-              :class="{ 'is-pressed': heroLogoPressed }"
+              :class="{ 'is-pressed': heroLogoPressed, 'is-fullbleed-art': activePack.id === 'ink' }"
               aria-hidden="true"
               @pointermove="handleHeroLogoPointerMove"
               @pointerleave="handleHeroLogoPointerLeave"
@@ -4284,12 +4284,20 @@ const handleHeroLogoPointerUp = () => {
 
 .hero-logo-field .hero-watermark {
   width: 100%;
+  height: 100%;
+  object-fit: contain;
   margin: 0;
-  filter: var(--brand-logo-filter, none) url('#hero-logo-fluid') saturate(0.9) brightness(0.94);
+  filter: url('#hero-logo-fluid') saturate(0.9) brightness(0.94);
   transform-origin: center;
   will-change: transform, filter;
   pointer-events: none;
   transition: filter 240ms ease;
+}
+
+/* 弈章位图笔画满幅无留白，按比例缩进呈现；焰标/花环自带留白，维持整框大小 */
+.hero-logo-field.is-fullbleed-art .hero-watermark {
+  width: 65%;
+  height: 65%;
 }
 
 .hero-logo-field.is-pressed::before {

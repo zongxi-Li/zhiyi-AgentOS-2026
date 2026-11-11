@@ -24,6 +24,6 @@ const { activePack } = useBrand()
 
 <style scoped>
 .brand-empty { display: grid; justify-items: center; align-content: center; gap: 12px; box-sizing: border-box; padding: 24px 14px; text-align: center; }
-.brand-empty__mark { object-fit: contain; opacity: .38; filter: var(--brand-logo-filter, none) grayscale(1) saturate(.55) contrast(.85) brightness(1.12); pointer-events: none; user-select: none; }
+.brand-empty__mark { object-fit: contain; opacity: .38; filter: grayscale(1) saturate(.55) contrast(.85) brightness(1.12); pointer-events: none; user-select: none; }
 .brand-empty__text { margin: 0; color: var(--wb-text-muted, var(--text-secondary)); font-size: 11px; line-height: 1.6; }
 </style>

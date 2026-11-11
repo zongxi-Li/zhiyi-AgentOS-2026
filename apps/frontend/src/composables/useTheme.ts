@@ -1,6 +1,5 @@
 import { ref } from 'vue'
 import { getColorScheme, isDarkColorScheme, type ColorSchemeId } from '@/themes/presets'
-import { brandLogoFilter } from '@/features/brand/useBrand'
 
 const currentScheme = ref<ColorSchemeId>('codex-dark')
 const CODEX_DARK_MIGRATION_KEY = 'theme.codex_dark_v1'
@@ -102,9 +101,7 @@ function applySchemeVariables(schemeId: ColorSchemeId): void {
     root.style.setProperty(`--el-color-${status}-light-9`, `color-mix(in srgb, var(--${status}) 12%, var(--bg-card))`)
     root.style.setProperty(`--el-color-${status}-dark-2`, `color-mix(in srgb, var(--${status}) 82%, #000000)`)
   }
-  // 品牌标滤镜按所选标而定（useBrand）：弈章为深底浅线，浅色主题反相为浅底深线并
-  // 做 180° 色相回正，避免深色块压在浅色界面上；位图彩色标（焰标/花环）不反相。
-  root.style.setProperty('--brand-logo-filter', brandLogoFilter(isDark))
+  // 弈章等主题变体资产由 useBrand 监听 data-color-scheme 即时换图，这里只负责写属性。
   root.dataset.colorScheme = scheme.id
   root.style.colorScheme = isDark ? 'dark' : 'light'
   document.body.style.backgroundImage = scheme.bodyBackground

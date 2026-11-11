@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { initBrand, brandLogoFilter, useBrand } from './useBrand'
+import { initBrand, useBrand } from './useBrand'
 
-// 品牌标三选一：持久化读取、非法值回退、favicon 跟随、per-pack 浅色反相。
-// 滤镜口径：只有弈章（白线深底）在浅色主题反相，位图彩色标恒不反相。
+// 品牌标三选一：持久化读取、非法值回退、favicon 跟随、弈章按主题换用深浅变体资产。
+// 变体口径：浅色主题显示黑线 logo-light.png，深色主题显示白线 logo-dark.png，无滤镜反相。
 
 const favicon = () => document.querySelector<HTMLLinkElement>("link[rel='icon']")
 
@@ -11,7 +11,6 @@ describe('useBrand', () => {
     localStorage.clear()
     document.head.innerHTML = ''
     document.documentElement.removeAttribute('data-color-scheme')
-    document.documentElement.style.removeProperty('--brand-logo-filter')
   })
 
   it('defaults to ember (current visuals unchanged) and rewrites the favicon', () => {
@@ -34,8 +33,8 @@ describe('useBrand', () => {
     initBrand()
     const { activePack } = useBrand()
     expect(activePack.value.id).toBe('ink')
-    expect(favicon()?.getAttribute('href')).toBe('/logo-compact.svg')
-    expect(favicon()?.getAttribute('type')).toBe('image/svg+xml')
+    expect(favicon()?.getAttribute('href')).toBe('/brand/ink/logo-compact.png')
+    expect(favicon()?.getAttribute('type')).toBe('image/png')
   })
 
   it('falls back to ember on an unknown persisted pack', () => {
@@ -52,32 +51,22 @@ describe('useBrand', () => {
     expect(activePack.value.id).toBe('ember')
   })
 
-  it('inverts only the ink mark, and only under light schemes', () => {
+  it('serves the ink pack the light asset under a light scheme and the dark asset under a dark scheme', () => {
     const root = document.documentElement
-    const { setBrand } = useBrand()
+    const { setBrand, activePack } = useBrand()
 
     root.dataset.colorScheme = 'claude-warm'
     setBrand('ink')
-    expect(root.style.getPropertyValue('--brand-logo-filter'))
-      .toBe('invert(1) hue-rotate(180deg) saturate(.9) brightness(.96)')
-
-    setBrand('ember')
-    expect(root.style.getPropertyValue('--brand-logo-filter')).toBe('none')
-
-    setBrand('wreath')
-    expect(root.style.getPropertyValue('--brand-logo-filter')).toBe('none')
+    expect(activePack.value.main).toBe('/brand/ink/logo-light.png')
+    expect(activePack.value.mark).toBe('/brand/ink/logo-light.png')
 
     root.dataset.colorScheme = 'codex-dark'
     setBrand('ink')
-    expect(root.style.getPropertyValue('--brand-logo-filter')).toBe('none')
-  })
+    expect(activePack.value.main).toBe('/brand/ink/logo-dark.png')
+    expect(activePack.value.mark).toBe('/brand/ink/logo-dark.png')
+    expect(activePack.value.favicon).toBe('/brand/ink/logo-compact.png')
 
-  it('keeps the pure filter helper consistent with the pack flag', () => {
-    const { setBrand } = useBrand()
-    setBrand('ink')
-    expect(brandLogoFilter(false)).not.toBe('none')
-    expect(brandLogoFilter(true)).toBe('none')
     setBrand('ember')
-    expect(brandLogoFilter(false)).toBe('none')
+    expect(activePack.value.main).toBe('/logo.svg')
   })
 })
