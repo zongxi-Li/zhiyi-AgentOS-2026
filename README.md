@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brand/show.png">
+  <img src="docs/assets/brand/show.png" width="640" alt="知弈 AgentOS">
 </p>
 
 <p align="center">
@@ -269,7 +269,6 @@ npm run test
 
 本机运行数据不在仓库内，固定位于 `%LOCALAPPDATA%\ZhiyiNative\default\`（PostgreSQL cluster、
 Memurai RDB/AOF、SQLite Store、uploads、workspace、Electron 用户数据与 DPAPI 凭据）。
-```
 
 ---
 
