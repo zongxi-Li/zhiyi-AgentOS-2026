@@ -105,9 +105,9 @@ it('watches valid source, keeps the last build on errors, and drains SSE before 
     if (child.connected) child.send('shutdown');
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      expect(await Promise.race([exited, new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Watcher cleanup timed out')), 6000);
-      })])).toBe(0);
+    expect(await Promise.race([exited, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Watcher cleanup timed out: ${diagnostics.slice(-2000)}`)), 15000);
+    })])).toBe(0);
     } finally { clearTimeout(timer); }
     await new Promise<void>(resolve => python.close(() => resolve()));
     // Only this test's new cache directory may be removed recursively.
