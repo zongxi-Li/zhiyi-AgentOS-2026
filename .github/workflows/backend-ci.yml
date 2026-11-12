@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: apps/backend-ts/package-lock.json
+          cache-dependency-path: apps/backend/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -29,6 +29,6 @@ jobs:
           echo "ZHIYI_TEST_POSTGRES_BIN=$(pg_config --bindir)" >> "$GITHUB_ENV"
           python -m pip install 'psycopg[binary]==3.3.6'
       - run: npm ci
-        working-directory: apps/backend-ts
+        working-directory: apps/backend
       - run: npm run typecheck && npm test
-        working-directory: apps/backend-ts
+        working-directory: apps/backend
