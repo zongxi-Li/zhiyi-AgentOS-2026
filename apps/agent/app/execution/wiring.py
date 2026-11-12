@@ -277,6 +277,22 @@ def build_model_setup(
                 "priority": 100,
                 "requestTimeoutSeconds": config.timeout_seconds,
             }])
+    # Reuse the application's provider capability catalog. Merely registering
+    # an adapter previously left tools=unknown, disabling real Tool Calling.
+    from app.llm.capabilities import provider_model_capabilities
+    try:
+        model_entries = json.loads(values.get('AGENTOS_MODELS') or '[]')
+    except (ValueError, TypeError):
+        model_entries = None  # ApplicationSetup reports the existing config error.
+    if isinstance(model_entries, list):
+        for entry in model_entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get('models'), list):
+                continue
+            if 'modelCapabilities' not in entry:
+                entry['modelCapabilities'] = {name: {'features': {'tools': provider_model_capabilities(
+                    name, str(entry.get('baseUrl') or ''), str(entry.get('provider') or '')).supports_tools}}
+                    for name in entry['models'] if isinstance(name, str)}
+        values['AGENTOS_MODELS'] = json.dumps(model_entries)
     setup = ApplicationSetup.from_environment(
         values,
         model_registry=runtime.model_registry,

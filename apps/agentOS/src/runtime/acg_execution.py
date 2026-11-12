@@ -88,6 +88,7 @@ class ExecutionRunCancelled(RuntimeError):
     它不是 ``asyncio.CancelledError``：不撕毁事件循环中正在执行的任务树，
     只让当前 run 停止认领新的节点执行，让已真实完成的步骤保留其提交。
     """
+    code = 'EXECUTION_CANCELLED'
 
 
 class ExecutionStateChanged(RuntimeError):
@@ -1253,8 +1254,9 @@ class ACGExecutionService(CollaboratorAccess):
             for tool_name in agent.profile.allowed_tools
         }
         delegate = self.tool_runtime or configured_tool_runtime()
-        # 工具必须先经过 AgentOS 的授权检查，再进入统一的超时、重试、限流与安全
-        # 错误映射边界。对已受保护的运行时不重复包装，避免双重重试放大副作用。
+        # Legacy 工具沿用已有运行 scope；AuditedToolRuntime 从受信任执行适配器
+        # 的目录统一开放 Hands 能力，不依赖 Agent profile 或 Planner 工具分配。
+        # 对已受保护的运行时不重复包装，避免双重重试放大副作用。
         protected_tools = (
             delegate
             if isinstance(delegate, GuardedToolRuntime)

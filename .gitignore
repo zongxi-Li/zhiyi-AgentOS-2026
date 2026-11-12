@@ -149,6 +149,9 @@ build_agentos_innovation_doc.py
 output/playwright/
 output/runtime-acceptance-*/
 
+# 回归/验收流程生成的 XML 报告
+*.xml
+
 # 额外的资源
 apps/agentOS/references
 .agentos-data/

@@ -96,6 +96,39 @@ class RegisteredModelRuntime:
         }
     )
 
+    @property
+    def supports_tool_calling(self) -> bool:
+        return self.describe_model().features.tools is True
+
+    async def generate_tool_turn(self, *, messages, tools, schema, timeout_seconds=120.0,
+                                 commit_id=None, max_output_tokens=None, reasoning_effort=None,
+                                 temperature=None, **kwargs):
+        """One native Function Calling turn through the registered model adapter."""
+        if not self.supports_tool_calling:
+            raise StructuredGenerationError("MODEL_TOOLS_UNSUPPORTED", "model does not declare tool calling")
+        capability = self.describe_model()
+        # Providers default to autonomous selection; some thinking endpoints
+        # reject an explicit tool_choice even when Function Calling is enabled.
+        options = {"tools": tools}
+        tokens = max_output_tokens or capability.max_output_tokens
+        if tokens is not None:
+            options[capability.max_tokens_field or "max_tokens"] = tokens
+        effort = _validated_reasoning_effort(reasoning_effort)
+        if effort:
+            options['reasoning_effort'] = effort
+        if temperature is not None:
+            options['temperature'] = temperature
+        request = ModelInvocationRequest(requestId=commit_id or f"model:{uuid4().hex}", model=self.model,
+            messages=messages, responseSchema=schema, options=options, commitId=commit_id)
+        try:
+            adapter = self._registry.resolve(self.provider, self.model, version=self.version)
+            return await self._wait_for(adapter.invoke(request), timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
+        except ModelInvocationError as exc:
+            raise StructuredGenerationError(exc.code, "model tool turn failed", audit={
+                "provider": self.provider, "model": self.model, "usage": dict(exc.usage)}) from exc
+
     async def generate_json(
         self,
         *,

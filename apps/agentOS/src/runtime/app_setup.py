@@ -7,7 +7,7 @@ import json
 import math
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from adapters.http_transport import HttpJsonTransport, RotatingKeyProvider
@@ -35,6 +35,7 @@ class ModelSetup:
     priority: int
     request_timeout: float
     allow_insecure: bool
+    model_capabilities: dict[str, Any] = field(default_factory=dict)
 
 
 class ApplicationSetup:
@@ -145,7 +146,7 @@ class ApplicationSetup:
                         provider=setup.provider,
                         capabilities=list(setup.models),
                         version=setup.version,
-                        metadata={"priority": setup.priority},
+                        metadata={"priority": setup.priority, "modelCapabilities": setup.model_capabilities},
                     ),
                     transport=HttpJsonTransport(
                         base_url=setup.base_url,
@@ -252,6 +253,14 @@ class ApplicationSetup:
                 raise ApplicationSetupError(
                     "APP_MODEL_CONFIG_INVALID: version must be a non-empty string"
                 )
+            model_capabilities = item.get('modelCapabilities', {})
+            if not isinstance(model_capabilities, dict) or any(
+                name not in models or not isinstance(spec, dict)
+                or not isinstance(spec.get('features', {}), dict)
+                or ('tools' in spec.get('features', {}) and not isinstance(spec['features']['tools'], bool))
+                for name, spec in model_capabilities.items()
+            ):
+                raise ApplicationSetupError('APP_MODEL_CONFIG_INVALID: invalid model capabilities')
             setups.append(
                 ModelSetup(
                     capability_id=capability_id,
@@ -266,6 +275,7 @@ class ApplicationSetup:
                         code="APP_MODEL_CONFIG_INVALID",
                     ),
                     allow_insecure=allow_insecure,
+                    model_capabilities=model_capabilities,
                 )
             )
         return tuple(setups)

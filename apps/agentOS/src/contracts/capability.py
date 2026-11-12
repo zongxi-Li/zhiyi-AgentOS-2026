@@ -183,6 +183,9 @@ class ModelInvocationResponse(BaseModel):
 
     request_id: str = Field(alias="requestId", min_length=1)
     content: dict[str, Any] = Field(default_factory=dict)
+    # Transient conversation data. Never copied into metadata/audit projections.
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list, alias="toolCalls")
+    assistant_message: dict[str, Any] | None = Field(default=None, alias="assistantMessage")
     provider: str
     model: str
     usage: dict[str, Any] = Field(default_factory=dict)

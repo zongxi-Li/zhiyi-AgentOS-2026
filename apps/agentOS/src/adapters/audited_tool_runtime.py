@@ -1,7 +1,7 @@
-"""工具调用的冻结授权与安全审计包装器。
+"""共享原生工具能力、legacy 授权与安全审计包装器。
 
-该包装器在真实工具 delegate 之前检查当前运行的允许工具集合，避免未授权调用产生
-任何外部副作用。审计事件刻意不复制 arguments，以免查询词、命令或其它敏感正文进入
+原生目录由受信任 Hands 适配器提供，实际执行授权保留在 Hands 边界；其它工具沿用
+当前运行的允许工具集合。审计事件刻意不复制 arguments，以免查询词、命令或敏感正文进入
 Trace；详细参数仍只停留在实际工具的受控边界中。
 """
 
@@ -27,15 +27,24 @@ class AuditedToolRuntime:
 
     def __init__(self, *, delegate: ToolRuntime, allowed_tools: Iterable[str]) -> None:
         self.delegate = delegate
-        self.allowed_tools = frozenset(allowed_tools)
+        discover = getattr(delegate, "list_tools", None)
+        self.native_tools = frozenset(tool.name for tool in discover() if tool.source == "hands") if callable(discover) else frozenset()
+        self.allowed_tools = frozenset(allowed_tools) | self.native_tools
         self.events: list[dict[str, str]] = []
 
     def scoped(self, allowed_tools: Iterable[str]) -> "AuditedToolRuntime":
-        """返回在当前权限集合基础上进一步收缩的新视图，绝不扩大授权。"""
+        """隔离调用状态，收缩 legacy scope；Hands 目录保持所有节点一致。"""
         return AuditedToolRuntime(
             delegate=self.delegate,
             allowed_tools=self.allowed_tools.intersection(allowed_tools),
         )
+
+    def list_tools(self):
+        discover = getattr(self.delegate, "list_tools", None)
+        return tuple(tool for tool in discover() if tool.name in self.allowed_tools) if callable(discover) else ()
+
+    def describe(self, name):
+        return next((tool for tool in self.list_tools() if tool.name == name), None)
 
     async def run(self, text: str, **kwargs: Any) -> Any:
         """保留工具运行时的文本入口；具体编排授权仍由 delegate 自身负责。"""

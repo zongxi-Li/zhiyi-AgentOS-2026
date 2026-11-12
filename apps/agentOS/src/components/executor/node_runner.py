@@ -390,16 +390,11 @@ class ACGNodeRunner:
             "tokensUsed": sum(estimate_tokens(record.content) for record in memories),
             "requireAudit": memory_policy["requireAudit"],
         }
-        # 每个 Step 创建独立的受限工具视图，使并行节点的事件缓冲区彼此隔离；
-        # 视图只能继承既有授权集合，不能在节点内扩大权限。
+        # 每个节点复制调用/事件状态，原生能力由 Runtime 统一供给；Planner 的
+        # SkillManifest 与 Agent profile 不再为节点分配 Hands 工具。
         step_tool_runtime = self.tool_runtime
         if self.tool_runtime is not None and hasattr(self.tool_runtime, "scoped"):
-            declared_tools = {
-                rule.tool_name
-                for rule in self.skill_manifest.for_step(step_id)
-                if rule.tool_name
-            }
-            allowed = declared_tools or set(getattr(self.tool_runtime, "allowed_tools", ()))
+            allowed = set(getattr(self.tool_runtime, "allowed_tools", ()))
             step_tool_runtime = self.tool_runtime.scoped(allowed)
         agent_context = AgentRunContext(
             task=self.task,
@@ -415,7 +410,7 @@ class ACGNodeRunner:
             modelRuntime=self.model_runtimes.get(step_id, self.model_runtime),
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
             commitId=commit_id,
-            attemptId=self.attempt_ids.get(step_id),
+            attemptId=execution_record.attempt_id,
         )
         if hasattr(step_tool_runtime, 'bind_context'):
             guard = (lambda: self.invocation_guard(step_id, state)) if self.invocation_guard else None

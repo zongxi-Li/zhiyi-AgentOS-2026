@@ -140,6 +140,19 @@ class GuardedModelRuntime:
     def supports_continuation(self) -> bool:
         return bool(getattr(self.delegate, "supports_continuation", False))
 
+    @property
+    def supports_tool_calling(self) -> bool:
+        return bool(getattr(self.delegate, "supports_tool_calling", False))
+
+    async def generate_tool_turn(self, *, timeout_seconds=120.0, **kwargs):
+        if timeout_seconds <= 0:
+            raise StructuredGenerationError("MODEL_TIMEOUT", "model timeout must be positive")
+        try:
+            return await self._gate.call(lambda: asyncio.wait_for(
+                self.delegate.generate_tool_turn(timeout_seconds=timeout_seconds, **kwargs), timeout_seconds))
+        except asyncio.TimeoutError as exc:
+            raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
+
     async def generate_json(
         self,
         *,

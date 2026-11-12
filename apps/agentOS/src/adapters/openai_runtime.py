@@ -537,6 +537,20 @@ class OpenAICompatibleRuntime:
                 usage=safe_usage,
                 metadata=safe_metadata,
             )
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            if not request.options.get("tools") or not isinstance(tool_calls, list) or any(
+                not isinstance(call, dict) or not isinstance(call.get("id"), str) or not call['id']
+                or call.get("type") != "function" or not isinstance(call.get("function"), dict)
+                or not isinstance(call['function'].get('name'), str)
+                or not isinstance(call['function'].get('arguments'), str)
+                for call in tool_calls
+            ) or len({call['id'] for call in tool_calls}) != len(tool_calls):
+                raise ModelInvocationError("MODEL_TOOL_CALL_INVALID", "invalid function calling response")
+            return ModelInvocationResponse(requestId=request.request_id, content={},
+                toolCalls=tool_calls, assistantMessage={"role": "assistant", 'content': message.get('content') or '', **{
+                    key: message[key] for key in ("tool_calls", "reasoning_content") if key in message}},
+                provider=self._manifest.provider, model=model, usage=safe_usage, metadata=safe_metadata)
         try:
             content = self._content_object(message.get("content"))
         except ModelInvocationError as exc:

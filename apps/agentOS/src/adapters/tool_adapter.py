@@ -13,6 +13,14 @@ class ToolRuntime(Protocol):
     ``commit_id`` 作为稳定幂等标识，超时、重试和并发保护由包装器统一提供。
     """
 
+    def list_tools(self) -> tuple:
+        """Return available provider-neutral ToolDefinitions."""
+        ...
+
+    def describe(self, name: str):
+        """Return the same description/schema used for execution discovery."""
+        ...
+
     def scoped(self, allowed_tools: Iterable[str]) -> "ToolRuntime":
         """返回仅允许 ``allowed_tools`` 的受限运行时视图。
 

@@ -1,6 +1,7 @@
 """AgentOS owns this bounded loop; Hands is only a signed capability service."""
 import json
 from adapters.model_runtime import StructuredGenerationError
+from adapters.agent_tools import AgentToolSession, supports_agent_tools
 
 from service.agents.base import BaseAgent, AgentProfile, AgentOutput
 from support.acg.capabilities import PlanningCapabilityDescriptor, CapabilityPromptProfile
@@ -51,7 +52,7 @@ class WorkspaceDeveloper(BaseAgent):
                 and tests[-1].get('status') == 'completed' and not tests[-1].get('timedOut'))
         async def complete(key):
             for snapshot_index,path in enumerate(dict.fromkeys(change['path'] for change in changes)):
-                snapshot = await context.tool_runtime.execute('read_file',{'path':path},
+                snapshot = await context.tool_runtime.execute('fs.read' if supports_agent_tools(context) else 'read_file',{'path':path},
                     operation_key=f'{key}:snapshot:{snapshot_index}',timeout_seconds=120)
                 if snapshot.data['status']!='completed':
                     raise RuntimeError('HANDS_FINAL_FILE_SNAPSHOT_FAILED')
@@ -60,6 +61,25 @@ class WorkspaceDeveloper(BaseAgent):
                 'execution_receipts':records,'development_summary':
                     f'Verified {len(changes)} file changes and real pytest exitCode 0; final file snapshots captured.'},
                 summary='Workspace changes and real tests verified.',toolExecutions=records,modelInvocations=models)
+        if supports_agent_tools(context):
+            session = AgentToolSession(context)
+            await session.generate_json(prompt=json.dumps({
+                'objective':context.mission_intent_basis.objective if context.mission_intent_basis else context.task.title,
+                'stepGoal':context.step.goal or context.step.name}, ensure_ascii=False),
+                system_prompt='Execute this workspace task. Inspect files, implement source and tests, '
+                    'then run system-managed tests through shell.exec with runner and path. Use only workspace-relative paths. '
+                    'Finish only after real file changes and a successful test execution.',
+                schema=OUTPUT, timeout_seconds=420, commit_id=context.commit_id)
+            records.extend(session.records)
+            models.extend(session.invocations)
+            for name, arguments, result in session.observations:
+                if name in {'fs.write','fs.patch'} and result.status == 'completed':
+                    changes.append({'path':arguments['path'],'operation':name})
+                elif name == 'shell.exec' and result.output.get('managedTest'):
+                    tests.append(dict(result.output, status=result.status))
+            if not verified_completion():
+                raise RuntimeError('WORKSPACE_UNVERIFIED_OUTPUT: file changes and passing tests required')
+            return await complete(f'{context.commit_id}:native-tools')
         for index in range(32):
             key = f'{context.commit_id}:workspace:{index}'
             action = store.get_tool_value(run_id=context.run.run_id,key=key+':plan')

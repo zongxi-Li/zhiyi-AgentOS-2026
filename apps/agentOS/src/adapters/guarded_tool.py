@@ -100,6 +100,13 @@ class GuardedToolRuntime:
             _gate=self._gate,
         )
 
+    def list_tools(self):
+        discover = getattr(self.delegate, "list_tools", None)
+        return discover() if callable(discover) else ()
+
+    def describe(self, name):
+        return next((tool for tool in self.list_tools() if tool.name == name), None)
+
     def bind_context(self, context, guard):
         binder = getattr(self.delegate, 'bind_context', None)
         return GuardedToolRuntime(
@@ -219,8 +226,14 @@ class GuardedToolRuntime:
                 if exc.code not in _RETRYABLE_CODES or attempt > self.retries:
                     raise error from exc
             except Exception as exc:
+                code = getattr(exc, 'code', 'TOOL_EXECUTION_FAILED')
+                if code == 'EXECUTION_CANCELLED':
+                    raise
                 raise ToolInvocationError(
-                    "TOOL_EXECUTION_FAILED", "tool operation failed", attempts=attempt
+                    code if isinstance(code, str) and code.startswith(('HANDS_', 'PERMISSION_', 'GRANT_'))
+                    and code.replace('_', '').isascii() and code.replace('_', '').isalnum()
+                    else "TOOL_EXECUTION_FAILED",
+                    "tool operation failed", attempts=attempt
                 ) from exc
             if self.retry_delay_seconds:
                 await asyncio.sleep(self.retry_delay_seconds)
