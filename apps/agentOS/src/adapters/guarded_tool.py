@@ -207,9 +207,11 @@ class GuardedToolRuntime:
             raise ToolInvocationError("TOOL_TIMEOUT", "tool timeout must be positive", retryable=True)
         for attempt in range(1, self.retries + 2):
             try:
-                return await self._gate.call(
-                    lambda: asyncio.wait_for(operation(), timeout=timeout_seconds)
-                )
+                async def timed_operation():
+                    from support.work_timeouts import work_timeout
+                    async with work_timeout(timeout_seconds):
+                        return await operation()
+                return await self._gate.call(timed_operation)
             except asyncio.TimeoutError as exc:
                 error = ToolInvocationError(
                     "TOOL_TIMEOUT", "tool operation timed out", attempts=attempt, retryable=True

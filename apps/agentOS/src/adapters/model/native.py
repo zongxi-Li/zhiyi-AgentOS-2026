@@ -13,6 +13,7 @@ from adapters.model.contract_repair import plan_field_repair
 from adapters.prompt_runtime import compose_execution_prompt
 from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from adapters.agent_tools import AgentToolSession, supports_agent_tools
+from adapters.context_tools import ContextReadTools
 from contracts.communication import (
     ContextContractError,
     apply_contract_defaults,
@@ -348,6 +349,7 @@ class NativeGeneralAgent(BaseAgent):
         allowed_tools = sorted(
             str(item) for item in getattr(context.tool_runtime, "allowed_tools", ()) if str(item)
         )
+        allowed_tools = sorted(set(allowed_tools) | {tool.name for tool in ContextReadTools(context).list_tools()})
         verified_tool_observations = []
         collect_evidence = getattr(context.tool_runtime, 'verified_observations', None)
         if capability in {'verification','artifact_generation'} and callable(collect_evidence):
@@ -608,6 +610,9 @@ class NativeGeneralAgent(BaseAgent):
             output = apply_contract_defaults(dict(generated.data), generation_schema)
             if capability == "artifact_generation":
                 output = self._normalize_artifact_output(context, output)
+        reader = getattr(context, "communication_reader", None)
+        if reader is not None:
+            evidence_refs.extend(ref for ref in reader.evidence_refs if ref not in evidence_refs)
         output = self._normalize_output_evidence_refs(output, evidence_refs)
         if capability in {"verification", "artifact_generation"}:
             output = self._enforce_verification_evidence(output)

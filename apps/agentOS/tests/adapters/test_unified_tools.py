@@ -297,6 +297,54 @@ async def test_direct_final_answer_requires_no_tool_execution(stack):
 
 
 @pytest.mark.asyncio
+async def test_native_tool_node_streams_before_committing_and_replays_without_new_requests(stack, monkeypatch):
+    from runtime.live_events import RuntimeEventBroker
+    broker = RuntimeEventBroker()
+    monkeypatch.setattr('adapters.agent_tools.runtime_event_broker', broker)
+    monkeypatch.setattr('adapters.model.native.runtime_event_broker', broker)
+    runner, state, step, http = node(stack, GeneralAgent(), [[('fs.list', {'path': '.'})], {'answer': 'live answer'}])
+    release = asyncio.Event()
+    async def stream_json(*, payload, **kwargs):
+        raw = await http.post_json(payload=payload, **kwargs)
+        message = raw['choices'][0]['message']
+        if message.get('tool_calls'):
+            yield {'choices': [{'delta': {'reasoning_content': 'PRIVATE'}}]}
+            for index, call in enumerate(message['tool_calls']):
+                yield {'choices': [{'delta': {'tool_calls': [{'index': index, **call}]}}]}
+        else:
+            content = message['content']
+            split = len(content) // 2
+            yield {'choices': [{'delta': {'content': content[:split]}}]}
+            await release.wait()
+            yield {'choices': [{'delta': {'content': content[split:]}}]}
+        yield {'choices': [{'delta': {}, 'finish_reason': raw['choices'][0]['finish_reason']}]}
+        yield {'choices': [], 'usage': raw['usage']}
+    http.stream_json = stream_json
+    queue = asyncio.Queue()
+    broker._queues[runner.run.run_id].add(queue)
+    task = asyncio.create_task(runner(step.step_id, state))
+    events = []
+    try:
+        while not any(event.event_type == 'model.output.delta' for event in events):
+            events.append(await asyncio.wait_for(queue.get(), 3))
+        assert not task.done()
+        assert len(stack.service.requests) == 1
+        assert http.requests[1]['messages'][-2]['reasoning_content'] == 'PRIVATE'
+        release.set()
+        result = await task
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        assert stack.runtime.execution_value_store.get_output(run_id=runner.run.run_id, output_ref=result['outputRef']) == {'answer': 'live answer'}
+        assert 'PRIVATE' not in json.dumps([event.model_dump(mode='json') for event in events])
+        await runner(step.step_id, state)
+        assert len(http.requests) == 2 and len(stack.service.requests) == 1
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_sequential_turns_and_multiple_calls_preserve_model_order(stack):
     runner, state, step, http = node(stack, GeneralAgent(), [
         [('fs.write', {'path': 'n', 'content': 'a'}), ('fs.list', {'path': '.'})],
@@ -495,6 +543,34 @@ async def test_cancellation_while_waiting_for_user_approval(stack):
         await task
     assert not stack.permissions._pending
     assert stack.service.requests == [] and len(http.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_user_approval_wait_does_not_exhaust_the_model_and_tool_work_budget(stack):
+    from app.tools.permissions import ApprovalDecision
+    class Ask:
+        def evaluate(self, *args, **kwargs):
+            return PermissionDecision.ASK
+    stack.permissions.policy = Ask()
+    runner, _, step, http = node(stack, GeneralAgent(), [[('shell.exec', {'command': 'mock'})], {'answer': 'approved'}])
+    session = AgentToolSession(context_for(runner, step))
+    task = asyncio.create_task(session.generate_json(prompt='inspect', schema=ANSWER, timeout_seconds=.25))
+    for _ in range(100):
+        if stack.permissions._pending:
+            break
+        await asyncio.sleep(.005)
+    assert stack.permissions._pending
+    approval_id, pending = next(iter(stack.permissions._pending.items()))
+    await asyncio.sleep(.35)
+    assert not task.done() and not stack.service.requests
+    request = pending.request
+    await stack.permissions.resolve(approval_id, decision=ApprovalDecision.ALLOW_ONCE,
+        session_id=request.session_id, invocation_id=request.invocation_id,
+        capability_id=request.capability_id, relative_path=request.relative_path)
+    result = await asyncio.wait_for(task, 2)
+    assert result.data == {'answer': 'approved'}
+    assert len(stack.service.requests) == 1 and len(http.requests) == 2
+    assert not stack.runtime.formal_tool_pending
 
 
 @pytest.mark.asyncio
