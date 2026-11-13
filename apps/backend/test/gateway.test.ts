@@ -155,6 +155,48 @@ describe('Python gateway transport contracts', () => {
 });
 
 describe('workbench response compatibility', () => {
+  it('projects the public initial plan and tool receipts without exposing runtime bodies', () => {
+    const plan = { planVersion: 3, commitId: 'commit', commitmentRevision: 2,
+      objective: 'Inspect the project', constraints: ['Keep existing behavior'], expectedArtifacts: ['report'],
+      tasks: [{ key: 'inspect', title: 'Inspect source', objective: 'Locate the cause',
+        rationale: 'Read the relevant source before changing behavior', acceptanceCriteria: ['Identify the cause'],
+        sourceRefs: ['source:task'] }] };
+    const activity = { executionId: 'execution', tool: 'fs.list', status: 'succeeded', stepId: 'inspect',
+      attemptId: 'attempt', receiptRef: 'tool:receipt', createdAt: '2026-11-13T12:00:00Z' };
+    const source = { runId: 'run', initialPlan: { ...plan, reasoning_content: 'PRIVATE',
+      tasks: plan.tasks.map(task => ({ ...task, modelMessages: ['PRIVATE'] })) },
+      toolActivity: [{ ...activity, content: 'PRIVATE', output: { fileBody: 'PRIVATE' }, authorization: { secret: 'PRIVATE' } }],
+      executionState: { rawModelMessages: 'PRIVATE' } };
+    const snapshot = structuredClone(source);
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', source) as Record<string, unknown>;
+    expect(result.initialPlan).toEqual(plan);
+    expect(result.toolActivity).toEqual([activity]);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    expect(result).not.toHaveProperty('executionState');
+    expect(source).toEqual(snapshot);
+  });
+
+  it('keeps absent Copilot plan data compatible and rejects nested values in public scalar fields', () => {
+    expect(projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', { runId: 'run' }))
+      .toMatchObject({ initialPlan: null, toolActivity: [] });
+    const privateValue = { reasoning_content: 'PRIVATE' };
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', {
+      initialPlan: { planVersion: privateValue, commitId: privateValue, commitmentRevision: privateValue,
+        objective: privateValue, constraints: ['public constraint', privateValue], expectedArtifacts: [privateValue],
+        tasks: [{ key: 'task', title: privateValue, objective: privateValue, rationale: privateValue,
+          acceptanceCriteria: ['public criterion', privateValue], sourceRefs: ['source:task', privateValue] }] },
+      toolActivity: [{ executionId: 'execution', tool: privateValue, status: privateValue, stepId: privateValue,
+        attemptId: privateValue, receiptRef: privateValue, createdAt: privateValue }],
+    }) as Record<string, unknown>;
+    expect(result.initialPlan).toMatchObject({ planVersion: null, commitId: null, commitmentRevision: null,
+      objective: null, constraints: ['public constraint'], expectedArtifacts: [],
+      tasks: [{ key: 'task', title: null, objective: null, rationale: null,
+        acceptanceCriteria: ['public criterion'], sourceRefs: ['source:task'] }] });
+    expect(result.toolActivity).toEqual([{ executionId: 'execution', tool: null, status: null, stepId: null,
+      attemptId: null, receiptRef: null, createdAt: null }]);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
   it('preserves heterogeneous resource provenance in catalog projections', () => {
     const projected = projectAgentOsResponse('/ai/agentos/v2/resources', { total: 1, items: [{
       profile: { resourceId: 'runtime:edge:acme', resourceType: 'worker', deploymentTier: 'edge',

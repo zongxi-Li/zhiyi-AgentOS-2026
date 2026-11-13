@@ -129,8 +129,32 @@ function resourceCatalog(source: Row): Row {
   }) };
 }
 
+const stringOrNull = (value: unknown): string | null => typeof value === 'string' ? value : null;
+const numberOrNull = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+function copilotInitialPlan(value: unknown): Row | null {
+  if (value == null) return null;
+  const source = row(value);
+  return {
+    planVersion: numberOrNull(source.planVersion), commitId: stringOrNull(source.commitId),
+    commitmentRevision: numberOrNull(source.commitmentRevision), objective: stringOrNull(source.objective),
+    constraints: strings(source.constraints), expectedArtifacts: strings(source.expectedArtifacts),
+    tasks: rows(source.tasks, task => ({
+      key: stringOrNull(task.key), title: stringOrNull(task.title), objective: stringOrNull(task.objective),
+      rationale: stringOrNull(task.rationale), acceptanceCriteria: strings(task.acceptanceCriteria),
+      sourceRefs: strings(task.sourceRefs),
+    })),
+  };
+}
+
+function copilotToolActivity(source: Row): Row {
+  return Object.fromEntries('executionId tool status stepId attemptId receiptRef createdAt'.split(' ')
+    .map(key => [key, stringOrNull(source[key])]));
+}
+
 function copilot(source: Row): Row {
   return { ...pick(source, 'runId missionId latestRunId taskPermission status revision modelAvailable defaultModelId permissions'),
+    initialPlan: copilotInitialPlan(source.initialPlan), toolActivity: rows(source.toolActivity, copilotToolActivity),
     question: source.question == null ? null : pick(source.question, 'questionId prompt choices'),
     humanAnswers: rows(source.humanAnswers, source => pick(source, 'questionId sourceRunId prompt answer operationId answeredAt')),
     review: source.review == null ? null : pick(source.review, 'subjectId subjectType reason reasonCode canApprove decisionRejected expectedRunUpdatedAt'),
