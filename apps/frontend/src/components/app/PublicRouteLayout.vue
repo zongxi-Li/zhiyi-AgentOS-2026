@@ -85,7 +85,10 @@ const route = useRoute()
 
 .route-loading {
   display: grid;
-  min-height: 100%;
+  /* 父级 .public-main 只有 min-height 无确定 height，百分比 min-height 解析为 0，
+     加载块会塌成内容高贴顶；直接吃满视口让 place-items 真正居中。 */
+  min-height: 100vh;
+  min-height: 100dvh;
   place-items: center;
   color: var(--text-secondary);
   font-size: 13px;
