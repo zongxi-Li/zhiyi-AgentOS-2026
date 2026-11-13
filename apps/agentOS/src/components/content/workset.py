@@ -34,12 +34,15 @@ class ContentWorksetSession:
         # including restored Runs. Never partially process an invalid set.
         for manifest_id in spec.source_manifest_refs:
             self._material(manifest_id)
+        self.expected_units = sum(self._material(ref).fragment_count for ref in spec.source_manifest_refs)
         stable = sha256(f"workset:{run_id}:{step_id}:{commit_id}".encode("utf-8")).hexdigest()[:32]
         self.result_manifest = store.create_manifest(
             manifest_id=f"manifest_{stable}", kind=ContentKind.INTERMEDIATE,
             owner_type="run", owner_id=run_id, media_type="application/json",
             chunking_version="workset-map.v1",
         )
+        if self.result_manifest.fragment_count > self.expected_units:
+            raise ValueError("Workset result coverage exceeds declared source fragments")
 
     def mapped_results(self) -> list[dict[str, Any]]:
         return [
@@ -63,15 +66,28 @@ class ContentWorksetSession:
             self._material(manifest_id)
             for ref, payload in self.store.iterate_fragments(manifest_id):
                 if global_sequence >= completed:
+                    content = payload.decode("utf-8", errors="strict")
                     yield {
                         "sequence": global_sequence,
                         "manifestId": manifest_id,
                         "fragmentRef": ref.model_dump(by_alias=True, mode="json"),
-                        "content": payload.decode("utf-8", errors="strict"),
+                        "content": content,
+                        "characterRange": [0, len(content)],
+                        "rangeUnit": "unicode-codepoints",
                     }
                 global_sequence += 1
 
-    def persist_map_result(self, sequence: int, value: dict[str, Any]) -> None:
+    def persist_map_result(self, sequence: int, value: dict[str, Any], *, unit: dict[str, Any] | None = None) -> None:
+        if not 0 <= sequence < self.expected_units:
+            raise ValueError("Workset result sequence is outside declared source fragments")
+        if unit is not None:
+            if unit["sequence"] != sequence:
+                raise ValueError("Workset result unit sequence mismatch")
+            value = {**value, "_worksetCoverage": {
+                "version": "workset-coverage.v1", "sequence": sequence,
+                "manifestId": unit["manifestId"], "fragmentRef": unit["fragmentRef"],
+                "characterRange": unit["characterRange"], "rangeUnit": unit["rangeUnit"],
+            }}
         self.store.append_fragment(
             manifest_id=self.result_manifest.manifest_id, sequence=sequence,
             content=json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
@@ -80,6 +96,8 @@ class ContentWorksetSession:
         self.result_manifest = self.store.get_manifest(self.result_manifest.manifest_id)
 
     def seal(self):
+        if self.result_manifest.fragment_count != self.expected_units:
+            raise ValueError("Cannot seal Workset with uncovered source fragments")
         self.result_manifest = self.store.seal_manifest(self.result_manifest.manifest_id)
         return self.result_manifest
 

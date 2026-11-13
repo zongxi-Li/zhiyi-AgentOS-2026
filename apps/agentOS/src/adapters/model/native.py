@@ -486,6 +486,10 @@ class NativeGeneralAgent(BaseAgent):
                     commit_id=context.commit_id,
                 )
         except StructuredGenerationError as exc:
+            if (exc.audit or {}).get("toolActionsExecuted", 0) and exc.code in {
+                "MODEL_INPUT_BUDGET_EXCEEDED", "MODEL_OUTPUT_EXHAUSTED",
+            }:
+                raise
             thinking_enabled = thinking_mode.strip().lower() not in {
                 "",
                 "disabled",
@@ -1082,6 +1086,7 @@ class NativeGeneralAgent(BaseAgent):
             session.persist_map_result(
                 int(unit["sequence"]),
                 result.model_dump(by_alias=True, mode="json"),
+                unit=unit,
             )
             mapped.append(result)
         session.seal()
@@ -1122,26 +1127,32 @@ class NativeGeneralAgent(BaseAgent):
     async def _execute_workset_unit(
         self, context: AgentRunContext, unit: dict[str, Any], *, depth: int = 0
     ) -> AgentOutput:
+        content = str(unit.get("content") or "")
+        start, end = unit.get("characterRange", [0, len(content)])
+        identity = f"{unit['sequence']}:{start}:{end}"
         subcontext = self._workset_context(
             context,
-            source_key=f"materialFragment:{unit['sequence']}:{depth}",
+            source_key=f"materialFragment:{identity}",
             source_payload=unit,
-            commit_suffix=f"map:{unit['sequence']}:{depth}",
+            commit_suffix=f"map:{unit['sequence']}:0" if depth == 0 else f"map:{identity}",
             boundary=True,
         )
         try:
             return await self.run(subcontext)
         except StructuredGenerationError as exc:
-            content = str(unit.get("content") or "")
-            if exc.code != "MODEL_OUTPUT_EXHAUSTED" or len(content) < 2:
+            # Splitting after tools ran would change operation keys and could
+            # repeat external writes. Keep the original failure for settlement.
+            if (exc.audit or {}).get("toolActionsExecuted", 0):
+                raise
+            if exc.code not in {"MODEL_OUTPUT_EXHAUSTED", "MODEL_INPUT_BUDGET_EXCEEDED"} or len(content) < 2:
                 raise
             midpoint = len(content) // 2
-            left_unit = {**unit, "content": content[:midpoint], "subrange": f"0:{midpoint}"}
-            right_unit = {**unit, "content": content[midpoint:], "subrange": f"{midpoint}:{len(content)}"}
+            left_unit = {**unit, "content": content[:midpoint], "characterRange": [start, start + midpoint]}
+            right_unit = {**unit, "content": content[midpoint:], "characterRange": [start + midpoint, end]}
             left = await self._execute_workset_unit(context, left_unit, depth=depth + 1)
             right = await self._execute_workset_unit(context, right_unit, depth=depth + 1)
             reduced = await self._reduce_workset_pair(
-                context, left, right, depth, int(unit["sequence"])
+                context, left, right, depth, int(unit["sequence"]), scope=f"fragment:{identity}"
             )
             exhausted_audit = [dict(exc.audit)] if isinstance(exc.audit, dict) and exc.audit else []
             return reduced.model_copy(update={
@@ -1156,10 +1167,11 @@ class NativeGeneralAgent(BaseAgent):
     async def _reduce_workset_pair(
         self, context: AgentRunContext, left: AgentOutput, right: AgentOutput,
         round_index: int, pair_index: int,
+        *, scope: str | None = None,
     ) -> AgentOutput:
         return await self.run(self._workset_context(
             context,
-            source_key=f"worksetReducer:{round_index}:{pair_index}",
+            source_key=f"worksetReducer:{scope or f'{round_index}:{pair_index}'}",
             source_payload={
                 "instruction": (
                     "Merge both complete partial results. Preserve every supported fact, item, "
@@ -1169,7 +1181,7 @@ class NativeGeneralAgent(BaseAgent):
                 "left": left.output,
                 "right": right.output,
             },
-            commit_suffix=f"reduce:{round_index}:{pair_index}",
+            commit_suffix=f"reduce:{scope or f'{round_index}:{pair_index}'}",
         ))
 
     @staticmethod
