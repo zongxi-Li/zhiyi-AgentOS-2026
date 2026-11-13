@@ -4,9 +4,12 @@ from __future__ import annotations
 from typing import Any
 
 from adapters.prompt_runtime import canonical_hash
+from components.communicator.contracts import estimate_tokens
+from contracts.request_budget import ModelRequestBudget
 
 
-def request_diagnostics(payload: dict[str, Any], schema_index: int | None) -> dict[str, Any]:
+def request_diagnostics(payload: dict[str, Any], schema_index: int | None,
+                        budget: ModelRequestBudget | None = None) -> dict[str, Any]:
     messages = payload.get("messages", [])
     shared = schema_index == 2 and len(messages) >= 4
     lengths = [len(message.get("content", "")) if isinstance(message.get("content", ""), str)
@@ -22,6 +25,22 @@ def request_diagnostics(payload: dict[str, Any], schema_index: int | None) -> di
             "role": message.get("role") if message.get("role") in {"system", "user", "assistant", "tool", "developer"} else "other",
             "segment": segment, "characters": lengths[index], "hash": canonical_hash(message),
         })
+    # Count the complete context-bearing wire fields, after schema injection.
+    # This includes tool definitions, arguments/results, memory and continuations.
+    input_estimate = estimate_tokens({key: payload[key] for key in (
+        "messages", "tools", "functions", "response_format",
+    ) if key in payload})
+    budget_diagnostics = {
+        "estimator": "json-characters-div-3.2.v1",
+        "estimatedInputTokens": input_estimate,
+        "status": "notConfigured",
+    }
+    if budget is not None:
+        budget_diagnostics.update({
+            **budget.model_dump(by_alias=True, mode="json"),
+            "estimatedTotalTokens": input_estimate + budget.output_reserve_tokens,
+            "status": "exceeded" if input_estimate + budget.output_reserve_tokens > budget.total_tokens else "withinBudget",
+        })
     return {
         "layoutVersion": "shared-execution.v1" if shared else "messages.v1",
         "lengthUnit": "characters",
@@ -31,4 +50,5 @@ def request_diagnostics(payload: dict[str, Any], schema_index: int | None) -> di
         "sharedPrefixHash": canonical_hash(messages[:2]) if shared else None,
         "sharedPrefixCharacters": sum(item["characters"] for item in segments[:2]) if shared else None,
         "segments": segments,
+        "requestBudget": budget_diagnostics,
     }

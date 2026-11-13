@@ -25,6 +25,8 @@ class CommunicationAccessError(PermissionError):
 class EntropyBudgetExceededError(ValueError):
     """run、step 或 channel 预算不能承载本次受控读取时抛出。"""
 
+    code = "COMMUNICATION_BUDGET_EXCEEDED"
+
 
 class ExecutionValueReader(Protocol):
     """Broker 所需的最小值仓库接口，避免通信器反向依赖 executor 包入口。"""
@@ -52,6 +54,9 @@ class CommunicationBroker:
         self._step_used: dict[str, int] = {}
         self._channel_used: dict[str, int] = {}
         self._events: list[dict[str, Any]] = []
+        self._event_operations: set[str] = set()
+        self._operations: dict[str, dict[str, Any]] = {}
+        self._supplemental_used: dict[str, int] = {}
         self.restore_usage(usage or {})
 
     async def read_reference(
@@ -63,6 +68,8 @@ class CommunicationBroker:
         requested_fields: Iterable[str],
         max_tokens: int | None,
         reason: str,
+        operation_id: str = "",
+        supplemental_limit: int | None = None,
     ) -> ContextPack:
         """读取一个经拓扑与预算许可的输出引用，并返回字段裁剪后的 ContextPack。
 
@@ -103,7 +110,9 @@ class CommunicationBroker:
         if ((max_tokens is not None and tokens > max_tokens)
                 or (rule.max_tokens is not None and tokens > rule.max_tokens)):
             raise EntropyBudgetExceededError("communication read exceeds request or rule token limit")
-        self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens)
+        self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens,
+                      operation_id=operation_id, supplemental_limit=supplemental_limit,
+                      fingerprint=input_revision([output_ref, list(fields), data, max_tokens, supplemental_limit]))
         pack = ContextPack(
             runId=run_id,
             stepId=consumer_step_id,
@@ -116,7 +125,7 @@ class CommunicationBroker:
             sourceStepIds=[rule.producer_step_id],
             inputRevision=input_revision(data),
         )
-        self._events.append(
+        self._append_event(
             {
                 "type": "communication_read",
                 "runId": run_id,
@@ -126,7 +135,9 @@ class CommunicationBroker:
                 "fields": list(data),
                 "tokens": tokens,
                 "channel": rule.channel,
-            }
+                **({"operationId": operation_id, "readKind": "fields", "readPhase": "supplemental" if supplemental_limit is not None else "prefetch"}
+                   if operation_id else {}),
+            }, operation_id=operation_id,
         )
         return pack
 
@@ -134,6 +145,7 @@ class CommunicationBroker:
         self, *, run_id: str, consumer_step_id: str, output_ref: str,
         requested_fields: Iterable[str], cursor: str | None,
         page_tokens: int, reason: str,
+        operation_id: str = "", supplemental_limit: int | None = None,
     ) -> tuple[ContextPack, str | None]:
         """Page one authorized large field without deleting any remaining content.
 
@@ -162,7 +174,12 @@ class CommunicationBroker:
         output = self.value_store.get_output(run_id=run_id, output_ref=output_ref)
         field = fields[field_index]
         value = output.get(field)
-        page_value, next_offset = self._slice_value(value, offset=offset, page_tokens=page_tokens)
+        # Account for the field envelope too. Never return a first oversized
+        # item merely to make progress: it would silently bypass the page cap.
+        overhead = estimate_tokens({field: None}) + 2
+        if page_tokens <= overhead:
+            raise EntropyBudgetExceededError("page budget cannot hold the field envelope")
+        page_value, next_offset = self._slice_value(value, offset=offset, page_tokens=page_tokens - overhead)
         next_cursor = (
             f"{field_index}:{next_offset}"
             if next_offset is not None
@@ -172,9 +189,13 @@ class CommunicationBroker:
         )
         data = {field: page_value}
         tokens = estimate_tokens(data)
+        if tokens > page_tokens:
+            raise EntropyBudgetExceededError("page item exceeds budget; increase page size within the read limit")
         if rule.max_tokens is not None and tokens > rule.max_tokens:
             raise EntropyBudgetExceededError("communication page exceeds rule token limit")
-        self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens)
+        self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens,
+                      operation_id=operation_id, supplemental_limit=supplemental_limit,
+                      fingerprint=input_revision([output_ref, list(fields), cursor, page_tokens, data, supplemental_limit]))
         raw_evidence = page_value if field in {"evidence_refs", "evidenceRefs"} else []
         evidence_refs = list(dict.fromkeys(
             str(item) for item in raw_evidence if str(item).strip()
@@ -182,27 +203,43 @@ class CommunicationBroker:
         pack = ContextPack(
             runId=run_id, stepId=consumer_step_id, data=data,
             sourceData={rule.producer_step_id: dict(data)}, evidenceRefs=evidence_refs,
-            tokensDelivered=tokens, tokensAvailable=estimate_tokens({field: value}),
-            savingRatio=self._saving_ratio(tokens, estimate_tokens({field: value})),
+            # Paging defers content; it does not remove it. Comparing every page
+            # with the entire field would manufacture savings on every page.
+            tokensDelivered=tokens, tokensAvailable=tokens, savingRatio=0.0,
             sourceStepIds=[rule.producer_step_id], inputRevision=input_revision(data),
         )
-        self._events.append({
+        self._append_event({
             "type": "communication_page_read", "runId": run_id,
             "consumerStepId": consumer_step_id, "producerStepId": rule.producer_step_id,
             "outputRef": output_ref, "fields": [field], "tokens": tokens,
             "channel": rule.channel, "cursor": cursor, "nextCursor": next_cursor,
-        })
+            **({"operationId": operation_id, "readKind": "page", "sourceTokensAvailable": estimate_tokens({field: value}),
+                "readPhase": "supplemental" if supplemental_limit is not None else "prefetch"}
+               if operation_id else {}),
+        }, operation_id=operation_id)
         return pack, next_cursor
 
     @staticmethod
     def _slice_value(value: Any, *, offset: int, page_tokens: int) -> tuple[Any, int | None]:
         """Return a non-empty bounded slice and the next logical offset."""
         if isinstance(value, str):
-            width = max(1, page_tokens * 4)
+            if offset > len(value):
+                raise CommunicationAccessError("CURSOR_INVALID", "cursor exceeds field size")
+            # JSON escaping can make a character cost more than one token.
+            low, high = 0, len(value) - offset
+            while low < high:
+                mid = (low + high + 1) // 2
+                if estimate_tokens([value[offset:offset + mid]]) <= page_tokens:
+                    low = mid
+                else:
+                    high = mid - 1
+            width = max(1, low)
             page = value[offset:offset + width]
             following = offset + len(page)
             return page, following if following < len(value) else None
         if isinstance(value, list):
+            if offset > len(value):
+                raise CommunicationAccessError("CURSOR_INVALID", "cursor exceeds field size")
             page: list[Any] = []
             index = offset
             while index < len(value):
@@ -214,6 +251,8 @@ class CommunicationBroker:
             return page, index if index < len(value) else None
         if isinstance(value, Mapping):
             entries = list(value.items())
+            if offset > len(entries):
+                raise CommunicationAccessError("CURSOR_INVALID", "cursor exceeds field size")
             page: dict[str, Any] = {}
             index = offset
             while index < len(entries):
@@ -242,12 +281,20 @@ class CommunicationBroker:
             ]
         return events
 
+    def _append_event(self, event: dict[str, Any], *, operation_id: str) -> None:
+        if not operation_id or operation_id not in self._event_operations:
+            self._events.append(event)
+            if operation_id:
+                self._event_operations.add(operation_id)
+
     def usage_snapshot(self) -> dict[str, Any]:
         """返回可进入 State/checkpoint 的通信消耗计数，不包含引用或正文。"""
         return {
             "run": self._run_used,
             "steps": dict(self._step_used),
             "channels": dict(self._channel_used),
+            **({"readOperations": {key: dict(value) for key, value in self._operations.items()}, "supplemental": dict(self._supplemental_used)}
+               if self._operations or self._supplemental_used else {}),
         }
 
     def restore_usage(self, usage: Mapping[str, Any]) -> None:
@@ -268,10 +315,21 @@ class CommunicationBroker:
         self._run_used = run_used
         self._step_used = normalized_steps
         self._channel_used = normalized_channels
+        self._supplemental_used = self._normalize_usage(usage.get("supplemental", {}))
+        operations = usage.get("readOperations", {})
+        if not isinstance(operations, Mapping):
+            raise ValueError("communication operations are invalid")
+        for key, record in operations.items():
+            if (not isinstance(key, str) or not isinstance(record, Mapping)
+                    or set(record) != {"fingerprint"} or not isinstance(record["fingerprint"], str)):
+                raise ValueError("communication operation receipt is invalid")
+        self._operations = {key: dict(record) for key, record in operations.items()}
 
     @staticmethod
     def _normalize_usage(values: Mapping[str, Any]) -> dict[str, int]:
         normalized: dict[str, int] = {}
+        if not isinstance(values, Mapping):
+            raise ValueError("communication usage counters must be a mapping")
         for key, value in values.items():
             if not isinstance(key, str) or not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("communication usage counters are invalid")
@@ -300,8 +358,16 @@ class CommunicationBroker:
             return rule
         raise CommunicationAccessError("TOPOLOGY_DENIED", "output reference has no permitted topology edge")
 
-    def _reserve(self, *, consumer_step_id: str, channel: str, tokens: int) -> None:
+    def _reserve(self, *, consumer_step_id: str, channel: str, tokens: int,
+                 operation_id: str = "", fingerprint: str = "", supplemental_limit: int | None = None) -> None:
         """先检查三级剩余额度，再一次性扣减，失败请求不会部分计费。"""
+        if operation_id and operation_id in self._operations:
+            if self._operations[operation_id]["fingerprint"] != fingerprint:
+                raise CommunicationAccessError("READ_OPERATION_CONFLICT", "read operation changed during replay")
+            return
+        supplemental_next = self._supplemental_used.get(consumer_step_id, 0) + tokens
+        if supplemental_limit is not None and supplemental_next > supplemental_limit:
+            raise EntropyBudgetExceededError("supplemental step budget exceeded")
         run_next = self._run_used + tokens
         step_next = self._step_used.get(consumer_step_id, 0) + tokens
         channel_next = self._channel_used.get(channel, 0) + tokens
@@ -316,6 +382,22 @@ class CommunicationBroker:
         self._run_used = run_next
         self._step_used[consumer_step_id] = step_next
         self._channel_used[channel] = channel_next
+        if supplemental_limit is not None:
+            self._supplemental_used[consumer_step_id] = supplemental_next
+        if operation_id:
+            self._operations[operation_id] = {"fingerprint": fingerprint}
+
+    def describe_reference(self, *, run_id: str, consumer_step_id: str, output_ref: str) -> dict[str, Any]:
+        """Expose sizes of permitted fields only; never expose output references or text."""
+        if run_id != self.manifest.run_id:
+            raise CommunicationAccessError("RUN_DENIED", "communication run does not match manifest")
+        rule = self._resolve_rule(run_id=run_id, consumer_step_id=consumer_step_id, output_ref=output_ref)
+        output = self.value_store.get_output(run_id=run_id, output_ref=output_ref)
+        return {"producerStepId": rule.producer_step_id, "fields": [
+            {"name": field, "present": field in output,
+             "estimatedTokens": estimate_tokens({field: output[field]}) if field in output else 0,
+             "valueType": type(output[field]).__name__ if field in output else "missing"}
+            for field in rule.allowed_fields]}
 
     @staticmethod
     def _saving_ratio(delivered: int, available: int) -> float:

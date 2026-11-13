@@ -577,6 +577,10 @@ def lowering_step_from_task(
             "version": descriptor.context_policy.version,
             "selectionReasons": consumption_reasons,
             "memoryTokenBudget": descriptor.context_policy.memory_token_budget,
+            **({"supplementalReadBudget": descriptor.context_policy.supplemental_read_budget.model_dump(by_alias=True, mode="json")}
+               if descriptor.context_policy.supplemental_read_budget is not None else {}),
+            **({"requestBudget": descriptor.context_policy.request_budget.model_dump(by_alias=True, mode="json")}
+               if descriptor.context_policy.request_budget is not None else {}),
         }
     return ACGLoweringStep(
         task_key=task.key,

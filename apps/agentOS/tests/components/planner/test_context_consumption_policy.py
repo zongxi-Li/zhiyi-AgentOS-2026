@@ -39,7 +39,9 @@ def test_registered_prefetch_rejects_empty_or_out_of_contract_fields(fields):
 
 
 def test_lowering_freezes_policy_and_incremental_producer_capability():
-    descriptor = consumer(prefetchFields={"producer": ["analysis"]}, memoryTokenBudget=512)
+    descriptor = consumer(prefetchFields={"producer": ["analysis"]}, memoryTokenBudget=512,
+                          supplementalReadBudget={"maxReadTokens": 2048, "pageTokens": 512, "totalTokens": 8192},
+                          requestBudget={"totalTokens": 32000, "outputReserveTokens": 8000})
     task = PlannedTask(key="target", title="Target", objective="Analyze", capabilityRequirements=("consumer",))
     producer = PlanningCapabilityDescriptor(capabilityId="producer", displayName="Producer",
         outputContract={"required": ["analysis", "large_unrelated", "constraints"]})
@@ -53,6 +55,10 @@ def test_lowering_freezes_policy_and_incremental_producer_capability():
     assert initial.input_spec["prefetch"] == {"source-id": ["analysis", "constraints"]}
     assert set(initial.input_spec["prefetch"]["source-id"]) <= set(initial.input_spec["from"]["source-id"])
     assert initial.metadata["memoryPolicy"]["tokenBudget"] == 512
+    assert initial.input_spec["contextPolicy"]["supplementalReadBudget"] == {
+        "version": "supplemental-read.v1", "maxReadTokens": 2048, "pageTokens": 512, "totalTokens": 8192}
+    assert initial.input_spec["contextPolicy"]["requestBudget"] == {
+        "version": "request-budget.v1", "totalTokens": 32000, "outputReserveTokens": 8000}
     descriptor.context_policy.prefetch_fields["producer"] = ["large_unrelated"]
     assert initial.input_spec == frozen
 

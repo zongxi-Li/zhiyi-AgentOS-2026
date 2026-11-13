@@ -6,6 +6,7 @@ from collections import OrderedDict
 from typing import Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from contracts.request_budget import ModelRequestBudget, SupplementalReadBudget
 
 PlanningRiskLevel = Literal["normal", "elevated", "high", "critical"]
 _RISK_LEVEL_ORDER: tuple[PlanningRiskLevel, ...] = (
@@ -42,6 +43,8 @@ class ContextConsumptionPolicy(BaseModel):
     match_input_contract: bool = Field(default=True, alias="matchInputContract")
     prefetch_fields: dict[str, list[str]] = Field(default_factory=dict, alias="prefetchFields")
     memory_token_budget: int = Field(default=2048, alias="memoryTokenBudget", ge=0)
+    request_budget: ModelRequestBudget | None = Field(default=None, alias="requestBudget")
+    supplemental_read_budget: SupplementalReadBudget | None = Field(default=None, alias="supplementalReadBudget")
 
 
 class PlanningCapabilityDescriptor(BaseModel):

@@ -176,7 +176,7 @@ class OpenAICompatibleRuntime:
     """
 
     _PATH = "/chat/completions"
-    _RESERVED_OPTIONS = frozenset({"model", "messages", "response_format", "stream", "schemaMessageIndex", "schema_message_index"})
+    _RESERVED_OPTIONS = frozenset({"model", "messages", "response_format", "stream", "schemaMessageIndex", "schema_message_index", "requestBudget", "request_budget"})
 
     def __init__(self, *, manifest: CapabilityManifest, transport: JsonTransport) -> None:
         """保存模型声明和应用层传输，并在启动期验证声明边界。"""
@@ -246,7 +246,8 @@ class OpenAICompatibleRuntime:
             )
         payload = self._build_payload(request, model)
         from adapters.request_diagnostics import request_diagnostics
-        diagnostics = request_diagnostics(payload, request.schema_message_index)
+        diagnostics = request_diagnostics(payload, request.schema_message_index, request.request_budget)
+        self._check_request_budget(diagnostics)
         try:
             response = await self._transport.post_json(
                 path=self._PATH,
@@ -281,7 +282,8 @@ class OpenAICompatibleRuntime:
             raise ModelInvocationError("MODEL_STREAM_UNSUPPORTED", "transport does not support streaming")
         payload = self._build_payload(request, model)
         from adapters.request_diagnostics import request_diagnostics
-        diagnostics = request_diagnostics(payload, request.schema_message_index)
+        diagnostics = request_diagnostics(payload, request.schema_message_index, request.request_budget)
+        self._check_request_budget(diagnostics)
         payload["stream"] = True
         stream_usage_present = False
         stream_usage_type: str | None = None
@@ -434,6 +436,14 @@ class OpenAICompatibleRuntime:
             metadata=metadata,
         )
 
+    @staticmethod
+    def _check_request_budget(diagnostics: dict[str, Any]) -> None:
+        if diagnostics["requestBudget"]["status"] == "exceeded":
+            raise ModelInvocationError(
+                "MODEL_INPUT_BUDGET_EXCEEDED",
+                "estimated request input plus output reserve exceeds the frozen budget; use authorized worksets or replan",
+                metadata={"requestDiagnostics": diagnostics},
+            )
     def _build_payload(
         self,
         request: ModelInvocationRequest,

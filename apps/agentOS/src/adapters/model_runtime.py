@@ -102,7 +102,7 @@ class RegisteredModelRuntime:
 
     async def generate_tool_turn(self, *, messages, tools, schema, timeout_seconds=120.0,
                                  commit_id=None, max_output_tokens=None, reasoning_effort=None,
-                                 temperature=None, **kwargs):
+                                 temperature=None, request_budget=None, **kwargs):
         """One native Function Calling turn through the registered model adapter."""
         if not self.supports_tool_calling:
             raise StructuredGenerationError("MODEL_TOOLS_UNSUPPORTED", "model does not declare tool calling")
@@ -119,7 +119,8 @@ class RegisteredModelRuntime:
         if temperature is not None:
             options['temperature'] = temperature
         request = ModelInvocationRequest(requestId=commit_id or f"model:{uuid4().hex}", model=self.model,
-            messages=messages, responseSchema=schema, options=options, commitId=commit_id)
+            messages=messages, responseSchema=schema, options=options, commitId=commit_id,
+            requestBudget=request_budget)
         try:
             adapter = self._registry.resolve(self.provider, self.model, version=self.version)
             return await self._wait_for(adapter.invoke(request), timeout_seconds)
@@ -127,7 +128,20 @@ class RegisteredModelRuntime:
             raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
         except ModelInvocationError as exc:
             raise StructuredGenerationError(exc.code, "model tool turn failed", audit={
-                "provider": self.provider, "model": self.model, "usage": dict(exc.usage)}) from exc
+                "provider": self.provider, "model": self.model, "usage": dict(exc.usage),
+                "requestDiagnostics": dict(exc.metadata.get("requestDiagnostics") or {})}) from exc
+        """Forward public content while retaining the complete tool turn internally."""
+        try:
+                    chunks += 1
+                    length += len(event.delta)
+                    if not first:
+                        first = True
+                    response = event.response
+                    last_activity = self._clock()
+        finally:
+            if callable(closer):
+            "receivedLength": length, "usage": dict(response.usage), "finishReason": response.metadata.get("finishReason")})
+        return response
 
     async def generate_json(
         self,
@@ -291,6 +305,7 @@ class RegisteredModelRuntime:
                 responseSchema=dict(schema),
                 prefixResponseSchema=prefix_schema,
                 schemaMessageIndex=schema_message_index,
+                requestBudget=(prompt_metadata or {}).get("requestBudget"),
                 options=options,
                 commitId=commit_id,
             )
@@ -517,6 +532,7 @@ class RegisteredModelRuntime:
             messages=messages,
             responseSchema=dict(schema),
             schemaMessageIndex=schema_message_index,
+            requestBudget=(prompt_metadata or {}).get("requestBudget"),
             options=options,
             commitId=commit_id,
         )

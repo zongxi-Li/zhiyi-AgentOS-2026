@@ -478,6 +478,7 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
         descriptor.model_copy(update={
             "context_policy": ContextConsumptionPolicy(
                 matchInputContract=descriptor.capability_id not in {"verification", "artifact_generation"},
+                supplementalReadBudget={"version": "supplemental-read.v1"},
             ),
             "description": purposes[descriptor.capability_id],
             "prompt_profile": CapabilityPromptProfile(

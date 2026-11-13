@@ -1178,6 +1178,7 @@ class ACGNodeRunner:
                 requested_fields=[str(field) for field in requested],
                 max_tokens=None,
                 reason=f"ACG step {step_id} requires upstream {source_id}",
+                operation_id=f"{commit_id}:prefetch:{source_id}",
             )
             data.update(partial.data)
             source_data.update(partial.source_data)
@@ -1219,12 +1220,20 @@ class ACGNodeRunner:
             for source_id in source_ids
             if source_id in state.output_refs
         }
+        from contracts.request_budget import SupplementalReadBudget
+        step = self.steps[step_id]
+        policy = (step.input.get("contextPolicy") or {}).get("supplementalReadBudget")
+        def on_read(pack, operation_id):
+            self.communicator.record_context_consumption(pack, operation_id=operation_id)
+            state.communication_usage = self.communication_broker.usage_snapshot()
         return CommunicationReader(
             broker=self.communication_broker,
             run_id=state.run_id,
             consumer_step_id=step_id,
             output_refs=output_refs,
             max_tokens=None,
+            model_budget=SupplementalReadBudget.model_validate(policy) if policy is not None else None,
+            on_read=on_read,
         )
     def _build_content_workset_session(
         self, *, state: ACGExecutionState, step_id: str, step: WorkflowStep, commit_id: str

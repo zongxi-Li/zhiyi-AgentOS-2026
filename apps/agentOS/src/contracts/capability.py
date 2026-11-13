@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from contracts.request_budget import ModelRequestBudget
 
 
 class CapabilityKind(str, Enum):
@@ -170,6 +171,7 @@ class ModelInvocationRequest(BaseModel):
     prefix_response_schema: dict[str, Any] | None = Field(default=None, alias="prefixResponseSchema")
     # Internal wire-layout instruction; never forwarded as a provider option.
     schema_message_index: int | None = Field(default=None, alias="schemaMessageIndex", ge=0, strict=True)
+    request_budget: ModelRequestBudget | None = Field(default=None, alias="requestBudget")
     options: dict[str, Any] = Field(default_factory=dict)
     # 模型请求与 ACG 节点提交边界的关联标识。它不是 prompt、模型正文或检查点状态；
     # 支持幂等键的应用层传输可将它安全映射为 HTTP Header 或供应商请求标识。

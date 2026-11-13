@@ -1532,6 +1532,12 @@ class ACGExecutionService(CollaboratorAccess):
                 "fields",
                 "tokens",
                 "channel",
+                "cursor",
+                "nextCursor",
+                "operationId",
+                "readPhase",
+                "readKind",
+                "sourceTokensAvailable",
             }
             payload = {
                 key: value

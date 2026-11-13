@@ -376,6 +376,9 @@ class NativeGeneralAgent(BaseAgent):
         prompt = prompt_envelope.user_prompt
         system_prompt = prompt_envelope.system_prompt
         prompt_metadata = prompt_envelope.audit_metadata()
+        frozen_budget = (context.step.input.get("contextPolicy") or {}).get("requestBudget")
+        if frozen_budget is not None:
+            prompt_metadata["requestBudget"] = frozen_budget
         thinking_mode = str(context.task.input.get("thinkingMode") or "disabled")
         output_thinking_mode = thinking_mode
         timeout_seconds = 600.0 if capability == "artifact_generation" else 300.0
