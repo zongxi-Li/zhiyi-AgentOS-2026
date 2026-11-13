@@ -22,7 +22,8 @@ from app.execution.coordinator import RunExecutionCoordinator
 from components.executor import InMemoryExecutionValueStore
 from components.mission_manager.store import WorkflowRegistry
 from components.recovery.checkpoint import ACGCheckpointStore
-from contracts.planning import PlannedTask
+from contracts.planning import PlannedTask, TaskPlan, TaskImplementationBinding
+from components.planner.lowering_input import _template_blueprint_from_workflow
 from contracts.workflow import (
     WorkflowDefinition,
     WorkflowDefinitionType,
@@ -327,6 +328,16 @@ async def _test_native_http_provider_to_fastapi_sse_streams_before_node_completi
         workflow_id="native-http-streaming-e2e",
         input={"userIntent": "understand this streamed task"},
     )
+    # This deterministic harness freezes an explicit package; production no
+    # longer promotes identity-free workflow steps into an implicit graph.
+    workflow = runtime.workflow_registry.get("native-http-streaming-e2e")
+    blueprint = _template_blueprint_from_workflow(workflow, mission_id=task.mission_id)
+    task.input.update({
+        "acgBlueprint": blueprint.model_dump(by_alias=True, mode="json"),
+        "taskPlan": TaskPlan(missionId=task.mission_id, nodes=workflow.planning_nodes).model_dump(by_alias=True, mode="json"),
+        "taskBindings": [TaskImplementationBinding(planNodeKey="understand", acgNodeId="understand").model_dump(by_alias=True)],
+    })
+    runtime.workflow_store.save_mission(task)
     _, run = runtime.prepare_run(task.mission_id, workflow_id="native-http-streaming-e2e")
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
