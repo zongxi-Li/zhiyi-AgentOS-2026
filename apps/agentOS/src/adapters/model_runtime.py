@@ -102,7 +102,7 @@ class RegisteredModelRuntime:
 
     async def generate_tool_turn(self, *, messages, tools, schema, timeout_seconds=120.0,
                                  commit_id=None, max_output_tokens=None, reasoning_effort=None,
-                                 temperature=None, request_budget=None, **kwargs):
+                                 temperature=None, progress_callback=None, request_budget=None, **kwargs):
         """One native Function Calling turn through the registered model adapter."""
         if not self.supports_tool_calling:
             raise StructuredGenerationError("MODEL_TOOLS_UNSUPPORTED", "model does not declare tool calling")
@@ -123,6 +123,8 @@ class RegisteredModelRuntime:
             requestBudget=request_budget)
         try:
             adapter = self._registry.resolve(self.provider, self.model, version=self.version)
+            if progress_callback is not None and getattr(adapter, "supports_streamed_tool_turns", False):
+                return await self._wait_for(self._stream_tool_turn(adapter, request, progress_callback), timeout_seconds)
             return await self._wait_for(adapter.invoke(request), timeout_seconds)
         except asyncio.TimeoutError as exc:
             raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
@@ -130,16 +132,39 @@ class RegisteredModelRuntime:
             raise StructuredGenerationError(exc.code, "model tool turn failed", audit={
                 "provider": self.provider, "model": self.model, "usage": dict(exc.usage),
                 "requestDiagnostics": dict(exc.metadata.get("requestDiagnostics") or {})}) from exc
+
+    async def _stream_tool_turn(self, adapter, request, progress):
         """Forward public content while retaining the complete tool turn internally."""
+        iterator = adapter.astream(request).__aiter__()
+        response = None
+        first = False
+        chunks = length = 0
+        started = last_activity = self._clock()
+        await progress("model.started", {"provider": self.provider, "model": self.model, "streamingCapability": True})
         try:
+            async for event in iterator:
+                if event.event_type == "delta" and event.delta:
                     chunks += 1
                     length += len(event.delta)
                     if not first:
                         first = True
+                        await progress("model.first_token", {})
+                    await progress("model.output.delta", {"delta": event.delta})
+                elif event.event_type == "completed":
                     response = event.response
+                # Private reasoning/tool argument fragments indicate liveness,
+                # but neither is ever forwarded to the runtime event broker.
+                if event.event_type in {"activity", "delta", "tool_call"} and self._clock() - last_activity >= .35:
                     last_activity = self._clock()
+                    await progress("model.activity", {"elapsedMs": round((last_activity-started)*1000),
+                        "receivedChunks": chunks, "receivedLength": length})
         finally:
+            closer = getattr(iterator, "aclose", None)
             if callable(closer):
+                await closer()
+        if response is None:
+            raise StructuredGenerationError("MODEL_STREAM_INCOMPLETE", "tool stream ended without a complete response")
+        await progress("model.completed", {"provider": response.provider, "model": response.model,
             "receivedLength": length, "usage": dict(response.usage), "finishReason": response.metadata.get("finishReason")})
         return response
 

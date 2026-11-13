@@ -203,6 +203,10 @@ class OpenAICompatibleRuntime:
         """表明运行时已被装配；真实连通性检查由应用层生命周期管理。"""
         return True
 
+    @property
+    def supports_streamed_tool_turns(self) -> bool:
+        return callable(getattr(self._transport, "stream_json", None))
+
     def describe_model(self, model: str) -> ModelCapabilityEnvelope:
         """从应用层 Manifest 读取精确声明；未声明容量时保持 unknown。"""
 
@@ -315,6 +319,10 @@ class OpenAICompatibleRuntime:
         )
         completed = False
         finish_reason: str | None = None
+        tool_turn = bool(request.options.get("tools"))
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        calls: dict[int, dict[str, Any]] = {}
         try:
             stream_started = True
             async for chunk in streamer(path=self._PATH, payload=payload, idempotency_key=request.commit_id):
@@ -336,10 +344,14 @@ class OpenAICompatibleRuntime:
                 delta = delta_data.get("content") if isinstance(delta_data, Mapping) else None
                 reasoning = delta_data.get("reasoning_content") if isinstance(delta_data, Mapping) else None
                 if isinstance(reasoning, str) and reasoning:
+                    if tool_turn:
+                        reasoning_parts.append(reasoning)
                     # Never expose private reasoning, but preserve provider
                     # liveness so long thinking is not misclassified as TTFT.
                     yield ModelStreamEvent(requestId=request.request_id, eventType="activity", provider=self._manifest.provider, model=model)
                 if isinstance(delta, str) and delta:
+                    if tool_turn:
+                        content_parts.append(delta)
                     first_token_observed = True
                     output_delta_observed = True
                     delta_count += 1
@@ -350,6 +362,22 @@ class OpenAICompatibleRuntime:
                         for tool_call in tool_calls:
                             if not isinstance(tool_call, Mapping):
                                 continue
+                            if tool_turn:
+                                index = tool_call.get("index", 0)
+                                if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                                    raise ModelInvocationError("MODEL_TOOL_CALL_INVALID", "invalid tool call index")
+                                if tool_call.get("type", "function") != "function":
+                                    raise ModelInvocationError("MODEL_TOOL_CALL_INVALID", "invalid tool call type")
+                                call = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                                if isinstance(tool_call.get("id"), str):
+                                    if call["id"] and call["id"] != tool_call["id"]:
+                                        raise ModelInvocationError("MODEL_TOOL_CALL_INVALID", "tool call identity changed")
+                                    call["id"] = tool_call["id"]
+                                fragment = tool_call.get("function")
+                                if isinstance(fragment, Mapping):
+                                    for key in ("name", "arguments"):
+                                        if isinstance(fragment.get(key), str):
+                                            call["function"][key] += fragment[key]
                             function = tool_call.get("function")
                             if not isinstance(function, Mapping):
                                 continue
@@ -428,11 +456,22 @@ class OpenAICompatibleRuntime:
             metadata["usage"] = dict(stream_usage)
         metadata["streamDiagnostics"] = stream_diagnostics("completed")
         metadata["requestDiagnostics"] = diagnostics
+        response = None
+        if tool_turn:
+            message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+            if calls:
+                message["tool_calls"] = [calls[index] for index in sorted(calls)]
+                if reasoning_parts:
+                    message["reasoning_content"] = "".join(reasoning_parts)
+            response = self._parse_response(request=request, model=model, response_mode="stream", response={
+                "choices": [{"finish_reason": finish_reason, "message": message}], "usage": stream_usage})
+            response = response.model_copy(update={"metadata": {**response.metadata, **metadata, "streaming": True}})
         yield ModelStreamEvent(
             requestId=request.request_id,
             eventType="completed",
             provider=self._manifest.provider,
             model=model,
+            response=response,
             metadata=metadata,
         )
 
@@ -444,6 +483,7 @@ class OpenAICompatibleRuntime:
                 "estimated request input plus output reserve exceeds the frozen budget; use authorized worksets or replan",
                 metadata={"requestDiagnostics": diagnostics},
             )
+
     def _build_payload(
         self,
         request: ModelInvocationRequest,
@@ -530,6 +570,7 @@ class OpenAICompatibleRuntime:
         request: ModelInvocationRequest,
         response: object,
         model: str,
+        response_mode: str = "non_stream",
     ) -> ModelInvocationResponse:
         """解析首个 choice 的 JSON 对象，拒绝空、非对象和无效 JSON 响应。"""
         if not isinstance(response, Mapping):
@@ -547,7 +588,7 @@ class OpenAICompatibleRuntime:
         _log_provider_usage_shape(
             provider=self._manifest.provider,
             model=model,
-            response_mode="non_stream",
+            response_mode=response_mode,
             response=response,
             finish_reason_present=isinstance(finish_reason, str),
         )

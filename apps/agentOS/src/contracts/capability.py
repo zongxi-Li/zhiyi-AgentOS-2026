@@ -209,6 +209,9 @@ class ModelStreamEvent(BaseModel):
     tool_call_id: str | None = Field(default=None, alias="toolCallId")
     tool_name: str | None = Field(default=None, alias="toolName")
     tool_arguments: str = Field(default="", alias="toolArguments")
+    # Internal final turn hand-off, including provider-required tool context.
+    # Never serialize it into public events, traces or audit metadata.
+    response: ModelInvocationResponse | None = Field(default=None, exclude=True)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
