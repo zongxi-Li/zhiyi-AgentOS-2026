@@ -18,6 +18,15 @@ export interface CopilotExchange {
 export type CopilotActionKind = 'rerun' | 'rerun_node' | 'recover' | 'user_input'
 export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string; capabilityCatalogRevision?: string; executionEnvironmentChanged?: boolean }
 export type CopilotPermission = 'read_only' | 'task_collaboration'
+export interface CopilotInitialPlan {
+  planVersion: number; commitId: string | null; commitmentRevision: number | null
+  objective: string; constraints: string[]; expectedArtifacts: string[]
+  tasks: { key: string; title: string; objective: string; rationale: string; acceptanceCriteria: string[]; sourceRefs: string[] }[]
+}
+export interface CopilotToolActivity {
+  executionId: string; tool: string; status: string; stepId: string
+  createdAt: string; attemptId?: string; receiptRef?: string
+}
 export interface CopilotState {
   missionId?: string; latestRunId?: string; taskPermission?: CopilotPermission
   runId: string; status: string; revision: number; modelAvailable: boolean
@@ -28,6 +37,8 @@ export interface CopilotState {
   exchanges: CopilotExchange[]
   decision: { action: string; reason: string } | null
   review?: { subjectId: string; subjectType: string; reason: string; reasonCode: string; canApprove: boolean; decisionRejected: boolean; expectedRunUpdatedAt: string } | null
+  initialPlan?: CopilotInitialPlan | null
+  toolActivity?: CopilotToolActivity[]
   steps: { stepId: string; name: string; status: string }[]
 }
 export const createCopilotApi = () => ({

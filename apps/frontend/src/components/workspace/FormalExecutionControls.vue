@@ -1,6 +1,5 @@
 <template>
   <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded }" aria-label="正式运行控制">
-    <FormalToolApprovals v-if="!historical && !readonly && !executionReadonly && runId && capabilities?.canResolveToolApproval" :run-id="runId" :active="run?.status === 'running'" />
     <header><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
     <LifecycleProgress v-if="embedded" :phase="lifecycle.phase" />
     <dl v-if="!embedded" aria-live="polite">
@@ -13,13 +12,14 @@
     <p v-if="run?.failureCode || run?.error?.code" role="status" class="formal-control__error">{{ run.failureCode || run.error?.code }}</p>
     <div class="formal-control__actions">
       <button v-if="action" type="button" class="formal-control__primary" :disabled="disabled" @click="submit">
-        {{ pending ? '正在提交…' : error && !blocked ? '重试原操作' : formalActionLabels[action] }}
+        {{ pending ? '正在提交…' : error && !blocked ? '重试原操作' : reviewedPlan && action === 'materialize' ? '确认规划并继续' : formalActionLabels[action] }}
       </button>
       <button v-if="canCancel && !historical && capabilities?.canCancel" type="button" :disabled="readonly || pending || cancelPending || !run" @click="emit('cancel')">
         {{ cancelPending ? '正在取消…' : '取消任务' }}
       </button>
     </div>
     <p v-if="error" class="formal-control__error" role="alert">{{ error }}</p>
+    <small v-if="!reviewedPlanMatches">规划版本已更新，请刷新后审阅最新规划。</small>
     <small v-if="(readonly || executionReadonly) && !historical && action">当前视图仅供查看，正式操作已禁用。</small>
     <WorkflowReviewPanel v-if="showReview && run?.status === 'waiting_review' && !historical && !blocked && !readonly && !executionReadonly && capabilities?.canReview" :run-id="run.runId"
       :run="reviewRun" :progress="null" compact @reviewed="emit('refresh')" @conflict="emit('refresh')" />
@@ -36,7 +36,6 @@
 </template>
 
 <script setup lang="ts">
-import FormalToolApprovals from './FormalToolApprovals.vue'
 import LifecycleProgress from './LifecycleProgress.vue'
 import { projectRunLifecycle, lifecycleDescriptions } from '@/features/workspace/runLifecycle'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -45,7 +44,7 @@ import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { formalActionLabels, formalSource, nextFormalAction, prepareFormalCommand, validFormalReceipt, type FormalOperationSuccess } from '@/features/acg/formalControl'
 
-const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; readonly?: boolean; executionReadonly?: boolean; showReview?: boolean; actionCapabilities?: RunActionCapabilities | null }>(), { embedded: false, readonly: false, executionReadonly: false, showReview: true })
+const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; readonly?: boolean; executionReadonly?: boolean; showReview?: boolean; actionCapabilities?: RunActionCapabilities | null; reviewedPlan?: { commitId: string | null; commitmentRevision: number | null } | null; requirePlanReview?: boolean; waitingForApproval?: boolean }>(), { embedded: false, readonly: false, executionReadonly: false, showReview: true, reviewedPlan: null, requirePlanReview: false, waitingForApproval: false })
 const capabilities = computed(() => !Number.isInteger(props.run?.runtimeRevision) ? null :
   readRunCapabilities(props.actionCapabilities === undefined ? props.run?.actionCapabilities : props.actionCapabilities,
     props.missionId, props.runId, props.run?.runtimeRevision, props.run?.status))
@@ -63,6 +62,9 @@ const control = computed(() => props.run?.formalControl)
 const visible = computed(() => seenFormal.value || Boolean(control.value) || props.run?.executionState?.planningCommitRequired
   || props.canCancel && capabilities.value?.canCancel === true)
 const action = computed(() => props.run?.runId === props.runId && props.run?.missionId === props.missionId ? nextFormalAction(props.run) : null)
+const reviewedPlanMatches = computed(() => action.value !== 'materialize' || (!props.reviewedPlan ? !props.requirePlanReview
+  : Boolean(props.reviewedPlan.commitId && props.reviewedPlan.commitId === control.value?.commitId
+    && props.reviewedPlan.commitmentRevision === control.value?.commitmentRevision)))
 const source = computed(() => action.value && props.run ? formalSource(props.run, action.value) : '')
 watch(source, () => { error.value = ''; blocked.value = false })
 // Observe authority changes synchronously, including mutations of the same Run object.
@@ -73,12 +75,13 @@ const authority = computed(() => JSON.stringify([props.missionId, props.runId,
 watch(authority, () => { generation++; pending.value = false }, { flush: 'sync' })
 
 const disabled = computed(() => props.readonly || props.executionReadonly || pending.value || blocked.value || props.historical || acknowledged.value === source.value
-  || !capabilities.value?.canExecuteFormalAction || !action.value || !capabilities.value.formalActions.includes(action.value))
+  || !reviewedPlanMatches.value || !capabilities.value?.canExecuteFormalAction || !action.value || !capabilities.value.formalActions.includes(action.value))
 const reviewRun = computed(() => props.run ? { ...props.run, review: props.run.review || props.run.executionState?.reviewPayload } : null)
 const references = computed(() => ({ Commit: control.value?.commitId, Graph: control.value?.graphId, Version: control.value?.graphVersion,
   Activation: control.value?.activationId, Handoff: control.value?.handoffId, Permit: control.value?.permitId, Dispatch: control.value?.dispatch?.dispatchId }))
 const lifecycle = computed(() => projectRunLifecycle({ missionId: props.missionId, runId: props.runId || '', run: props.run }))
 const explanation = computed(() => {
+  if (props.waitingForApproval) return '等待你确认工具操作，审批通过后继续执行。'
   if (!props.run) return '无法验证正式状态，控制操作已禁用。'
   if (!control.value) return capabilities.value?.canCancel
     ? 'Runtime 已确认此 Run 可停止；未提供正式图控制证据。' : '无法验证正式状态，控制操作已禁用。'

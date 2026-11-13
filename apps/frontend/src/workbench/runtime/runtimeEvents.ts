@@ -62,6 +62,7 @@ export interface RuntimeEventStore {
   lastSequence: number
   readonly nodes: Record<string, NodeRuntimeState>
   readonly planning: PlanningRuntimeState
+  readonly activity?: { events: RuntimeEvent[]; approvalRevision: number }
   apply(event: RuntimeEvent): void
 }
 
@@ -119,6 +120,7 @@ export class RunRuntimeStore {
   lastSequence = -1
   readonly nodes = reactive<Record<string, NodeRuntimeState>>({})
   readonly planning = reactive<PlanningRuntimeState>(createPlanningState())
+  readonly activity = reactive({ events: [] as RuntimeEvent[], approvalRevision: 0 })
   private pending = new Map<string, string>()
   private frame = 0
 
@@ -142,6 +144,14 @@ export class RunRuntimeStore {
   apply(event: RuntimeEvent) {
     if (event.runId !== this.runId || event.sequence <= this.lastSequence) return
     this.lastSequence = event.sequence
+    if (['tool.approval_required', 'tool.approval_resolved', 'tool.execution_started', 'tool.execution_completed',
+      'node.started', 'node.completed', 'node.failed'].includes(event.eventType)) {
+      if (!this.activity.events.some(item => item.eventId === event.eventId)) {
+        this.activity.events.push(event)
+        if (this.activity.events.length > 100) this.activity.events.shift()
+      }
+      if (event.eventType.startsWith('tool.approval_')) this.activity.approvalRevision++
+    }
     if (PLANNER_EVENTS.has(event.eventType) || event.eventType.startsWith('planner.')) {
       this.applyPlanner(event)
       return
@@ -369,6 +379,8 @@ export class RuntimeEventClient {
       }
       if (!response.ok) throw new Error(`Runtime event stream failed with HTTP ${response.status}`)
       if (!response.body) throw new Error('Runtime event stream has no response body')
+      // Reconcile approvals created while disconnected, even without a Run revision change.
+      this.store.activity.approvalRevision++
 
       for await (const { data } of readSseFrames(response.body, { signal: controller.signal, flushAtEof: true })) {
         if (generation !== this.generation || controller.signal.aborted) return

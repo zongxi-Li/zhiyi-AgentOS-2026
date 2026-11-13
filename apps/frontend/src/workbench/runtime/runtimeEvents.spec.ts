@@ -26,6 +26,16 @@ describe('RunRuntimeStore streaming projection', () => {
       expect(store.nodes.A.status).toBe('COMPLETED')
     } finally { raf.mockRestore() }
   })
+  it('notifies inline approval consumers without changing the durable Run revision', () => {
+    const store = new RunRuntimeStore('run')
+    store.apply(event(1, 'tool.approval_required'))
+    store.apply(event(1, 'tool.approval_required'))
+    expect(store.activity.approvalRevision).toBe(1)
+    expect(store.activity.events).toHaveLength(1)
+    store.apply(event(2, 'tool.approval_resolved'))
+    expect(store.activity.approvalRevision).toBe(2)
+    expect(store.activity.events).toHaveLength(2)
+  })
   it('accepts the authenticated terminal snapshot with sequence zero', () => {
     const store = new RunRuntimeStore('run')
     store.apply(event(0, 'run.completed'))

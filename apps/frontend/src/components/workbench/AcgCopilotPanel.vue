@@ -7,15 +7,20 @@
     </nav>
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
-      <FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
+      <CopilotRunTimeline :key="runId || ''" :run-id="runId" :status="state?.status || runStatus || ''"
+        :plan="state?.initialPlan" :tools="state?.toolActivity" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="scrollBottom">
+      <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
         :can-cancel="canCancel" :cancel-pending="cancelPending" embedded
         :readonly="readonly || historical || busy || loading || !state"
-        :execution-readonly="permission !== 'task_collaboration'"
-        :show-review="!state?.review" @refresh="refreshRun" @cancel="emit('cancel-run')" />
+        :execution-readonly="permission !== 'task_collaboration'" :reviewed-plan="state?.initialPlan" require-plan-review :waiting-for-approval="hasPendingToolApproval"
+        :show-review="!state?.review" @refresh="refreshRun" @cancel="emit('cancel-run')" /></template>
+      <template #approvals><FormalToolApprovals v-if="runId && !historical" :run-id="runId" :active="(state?.status || runStatus) === 'running'"
+        :readonly="readonly || !allows('canResolveToolApproval')" @waiting="hasPendingToolApproval = $event" @resolved="refreshRun" /></template>
+      </CopilotRunTimeline>
       <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
-      <div v-else-if="!messages.length && !state?.question && !state?.review" class="empty-state">
+      <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval" class="empty-state">
         <img class="empty-watermark" :src="activePack.mark" alt="" aria-hidden="true" />
         <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
         <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
@@ -125,6 +130,8 @@ import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import { renderMarkdown } from '@/utils/markdown'
 import { clearCopilotSession, getCopilotSession, saveCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
+import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
+import CopilotRunTimeline from './CopilotRunTimeline.vue'
 import { useBrand } from '@/features/brand/useBrand'
 
 const props = withDefaults(defineProps<{
@@ -150,6 +157,7 @@ function proposalAllowed(action: CopilotAction, sourceRunId?: string) {
 const hasFormalControl = computed(() => Boolean(controlRun.value?.formalControl || controlRun.value?.executionState?.planningCommitRequired))
 const refreshRun = () => { emit('refresh-run'); void refresh() }
 const state = ref<CopilotState | null>(null)
+const hasPendingToolApproval = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
 const tab = ref<'chat' | 'trace'>('chat')
 const draft = ref(''), error = ref(''), traceSearch = ref('')
@@ -182,7 +190,7 @@ let viewSuspended = false
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
 const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
 const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
-const statusLabel = computed(() => ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
+const statusLabel = computed(() => hasPendingToolApproval.value ? '等待你确认' : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
 const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
 const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed(() => [
@@ -330,6 +338,7 @@ function saveSession(id = props.runId) { if (id && state.value) saveCopilotSessi
 watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
   generation++; controller?.abort(); controller = new AbortController(); clearTimeout(timer)
+  hasPendingToolApproval.value = false
   state.value = null; draft.value = ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
   reviewComment.value = ''; reviewReceipt.value = ''; reviewRequest = undefined
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null

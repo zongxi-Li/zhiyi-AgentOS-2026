@@ -44,6 +44,7 @@ declare module 'vue' {
     ConversationExport: typeof import('./src/components/ConversationExport.vue')['default']
     ConversationList: typeof import('./src/components/ConversationList.vue')['default']
     ConversationWorkFeed: typeof import('./src/components/ConversationWorkFeed.vue')['default']
+    CopilotRunTimeline: typeof import('./src/components/workbench/CopilotRunTimeline.vue')['default']
     CreateRoleDialog: typeof import('./src/components/CreateRoleDialog.vue')['default']
     CustomResourceDialog: typeof import('./src/components/resource-center/CustomResourceDialog.vue')['default']
     DesktopRuntimeStatus: typeof import('./src/components/platform/DesktopRuntimeStatus.vue')['default']

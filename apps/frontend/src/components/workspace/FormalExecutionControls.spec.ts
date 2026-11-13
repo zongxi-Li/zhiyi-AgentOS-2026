@@ -25,6 +25,28 @@ const execute = (wrapper: ReturnType<typeof render>) => wrapper.findAll('button'
 beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.stubGlobal('crypto', webcrypto) })
 
 describe('formal Workbench controls', () => {
+  it('approves only the planning commit actually displayed to the user', async () => {
+    const run = permitted()
+    run.formalControl = { ...run.formalControl!, status: 'PLANNING_ACCEPTED', permitIssued: false, permitId: null, permitStatus: null }
+    const post = vi.spyOn(agentosApi, 'submitFormalControl').mockImplementation(async (_mission, _run, _action, command) => ({ operationId: command.operationId, status: 'MATERIALIZED_INACTIVE' }))
+    const w = render(run, { requirePlanReview: true, reviewedPlan: null })
+    expect(w.get('.formal-control__primary').attributes('disabled')).toBeDefined()
+    await w.get('.formal-control__primary').trigger('click')
+    expect(post).not.toHaveBeenCalled()
+    await w.setProps({ reviewedPlan: { commitId: 'old-plan', commitmentRevision: 1 } })
+    expect(w.get('.formal-control__primary').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain('规划版本已更新')
+    await w.get('.formal-control__primary').trigger('click')
+    expect(post).not.toHaveBeenCalled()
+    await w.setProps({ reviewedPlan: { commitId: 'commit', commitmentRevision: 2 } })
+    expect(w.get('.formal-control__primary').attributes('disabled')).toBeDefined()
+    await w.setProps({ reviewedPlan: { commitId: 'commit', commitmentRevision: 1 } })
+    expect(w.get('.formal-control__primary').text()).toBe('确认规划并继续')
+    await w.get('.formal-control__primary').trigger('click'); await flushPromises()
+    expect(post).toHaveBeenCalledWith('mission', 'run', 'materialize', expect.objectContaining({ commitId: 'commit', expectedCommitmentRevision: 1 }))
+    expect(post).toHaveBeenCalledTimes(1)
+    w.unmount()
+  })
   it('keeps embedded controls read-only and exposes technical evidence on demand', async () => {
     const post = vi.spyOn(agentosApi, 'submitFormalControl')
     const w = render(permitted(), {embedded:true,readonly:true})

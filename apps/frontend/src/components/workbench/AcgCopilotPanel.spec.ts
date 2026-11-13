@@ -6,9 +6,12 @@ import { agentosApi } from '@/services/api/agentos'
 import type { CopilotState } from '@/services/api/agentos/api/copilot'
 import { clearCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
+import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
 
 vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn() } }))
+vi.mock('@/services/api/agentos/client', () => ({ agentosRequest: { get: vi.fn(async () => ({ data: { items: [] } })), post: vi.fn() } }))
+vi.mock('@/workbench/runtime/runtimeEvents', () => ({ acquireRunRuntimeStore: vi.fn(() => null), releaseRunRuntimeStore: vi.fn() }))
 const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision: 3, modelAvailable: true,
   question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
 const wrappers: ReturnType<typeof mount>[] = []
@@ -39,7 +42,7 @@ describe('explicit review interaction', () => {
     await w.get('.review-actions button').trigger('click'); await flushPromises()
     expect(agentosApi.applyWorkflowReview).toHaveBeenCalledWith('run-1', { stepId: 'graph-1', decision: 'approved', comment: '条件已满足', operationId: expect.any(String), expectedRunUpdatedAt: '2026-10-06T12:00:00Z' })
     expect(w.find('.review-card').exists()).toBe(false)
-    expect(w.get('[role="status"]').text()).toContain('审核已提交')
+    expect(w.get('.wait-note[role="status"]').text()).toContain('审核已提交')
   })
 })
 async function panel(props = {}) {
@@ -52,6 +55,25 @@ async function panel(props = {}) {
 beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.setCopilotPermission).mockImplementation(async (_, permission) => ({ missionId: 'mission-1', taskPermission: permission })); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.useRealTimers() })
 describe('task Copilot', () => {
+  it('puts frozen planning explanations in the conversation and keeps the composer available', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), initialPlan: {
+      planVersion: 1, commitId: 'commit', commitmentRevision: 1, objective: '分析故障恢复', constraints: ['不修改代码'], expectedArtifacts: ['方案报告'],
+      tasks: [{ key: 'T1', title: '核对事实', objective: '确认输入', rationale: '先建立共同事实依据', acceptanceCriteria: ['标明来源'], sourceRefs: [] }] } })
+    const w = await panel()
+    expect(w.get('.run-timeline__plan').text()).toContain('先建立共同事实依据')
+    expect(w.find('.empty-state').exists()).toBe(false)
+    expect(w.find('form textarea').exists()).toBe(true)
+  })
+  it('keeps formal approvals separate from the chat-only conversation preference', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), taskPermission: 'read_only' })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'running', 3, { canResolveToolApproval: true }) })
+    const approvals = w.getComponent(FormalToolApprovals)
+    expect(approvals.props('active')).toBe(true)
+    expect(approvals.props('readonly')).toBe(false)
+    await w.setProps({ readonly: true })
+    expect(approvals.exists()).toBe(true)
+    expect(approvals.props('readonly')).toBe(true)
+  })
   it('cannot apply another Run proposal or replace its expected revision with the selected Run capability', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'failed' })
     const wrapper = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'failed', 3) })
