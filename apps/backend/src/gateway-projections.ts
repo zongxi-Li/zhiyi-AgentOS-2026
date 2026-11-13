@@ -99,7 +99,7 @@ function workspace(source: Row): Row {
   if (tasks.length) lines.push('', '## Planned steps', ...tasks.map(value => `- **${value.name}** (\`${value.semanticTaskKey}\`)${value.objective ? `: ${value.objective}` : ''}`));
   for (const entry of entries) if (entry.entryId === 'overview:mission.md' && entry.kind === 'virtual_document') entry.content = lines.join('\n') + '\n';
   const diagnosticKeys: Record<string, string> = { RUN_DELIVERABLE_MISSING: 'runId', GRAPH_TASK_NOT_FOUND: 'acgNodeId taskId', TASK_PLAN_TASK_NOT_FOUND: 'runId semanticTaskKey', LEGACY_ARTIFACT_IDENTITY: 'count', PLAN_SNAPSHOT_UNRESOLVED: 'runId taskPlanVersion', PLANNING_PROJECTION_PENDING: 'runtimeStatus lifecyclePhase errorCode' };
-  return { mission, activeRun,
+  return { mission, activeRun, ...pick(source, 'projectionRevision projectionSchemaVersion'),
     activeGraph: source.activeGraph == null ? null : { ...graph(source.activeGraph), taskPlanVersion: row(source.activeGraph).taskPlanVersion ?? null },
     runs: rows(source.runs, summary), entries,
     graphNodes: rows(source.graphNodes, source => pick(source, 'acgNodeId nodeType name semanticTaskKey taskId identityQuality displayOrder status attemptId artifactCount artifactIds')),

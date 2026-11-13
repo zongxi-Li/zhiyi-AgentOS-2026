@@ -2,6 +2,7 @@ import { localFetch } from '@/platform/api'
 import { agentosRequest } from '../client'
 import { runPath } from '../paths'
 import { apiUrl } from '@/platform'
+import { readSseFrames } from '@/utils/sse'
 
 export interface CopilotStreamEvent { type: 'content' | 'activity' | 'heartbeat' | 'completed' | 'error'; content?: string; message?: string; exchange?: CopilotExchange }
 export interface CopilotMessageOptions { modelId?: string; permission: CopilotPermission; reasoningEffort?: string }
@@ -53,27 +54,14 @@ export const createCopilotApi = () => ({
       throw error
     }
     if (!response.body) throw new Error('服务未返回流式响应')
-    const reader = response.body.getReader(), decoder = new TextDecoder()
-    let buffer = '', completed: CopilotExchange | undefined
-    function consume(block: string) {
-      const data = block.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
-      if (!data) return
+    for await (const { data } of readSseFrames(response.body, { signal, flushAtEof: true })) {
+      if (!data) continue
       const event = JSON.parse(data) as CopilotStreamEvent & { event?: string }
       if (event.type === 'error' || event.event === 'error') throw new Error(event.message || '对话流中断，请重试')
       onEvent(event)
-      if (event.type === 'completed') completed = event.exchange
+      if (event.type === 'completed' && event.exchange) return event.exchange
     }
-    try {
-      while (!completed) {
-        const { done, value } = await reader.read()
-        buffer += decoder.decode(value, { stream: !done }).replace(/\r/g, '')
-        let boundary: number
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) { consume(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + 2) }
-        if (done) { if (buffer.trim()) consume(buffer); break }
-      }
-      if (!completed) throw new Error('对话流提前结束，回复尚未保存，请重试')
-      return completed
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+    throw new Error('对话流提前结束，回复尚未保存，请重试')
   },
   async sendCopilotMessage(runId: string, content: string, operationId: string, signal?: AbortSignal, options?: CopilotMessageOptions): Promise<CopilotExchange> {
     return (await agentosRequest.post(`${runPath(runId)}/copilot/messages`, { content, operationId, ...options }, { signal })).data

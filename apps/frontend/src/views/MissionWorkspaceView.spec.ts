@@ -8,6 +8,18 @@ import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
 
+const workspaceEventCallbacks = vi.hoisted(() => new Map<string, (revision: number) => void>())
+vi.mock('@/workbench/runtime/workspaceEvents', () => ({
+  WorkspaceProjectionClient: class {
+    private missionId = ''
+    connect(missionId: string, callback: (revision: number) => void) {
+      this.missionId = missionId
+      workspaceEventCallbacks.set(missionId, callback)
+    }
+    disconnect() { workspaceEventCallbacks.delete(this.missionId) }
+  }
+}))
+
 const defaultLayoutStubState = {
   leftAutoHidden: false,
   restoreLeftPane: () => undefined
@@ -69,6 +81,7 @@ const artifact = (key = 'primary', id = 'artifact_1', legacy = false): Workspace
 
 const projection = (overrides: Partial<MissionWorkspaceProjection> = {}): MissionWorkspaceProjection => {
   const value: MissionWorkspaceProjection = {
+  projectionRevision: 1, projectionSchemaVersion: 1,
   mission: { missionId: 'mission_1', userId: 'user_1', goal: '设备人员规划', description: '目标', metadata: { domain: 'ops' }, createdAt: '2026-08-28T00:00:00Z', updatedAt: '2026-08-28T00:00:00Z', status: 'created' },
   activeRun: { runId: 'run_2', status: 'running', createdAt: '2026-08-28T00:02:00Z', isActive: true },
   runs: [
@@ -167,6 +180,7 @@ describe('MissionWorkspaceView', () => {
     layoutStubState = { ...defaultLayoutStubState }
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    workspaceEventCallbacks.clear()
   })
 
   it('loads one Mission Workspace projection and renders the project shell', async () => {
@@ -357,7 +371,9 @@ describe('MissionWorkspaceView', () => {
         const value = queued.shift()
         if (value) return Promise.resolve({ done: false, value })
         return new Promise<{ done: boolean; value?: Uint8Array }>(resolve => { pendingRead = resolve })
-      })
+      }),
+      cancel: vi.fn(async () => { pendingRead?.({ done: true }); pendingRead = null }),
+      releaseLock: vi.fn()
     }
     const push = (type: string, payload: Record<string, unknown>) => {
       const value = encoder.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`)
@@ -614,6 +630,7 @@ describe('MissionWorkspaceView', () => {
           : item)
       })
       const second = projection({
+        projectionRevision: 2,
         entries: projection().entries.map(item => item.entryId === 'task:capacity'
           ? { ...item, status: 'completed', artifactCount: 1 }
           : item)
@@ -627,6 +644,10 @@ describe('MissionWorkspaceView', () => {
 
       await vi.advanceTimersByTimeAsync(8000)
       await flushPromises()
+      expect(getWorkspace).toHaveBeenCalledTimes(1)
+      workspaceEventCallbacks.get('mission_1')!(2)
+      await vi.advanceTimersByTimeAsync(150)
+      await flushPromises()
 
       expect(getWorkspace).toHaveBeenCalledTimes(2)
       expect(wrapper.find('.task-editor__status').text()).toBe('已完成')
@@ -635,6 +656,109 @@ describe('MissionWorkspaceView', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('does not poll the workspace after a Run reaches a terminal state', async () => {
+    vi.useFakeTimers()
+    try {
+      const completed = projection({
+        activeRun: { runId: 'run_2', status: 'succeeded', createdAt: '2026-08-28T00:02:00Z', isActive: false }
+      })
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace').mockResolvedValue(completed)
+      const { wrapper } = await mountWorkspace(completed)
+
+      await vi.advanceTimersByTimeAsync(16000)
+      expect(getWorkspace).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('merges duplicate invalidations and catches updates arriving during an in-flight read', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveRefresh!: (value: MissionWorkspaceProjection) => void
+      const refresh = new Promise<MissionWorkspaceProjection>(resolve => { resolveRefresh = resolve })
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace')
+        .mockResolvedValueOnce(projection()).mockReturnValueOnce(refresh)
+        .mockResolvedValue(projection({ projectionRevision: 4 }))
+      const { wrapper } = await mountWorkspace()
+      const revision = workspaceEventCallbacks.get('mission_1')!
+      revision(2); revision(2); revision(1)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      revision(3); revision(4)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      resolveRefresh(projection({ projectionRevision: 2 }))
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(150)
+      expect(getWorkspace).toHaveBeenCalledTimes(3)
+      revision(4); revision(3)
+      await vi.advanceTimersByTimeAsync(16000)
+      expect(getWorkspace).toHaveBeenCalledTimes(3)
+      expect((wrapper.vm as any).projection.projectionRevision).toBe(4)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('keeps observing a completed Run for late projection commits', async () => {
+    vi.useFakeTimers()
+    try {
+      const completed = projection({ activeRun: { runId: 'run_2', status: 'succeeded', createdAt: '', isActive: false } })
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace').mockResolvedValueOnce(completed)
+        .mockResolvedValue({ ...completed, projectionRevision: 2 })
+      await mountWorkspace(completed)
+      workspaceEventCallbacks.get('mission_1')!(2)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('retries a failed invalidation once after backoff and stops when caught up', async () => {
+    vi.useFakeTimers()
+    try {
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace')
+        .mockResolvedValueOnce(projection())
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue(projection({ projectionRevision: 2 }))
+      const { wrapper } = await mountWorkspace()
+      const revision = workspaceEventCallbacks.get('mission_1')!
+      revision(2)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      expect((wrapper.vm as any).controlReadOnly).toBe(false)
+      revision(2); revision(2)
+      await vi.advanceTimersByTimeAsync(4999)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getWorkspace).toHaveBeenCalledTimes(3)
+      expect((wrapper.vm as any).projection.projectionRevision).toBe(2)
+      await vi.advanceTimersByTimeAsync(16000)
+      expect(getWorkspace).toHaveBeenCalledTimes(3)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('retains the newer snapshot and backs off when a response is stale', async () => {
+    vi.useFakeTimers()
+    try {
+      const getWorkspace = vi.spyOn(agentosApi, 'getMissionWorkspace')
+        .mockResolvedValueOnce(projection({ projectionRevision: 3 }))
+        .mockResolvedValueOnce(projection({ projectionRevision: 2 }))
+        .mockResolvedValue(projection({ projectionRevision: 4 }))
+      const { wrapper } = await mountWorkspace()
+      workspaceEventCallbacks.get('mission_1')!(4)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      expect((wrapper.vm as any).projection.projectionRevision).toBe(3)
+      await vi.advanceTimersByTimeAsync(4999)
+      expect(getWorkspace).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getWorkspace).toHaveBeenCalledTimes(3)
+      expect((wrapper.vm as any).projection.projectionRevision).toBe(4)
+      await vi.advanceTimersByTimeAsync(16000)
+      expect(getWorkspace).toHaveBeenCalledTimes(3)
+    } finally { vi.useRealTimers() }
   })
 
   it('keeps runtime observation visible while a projection refresh is pending', async () => {
@@ -653,13 +777,15 @@ describe('MissionWorkspaceView', () => {
       const { wrapper } = await mountWorkspace()
       await vi.waitFor(() => expect((wrapper.vm as any).runtimeObservation).not.toBeNull())
 
-      await vi.advanceTimersByTimeAsync(8000)
+      workspaceEventCallbacks.get('mission_1')!(2)
+      await vi.advanceTimersByTimeAsync(150)
       await flushPromises()
 
       expect(getWorkspace).toHaveBeenCalledTimes(2)
       expect((wrapper.vm as any).runtimeObservation).not.toBeNull()
+      expect((wrapper.vm as any).controlReadOnly).toBe(false)
 
-      resolveRefresh(projection())
+      resolveRefresh(projection({ projectionRevision: 2 }))
       await flushPromises()
       wrapper.unmount()
     } finally {

@@ -70,6 +70,7 @@ from runtime.workspace import (
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
 from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
 from contracts.runtime_events import RuntimeEvent
+from support.stores.workspace_projection import workspace_changes
 from components.attachments import AttachmentError
 from contracts.attachments import InputAttachmentStatus
 from app.api.agentos_contracts import (
@@ -1820,11 +1821,45 @@ def create_router(
         history = require_identity_queries().mission_run_history(mission_id)
         return history.model_dump(by_alias=True, mode="json")
 
+    def workspace_revision(mission_id: str) -> int:
+        # Sum committed source counters, independently of authorization revision.
+        identity_storage = getattr(identity_repositories, "storage", None)
+        return sum(getattr(source, "workspace_projection_revision", lambda _: 0)(mission_id)
+                   for source in (identity_storage, runtime.workflow_store))
+
+    @router.get("/missions/{mission_id}/workspace/events")
+    async def stream_workspace_projection(mission_id: str):
+        require_current_mission_read(mission_id)
+        require_mission_access(mission_id)
+
+        async def body():
+            # Register before the first read, avoiding a subscription race.
+            async with workspace_changes.subscribe() as queue:
+                previous = -1
+                while True:
+                    revision = workspace_revision(mission_id)
+                    if revision > previous:
+                        payload = json.dumps({"eventType": "workspace.projection.updated",
+                            "missionId": mission_id, "projectionRevision": revision,
+                            "schemaVersion": 1}, separators=(",", ":"))
+                        yield f"id: {revision}\nevent: workspace.projection.updated\ndata: {payload}\n\n"
+                        previous = revision
+                    try:
+                        # Immediate local commit wakeups; a cheap watermark check
+                        # also catches other workers and keeps proxies alive.
+                        await asyncio.wait_for(queue.get(), timeout=15)
+                    except asyncio.TimeoutError:
+                        yield ": workspace heartbeat\n\n"
+        return StreamingResponse(body(), media_type="text/event-stream", headers={
+            "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
     @router.get("/missions/{mission_id}/workspace")
     async def get_mission_workspace(
         mission_id: str,
         run_id: str | None = Query(default=None, alias="runId"),
     ):
+        # Capture BEFORE composing: concurrent writes require another refresh.
+        projection_revision = workspace_revision(mission_id)
         semantic_view = None
         semantic_read = require_current_mission_read(mission_id)
         if semantic_read is not None:
@@ -2195,6 +2230,8 @@ def create_router(
                     capabilities[selected_id] = (project_run_capabilities(runtime, source)
                         if source.mission_id == mission_id else None)
             summary['actionCapabilities'] = capabilities[selected_id]
+        payload['projectionRevision'] = projection_revision
+        payload['projectionSchemaVersion'] = 1
         return payload
 
     async def workspace_file_read(mission_id: str, path: str, tool_name: str, arguments: dict, *, save_operation: str | None = None):

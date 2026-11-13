@@ -22,6 +22,7 @@ from support.stores.graph_activation_store import SQLiteGraphActivationStore, va
 from contracts.workflow import RuntimeRunRecord
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore, SQLiteStagedGraphCheckpointStore
 from support.stores.execution_permit_store import SQLiteExecutionPermitStore
+from support.stores.workspace_projection import IDENTITY_SOURCES, RUNTIME_SOURCES, install_revision_triggers
 
 
 UPGRADERS = (
@@ -174,6 +175,14 @@ def _inspect_one(role, path, reference, initialize_empty):
         required = (_reference()["workflow_base"] if role == "workflow" else
                     {"acg_execution_checkpoints"} if role == "checkpoint" else set(reference))
         missing_required = set(required) - current.keys()
+        # Projection bookkeeping is an additive extension to existing volumes.
+        # Only its wholly absent legacy form is upgradeable: a partially missing
+        # installation may have lost durable watermarks and must not be reset.
+        projection_objects = {name for name in reference
+                              if name == "workspace_projection_versions"
+                              or name.startswith("workspace_revision_")}
+        if projection_objects and not (projection_objects & current.keys()):
+            missing_required -= projection_objects
         legacy_revision = (role == "workflow"
                            and missing_required == {"mission_revision_decisions"}
                            and not (C2_TABLES & current.keys()))
@@ -362,6 +371,9 @@ def upgrade_databases(workflow, checkpoint, identity, *, initialize_empty=False)
         state = _inspect_one(role, path, _reference()[role], initialize_empty)
         if state["status"] == "EMPTY_REQUIRES_INITIALIZATION":
             _initialize(role, path)
+        if "workspace_projection_versions" in state["missing"]:
+            with _connect(path, readonly=False) as conn, conn:
+                install_revision_triggers(conn, IDENTITY_SOURCES if role == "identity" else RUNTIME_SOURCES)
         if role == "workflow":
             if "mission_revision_decisions" in state["missing"]:
                 _AdministrativeWorkflowStore(path, enable_mission_semantics=True)
@@ -370,7 +382,8 @@ def upgrade_databases(workflow, checkpoint, identity, *, initialize_empty=False)
                 factory.upgrade_schema(path)
         elif role == "checkpoint":
             SQLiteStagedGraphCheckpointStore.upgrade_schema(path)
-        # Existing Identity is deliberately NEVER passed to SQLiteV2Storage.
+        # Existing Identity is deliberately NEVER passed to SQLiteV2Storage;
+        # only the explicitly checked additive projection extension is installed.
     after = inspect_databases(**paths)
     if any(item["status"] != "READY" for item in after.values()):
         raise SchemaUpgradeError(f"upgrade incomplete; inspect and rerun: {after}")

@@ -10,6 +10,7 @@ from threading import RLock
 from typing import Iterator
 
 from .schema import SCHEMA_SQL
+from support.stores.workspace_projection import WorkspaceConnection, IDENTITY_SOURCES, install_revision_triggers, projection_revision
 
 
 CURRENT_SCHEMA_VERSION = 3
@@ -23,7 +24,7 @@ class SQLiteV2Storage:
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
-        self._connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._connection = sqlite3.connect(self.db_path, check_same_thread=False, factory=WorkspaceConnection)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._connection.execute("PRAGMA busy_timeout=5000")
@@ -36,6 +37,7 @@ class SQLiteV2Storage:
             # because its indexes reference the canonical semantic key.
             self._ensure_legacy_columns()
             self._connection.executescript(SCHEMA_SQL)
+            install_revision_triggers(self._connection, IDENTITY_SOURCES)
             version = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
             if version < CURRENT_SCHEMA_VERSION:
                 self._backfill_unambiguous_semantic_keys()
@@ -110,6 +112,10 @@ class SQLiteV2Storage:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+
+    def workspace_projection_revision(self, mission_id: str) -> int:
+        with self.read() as conn:
+            return projection_revision(conn, mission_id)
 
     def __enter__(self) -> "SQLiteV2Storage":
         return self

@@ -98,6 +98,43 @@ def test_incompatible_version_rejects_all_targets_before_writes(paths, role, ver
     assert contents(paths) == before
 
 
+def test_legacy_projection_extension_is_explicit_and_preserves_data(paths):
+    ops.upgrade_databases(**paths, initialize_empty=True)
+    for role in ("workflow", "identity"):
+        for name, (kind, _, _) in ops._reference()[role].items():
+            if name.startswith("workspace_revision_"):
+                sql(paths[role], f'DROP {kind} "{name}"')
+        sql(paths[role], "DROP TABLE workspace_projection_versions")
+    sql(paths["identity"], "INSERT INTO missions(mission_id,user_id,goal,status,created_at,updated_at) VALUES('m','u','keep','created','now','now')")
+    sql(paths["workflow"], "INSERT INTO tasks VALUES('m','{}','now')")
+    before = contents(paths)
+    inspection = ops.inspect_databases(**paths)
+    assert inspection["workflow"]["status"] == "UPGRADE_REQUIRED"
+    assert inspection["identity"]["status"] == "UPGRADE_REQUIRED"
+    assert contents(paths) == before  # Inspection never upgrades the volume.
+    ops.upgrade_databases(**paths)
+    checked(paths)
+    assert sql(paths["identity"], "SELECT goal FROM missions WHERE mission_id='m'") == [("keep",)]
+    assert sql(paths["workflow"], "SELECT count(*) FROM tasks") == [(1,)]
+    for role, statement in (("identity", "UPDATE missions SET goal='changed' WHERE mission_id='m'"),
+                            ("workflow", "UPDATE tasks SET updated_at='later' WHERE mission_id='m'")):
+        sql(paths[role], statement)
+        assert sql(paths[role], "SELECT revision FROM workspace_projection_versions WHERE mission_id='m'") == [(1,)]
+    upgraded = contents(paths)
+    ops.upgrade_databases(**paths)
+    assert contents(paths) == upgraded
+
+
+@pytest.mark.parametrize("role", ["workflow", "identity"])
+def test_partial_projection_installation_is_never_silently_repaired(paths, role):
+    ops.upgrade_databases(**paths, initialize_empty=True)
+    sql(paths[role], "DROP TABLE workspace_projection_versions")
+    before = contents(paths)
+    with pytest.raises(ops.SchemaUpgradeError, match="missing prerequisite"):
+        ops.upgrade_databases(**paths)
+    assert contents(paths) == before
+
+
 @pytest.mark.parametrize("marker", ["mission_semantic_schema", *ops.GROUPS])
 def test_incompatible_component_marker_rejected(paths, marker):
     ops.upgrade_databases(**paths, initialize_empty=True)
@@ -209,7 +246,10 @@ def test_identity_cross_mission_trigger_and_foreign_keys_remain_authoritative(pa
     with pytest.raises(sqlite3.IntegrityError):
         sql(i, "DELETE FROM missions WHERE mission_id='m2'")
     assert sql(i, "SELECT count(*) FROM attempts") == [(0,)]
-    assert len(sql(i, "SELECT name FROM sqlite_master WHERE type='trigger'")) == 8
+    triggers = {name for name, in sql(i, "SELECT name FROM sqlite_master WHERE type='trigger'")}
+    assert len({name for name in triggers if not name.startswith("workspace_revision_")}) == 8
+    assert {name for name, (kind, _, _) in ops._reference()["identity"].items()
+            if kind == "trigger"} <= triggers
 
 
 def test_existing_identity_foreign_key_corruption_blocks_all_upgrades(paths):

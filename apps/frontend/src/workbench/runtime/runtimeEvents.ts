@@ -1,6 +1,7 @@
 import { localFetch } from '@/platform/api'
 import { reactive } from 'vue'
 import { apiUrl } from '@/platform'
+import { readSseFrames } from '@/utils/sse'
 
 export interface RuntimeEvent {
   eventId: string
@@ -349,6 +350,7 @@ export class RuntimeEventClient {
         cache: 'no-store',
         signal: controller.signal
       })
+      if (generation !== this.generation || controller.signal.aborted) return
       if (response.status === 401 || response.status === 403) {
         this.disconnect() // Configuration failures require an explicit reconnect.
         return
@@ -356,16 +358,10 @@ export class RuntimeEventClient {
       if (!response.ok) throw new Error(`Runtime event stream failed with HTTP ${response.status}`)
       if (!response.body) throw new Error('Runtime event stream has no response body')
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (!controller.signal.aborted) {
-        const { done, value } = await reader.read()
-        buffer += decoder.decode(value, { stream: !done })
-        const frames = buffer.replace(/\r\n/g, '\n').split('\n\n')
-        buffer = done ? '' : frames.pop() || ''
-        for (const frame of frames) this.consumeFrame(frame)
-        if (done || this.store.terminal) break
+      for await (const { data } of readSseFrames(response.body, { signal: controller.signal, flushAtEof: true })) {
+        if (generation !== this.generation || controller.signal.aborted) return
+        this.consumeData(data)
+        if (this.store.terminal) break
       }
     } catch (error) {
       if ((error as { name?: string })?.name === 'AbortError') return
@@ -380,19 +376,14 @@ export class RuntimeEventClient {
     }
   }
 
-  private consumeFrame(frame: string) {
-    const data = frame.split('\n')
-      .filter(line => line.startsWith('data:'))
-      .map(line => line.slice(5).trimStart())
-      .join('\n')
+  private consumeData(data: string) {
     if (!data || data === '[DONE]') return
-    try {
-      const event = JSON.parse(data) as RuntimeEvent
-      this.store.apply(event)
-      if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.eventType)) this.disconnect()
-    } catch {
-      // A malformed frame must not terminate the runtime stream.
-    }
+    let event: RuntimeEvent
+    try { event = JSON.parse(data) as RuntimeEvent }
+    catch { return /* A malformed frame must not terminate the runtime stream. */ }
+    if (!event || typeof event.eventType !== 'string') return
+    this.store.apply(event)
+    if (this.store.terminal) this.disconnect()
   }
 }
 

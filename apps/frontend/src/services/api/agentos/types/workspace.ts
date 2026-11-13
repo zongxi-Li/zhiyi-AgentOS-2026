@@ -84,6 +84,9 @@ export interface WorkspaceDiagnostic {
   details?: Record<string, unknown>
 }
 export interface MissionWorkspaceProjection {
+  /** Committed source watermark; separate from authorization runtimeRevision. */
+  projectionRevision?: number
+  projectionSchemaVersion?: number
   mission: WorkspaceMission
   missionSemanticView?: {
     missionId: string

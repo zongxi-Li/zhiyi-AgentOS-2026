@@ -20,6 +20,7 @@ from contracts.mission_semantic import (
 from support.stores.mission_semantic_store import (
     MissionSemanticStore, prepare_commit, replay, request_fingerprint, semantic_outbox, snapshot,
 )
+from support.stores.workspace_projection import WorkspaceConnection, RUNTIME_SOURCES, install_revision_triggers, projection_revision
 
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
 from support.stores._policy import matches_mission, reject_terminal_overwrite, validate_run_state, mission_status_from_runs
@@ -52,6 +53,15 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         self._mission_semantics_enabled = enable_mission_semantics
         if enable_mission_semantics:
             self._init_semantic_schema()
+        with self._connect() as conn:
+            install_revision_triggers(conn, RUNTIME_SOURCES)
+
+    def workspace_projection_revision(self, mission_id: str) -> int:
+        conn = self._connect()
+        try:
+            return projection_revision(conn, mission_id)
+        finally:
+            conn.close()
 
     def _require_semantic_schema(self) -> None:
         if not self._mission_semantics_enabled:
@@ -70,6 +80,8 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             if versions != [1]:
                 raise RuntimeError(f"unsupported Mission semantic schema: {versions}")
         self._mission_semantics_enabled = True
+        with self._connect() as conn:
+            install_revision_triggers(conn, RUNTIME_SOURCES)
 
     def _init_semantic_schema(self) -> None:
         """Additive v1 migration; separate from IdentityV2's schema version.
@@ -1317,7 +1329,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             return cursor.fetchall()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=max(self.busy_timeout_ms, 1) / 1000)
+        conn = sqlite3.connect(self.db_path, timeout=max(self.busy_timeout_ms, 1) / 1000, factory=WorkspaceConnection)
         conn.execute(f"PRAGMA busy_timeout={max(self.busy_timeout_ms, 1)}")
         conn.execute("PRAGMA synchronous=FULL")
         conn.execute("PRAGMA foreign_keys=ON")

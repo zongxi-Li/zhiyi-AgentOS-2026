@@ -1,3 +1,4 @@
+import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import { RunRuntimeStore, RuntimeEventClient, acquireRunRuntimeStore, releaseRunRuntimeStore } from './runtimeEvents'
 
@@ -39,7 +40,7 @@ describe('RunRuntimeStore streaming projection', () => {
   })
   it('reconnects a nonterminal clean EOF and cancels its retry on disconnect', async () => {
     vi.useFakeTimers()
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read: async () => ({ done: true }) }) } })
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read: async () => ({ done: true }), cancel: async () => {}, releaseLock: vi.fn() }) } })
     vi.stubGlobal('fetch', fetchMock)
     const client = new RuntimeEventClient(new RunRuntimeStore('run'))
     try {
@@ -148,7 +149,9 @@ describe('RunRuntimeStore streaming projection', () => {
       }).mockResolvedValueOnce({
         done: false,
         value: encoder.encode('event: run.failed\ndata: {"runId":"run","eventType":"run.failed","sequence":3,"payload":{}}\n\n')
-      })
+      }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      releaseLock: vi.fn()
     }
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => reader } })
     vi.stubGlobal('fetch', fetchMock)
@@ -157,12 +160,37 @@ describe('RunRuntimeStore streaming projection', () => {
     client.connect()
     await vi.waitFor(() => expect(store.terminal).toBe(true))
     expect(store.planning.status).toBe('STARTING')
+    expect(reader.cancel).toHaveBeenCalledOnce()
+    expect(reader.releaseLock).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/agentos/v2/runs/run/events'), expect.objectContaining({
       headers: { Accept: 'text/event-stream' },
       signal: expect.any(AbortSignal)
     }))
     localStorage.removeItem('token')
     vi.unstubAllGlobals()
+  })
+
+  it('stops at this Run terminal event without applying later buffered frames', async () => {
+    const cancel = vi.fn()
+    const frames = [
+      { ...event(1, 'run.completed'), runId: 'foreign' },
+      event(2, 'planner.started'), event(3, 'run.completed'), event(4, 'planner.failed')
+    ].map(value => `data: ${JSON.stringify(value)}\n\n`).join('')
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(frames)) }, cancel
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream)))
+    const store = new RunRuntimeStore('run')
+    const client = new RuntimeEventClient(store)
+    try {
+      client.connect()
+      await flushPromises()
+      expect(store.terminal).toBe(true)
+      expect(store.planning.status).toBe('STARTING')
+      expect(store.lastSequence).toBe(3)
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(stream.locked).toBe(false)
+    } finally { client.disconnect(); vi.unstubAllGlobals() }
   })
 
 })

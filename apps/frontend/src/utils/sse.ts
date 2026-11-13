@@ -7,6 +7,68 @@ export function parseSseDataLine(line: string): string | null {
   return value.startsWith(' ') ? value.slice(1) : value
 }
 
+export interface SseFrame { event: string; data: string }
+
+/** Decode protocol fields only; payload validation belongs to each caller. */
+export function parseSseFrame(frame: string): SseFrame | null {
+  let event = ''
+  const data: string[] = []
+  for (const line of frame.split(/\r?\n/)) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    const value = parseSseDataLine(line)
+    if (value !== null) data.push(value)
+  }
+  return data.length ? { event, data: data.join('\n') } : null
+}
+
+/** Read frames without owning endpoint-specific retry or completion rules. */
+export async function* readSseFrames(body: ReadableStream<Uint8Array>, options: {
+  signal?: AbortSignal
+  onActivity?: () => void
+  /** Retain compatibility with endpoints that omit the final empty line. */
+  flushAtEof?: boolean
+} = {}): AsyncGenerator<SseFrame> {
+  const { signal, onActivity, flushAtEof = false } = options
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let cancellation: Promise<void> | undefined
+  const cancel = () => cancellation ||= reader.cancel().catch(() => {})
+  const onAbort = () => { void cancel() }
+  const checkAbort = () => {
+    if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    checkAbort()
+    while (true) {
+      const { done, value } = await reader.read()
+      checkAbort()
+      if (!done) onActivity?.()
+      buffer += decoder.decode(value, { stream: !done })
+      let boundary: RegExpExecArray | null
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        checkAbort()
+        const frame = parseSseFrame(buffer.slice(0, boundary.index))
+        buffer = buffer.slice(boundary.index + boundary[0].length)
+        if (frame) {
+          yield frame
+          checkAbort()
+        }
+      }
+      if (done) {
+        const frame = flushAtEof ? parseSseFrame(buffer) : null
+        if (frame) yield frame
+        return
+      }
+    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    await cancel()
+    reader.releaseLock()
+  }
+}
+
 export type ChatStreamEventType =
   | 'heartbeat'
   | 'reasoning_start'
@@ -73,15 +135,9 @@ export function parseChatStreamData(data: string): ChatStreamEvent | null {
 
 /** Keep the SSE event field: gateway terminal events have no JSON envelope. */
 export function parseChatStreamFrame(frame: string): ChatStreamEvent | null {
-  let eventName = ''
-  const data: string[] = []
-  for (const line of frame.split(/\r?\n/)) {
-    if (line.startsWith('event:')) eventName = line.slice(6).trim()
-    const value = parseSseDataLine(line)
-    if (value !== null) data.push(value)
-  }
-  if (!data.length) return null
-  const payload = data.join('\n')
+  const parsedFrame = parseSseFrame(frame)
+  if (!parsedFrame) return null
+  const { event: eventName, data: payload } = parsedFrame
   if (eventName === 'error') {
     try {
       const parsed = JSON.parse(payload)

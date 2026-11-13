@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -145,6 +147,26 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
         task_entry = next(item for item in payload["entries"] if item["kind"] == "task")
         assert task_entry["metadata"]["outputRef"] == "output:api-step"
         assert task_entry["metadata"]["outputSummary"] == "API step completed"
+        assert payload["projectionSchemaVersion"] == 1
+        revision = payload["projectionRevision"]
+        assert revision > 0
+
+        # The Mission stream survives a completed Run, and catches a commit
+        # between HTTP snapshot loading and the SSE handshake.
+        with storage.transaction() as conn:
+            conn.execute("UPDATE missions SET description=? WHERE mission_id=?", ("updated", mission.mission_id))
+        endpoint = next(route.endpoint for route in app.routes
+            if route.path == "/agentos/v2/missions/{mission_id}/workspace/events")
+        stream = await endpoint(mission.mission_id)
+        first = await anext(stream.body_iterator)
+        initial = json.loads(first.split("data: ")[1])
+        assert initial["projectionRevision"] > revision
+        assert initial["missionId"] == mission.mission_id
+        with storage.transaction() as conn:
+            conn.execute("UPDATE missions SET description=? WHERE mission_id=?", ("late artifact metadata", mission.mission_id))
+        next_frame = await asyncio.wait_for(anext(stream.body_iterator), timeout=1)
+        assert json.loads(next_frame.split("data: ")[1])["projectionRevision"] > initial["projectionRevision"]
+        await stream.body_iterator.aclose()
     finally:
         content.close()
         service.close()

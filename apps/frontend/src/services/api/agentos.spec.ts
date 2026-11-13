@@ -476,6 +476,18 @@ describe('AgentOS v2 application API', () => {
     })
   })
 
+  it('forwards a bounded timeout for interactive Workspace projection reads', async () => {
+    const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
+      data: { mission: { missionId: 'mission_1' }, entries: [], runs: [], graphNodes: [], diagnostics: [] }
+    } as never)
+
+    await agentosApi.getMissionWorkspace('mission_1', { timeout: 15000 })
+
+    expect(get).toHaveBeenCalledWith('/missions/mission_1/workspace', {
+      params: { runId: undefined }, signal: undefined, timeout: 15000
+    })
+  })
+
   it('does not request Artifact content as part of Workspace projection loading', async () => {
     const get = vi.spyOn(agentosRequest, 'get').mockResolvedValue({
       data: { mission: { missionId: 'mission_1' }, entries: [{ entryId: 'task:one:primary', kind: 'artifact' }], runs: [], graphNodes: [], diagnostics: [] }

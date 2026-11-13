@@ -25,6 +25,12 @@ describe('Python gateway transport contracts', () => {
         setTimeout(() => reply.end('event: done\ndata: {"usage":{"total_tokens":7}}\n\n'), 30).unref();
         return;
       }
+      if (request.url === '/ai/agentos/v2/missions/mission/workspace/events') {
+        reply.writeHead(200, { 'content-type': 'text/event-stream' });
+        reply.write('id: 42\nevent: workspace.projection.updated\ndata: {"eventType":"workspace.projection.updated","schemaVersion":1,"missionId":"mission","projectionRevision":42}\n\n');
+        reply.end(': workspace heartbeat\n\n');
+        return;
+      }
       if (request.url === '/ai/error') {
         reply.writeHead(409, { 'content-type': 'application/json', 'set-cookie': 'private=value' });
         reply.end(JSON.stringify({ code: 'REVISION_CONFLICT', message: 'revision changed', requestId: 'python-request' }));
@@ -104,6 +110,26 @@ describe('Python gateway transport contracts', () => {
     let text = '';
     for (;;) { const chunk = await reader.read(); if (chunk.done) break; text += new TextDecoder().decode(chunk.value); }
     expect(text).toContain('"total_tokens":7'); client.close();
+  });
+
+  it('preserves workspace projection watermarks through the public read projection', () => {
+    expect(projectAgentOsResponse('/ai/agentos/v2/missions/mission/workspace', {
+      mission: { missionId: 'mission' }, projectionRevision: 42, projectionSchemaVersion: 1,
+      runs: [], entries: [], graphNodes: [], diagnostics: []
+    })).toMatchObject({ projectionRevision: 42, projectionSchemaVersion: 1 });
+  });
+
+  it('forwards Mission workspace SSE through the public alias without JSON projection', async () => {
+    const app = Fastify();
+    app.decorateRequest('localIdentity', null);
+    app.addHook('onRequest', async request => { request.localIdentity = identity; });
+    registerGateway(app, gateway());
+    const response = await app.inject('/api/agentos/v2/missions/mission/workspace/events');
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('id: 42\nevent: workspace.projection.updated');
+    expect(response.body).toContain('"projectionRevision":42');
+    await app.close();
   });
 
   it('propagates cancellation, request deadlines and stream idle timeouts', async () => {

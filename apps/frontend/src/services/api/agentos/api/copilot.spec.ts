@@ -38,4 +38,26 @@ describe('Copilot SSE transport', () => {
     await expect(createCopilotApi().streamCopilotMessage('run', 'hello', 'op', vi.fn())).rejects.toThrow('401')
     expect(localStorage.getItem('token')).toBeNull()
   })
+
+  it('returns on completion without consuming a later buffered business error', async () => {
+    const exchange = { operationId: 'op', assistant: 'done', user: 'hello', createdAt: '', observedRevision: 1 }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([
+      { type: 'completed', exchange }, { type: 'error', message: 'late error' }
+    ])))
+    const onEvent = vi.fn()
+    await expect(createCopilotApi().streamCopilotMessage('run', 'hello', 'op', onEvent)).resolves.toEqual(exchange)
+    expect(onEvent).toHaveBeenCalledOnce()
+  })
+
+  it('retains final frames without a separator and preserves callback errors', async () => {
+    const exchange = { operationId: 'op', assistant: 'done', user: 'hello', createdAt: '', observedRevision: 1 }
+    const eofResponse = new Response(`data: ${JSON.stringify({ type: 'completed', exchange })}`)
+    const callbackResponse = response([{ type: 'content', content: 'hello' }])
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(eofResponse).mockResolvedValueOnce(callbackResponse))
+    const api = createCopilotApi()
+    await expect(api.streamCopilotMessage('run', 'hello', 'op', vi.fn())).resolves.toEqual(exchange)
+    const businessError = new Error('callback failed')
+    await expect(api.streamCopilotMessage('run', 'hello', 'op', () => { throw businessError })).rejects.toBe(businessError)
+    expect(callbackResponse.body!.locked).toBe(false)
+  })
 })

@@ -250,6 +250,7 @@ import { conversationBindingKey, readRunDeliverableIntent } from '@/features/wor
 import WorkspaceLifecycleBar from '@/components/workspace/WorkspaceLifecycleBar.vue'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 import { initialEditorIntent, selectLifecycleEditor } from '@/workbench/runtime/editorSelection'
+import { WorkspaceProjectionClient } from '@/workbench/runtime/workspaceEvents'
 
 const route = useRoute()
 const router = useRouter()
@@ -331,6 +332,10 @@ const workspaceProjectionRetryDelays = [
   ...Array.from({ length: 23 }, () => 5000)
 ]
 
+// A workspace projection is a small read model. Do not let the shared
+// 240-second API timeout turn a stalled gateway into a frozen editor.
+const WORKSPACE_PROJECTION_TIMEOUT_MS = 15000
+
 // Run Progress is a first-class editor entry. Its identity is scoped to the Run
 // so reopening/history switching cannot silently reuse another Run's document.
 const progressEntryFor = (runId: string | null): WorkspaceEntry => ({
@@ -408,7 +413,10 @@ const inspectorGraphNode = computed<WorkspaceGraphNode | null>(() => {
   return projection.value?.graphNodes.find(node => node.acgNodeId === selectedGraphNodeId.value) || null
 })
 const isHistorical = computed(() => lifecycle.value.isHistorical)
-const controlReadOnly = computed(() => lifecycle.value.isReadOnly || loading.value || Boolean(loadError.value))
+// Keep an existing projection usable while a background refresh is pending or
+// has briefly failed. Only an empty workspace is blocked by load state.
+const controlReadOnly = computed(() => lifecycle.value.isReadOnly
+  || (!projection.value && (loading.value || Boolean(loadError.value))))
 const canRerunSelectedRun = computed(() => Boolean(
   projection.value?.activeRun?.runId && (lifecycle.value.capabilities?.canRetrySuccessor || lifecycle.value.capabilities?.canRerunSuccessor)
 ))
@@ -629,8 +637,8 @@ const waitForWorkspaceRetry = (delayMs: number, signal: AbortSignal) => new Prom
   signal.addEventListener('abort', onAbort, { once: true })
 })
 
-// Java 网关对 AgentOS GET 的预算只有几秒；活跃 Run 执行高峰时投影查询可能暂时
-// 超时变成 502/503/504。这类瞬时抖动与 404（投影未注册）一样按退避梯子重试。
+// Retry temporary gateway failures and accepted Runs whose Identity projection
+// is not registered yet; permanent contract/access failures remain visible.
 const TRANSIENT_PROJECTION_STATUSES = new Set([502, 503, 504])
 
 const requestWorkspaceProjection = async (runId: string | null, signal: AbortSignal) => {
@@ -640,7 +648,8 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
     try {
       return await agentosApi.getMissionWorkspace(missionId.value, {
         runId: runId || undefined,
-        signal
+        signal,
+        timeout: WORKSPACE_PROJECTION_TIMEOUT_MS
       })
     } catch (error: unknown) {
       const status = responseStatus(error)
@@ -670,11 +679,15 @@ const requestWorkspaceProjection = async (runId: string | null, signal: AbortSig
   }
 }
 
-// 降级投影重拉：PLANNING_PROJECTION_PENDING 表示 identity graph 尚未注册，
-// Run 活跃期间周期性重拉投影，注册完成后 STEPS/OUTPUT/RUNS/Graph 即刻出现。
-const PROJECTION_REFRESH_MS = 8000
+// Mission-scoped invalidations cover delayed Identity materialization and final
+// artifacts even after the selected Run's transient output stream has ended.
 const ACTIVE_PROJECTION_RUN_STATUSES = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
 let projectionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const workspaceEvents = new WorkspaceProjectionClient()
+let workspaceEventsMissionId: string | null = null
+let targetProjectionRevision = -1
+let projectionRequestInFlight = false
+let projectionRefreshDelay = 150
 
 const stopProjectionRefresh = () => {
   if (projectionRefreshTimer !== null) {
@@ -688,14 +701,26 @@ const projectionActive = (projection: MissionWorkspaceProjection) => (
 )
 
 const scheduleProjectionRefresh = () => {
-  stopProjectionRefresh()
-  if (!isWorkspaceVisible()) return
+  const snapshot = projection.value
+  if (!isWorkspaceVisible() || !snapshot || snapshot.projectionSchemaVersion !== 1
+    || !Number.isSafeInteger(snapshot.projectionRevision)) { stopProjectionRefresh(); return }
+  if (workspaceEventsMissionId !== missionId.value) {
+    workspaceEventsMissionId = missionId.value
+    targetProjectionRevision = -1
+    const subscribedMissionId = missionId.value
+    workspaceEvents.connect(subscribedMissionId, revision => {
+      if (!isWorkspaceVisible() || missionId.value !== subscribedMissionId) return
+      targetProjectionRevision = Math.max(targetProjectionRevision, revision)
+      scheduleProjectionRefresh()
+    })
+  }
+  if (projectionRequestInFlight || targetProjectionRevision <= snapshot.projectionRevision!) { stopProjectionRefresh(); return }
+  // Throttle bursts rather than postponing the read on every new event.
+  if (projectionRefreshTimer !== null) return
   projectionRefreshTimer = setTimeout(async () => {
     projectionRefreshTimer = null
-    if (!viewActive || loading.value) return
-    const projectionSnapshot = projection.value
-    if (projectionSnapshot) await loadWorkspace(selectedRunId.value)
-  }, PROJECTION_REFRESH_MS)
+    if (isWorkspaceVisible() && !projectionRequestInFlight) await loadWorkspace(selectedRunId.value)
+  }, projectionRefreshDelay)
 }
 
 const deliveryIntentError = ref('')
@@ -722,9 +747,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
     return
   }
-  // Keep the rendered projection and runtime observation visible while the
-  // periodic projection refresh is in flight. Clearing them here made the
-  // inspector and bottom panels flash on every refresh cycle.
+  // Refresh the current Run in place; retire rendered facts only on selection changes.
   const runSelectionChanged = Boolean(
     runId
     && projection.value?.activeRun?.runId
@@ -748,14 +771,22 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   stopProjectionRefresh()
   controller = new AbortController()
   const requestController = controller
-  if (!preserveRenderedWorkspace) runtimeObservation.value = null
-  loading.value = true
+  projectionRequestInFlight = true
+  // Keep the editor interactive during background/manual refreshes. The initial
+  // request still owns the loading state while no projection is available.
+  loading.value = !preserveRenderedWorkspace
   loadError.value = ''
   try {
     const nextProjection = await requestWorkspaceProjection(runId, requestController.signal)
     if (!isWorkspaceVisible() || controller !== requestController || requestController.signal.aborted) return
     if (nextProjection.mission.missionId !== missionId.value
       || (runId && nextProjection.activeRun?.runId !== runId)) throw new Error('Workspace identity mismatch')
+    const previousRevision = projection.value?.projectionRevision ?? -1
+    const nextRevision = nextProjection.projectionRevision ?? -1
+    // A stale/cached response must neither replace a newer snapshot nor cause
+    // a tight refetch loop while waiting for the requested source watermark.
+    projectionRefreshDelay = targetProjectionRevision > nextRevision && nextRevision <= previousRevision ? 5000 : 150
+    if (preserveRenderedWorkspace && nextRevision >= 0 && previousRevision > nextRevision) return
     projection.value = nextProjection
     selectedRunId.value = nextProjection.activeRun?.runId || runId || null
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
@@ -790,22 +821,24 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
         pendingObservation = { runId: nextRunId, start: startObservation }
       } else startObservation()
     }
-    // 降级投影等待 identity 注册：活跃 Run 期间周期重拉，直到 PLANNING_PROJECTION_PENDING 消失。
-    scheduleProjectionRefresh()
     if (!route.query.runId && selectedRunId.value) void persistRunInUrl(selectedRunId.value)
   } catch (error: unknown) {
     if (!viewActive || controller !== requestController || requestController.signal.aborted) return
     if (isAbortError(error)) return
-    // 重试梯子耗尽才到这里：活跃 Run 期间继续周期重拉，抖动恢复后错误条自动
-    // 消失；一次网关抖动不应把报错钉在右上角并让工作台停止自愈。
+    // A known unapplied watermark is retried with backoff, preserving content.
     const status = responseStatus(error)
     loadError.value = status === 401 || status === 403 ? '无权访问所选 Run，未切换到其他 Run。'
       : status === 404 ? '所选 Run 不存在，未切换到其他 Run。' : projection.value
       ? 'Mission Workspace Projection 暂时刷新失败，正在自动重试…'
       : '无法加载 Mission Workspace Projection，请稍后重试。'
-    scheduleProjectionRefresh()
+    projectionRefreshDelay = 5000
   } finally {
-    if (controller === requestController && !requestController.signal.aborted) loading.value = false
+    if (controller === requestController) {
+      projectionRequestInFlight = false
+      if (!requestController.signal.aborted) loading.value = false
+      // One completion path owns subscription and any pending watermark retry.
+      scheduleProjectionRefresh()
+    }
   }
 }
 
@@ -1167,8 +1200,13 @@ const suspendWorkspace = () => {
   controller?.abort()
   runtimeObservationAdapter.stop()
   stopProjectionRefresh()
+  workspaceEvents.disconnect()
+  workspaceEventsMissionId = null
+  targetProjectionRevision = -1
+  projectionRequestInFlight = false
+  projectionRefreshDelay = 150
   // Runtime output is transient and cannot be replayed. The cached Mission owns
-  // its one shared SSE reference even while hidden; only polling is suspended.
+  // its one shared Runtime SSE reference while workspace invalidations suspend.
   loading.value = false
 }
 onDeactivated(() => { suspended = true; suspendWorkspace() })
