@@ -6,7 +6,7 @@ import json
 from typing import Any
 from contracts.mission_semantic import MissionIntentBasis
 
-from .prompt_context import project_prompt_context
+from .prompt_context import project_inline_content, project_prompt_context
 
 from adapters.prompt_runtime import (
     PromptEnvelope,
@@ -140,6 +140,7 @@ class NativeCapabilityPromptBuilder:
             request["contextPack"]["upstreamOutputRefs"] = trust_envelope(
                 TrustClass.AGENT_GENERATED, aliases,
             )
+        request["contextPack"] = project_inline_content(request["contextPack"])
         return compose_execution_prompt(
             descriptor=capability_descriptor,
             execution_request=request,
