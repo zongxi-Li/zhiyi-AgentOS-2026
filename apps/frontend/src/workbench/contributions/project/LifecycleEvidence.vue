@@ -1,6 +1,8 @@
 <template>
   <InspectorSection title="本次运行" :badge="phaseLabel" :badge-tone="statusSemanticTone(lifecycle.normalizedStatus)">
+    <LifecycleProgress :phase="lifecycle.phase" />
     <p class="lifecycle-summary">{{ description }}</p>
+    <WorkspaceLifecycleBar v-if="following !== undefined" controls-only :lifecycle="lifecycle" :following="following" :active-run-ids="activeRunIds || []" @follow="emit('follow')" />
     <p v-if="lifecycle.isHistorical" class="lifecycle-note">你正在查看历史运行，其执行记录保持只读。</p>
     <div v-if="lifecycle.phase === 'COMPLETED'" class="lifecycle-delivery" :class="{ 'is-missing': !lifecycle.deliverable }">
       <strong>{{ lifecycle.deliverable ? '最终交付物已就绪' : '尚未确认最终交付物' }}</strong>
@@ -32,9 +34,11 @@
       <p v-if="!lifecycle.capabilities">当前缺少经校验的操作状态，系统暂不提供执行操作。</p>
     </InspectorDetails>
     <InspectorDetails title="技术详情与事实来源" description="编号、状态版本和原因码用于定位问题，可选中文字复制。">
+      <RuntimeObservationNotice :observation="observation" :run-id="lifecycle.runId" />
       <InspectorPropertyList :rows="[
         { label: '运行编号', value: lifecycle.runId, code: true },
         { label: '状态版本', value: lifecycle.capabilities?.runtimeRevision },
+        { label: '内部阶段', value: lifecycleTechnicalLabels[lifecycle.phase] },
         { label: '原始状态', value: lifecycle.rawStatus, code: true },
         { label: '后续运行', value: lifecycle.successorRunId, code: true, emptyLabel: '尚未发现' },
         { label: '产物编号', value: lifecycle.deliverable?.artifactId, code: true },
@@ -51,34 +55,26 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import WorkspaceLifecycleBar from '@/components/workspace/WorkspaceLifecycleBar.vue'
+import RuntimeObservationNotice from '@/components/workspace/RuntimeObservationNotice.vue'
 import InspectorSection from '@/components/workbench/InspectorSection.vue'
 import InspectorPropertyList from '@/components/workbench/InspectorPropertyList.vue'
 import InspectorDetails from '@/components/workbench/InspectorDetails.vue'
-import { lifecycleLabels } from '@/features/workspace/runLifecycle'
+import LifecycleProgress from '@/components/workspace/LifecycleProgress.vue'
+import { lifecycleLabels, lifecycleTechnicalLabels, lifecycleDescriptions } from '@/features/workspace/runLifecycle'
 import { capabilityLabels, capabilityReason, inspectorValue } from '@/workbench/runtime/inspectorPresentation'
 import { statusSemanticTone } from '@/utils/statusSemantic'
 import type { WorkspaceEntry } from '@/services/api/agentos'
 import type { LifecycleProjection } from '@/workbench/runtime/lifecycleProjection'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
-const props = defineProps<{ lifecycle: LifecycleProjection; observation?: RuntimeObservation | null }>()
-const emit = defineEmits<{ openArtifact: [entry: WorkspaceEntry] }>()
+const props = defineProps<{ lifecycle: LifecycleProjection; observation?: RuntimeObservation | null; following?: boolean; activeRunIds?: string[] }>()
+const emit = defineEmits<{ follow: []; openArtifact: [entry: WorkspaceEntry] }>()
 const provenance = computed(() => props.observation?.runId === props.lifecycle.runId ? props.observation.provenance.integrityStatus : null)
 const phaseLabel = computed(() => lifecycleLabels[props.lifecycle.phase])
 const isOlderSelection = computed(() => props.lifecycle.latestRunId && props.lifecycle.latestRunId !== props.lifecycle.runId)
 const availableActions = computed(() => Object.keys(capabilityLabels).filter(action =>
   props.lifecycle.capabilities?.[action as keyof NonNullable<LifecycleProjection['capabilities']>] === true))
-const description = computed(() => ({
-  COMPLETED: '本次运行已完成，可以查看交付物和执行记录。',
-  FAILED: '运行未能完成，请查看失败原因和可用的恢复操作。',
-  CANCELLED: '本次运行已取消，已保存的执行记录仍可查看。',
-  SUPERSEDED: '后续运行已接替本次运行，可以继续查看原有记录。',
-  CREATED: '任务已创建，尚未选择运行。', QUEUED: '任务正在排队，等待开始执行。',
-  PLANNING: '正在理解任务并编排执行计划。', RUNNING: '正在执行任务，状态会自动更新。',
-  WAITING_REVIEW: '执行已暂停，等待你处理人工审核。', RECOVERING: '正在恢复执行，请留意新的运行状态。',
-  AWAITING_CONFIRMATION: '计划已准备好，等待确认后继续。', ACTIVATED_PAUSED: '执行图已激活，当前处于暂停状态。',
-  READY_TO_DISPATCH: '执行条件已准备好，等待正式派发。', DISPATCHED: '执行请求已派发，正在等待运行反馈。',
-  UNKNOWN: '暂时无法确认运行状态，请等待记录刷新后再操作。',
-}[props.lifecycle.phase]))
+const description = computed(() => lifecycleDescriptions[props.lifecycle.phase])
 </script>
 
 <style scoped>

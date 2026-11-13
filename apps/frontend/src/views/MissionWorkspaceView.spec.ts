@@ -191,6 +191,15 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.find('.editor-inspector-trigger').attributes('aria-label')).toBe('收起 Inspector')
     expect(wrapper.find('.editor-navigator-trigger').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('MISSION WORKSPACE')
+    expect(wrapper.find('main .lifecycle-bar').exists()).toBe(false)
+    expect(wrapper.find('.workspace-inspector-column .lifecycle-bar__follow').exists()).toBe(true)
+    expect(wrapper.find('.runtime-inspector > .observation-notice').exists()).toBe(false)
+    await wrapper.get('.lifecycle-bar__details-toggle').trigger('click')
+    expect(wrapper.get('.lifecycle-bar__details').text()).toContain('run_2')
+    await wrapper.findAll('.workspace-tree__entry').find(node => node.text().includes('mission.md'))!.trigger('click')
+    expect(wrapper.get('.lifecycle-bar__follow').attributes('aria-pressed')).toBe('false')
+    await wrapper.get('.lifecycle-bar__follow').trigger('click')
+    expect(wrapper.get('.lifecycle-bar__follow').attributes('aria-pressed')).toBe('true')
   })
 
   it('switches Inspector and ACG Copilot inside the shared right sidebar', async () => {

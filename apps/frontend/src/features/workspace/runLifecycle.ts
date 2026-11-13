@@ -6,11 +6,48 @@ export type LifecyclePhase = 'CREATED' | 'QUEUED' | 'PLANNING' | 'AWAITING_CONFI
   | 'ACTIVATED_PAUSED' | 'READY_TO_DISPATCH' | 'DISPATCHED' | 'RUNNING' | 'WAITING_REVIEW'
   | 'RECOVERING' | 'FAILED' | 'COMPLETED' | 'CANCELLED' | 'SUPERSEDED' | 'UNKNOWN'
 
-export const lifecycleLabels: Record<LifecyclePhase, string> = {
+export const lifecycleTechnicalLabels: Record<LifecyclePhase, string> = {
   CREATED: '任务已创建', QUEUED: '排队中', PLANNING: '规划中', AWAITING_CONFIRMATION: '等待确认',
   ACTIVATED_PAUSED: '已激活，等待执行', READY_TO_DISPATCH: '等待正式派发', DISPATCHED: '已派发，等待运行',
   RUNNING: '执行中', WAITING_REVIEW: '等待人工审核', RECOVERING: '恢复中', FAILED: '运行失败',
   COMPLETED: '已完成', CANCELLED: '已取消', SUPERSEDED: '已被后续运行替代', UNKNOWN: '状态待确认'
+}
+// User-facing progress only; never use these stages to authorize execution.
+export const lifecycleMainStages = [
+  { phase: 'CREATED', label: '待开始' },
+  { phase: 'PLANNING', label: '规划中' },
+  { phase: 'AWAITING_CONFIRMATION', label: '待确认' },
+  { phase: 'RUNNING', label: '执行中' },
+  { phase: 'COMPLETED', label: '已完成' }
+] as const
+export type LifecycleMainStage = typeof lifecycleMainStages[number]['phase']
+export const lifecycleMainStage: Record<LifecyclePhase, LifecycleMainStage | null> = {
+  CREATED: 'CREATED', QUEUED: 'CREATED', PLANNING: 'PLANNING',
+  AWAITING_CONFIRMATION: 'AWAITING_CONFIRMATION', ACTIVATED_PAUSED: 'AWAITING_CONFIRMATION',
+  READY_TO_DISPATCH: 'AWAITING_CONFIRMATION', DISPATCHED: 'RUNNING', RUNNING: 'RUNNING',
+  WAITING_REVIEW: 'RUNNING', RECOVERING: 'RUNNING', COMPLETED: 'COMPLETED',
+  FAILED: null, CANCELLED: null, SUPERSEDED: null, UNKNOWN: null
+}
+export const lifecycleLabels: Record<LifecyclePhase, string> = {
+  ...lifecycleTechnicalLabels,
+  CREATED: '待开始', QUEUED: '待开始', AWAITING_CONFIRMATION: '待确认',
+  ACTIVATED_PAUSED: '待确认', READY_TO_DISPATCH: '待确认', DISPATCHED: '执行中'
+}
+export const lifecycleDescriptions: Record<LifecyclePhase, string> = {
+  CREATED: '任务已就绪，等待开始。', QUEUED: '任务正在排队，等待开始。',
+  PLANNING: '正在理解任务并编排执行计划。',
+  AWAITING_CONFIRMATION: '计划已准备好，请确认执行方案后继续。',
+  ACTIVATED_PAUSED: '方案已准备，等待你确认继续执行。',
+  READY_TO_DISPATCH: '执行条件已准备好，等待你确认执行。',
+  DISPATCHED: '执行请求已提交，正在启动任务。',
+  RUNNING: '正在执行任务，状态会自动更新。',
+  WAITING_REVIEW: '执行已暂停，等待你处理人工审核。',
+  RECOVERING: '正在恢复执行，请留意新的运行状态。',
+  COMPLETED: '本次运行已完成，可以查看交付物和执行记录。',
+  FAILED: '运行未能完成，请查看失败原因和可用的恢复操作。',
+  CANCELLED: '本次运行已取消，已保存的执行记录仍可查看。',
+  SUPERSEDED: '后续运行已接替本次运行，可以继续查看原有记录。',
+  UNKNOWN: '暂时无法确认运行状态，请等待记录刷新后再操作。'
 }
 export function mapRunPhase(rawStatus: string | null, run: WorkflowRun | null, selectedRunId: string | null, hasMission: boolean) {
   const status = rawStatus?.toLowerCase() || 'unknown'

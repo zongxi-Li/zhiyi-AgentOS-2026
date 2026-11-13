@@ -1,6 +1,6 @@
 <template>
   <div class="sidebar-view-stack">
-    <LifecycleEvidence v-if="context?.lifecycle" :lifecycle="context.lifecycle" :observation="runtimeObservation" @open-artifact="emit('openArtifact', $event)" />
+    <LifecycleEvidence v-if="context?.lifecycle" :lifecycle="context.lifecycle" :observation="runtimeObservation" :following="following" :active-run-ids="activeRunIds" @follow="emit('follow')" @open-artifact="emit('openArtifact', $event)" />
     <InspectorSection v-else title="运行状态" :badge="statusLabel" badge-tone="status">
       <p>{{ inspectorValue(statusLabel) }}</p>
       <InspectorPropertyList :rows="[{ label: '当前对象', value: objectLabel }]" />
@@ -102,6 +102,8 @@ const props = defineProps<{
   graph: GraphProjection | null
   runStatus: string | null
   historical: boolean
+  following?: boolean
+  activeRunIds?: string[]
   context?: WorkbenchInspectorContext
   runtimeObservation?: RuntimeObservation | null
   runtimeStore?: RuntimeEventStore | null
@@ -109,7 +111,7 @@ const props = defineProps<{
   entries?: WorkspaceEntry[]
 }>()
 
-const emit = defineEmits<{ openArtifact: [entry: WorkspaceEntry]; locateGraph: [] }>()
+const emit = defineEmits<{ follow: []; openArtifact: [entry: WorkspaceEntry]; locateGraph: [] }>()
 const stepLabel = (id: string) => props.graphNodes.find(node => node.acgNodeId === id)?.name || id
 
 const liveNode = computed(() => (

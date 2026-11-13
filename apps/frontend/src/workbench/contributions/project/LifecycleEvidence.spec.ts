@@ -40,6 +40,23 @@ describe('Inspector lifecycle reading and authority boundaries', () => {
     wrapper.unmount()
   })
 
+  it.each(['AWAITING_CONFIRMATION', 'ACTIVATED_PAUSED', 'READY_TO_DISPATCH'] as const)('keeps %s within user confirmation without changing authority', phase => {
+    const view = { ...lifecycle({ status: 'pending' }), phase }
+    const wrapper = mount(LifecycleEvidence, { props: { lifecycle: view } })
+    expect(wrapper.get('[aria-current="step"]').text()).toBe('待确认')
+    expect(wrapper.get('.inspector-section__badge').text()).toBe('待确认')
+    expect(wrapper.find('.lifecycle-delivery').exists()).toBe(false)
+    expect(wrapper.get('.lifecycle-raw').text()).toContain('RUN_NOT_ACTIVE')
+    wrapper.unmount()
+  })
+
+  it.each(['failed', 'cancelled', 'superseded', 'unknown'])('does not show %s as a successful main stage', status => {
+    const wrapper = mount(LifecycleEvidence, { props: { lifecycle: lifecycle({ status }) } })
+    expect(wrapper.find('[aria-current="step"]').exists()).toBe(false)
+    expect(wrapper.find('.lifecycle-delivery').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('makes missing final delivery explicit without offering a fabricated download', () => {
     const wrapper = mount(LifecycleEvidence, { props: { lifecycle: lifecycle({ delivery: false }) } })
     expect(wrapper.text()).toContain('尚未确认最终交付物')

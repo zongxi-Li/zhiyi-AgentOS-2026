@@ -1,7 +1,7 @@
 <template>
-  <section class="lifecycle-bar" :data-tone="tone" aria-label="运行状态">
+  <section class="lifecycle-bar" :data-tone="tone" :class="{ 'is-controls-only': controlsOnly }" aria-label="运行状态">
     <div class="lifecycle-bar__row">
-      <div class="lifecycle-bar__status" role="status" aria-live="polite">
+      <div v-if="!controlsOnly" class="lifecycle-bar__status" role="status" aria-live="polite">
         <span class="lifecycle-bar__badge">
           <svg v-if="lifecycle.phase === 'COMPLETED'" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8 2.5 2.5L12 5" /></svg>
           <span v-else class="lifecycle-bar__dot" aria-hidden="true" />
@@ -37,10 +37,10 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { lifecycleLabels, type LifecyclePhase } from '@/features/workspace/runLifecycle'
+import { lifecycleLabels, lifecycleDescriptions } from '@/features/workspace/runLifecycle'
 import type { LifecycleProjection } from '@/workbench/runtime/lifecycleProjection'
 
-const props = defineProps<{ lifecycle: LifecycleProjection; activeRunIds: string[]; following: boolean }>()
+const props = defineProps<{ lifecycle: LifecycleProjection; activeRunIds: string[]; following: boolean; controlsOnly?: boolean }>()
 defineEmits<{ follow: [] }>()
 const detailsOpen = ref(false)
 const tone = computed(() => {
@@ -51,17 +51,9 @@ const tone = computed(() => {
   if (['RUNNING', 'PLANNING', 'QUEUED', 'DISPATCHED'].includes(phase)) return 'active'
   return 'muted'
 })
-const messages: Record<LifecyclePhase, string> = {
-  CREATED: '任务已就绪，等待创建运行', QUEUED: '等待调度执行', PLANNING: '正在理解需求并编排任务',
-  AWAITING_CONFIRMATION: '请确认执行方案', ACTIVATED_PAUSED: '执行图已激活，等待继续',
-  READY_TO_DISPATCH: '执行许可已就绪，等待派发', DISPATCHED: '已提交执行，等待运行反馈',
-  RUNNING: '正在执行任务', WAITING_REVIEW: '有任务需要你审核', RECOVERING: '正在恢复执行',
-  FAILED: '请查看失败原因与任务详情', COMPLETED: '交付物已就绪', CANCELLED: '本次执行已停止',
-  SUPERSEDED: '已由后续运行接替，当前记录仅供查阅', UNKNOWN: '等待同步运行状态'
-}
 const message = computed(() => props.lifecycle.deliveryStatus === 'MISSING'
   ? '执行已完成，尚未找到最终交付物'
-  : props.lifecycle.isHistorical ? '历史运行 · 当前记录仅供查阅' : messages[props.lifecycle.phase])
+  : props.lifecycle.isHistorical ? '历史运行 · 当前记录仅供查阅' : lifecycleDescriptions[props.lifecycle.phase])
 </script>
 
 <style scoped>
@@ -89,5 +81,9 @@ const message = computed(() => props.lifecycle.deliveryStatus === 'MISSING'
 .lifecycle-bar__details dt { margin-bottom: 5px; color: var(--wb-text-muted); font-size: 10px; }
 .lifecycle-bar__details dd { margin: 0; color: var(--wb-text-secondary); font-family: var(--font-mono, monospace); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; user-select: text; }
 .lifecycle-bar__reason { grid-column: 1 / -1; }
+.lifecycle-bar.is-controls-only { border: 0; background: transparent; }
+.is-controls-only .lifecycle-bar__row { min-height: 0; padding: 0; }
+.is-controls-only .lifecycle-bar__actions { flex-wrap: wrap; margin-left: 0; }
+.is-controls-only .lifecycle-bar__details { grid-template-columns: minmax(0, 1fr); margin-top: 8px; padding: 10px; }
 @media (prefers-reduced-motion: reduce) { .lifecycle-bar button, .lifecycle-bar__details-toggle svg { transition: none; } }
 </style>

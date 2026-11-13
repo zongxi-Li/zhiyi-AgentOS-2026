@@ -1,6 +1,5 @@
 <template>
   <aside class="runtime-inspector" aria-label="Workspace Secondary Sidebar">
-    <RuntimeObservationNotice :observation="workbenchContext.runtimeObservation" :run-id="runId" />
     <SecondarySidebar
       v-if="secondarySidebarViews.length && !isTaskInspector"
       :registry="registry"
@@ -64,7 +63,7 @@
             @locate-graph="emit('locateGraph')"
           />
           <InspectorDetails v-if="inspectorContext.lifecycle" title="整次运行与最终交付物">
-            <LifecycleEvidence :lifecycle="inspectorContext.lifecycle" :observation="workbenchContext.runtimeObservation" @open-artifact="emit('openArtifact', $event)" />
+            <LifecycleEvidence :lifecycle="inspectorContext.lifecycle" :observation="workbenchContext.runtimeObservation" :following="following" :active-run-ids="activeRunIds" @follow="emit('follow')" @open-artifact="emit('openArtifact', $event)" />
           </InspectorDetails>
         </div>
         <div v-else-if="activeTaskTab === 'evidence'" class="runtime-inspector__tab-panel" role="tabpanel" id="task-inspector-panel-evidence" aria-labelledby="task-inspector-tab-evidence">
@@ -167,7 +166,6 @@ import InspectorDetails from '@/components/workbench/InspectorDetails.vue'
 import LifecycleEvidence from '@/workbench/contributions/project/LifecycleEvidence.vue'
 import { handleInspectorTabKeydown, inspectorLabel, inspectorValue } from '@/workbench/runtime/inspectorPresentation'
 import TaskRelatedFilesInspector from './TaskRelatedFilesInspector.vue'
-import RuntimeObservationNotice from './RuntimeObservationNotice.vue'
 import {
   RunRuntimeStore,
   acquireRunRuntimeStore,
@@ -193,6 +191,8 @@ const props = defineProps<{
   runtimeStore?: RuntimeEventStore | null
   entries?: WorkspaceEntry[]
   artifactDocument?: ArtifactDocumentModel | null
+  following?: boolean
+  activeRunIds?: string[]
   fullscreen?: boolean
 }>()
 const ownedRuntimeStore = shallowRef<RunRuntimeStore | null>(null)
@@ -230,6 +230,7 @@ onActivated(() => { viewActive = true; connectRuntime(props.runId) })
 onBeforeUnmount(disconnectRuntime)
 
 const emit = defineEmits<{
+  follow: []
   locateGraph: []
   openArtifact: [entry: WorkspaceEntry]
   close: []
@@ -360,6 +361,9 @@ const inspectorSummary = computed(() => {
   }
 })
 const baseProps = computed(() => ({
+  following: props.following,
+  activeRunIds: props.activeRunIds,
+  onFollow: () => emit('follow'),
   entry: props.entry,
   graphNode: props.graphNode,
   selectedSymbol: props.selectedSymbol || null,

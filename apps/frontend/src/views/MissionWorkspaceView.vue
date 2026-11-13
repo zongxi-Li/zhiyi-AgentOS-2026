@@ -50,13 +50,6 @@
       <template #main="mainState">
         <section class="workspace-document-surface">
         <p v-if="deliveryIntentError" role="alert">{{ deliveryIntentError }}</p>
-        <WorkspaceLifecycleBar
-          v-if="projection"
-          :lifecycle="lifecycle"
-          :active-run-ids="activeRunIds"
-          :following="editorIntent.mode === 'follow'"
-          @follow="enableLifecycleFollow"
-        />
         <EditorGroup
           v-if="projection"
           :projection="projection"
@@ -130,6 +123,9 @@
           :registry="registry"
           :workbench-context="workbenchContext"
           :fullscreen="rightState.rightPaneMaximized"
+          :following="editorIntent.mode === 'follow'"
+          :active-run-ids="activeRunIds"
+          @follow="enableLifecycleFollow"
           @locate-graph="inspectorEntry && locateGraph(inspectorEntry)"
           @open-artifact="openEntry"
           @toggle-fullscreen="rightState.toggleRightPaneMaximized"
@@ -247,7 +243,6 @@ import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjecti
 import { beginRunRecovery, pendingRunRecovery, completeRunRecovery } from '@/workbench/runtime/recoveryIdentity'
 import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
 import { conversationBindingKey, readRunDeliverableIntent } from '@/features/workspace/navigation'
-import WorkspaceLifecycleBar from '@/components/workspace/WorkspaceLifecycleBar.vue'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 import { initialEditorIntent, selectLifecycleEditor } from '@/workbench/runtime/editorSelection'
 import { WorkspaceProjectionClient } from '@/workbench/runtime/workspaceEvents'

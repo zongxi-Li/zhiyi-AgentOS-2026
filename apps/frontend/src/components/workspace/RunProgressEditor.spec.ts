@@ -114,20 +114,20 @@ const runtimeEvent = (sequence: number, eventType: string) => ({
 })
 
 describe('RunProgressEditor', () => {
-  it('shows formal pause/permit/dispatch facts instead of RUNNING before node execution', async () => {
+  it('groups formal preparation under confirmation and accepted dispatch under execution', async () => {
     const value = observation([], 'planning')
     value.run = { runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow', domain: 'test', status: 'planning', steps: [],
       formalControl: { status: 'ACTIVATED_PAUSED', executionAuthorized: false, permitIssued: false, dispatchEligible: false,
         dispatchEnabled: true, commitId: 'c', commitmentRevision: 1, materializationId: 'm', activationId: 'a', graphId: 'g',
         graphVersion: 1, handoffId: null, handoffStatus: null, permitId: null, permitStatus: null, dispatch: null } }
     const wrapper = mountEditor({ runtimeObservation: value })
-    expect(wrapper.get('.run-progress__status').text()).toBe('ACTIVATED_PAUSED')
+    expect(wrapper.get('.run-progress__status').text()).toBe('待确认')
     const control = value.run.formalControl!
     await wrapper.setProps({ runtimeObservation: { ...value, run: { ...value.run, formalControl: { ...control, permitStatus: 'ISSUED' } } } })
-    expect(wrapper.get('.run-progress__status').text()).toBe('Permit ISSUED')
+    expect(wrapper.get('.run-progress__status').text()).toBe('待确认')
     await wrapper.setProps({ runtimeObservation: { ...value, run: { ...value.run, formalControl: { ...control,
       dispatch: { dispatchId: 'd', runId: 'run_1', permitId: 'p', graphVersion: 1, status: 'ACCEPTED' } } } } })
-    expect(wrapper.get('.run-progress__status').text()).toBe('Dispatch ACCEPTED')
+    expect(wrapper.get('.run-progress__status').text()).toBe('执行中')
     wrapper.unmount()
   })
   it('uses selected Run history instead of the current Mission goal', () => {
@@ -388,7 +388,7 @@ describe('RunProgressEditor', () => {
     })
 
     expect(wrapper.find('.run-progress-group__note').text()).toContain('依赖构建开始')
-    expect(wrapper.text()).toContain('RUNNING')
+    expect(wrapper.text()).toContain('执行中')
   })
 
   it('keeps a failed planner group failed without inventing success', () => {
@@ -534,7 +534,7 @@ describe('RunProgressEditor', () => {
 
     const wrapper = mountEditor({ runtimeObservation: observation([]), runtimeStore })
 
-    expect(wrapper.get('.run-progress__status').text()).toBe('RUNNING')
+    expect(wrapper.get('.run-progress__status').text()).toBe('执行中')
     expect(wrapper.text()).toContain('生成任务骨架')
     expect(wrapper.text()).toContain('模型响应中')
     expect(wrapper.text()).toContain('Attempt 1')
@@ -574,7 +574,7 @@ describe('RunProgressEditor', () => {
   it('shows the empty state without a run instead of pretending progress', () => {
     const wrapper = mountEditor({ runId: null })
 
-    expect(wrapper.find('.run-progress__status').text()).toBe('尚未运行')
+    expect(wrapper.find('.run-progress__status').text()).toBe('待开始')
     expect(wrapper.find('.run-progress__status').classes()).toContain('is-idle')
     expect(wrapper.text()).toContain('运行开始后，这里会显示任务规划和执行过程。')
     expect(wrapper.text()).not.toContain('等待模型思考')
@@ -586,7 +586,7 @@ describe('RunProgressEditor', () => {
       projection: projection({ runs: [] } as Partial<MissionWorkspaceProjection>)
     })
 
-    expect(wrapper.find('.run-progress__status').text()).toBe('状态未知')
+    expect(wrapper.find('.run-progress__status').text()).toBe('状态待确认')
     expect(wrapper.find('.run-progress__status').classes()).toContain('is-unknown')
     expect(wrapper.text()).not.toContain('RUNNING')
   })
@@ -597,7 +597,7 @@ describe('RunProgressEditor', () => {
       projection: projection({ runs: [{ runId: 'run_1', status: 'mystery_status', createdAt: '', completedAt: null, isActive: false }] } as Partial<MissionWorkspaceProjection>)
     })
 
-    expect(wrapper.find('.run-progress__status').text()).toBe('状态未知')
+    expect(wrapper.find('.run-progress__status').text()).toBe('状态待确认')
     expect(wrapper.text()).not.toContain('RUNNING')
   })
 

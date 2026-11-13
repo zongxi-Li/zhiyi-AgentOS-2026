@@ -2,6 +2,7 @@
   <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded }" aria-label="正式运行控制">
     <FormalToolApprovals v-if="!historical && !readonly && !executionReadonly && runId && capabilities?.canResolveToolApproval" :run-id="runId" :active="run?.status === 'running'" />
     <header><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
+    <LifecycleProgress v-if="embedded" :phase="lifecycle.phase" />
     <dl v-if="!embedded" aria-live="polite">
       <div><dt>任务</dt><dd>{{ run?.status || '状态不可用' }}</dd></div>
       <div><dt>图</dt><dd>{{ control?.status || '证据不可用' }}</dd></div>
@@ -36,6 +37,8 @@
 
 <script setup lang="ts">
 import FormalToolApprovals from './FormalToolApprovals.vue'
+import LifecycleProgress from './LifecycleProgress.vue'
+import { projectRunLifecycle, lifecycleDescriptions } from '@/features/workspace/runLifecycle'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { agentosApi, type WorkflowRun, type RunActionCapabilities } from '@/services/api/agentos'
 import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
@@ -74,11 +77,13 @@ const disabled = computed(() => props.readonly || props.executionReadonly || pen
 const reviewRun = computed(() => props.run ? { ...props.run, review: props.run.review || props.run.executionState?.reviewPayload } : null)
 const references = computed(() => ({ Commit: control.value?.commitId, Graph: control.value?.graphId, Version: control.value?.graphVersion,
   Activation: control.value?.activationId, Handoff: control.value?.handoffId, Permit: control.value?.permitId, Dispatch: control.value?.dispatch?.dispatchId }))
+const lifecycle = computed(() => projectRunLifecycle({ missionId: props.missionId, runId: props.runId || '', run: props.run }))
 const explanation = computed(() => {
   if (!props.run) return '无法验证正式状态，控制操作已禁用。'
   if (!control.value) return capabilities.value?.canCancel
     ? 'Runtime 已确认此 Run 可停止；未提供正式图控制证据。' : '无法验证正式状态，控制操作已禁用。'
   if (props.historical) return '历史 Run 只读。'
+  if (props.embedded) return lifecycleDescriptions[lifecycle.value.phase]
   if (props.run.status === 'completed') return props.embedded ? '任务已完成，可从左侧查看或下载交付文件。' : '运行已完成；已登记的 Artifact 可从左侧打开或下载，最终交付以正式引用为准。'
   if (['failed', 'cancelled'].includes(props.run.status)) return props.run.lifecycleMessage || '运行已停止。请查看下方故障与恢复证据。'
   if (props.run.status === 'waiting_review') return '等待审核；审核决定由正式接口处理。'

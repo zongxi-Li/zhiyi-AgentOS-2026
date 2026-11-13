@@ -197,6 +197,7 @@ import RunBreadcrumb from './RunBreadcrumb.vue'
 import RunSymbolRow from './RunSymbolRow.vue'
 import { findRunDocumentSymbol, projectRunDocument, type RunDocumentSymbol, type RunDocumentViewKey } from '@/workbench/runtime/runDocument'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
+import { lifecycleLabels } from '@/features/workspace/runLifecycle'
 
 type PlanningStageViewKey = Exclude<RunDocumentViewKey, 'intent-profile'>
 
@@ -246,28 +247,8 @@ const runState = computed<'idle' | 'unknown' | 'running' | 'completed' | 'failed
   return 'unknown'
 })
 
-const STATE_LABELS: Record<string, string> = {
-  idle: '尚未运行',
-  running: 'RUNNING',
-  completed: '运行完成',
-  failed: '运行失败',
-  paused: '等待审核',
-  cancelled: '已取消',
-  superseded: '已由后继 Run 替代',
-  unknown: '状态未知'
-}
-const stateLabel = computed(() => {
-  const formal = formalControl.value
-  if (formal && ['pending', 'planning'].includes(runStatus.value || '')) {
-    return formal.dispatch ? `Dispatch ${formal.dispatch.status}` : formal.permitStatus === 'ISSUED' ? 'Permit ISSUED'
-      : formal.handoffStatus === 'STATE_PREPARED' ? 'STATE_PREPARED' : formal.status
-  }
-  // Temporary planner SSE remains in the live output, not the durable Run label.
-  if (!resolvedRunId.value) return STATE_LABELS.idle
-  return ({ PLANNING: 'PLANNING', QUEUED: '等待执行', RUNNING: 'RUNNING', RECOVERING: '正在恢复',
-    WAITING_REVIEW: '等待审核', FAILED: '运行失败', COMPLETED: '运行完成', CANCELLED: '已取消',
-    SUPERSEDED: '已由后继 Run 替代' } as Record<string, string>)[lifecycle.value.phase] || '状态未知'
-})
+// Only the user-facing stage belongs in the document header.
+const stateLabel = computed(() => lifecycleLabels[lifecycle.value.phase])
 
 const shorten = (value: string, length: number) => value.length > length ? `${value.slice(0, length)}…` : value
 const goalSource = computed(() => runDisplayObjective(props.projection))
