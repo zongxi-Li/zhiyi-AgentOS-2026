@@ -17,6 +17,7 @@ from contracts.tools import hands_tools, ToolExecutionResult
 from contracts.communication import validate_contract_payload
 from runtime.live_events import runtime_event_broker
 from app.tools.permissions import get_chat_permission_service, normalize_relative_path
+from support.work_timeouts import human_approval_wait
 
 TOOLS = {'read_file':'fs.read','list_files':'fs.list','write_file':'fs.write','patch_file':'fs.patch','run_tests':'shell.exec'}
 FIELDS = {'read_file':{'path'},'list_files':{'path'},'write_file':{'path','content'},
@@ -145,16 +146,31 @@ class FormalWorkspaceTools:
                 or record.get('grantId') != authorization.grant_id or record.get('workspaceId') != authorization.workspace_id):
                 raise PermissionError('Tool replay must retain its frozen input and workspace authority')
             return ToolExecutionResult(data=cached['data'], record=record)
+        approval_ids = set()
         async def emit(kind,payload):
             if kind == 'hands_event' and payload.get('executionId'):
                 rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,
                     key=operation_key+':admission',payload={'executionId':payload['executionId'],**identity})
             approval = payload.get('approval')
-            if approval: rt.formal_tool_pending[approval['approvalId']] = approval
+            if approval:
+                approval_id = approval['approvalId']
+                if kind == 'approval_required':
+                    approval_ids.add(approval_id)
+                    rt.formal_tool_pending[approval_id] = approval
+                else:
+                    rt.formal_tool_pending.pop(approval_id, None)
+                    approval_ids.discard(approval_id)
             await runtime_event_broker.publish(run_id,RuntimeEvent(eventType='tool.'+kind,runId=run_id,
                 nodeId=step_id,attemptId=context.attempt_id,sequence=0,payload=payload))
-        await self.permissions.authorize(tool_name=approval_name,arguments=approval_data,call_id=operation_key,
-            session_id=run_id,workspace_id=authorization.workspace_id,emit=emit)
+        try:
+            with human_approval_wait():
+                await self.permissions.authorize(tool_name=approval_name,arguments=approval_data,call_id=operation_key,
+                    session_id=run_id,workspace_id=authorization.workspace_id,emit=emit)
+        finally:
+            for approval_id in tuple(approval_ids):
+                approval = rt.formal_tool_pending.get(approval_id)
+                if approval:
+                    await emit('approval_resolved', {'approval': {**approval, 'status': 'cancelled'}})
         self.guard()  # Human approval may have yielded while a permit was revoked.
         if authority: authorization = authority.resolve(context.run)
         healthy = await rt.local_runtime_health_projector.refresh(rt.local_runtime_transport)

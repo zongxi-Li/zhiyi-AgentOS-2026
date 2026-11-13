@@ -2917,7 +2917,7 @@ def create_router(
 
     @router.get("/runs/{run_id}/tool-approvals")
     async def formal_tool_approvals(run_id: str):
-        load_run(run_id, readonly=True)  # existing authenticated owner boundary
+        load_content_run(run_id)
         from app.tools.permissions import get_chat_permission_service
         service = get_chat_permission_service()
         pending = getattr(runtime, "formal_tool_pending", {})

@@ -176,14 +176,10 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
                 pass
         if (status == 'running' and run.execution_state.get('executionPermitId') and semantic is not None
                 and getattr(runtime, 'execution_permit_authority', None) is not None):
-            try:
-                from app.tools.permissions import get_chat_permission_service
-                pending = getattr(runtime, 'formal_tool_pending', {})
-                if any(item.get('sessionId') == run.run_id and get_chat_permission_service().pending(key) is not None
-                        for key, item in pending.items()):
-                    allow('canResolveToolApproval')
-            except EVIDENCE_ERRORS:
-                pass
+            # This is permission to decide a live request, not a pending count.
+            # In-memory approval arrivals must not change capabilities at the
+            # same runtimeRevision. The command still validates its live waiter.
+            allow('canResolveToolApproval')
         if status in {'pending', 'planning'} and run.execution_state.get('planningCommitRequired'):
             try:
                 from app.api.agentos_c2 import project_initial_control, require_c2
