@@ -145,6 +145,21 @@ describe('TaskEditor stage output', () => {
     expect(wrapper.get('[data-testid="task-stage-output"]').text()).not.toContain('旧结果')
   })
 
+  it('shows unfinished evidence text rather than an empty evidence count', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({ runId: 'run_1', outputRef: 'output:node_1', content: {} })
+    const runtimeStore = new RunRuntimeStore('run_1')
+    runtimeStore.apply({ eventId: 'partial', eventType: 'model.output.delta', runId: 'run_1', nodeId: 'node_1',
+      attemptId: 'attempt_1', sequence: 1, payload: { delta: '{"reasoning_content":"PRIVATE","evidence_analysis":[{"description":"正在核对恢复证据' } })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const wrapper = mountEditor(runtimeStore)
+    await wrapper.setProps({ entry: { ...task, semanticTaskKey: 'evidence_assessment', status: 'running' } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="task-stage-output"]').text()).toContain('正在核对恢复证据')
+    expect(wrapper.text()).not.toContain('共 0 项证据评估')
+    expect(wrapper.text()).not.toContain('PRIVATE')
+    wrapper.unmount()
+  })
+
   it('promotes a structured result item to the shared Inspector selection', async () => {
     vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({
       runId: 'run_1', outputRef: 'output:node_1', content: {

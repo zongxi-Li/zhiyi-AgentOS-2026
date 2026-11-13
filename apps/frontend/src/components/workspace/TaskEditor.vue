@@ -6,6 +6,7 @@
     :artifacts="artifacts"
     :document="artifactDocument"
     :stage-output-content="stageOutputContent"
+    :streaming-preview="streamingPreview"
     :stage-output-loading="stageOutputLoading"
     :stage-output-error="stageOutputError"
     :selected-symbol-id="selectedSymbolId"
@@ -35,6 +36,7 @@ import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import { projectArtifactDocument, type ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import TaskArtifactDocument from './TaskArtifactDocument.vue'
 import type { StageOutputSelection } from './StageOutputRenderer.vue'
+import { streamingContent } from '@/workbench/runtime/streamingContent'
 
 const props = defineProps<{
   entry: WorkspaceEntry
@@ -110,6 +112,11 @@ const stageOutputContent = computed(() => {
     return node.outputBuffer
   }
   return persistedStageOutput.value
+})
+const streamingPreview = computed(() => {
+  const node = liveNode.value
+  return node && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(node.status) && node.outputBuffer
+    ? streamingContent(node.outputBuffer) : null
 })
 const resultIdPrefix = computed(() => `task-result:${props.entry.semanticTaskKey || props.entry.entryId}`)
 const artifactDocument = computed(() => projectArtifactDocument({

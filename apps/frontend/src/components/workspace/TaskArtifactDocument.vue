@@ -28,8 +28,12 @@
 
     <div class="task-document__body">
       <article class="task-document__canvas">
-        <ArtifactVerification v-if="stageOutputContent && (document.artifactKind === 'final_report' || (document.artifactKind !== 'unknown' && document.verification))" :verification="document.verification" />
-        <p v-if="!stageOutputContent && stageOutputLoading" role="status">{{ stageOutputPlaceholder }}</p>
+        <ArtifactVerification v-if="streamingPreview == null && stageOutputContent && (document.artifactKind === 'final_report' || (document.artifactKind !== 'unknown' && document.verification))" :verification="document.verification" />
+        <section v-if="streamingPreview != null" class="task-document__blocks">
+          <p role="status">正在生成结果…</p>
+          <div class="task-document__markdown markdown-body" data-testid="task-stage-output" v-html="renderMarkdown(streamingPreview)" />
+        </section>
+        <p v-else-if="!stageOutputContent && stageOutputLoading" role="status">{{ stageOutputPlaceholder }}</p>
         <p v-else-if="!stageOutputContent && stageOutputError" role="alert">{{ stageOutputError }}</p>
         <p v-else-if="!stageOutputContent && isTerminal" role="status">{{ stageOutputPlaceholder }}</p>
         <StageOutputRenderer v-else-if="document.artifactKind === 'unknown'" class="task-document__blocks" :value="stageOutputContent"
@@ -89,6 +93,7 @@ const props = defineProps<{
   artifacts: WorkspaceEntry[]
   document: ArtifactDocumentModel
   stageOutputContent: string
+  streamingPreview?: string | null
   stageOutputLoading?: boolean
   stageOutputError: string
   selectedSymbolId?: string | null

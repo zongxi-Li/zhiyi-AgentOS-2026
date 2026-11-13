@@ -8,6 +8,24 @@ const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a
 })
 
 describe('RunRuntimeStore streaming projection', () => {
+  it('flushes the final chunk before completion and resets each tool model turn', () => {
+    const callbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { callbacks.push(cb); return callbacks.length })
+    try {
+      const store = new RunRuntimeStore('run')
+      store.apply(event(1, 'model.started'))
+      store.apply(event(2, 'model.output.delta', 'A', 'a1', '{"answer":"第一轮"}'))
+      store.apply(event(3, 'model.completed'))
+      expect(store.nodes.A.outputBuffer).toBe('{"answer":"第一轮"}')
+      store.apply(event(4, 'model.started'))
+      expect(store.nodes.A.outputBuffer).toBe('')
+      store.apply(event(5, 'model.output.delta', 'A', 'a1', '{"answer":"第二轮"}'))
+      store.apply(event(6, 'node.completed'))
+      callbacks.forEach(callback => callback(0))
+      expect(store.nodes.A.outputBuffer).toBe('{"answer":"第二轮"}')
+      expect(store.nodes.A.status).toBe('COMPLETED')
+    } finally { raf.mockRestore() }
+  })
   it('accepts the authenticated terminal snapshot with sequence zero', () => {
     const store = new RunRuntimeStore('run')
     store.apply(event(0, 'run.completed'))

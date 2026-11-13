@@ -15,6 +15,7 @@ export interface RuntimeEvent {
 }
 
 export interface NodeRuntimeState {
+  title?: string | null
   status: string
   phase: string
   currentAttemptId: string | null
@@ -153,6 +154,7 @@ export class RunRuntimeStore {
     if (!id) return
     const n = this.node(id)
     const p = event.payload || {}
+    if (typeof p.nodeTitle === 'string') n.title = p.nodeTitle
     const attempt = event.attemptId || n.currentAttemptId
     const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
     if (attempt && n.currentAttemptId !== attempt) {
@@ -166,7 +168,12 @@ export class RunRuntimeStore {
     if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
     if (event.eventType === 'node.started') n.status = 'RUNNING'
     else if (event.eventType === 'model.started') {
+      n.status = 'RUNNING'
       n.phase = 'MODEL_STARTING'
+      n.outputBuffer = ''
+      n.chunkCount = 0
+      n.firstTokenAt = null
+      this.pending.delete(id)
       n.modelStartedAt = timestampOrNow(event)
       n.modelName = String(p.model || '') || n.modelName
     } else if (event.eventType === 'model.first_token') {
@@ -181,10 +188,15 @@ export class RunRuntimeStore {
       n.chunkCount++
       const base = this.pending.get(id) ?? n.outputBuffer
       const next = base + String(p.delta || '')
-      this.pending.set(id, next.length > 65536 ? next.slice(-65536) : next)
+      this.pending.set(id, next.slice(0, 65536))
       this.schedule()
-    } else if (event.eventType === 'model.completed') n.phase = 'FINALIZING'
+    } else if (event.eventType === 'model.completed') {
+      if (this.pending.has(id)) n.outputBuffer = this.pending.get(id)!
+      this.pending.delete(id)
+      n.phase = 'FINALIZING'
+    }
     else if (event.eventType === 'node.completed') {
+      if (this.pending.has(id)) n.outputBuffer = this.pending.get(id)!
       n.status = 'COMPLETED'
       n.phase = 'COMPLETED'
       n.completedAt = timestampOrNow(event)
