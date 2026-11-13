@@ -14,6 +14,7 @@ from contracts.workflow import TraceEventType, WorkflowStatus, utc_now
 from runtime.review import ReviewConflictError
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.planning_operations import RuntimeTaskOperations, TaskOperationIntent
+from runtime.copilot_projection import initial_plan_summary
 from support.stores._policy import acg_review_subject
 
 
@@ -90,6 +91,8 @@ class RuntimePlanningInteraction:
             "status": run.status.value, "revision": run.runtime_revision,
             "question": question, "humanAnswers": [a.model_dump(by_alias=True, mode="json") for a in loop.human_answers],
             "review": review,
+            "initialPlan": initial_plan_summary(self.runtime, run),
+            "toolActivity": getattr(getattr(self.runtime, "execution_value_store", None), "list_tool_activity", lambda **_: [])(run_id=run_id),
             "exchanges": store.list_task_copilot_exchanges(run.mission_id),
             "decision": current.decision.model_dump(by_alias=True, mode="json") if current and current.decision else None,
             "steps": [{"stepId": s.step_id, "name": s.name, "status": s.status.value} for s in run.steps],

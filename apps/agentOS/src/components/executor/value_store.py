@@ -431,6 +431,25 @@ class SQLiteExecutionValueStore:
             )
         self._connection.commit()
 
+    def list_tool_activity(self, *, run_id: str) -> list[dict[str, Any]]:
+        """Read committed tool receipts, including nodes that have not completed.
+
+        The conversation receives identifiers and status, never cached model
+        messages, file bodies, provider reasoning or arbitrary tool output.
+        """
+        rows = self._connection.execute(
+            "SELECT payload_json, created_at FROM execution_values WHERE run_id=? "
+            "AND reference LIKE 'tool:%' AND json_type(payload_json, '$.record.executionId')='text' "
+            "ORDER BY created_at DESC LIMIT 100", (run_id,),
+        ).fetchall()
+        fields = ("executionId", "tool", "status", "stepId", "attemptId", "receiptRef")
+        activity = []
+        for payload, created_at in reversed(rows):
+            record = json.loads(payload)["record"]
+            activity.append({**{key: record.get(key) for key in fields},
+                             "createdAt": datetime.fromtimestamp(created_at, timezone.utc).isoformat()})
+        return activity
+
     def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
         reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
         row = self._connection.execute("SELECT run_id,payload_json FROM execution_values WHERE reference=?", (reference,)).fetchone()
