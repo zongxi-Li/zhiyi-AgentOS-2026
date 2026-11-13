@@ -131,6 +131,10 @@ def build_semantic_patch_lowering_input(
             expected_artifacts=next_plan.expected_artifacts,
             router_score=routed[key].score,
             dependency_output_contracts=output_contracts,
+            dependency_capabilities={
+                **{key: step.capability for key, step in steps_by_key.items()},
+                **{key: value.capability_id for key, value in descriptors.items()},
+            },
         )
 
     resource_plan = _rebuild_resource_plan(

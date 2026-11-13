@@ -330,6 +330,7 @@ class RegisteredModelRuntime:
                         "model": capability.model,
                         "usage": dict(getattr(exc, "usage", {}) or {}),
                         "finishReason": (getattr(exc, "metadata", {}) or {}).get("finishReason"),
+                        "requestDiagnostics": dict((getattr(exc, "metadata", {}) or {}).get("requestDiagnostics") or {}),
                         "capability": capability.model_dump(by_alias=True, mode="json", exclude_none=True),
                         "outputPolicy": policy.value,
                         "requestedOutputTokens": max_output_tokens,
@@ -374,6 +375,7 @@ class RegisteredModelRuntime:
                     "trustSummary": trust_summary(prompt),
                     "provider": selected_capability.provider,
                     "model": selected_capability.model,
+                    "requestDiagnostics": dict(response.metadata.get("requestDiagnostics") or {}),
                     "usage": dict(response.usage),
                     "finishReason": finish_reason,
                     "capability": selected_capability.model_dump(
@@ -409,6 +411,7 @@ class RegisteredModelRuntime:
             modelVersion=(selected_capability.version or self.version),
             streaming=False,
             trustSummary=trust_summary(prompt),
+            requestDiagnostics=dict(response.metadata.get("requestDiagnostics") or {}),
             usage=dict(response.usage),
             finishReason=finish_reason,
             capability=selected_capability,
@@ -582,6 +585,7 @@ class RegisteredModelRuntime:
                         "model": self.model,
                         "usage": dict(getattr(exc, "usage", {}) or {}),
                         "finishReason": (getattr(exc, "metadata", {}) or {}).get("finishReason"),
+                        "requestDiagnostics": dict((getattr(exc, "metadata", {}) or {}).get("requestDiagnostics") or {}),
                     }
                     raw_diagnostics = (getattr(exc, "metadata", {}) or {}).get("streamDiagnostics")
                     if isinstance(raw_diagnostics, dict):
@@ -626,6 +630,7 @@ class RegisteredModelRuntime:
                         public_activity_pending = False
                         yield emit("model.activity", activity_payload(idle_ms))
                 elif item.event_type == "completed":
+                    safe_audit["requestDiagnostics"] = dict(item.metadata.get("requestDiagnostics") or {})
                     raw_finish_reason = item.metadata.get("finishReason")
                     finish_reason = str(raw_finish_reason or "") or None
                     raw_usage = item.metadata.get("usage")

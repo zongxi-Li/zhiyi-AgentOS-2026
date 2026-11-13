@@ -245,22 +245,31 @@ class OpenAICompatibleRuntime:
                 "requested model is not declared by this adapter",
             )
         payload = self._build_payload(request, model)
+        from adapters.request_diagnostics import request_diagnostics
+        diagnostics = request_diagnostics(payload, request.schema_message_index)
         try:
             response = await self._transport.post_json(
                 path=self._PATH,
                 payload=payload,
                 idempotency_key=request.commit_id,
             )
-        except ModelInvocationError:
+        except ModelInvocationError as exc:
+            exc.metadata["requestDiagnostics"] = diagnostics
             raise
         except HttpTransportError as exc:
-            raise ModelInvocationError(exc.code, "OpenAI compatible provider request failed") from exc
+            raise ModelInvocationError(exc.code, "OpenAI compatible provider request failed", metadata={"requestDiagnostics": diagnostics}) from exc
         except Exception as exc:
             raise ModelInvocationError(
                 "MODEL_PROVIDER_FAILED",
                 "OpenAI compatible provider request failed",
+                metadata={"requestDiagnostics": diagnostics},
             ) from exc
-        return self._parse_response(request=request, response=response, model=model)
+        try:
+            result = self._parse_response(request=request, response=response, model=model)
+        except ModelInvocationError as exc:
+            exc.metadata["requestDiagnostics"] = diagnostics
+            raise
+        return result.model_copy(update={"metadata": {**result.metadata, "requestDiagnostics": diagnostics}})
 
     async def astream(self, request: ModelInvocationRequest) -> AsyncIterator[ModelStreamEvent]:
         """将 OpenAI 兼容流投影为会话内增量事件，不向运行状态写入正文。"""
@@ -271,6 +280,8 @@ class OpenAICompatibleRuntime:
         if not callable(streamer):
             raise ModelInvocationError("MODEL_STREAM_UNSUPPORTED", "transport does not support streaming")
         payload = self._build_payload(request, model)
+        from adapters.request_diagnostics import request_diagnostics
+        diagnostics = request_diagnostics(payload, request.schema_message_index)
         payload["stream"] = True
         stream_usage_present = False
         stream_usage_type: str | None = None
@@ -366,10 +377,10 @@ class OpenAICompatibleRuntime:
             raise ModelInvocationError(
                 exc.code,
                 "OpenAI compatible provider stream failed",
-                metadata={"streamDiagnostics": stream_diagnostics("provider_transport_error")},
+                metadata={"requestDiagnostics": diagnostics, "streamDiagnostics": stream_diagnostics("provider_transport_error")},
             ) from exc
         except ModelInvocationError as exc:
-            metadata = dict(exc.metadata)
+            metadata = {**exc.metadata, "requestDiagnostics": diagnostics}
             metadata.setdefault("streamDiagnostics", stream_diagnostics("provider_error"))
             raise ModelInvocationError(
                 exc.code,
@@ -381,7 +392,7 @@ class OpenAICompatibleRuntime:
             raise ModelInvocationError(
                 "MODEL_PROVIDER_FAILED",
                 "OpenAI compatible provider stream failed",
-                metadata={"streamDiagnostics": stream_diagnostics("provider_exception")},
+                metadata={"requestDiagnostics": diagnostics, "streamDiagnostics": stream_diagnostics("provider_exception")},
             ) from exc
         _log_provider_usage_shape(
             provider=self._manifest.provider,
@@ -406,7 +417,7 @@ class OpenAICompatibleRuntime:
             raise ModelInvocationError(
                 "MODEL_STREAM_INCOMPLETE",
                 "provider stream ended without completion",
-                metadata={"streamDiagnostics": stream_diagnostics("eof_before_completion")},
+                metadata={"requestDiagnostics": diagnostics, "streamDiagnostics": stream_diagnostics("eof_before_completion")},
             )
         metadata: dict[str, Any] = {}
         if finish_reason is not None:
@@ -414,6 +425,7 @@ class OpenAICompatibleRuntime:
         if stream_usage:
             metadata["usage"] = dict(stream_usage)
         metadata["streamDiagnostics"] = stream_diagnostics("completed")
+        metadata["requestDiagnostics"] = diagnostics
         yield ModelStreamEvent(
             requestId=request.request_id,
             eventType="completed",

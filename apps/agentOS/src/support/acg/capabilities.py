@@ -34,6 +34,16 @@ class CapabilityPromptProfile(BaseModel):
     evidence_policy: str = Field(default="Use only supplied or tool-returned evidence.", alias="evidencePolicy")
 
 
+class ContextConsumptionPolicy(BaseModel):
+    """Registered consumer policy, frozen when a new execution package is built."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    version: Literal["consumer-fields.v1"] = "consumer-fields.v1"
+    match_input_contract: bool = Field(default=True, alias="matchInputContract")
+    prefetch_fields: dict[str, list[str]] = Field(default_factory=dict, alias="prefetchFields")
+    memory_token_budget: int = Field(default=2048, alias="memoryTokenBudget", ge=0)
+
+
 class PlanningCapabilityDescriptor(BaseModel):
     """解析、路由和 ACG 构造共享的稳定能力描述。
 
@@ -56,6 +66,7 @@ class PlanningCapabilityDescriptor(BaseModel):
     optional_dependencies: list[str] = Field(default_factory=list, alias="optionalDependencies")
     input_contract: dict = Field(default_factory=dict, alias="inputContract")
     output_contract: dict = Field(default_factory=dict, alias="outputContract")
+    context_policy: ContextConsumptionPolicy | None = Field(default=None, alias="contextPolicy")
     produces_artifact: bool = Field(default=False, alias="producesArtifact")
     requires_evidence: bool = Field(default=False, alias="requiresEvidence")
     writes_memory: bool = Field(default=False, alias="writesMemory")

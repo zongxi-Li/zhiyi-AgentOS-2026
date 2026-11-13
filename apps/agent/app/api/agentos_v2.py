@@ -541,13 +541,11 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
             continue
         payload = dict(event.payload) if isinstance(event.payload, dict) else {}
         usage = dict(payload.get("usage") or {})
-        prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
         completion_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
         input_tokens = _usage_number(usage, "input_tokens", "prompt_tokens", "inputTokens")
         output_tokens = _usage_number(usage, "output_tokens", "completion_tokens", "outputTokens")
-        cache_read = _usage_number(
-            usage, "cache_read_tokens", "cache_read_input_tokens", "cached_tokens", "cacheReadTokens"
-        ) or _usage_number(prompt_details if isinstance(prompt_details, dict) else {}, "cached_tokens")
+        from app.api.model_usage import cache_usage
+        cache_read, cache_reported = cache_usage(usage)
         cache_write = _usage_number(
             usage, "cache_write_tokens", "cache_creation_input_tokens", "cacheWriteTokens"
         )
@@ -565,6 +563,13 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
             else None
         )
         calls.append({
+            "cacheUsageReported": cache_reported,
+            "requestDiagnostics": dict(payload.get("requestDiagnostics") or {}),
+            "stablePrefixHash": payload.get("stablePrefixHash"),
+            "capabilityId": payload.get("capabilityId"),
+            "modelVersion": payload.get("modelVersion"),
+            "promptTemplateHash": payload.get("promptTemplateHash"),
+            "schemaHash": payload.get("schemaHash"),
             "callId": event.event_id,
             "stepId": event.step_id,
             "provider": payload.get("provider"),
@@ -2952,6 +2957,7 @@ def create_router(
     @router.get("/runs/{run_id}/resource-usage")
     async def get_resource_usage(run_id: str):
         run = load_run(run_id)
+        from app.api.model_usage import cache_groups, cache_summary
         calls = _model_call_projection(run)
         usage = {
             key: sum(int(call["usage"][key]) for call in calls)
@@ -2997,12 +3003,9 @@ def create_router(
                 "callCount": len(calls),
                 "retryCount": sum(1 for call in calls if str(call.get("effectiveReason") or "").startswith("retry")),
                 "latencyMs": sum(int(call["latencyMs"]) for call in calls),
-                "cacheHitRatio": (
-                    round(usage["cacheReadTokens"] / usage["inputTokens"], 4)
-                    if usage["inputTokens"]
-                    else None
-                ),
+                **cache_summary(calls),
             },
+            "cacheGroups": cache_groups(calls),
             "contextPressure": {
                 "current": pressures[-1] if pressures else None,
                 "peak": max(pressures) if pressures else None,

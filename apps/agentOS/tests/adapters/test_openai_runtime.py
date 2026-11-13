@@ -134,7 +134,9 @@ def test_openai_compatible_runtime_maps_json_request_and_response() -> None:
     assert response.provider == "openai_compatible"
     assert response.model == "local-chat"
     assert response.usage == {"prompt_tokens": 12, "completion_tokens": 3}
-    assert response.metadata == {"finishReason": "stop"}
+    assert response.metadata["finishReason"] == "stop"
+    assert response.metadata["requestDiagnostics"]["messageCount"] == 1
+    assert response.metadata["requestDiagnostics"]["totalCharacters"] == len("只返回 JSON")
     assert transport.idempotency_key == "commit:run-1:step-1:0"
 
 

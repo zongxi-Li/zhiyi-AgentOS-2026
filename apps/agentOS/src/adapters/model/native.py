@@ -460,6 +460,7 @@ class NativeGeneralAgent(BaseAgent):
                     providerFamily=stream_completed_payload.get("providerFamily"),
                     modelVersion=stream_completed_payload.get("modelVersion"),
                     streaming=True,
+                    requestDiagnostics=dict(stream_completed_payload.get("requestDiagnostics") or {}),
                     trustSummary=dict(stream_completed_payload.get("trustSummary") or {}),
                 )
             else:

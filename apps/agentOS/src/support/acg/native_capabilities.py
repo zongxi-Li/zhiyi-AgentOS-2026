@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .capabilities import (
-    CapabilityCatalog, CapabilityPromptProfile, PlanningCapabilityDescriptor,
+    CapabilityCatalog, CapabilityPromptProfile, ContextConsumptionPolicy, PlanningCapabilityDescriptor,
 )
 
 def build_default_capability_catalog() -> CapabilityCatalog:
@@ -476,6 +476,9 @@ def native_capability_descriptors() -> tuple[PlanningCapabilityDescriptor, ...]:
     }
     return tuple(
         descriptor.model_copy(update={
+            "context_policy": ContextConsumptionPolicy(
+                matchInputContract=descriptor.capability_id not in {"verification", "artifact_generation"},
+            ),
             "description": purposes[descriptor.capability_id],
             "prompt_profile": CapabilityPromptProfile(
                 profileId=descriptor.capability_id,

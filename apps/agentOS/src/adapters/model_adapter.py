@@ -67,6 +67,7 @@ class StructuredGenerationResult(BaseModel):
     model_version: str | None = Field(default=None, alias="modelVersion")
     streaming: bool = False
     trust_summary: Dict[str, int] = Field(default_factory=dict, alias="trustSummary")
+    request_diagnostics: Dict[str, Any] = Field(default_factory=dict, alias="requestDiagnostics")
     usage: Dict[str, Any] = Field(default_factory=dict)
     finish_reason: str | None = Field(default=None, alias="finishReason")
     capability: ModelCapabilityEnvelope | None = None
@@ -109,6 +110,7 @@ class StructuredGenerationResult(BaseModel):
             "modelVersion": self.model_version,
             "streaming": self.streaming,
             "trustSummary": dict(self.trust_summary),
+            "requestDiagnostics": dict(self.request_diagnostics),
             "usage": dict(self.usage),
             "finishReason": self.finish_reason,
             "capability": (

@@ -22,6 +22,7 @@ from support.acg.schema import ACGBlueprint, ACGEdge, ComplexityLevel, EdgeType,
 from support.acg.semantic_profile import TaskSemanticProfile
 from .acg_lowerer import ACGLoweringInput, ACGLoweringStep
 from .cognitive_router import CollaborationNetwork
+from .context_policy import resolve_prefetch
 
 
 def build_acg_lowering_input(
@@ -503,6 +504,7 @@ def lowering_step_from_task(
     expected_artifacts: tuple[str, ...],
     router_score: float,
     dependency_output_contracts: dict[str, dict] | None = None,
+    dependency_capabilities: dict[str, str] | None = None,
 ) -> ACGLoweringStep:
     from_map = {
         node_id_by_task[dependency]: output_fields(
@@ -515,6 +517,18 @@ def lowering_step_from_task(
         for dependency in dependencies
     }
     input_spec = deepcopy(descriptor.input_contract)
+    prefetch = {}
+    consumption_reasons = {}
+    for dependency in dependencies:
+        source_id = node_id_by_task[dependency]
+        # Incremental lowering can reuse a frozen producer without its descriptor.
+        producer = descriptors.get(dependency)
+        producer_capability = (dependency_capabilities or {}).get(
+            dependency, producer.capability_id if producer is not None else "",
+        )
+        prefetch[source_id], consumption_reasons[source_id] = resolve_prefetch(
+            descriptor, producer_capability, from_map[source_id],
+        )
     workset = (
         task.workset.model_dump(by_alias=True, mode="json")
         if task.workset is not None
@@ -523,6 +537,7 @@ def lowering_step_from_task(
     if from_map:
         input_spec = {
             "from": from_map,
+            **({"prefetch": prefetch} if descriptor.context_policy is not None else {}),
             "schema": deepcopy(descriptor.input_contract),
             **({"workset": workset} if workset is not None else {}),
         }
@@ -543,7 +558,7 @@ def lowering_step_from_task(
             "readTypes": ["episodic"],
             "writeType": "episodic" if descriptor.writes_memory else None,
             "limit": 10,
-            "tokenBudget": None,
+            "tokenBudget": (descriptor.context_policy.memory_token_budget if descriptor.context_policy else None),
             "requireAudit": descriptor.writes_memory,
         },
         "routerScore": router_score,
@@ -556,6 +571,13 @@ def lowering_step_from_task(
         "reasoningEffort": _reasoning_effort(task, descriptor),
         "reasoningPolicyReason": _reasoning_policy_reason(task, descriptor),
     }
+    if descriptor.context_policy is not None:
+        # Stored inside inputSpec because the compiled package freezes it.
+        input_spec["contextPolicy"] = {
+            "version": descriptor.context_policy.version,
+            "selectionReasons": consumption_reasons,
+            "memoryTokenBudget": descriptor.context_policy.memory_token_budget,
+        }
     return ACGLoweringStep(
         task_key=task.key,
         node_id=node_id,

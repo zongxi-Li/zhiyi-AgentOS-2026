@@ -44,6 +44,7 @@ class ContextAssembler:
             step_goal = step_goal or str(getattr(step_node, "goal", ""))
         spec = dict(input_spec or {})
         from_map = spec.get("from") if isinstance(spec.get("from"), Mapping) else {}
+        prefetch_map = spec.get("prefetch") if isinstance(spec.get("prefetch"), Mapping) else {}
         field_list = spec.get("fields") if isinstance(spec.get("fields"), list) else []
         source_ids = list(from_map) if from_map else list(upstream_outputs)
         source_ids = [str(source) for source in source_ids if source in upstream_outputs]
@@ -52,6 +53,11 @@ class ContextAssembler:
         for source in source_ids:
             output = upstream_outputs[source]
             allowed = list(from_map.get(source, [])) if from_map else list(field_list)
+            requested = prefetch_map.get(source, allowed)
+            if not isinstance(requested, list) or set(requested) - set(allowed):
+                raise ValueError("prefetch fields must be a subset of input.from")
+            # Empty legacy prefetch means all authorized fields, like Broker.
+            allowed = requested or allowed
             chosen = select_fields(output, allowed, token_budget)
             for field in chosen:
                 source_data.setdefault(source, {})[field] = output[field]

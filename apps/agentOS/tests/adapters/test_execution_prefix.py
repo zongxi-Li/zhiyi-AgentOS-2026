@@ -162,3 +162,44 @@ def test_guarded_runtime_routes_shared_layout_to_actual_transport_and_audits_the
     assert "UNTRUSTED shared source" not in str({key: value for key, value in result.items() if key != "data"})
     assert "TRANSPORT OUTPUT CONTRACT" in transport.payload["messages"][2]["content"]
     assert result["usage"]["prompt_tokens_details"]["cached_tokens"] == 80
+    diagnostics = result["requestDiagnostics"]
+    assert diagnostics["layoutVersion"] == "shared-execution.v1"
+    assert diagnostics["sharedPrefixHash"] == result["stablePrefixHash"]
+    assert diagnostics["messageCount"] == 4
+    assert diagnostics["lengthUnit"] == "characters"
+    assert diagnostics["totalCharacters"] == sum(len(m["content"]) for m in transport.payload["messages"])
+    assert diagnostics["segments"][2]["hash"] == canonical_hash(transport.payload["messages"][2])
+    assert "UNTRUSTED shared source" not in json.dumps(diagnostics)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_invalid_json_keeps_actual_request_diagnostics_without_body(streaming):
+    from adapters.model_adapter import StructuredGenerationError
+
+    class Transport:
+        async def post_json(self, **kwargs):
+            return {"choices": [{"finish_reason": "stop", "message": {"content": "not-json"}}],
+                    "usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 20}}
+
+        async def stream_json(self, **kwargs):
+            yield {"choices": [{"delta": {"content": "not-json"}}]}
+            yield {"choices": [{"delta": {}, "finish_reason": "stop"}],
+                   "usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 20}}
+
+    registry = ModelCompatibilityRegistry()
+    registry.register(OpenAICompatibleRuntime(manifest=adapter().manifest, transport=Transport()))
+    runtime = RegisteredModelRuntime(registry=registry, provider="deepseek", model="deepseek-flash")
+    item = envelope()
+    kwargs = dict(prompt=item.user_prompt, system_prompt=item.system_prompt, prompt_metadata=item.audit_metadata(), schema={"type": "object"})
+
+    async def scenario():
+        if streaming:
+            return [event async for event in runtime.stream_generate_json(**kwargs, run_id="run")]
+        return await runtime.generate_json(**kwargs)
+
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(scenario())
+    audit = caught.value.audit
+    assert audit["requestDiagnostics"]["layoutVersion"] == "shared-execution.v1"
+    assert audit["usage"]["prompt_cache_hit_tokens"] == 20
+    assert "UNTRUSTED shared source" not in json.dumps(audit)
