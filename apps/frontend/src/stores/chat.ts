@@ -1284,9 +1284,7 @@ export const useChatStore = defineStore('chat', () => {
           const snapshot = await chatApi.getContextUsage(targetContextId, selected,
             modelSettings.provider === 'system' ? undefined : modelSettings.baseUrl, currentRoleId.value)
           if (generation === historyGeneration && contextId.value === targetContextId && contextUsageState.value === beforeSnapshot) {
-            if (!applyContextSnapshot(snapshot.contextUsage) && snapshot.contextUsage === null) {
-              contextUsageState.value = null
-            }
+            applyContextSnapshot(snapshot.contextUsage)
           }
         } catch { /* Preserve the last confirmed delivery if the snapshot read is unavailable. */ }
       }

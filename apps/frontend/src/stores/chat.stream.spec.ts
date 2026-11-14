@@ -100,7 +100,10 @@ describe('Chat stream termination', () => {
     await store.sendMessageStream('next', 'default', settings)
     expect(store.messages.at(-1)?.thinkingDurationMs).toBe(17)
   })
-  beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()) })
+  beforeEach(() => {
+    localStorage.clear(); setActivePinia(createPinia())
+    vi.spyOn(chatApi,'getContextUsage').mockResolvedValue({contextUsage:null})
+  })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it.each([

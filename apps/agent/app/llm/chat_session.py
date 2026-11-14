@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import hashlib
 import json
+import sqlite3
 import time
 
 from agents import SQLiteSession
@@ -206,7 +207,7 @@ async def read_context_usage(context_id, model, base_url, role_id):
         [base_url.rstrip('/'), model, role_id])
     try:
         view = await asyncio.to_thread(store.read, balanced_view)
-    except __import__('sqlite3').OperationalError as error:
+    except sqlite3.OperationalError as error:
         if 'no such table' not in str(error):
             raise
         return None
@@ -214,7 +215,11 @@ async def read_context_usage(context_id, model, base_url, role_id):
         if str(error) != 'CHAT_PROJECTION_MISSING':
             raise
         return None
-    return view.metadata.get('contextUsage')
+    from app.llm.capabilities import provider_model_capabilities
+    policy = settings.OSCODE_CONTEXT_COMPACTION_MODELS.get(f"{base_url.rstrip('/')}::{model}", {})
+    window = policy.get('context_window', provider_model_capabilities(model, base_url).context_window_tokens)
+    state = view.metadata.get('contextUsage') or {'usedTokens':None,'measurement':'unknown','source':'prepared'}
+    return {**state, 'maxTokens':window}
 
 
 def forget_chat_sessions(context_id):

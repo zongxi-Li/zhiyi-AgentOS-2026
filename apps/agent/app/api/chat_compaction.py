@@ -20,10 +20,6 @@ async def get_context_usage(context_id: str, model: str = '', base_url: str = ''
     if not base_url:
         model, base_url, _ = resolve_system_runtime_config(model)
     state = await read_context_usage(context_id, model, base_url, role_id)
-    if state:
-        from app.llm.capabilities import provider_model_capabilities
-        policy = settings.OSCODE_CONTEXT_COMPACTION_MODELS.get(f"{base_url.rstrip('/')}::{model}", {})
-        state = {**state, 'maxTokens': policy.get('context_window', provider_model_capabilities(model, base_url).context_window_tokens)}
     return {'contextId': context_id, 'contextUsage': state}
 
 

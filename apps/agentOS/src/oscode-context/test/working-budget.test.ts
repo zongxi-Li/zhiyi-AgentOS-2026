@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ContextCompactionEngine } from '../src/engine.ts'
+import { ContextCompactionEngine, checksum } from '../src/engine.ts'
 import { DEFAULTS, SUMMARY_FIELDS } from '../src/contracts.ts'
 import type { Message, ProjectionRequest } from '../src/contracts.ts'
 import { TokenMeter } from '../src/token-meter.ts'
@@ -8,6 +8,18 @@ import { balancedCuts, selectCycleRange } from '../src/history-segmenter.ts'
 import { pruneResults } from '../src/tool-result-pruner.ts'
 
 const config = {...DEFAULTS, recentToolGroups: 5, recentTailTokens: 14000, maxSummaryCalls: 2, summaryMaxTokens: 4096}
+
+test('validated provider baseline governs worker admission, while a changed prefix cannot reuse it', async () => {
+  const messages: Message[]=[{role:'user',content:'protected '.repeat(200000)}]
+  const input=request(messages)
+  const engine=new ContextCompactionEngine(new TokenMeter(),async()=>{throw Error('protected source must not invoke')},config)
+  const sourceUsage={inputTokens:200000,sourceHash:checksum(messages),tokenMethod:'single-request-usage+utf8-delta-upper-bound'}
+  const result=await engine.project({...input,sourceUsage})
+  assert.equal(result.metrics.inputTokens,200000)
+  assert.equal(result.metrics.outputTokens,200000)
+  assert.equal(result.status,'no_safe_range')
+  await assert.rejects(engine.project({...input,sourceUsage:{...sourceUsage,sourceHash:'changed'}}),/oversized request blocked|hard input budget/)
+})
 const request = (messages: Message[]): ProjectionRequest => ({contextId:'owner', provider:'mock', model:'mock',
   instructions:'fixed rules', tools:[], messages,
   budget:{contextWindow:1_000_000, outputReserve:65536, safetyMargin:1024, workingSetTriggerTokens:65536, workingSetTargetTokens:40960}})
