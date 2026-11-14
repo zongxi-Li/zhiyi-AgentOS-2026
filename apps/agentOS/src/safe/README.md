@@ -6,7 +6,7 @@
 
 2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验、`ActivationService` 的受信会话/manifest/phase/位置/shape校验，以及 P3 单进程会话事务基线。`ActivationContext` 必须来自受信会话，摘要来自批准配置；`SessionService` + `MemorySessionStore` 已覆盖 owner 隔离、严格 step、60秒空闲 TTL、300秒绝对 TTL、请求幂等、终态和 runner 异常失败。会话存储可注入 `ModelRunner`，分配不透明 KV 句柄并在关闭/失败/过期时释放；释放失败会保持终态并允许清理重试。当前仍无真实 KV 前向、认证、跨进程存储或网络服务，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
 
-同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并在全新锁环境完成20×16步与完整模型的logits/greedy对照。完整记录、安装方式和边界见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)。当前每步全序列重算、无KV/网络/DP，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
+同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并完成20×16步无KV基线；另完成真实权重逐token KV 短程核验，验证 prefix/suffix 分别持有本角色缓存、每步 greedy 与完整模型一致。基线和KV验证记录分别见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)和[KV续算报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-kv.md)。KV报告目前为2条合成输入×4步，尚非完整20×32验收；KV runner 与完整模型的 `DynamicCache` oracle 使用 `atol=1e-5, rtol=1e-4`，并单独记录与无KV全序列重算的数值差异，greedy 必须完全一致。网络、认证和DP仍未接通，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
 
 ## 当前状态
 
@@ -21,6 +21,7 @@
 | FP32 codec、形状边界、会话迁移/step/幂等规则、全局 L2 裁剪 | 已实现并有基础测试 | 仅独立基础能力；裁剪不构成 DP，摘要不构成认证。 |
 | 推理服务、隐私发布服务 | 已创建明确拒绝的入口 | 分别抛出 `MODEL_PARTITION_UNAVAILABLE` / `PRIVACY_UNAVAILABLE`；不返回模拟结果。 |
 | P3 `SessionService` + `MemorySessionStore` | 已实现并有并发/TTL/幂等/KV生命周期测试 | 仅进程内短时状态；可管理注入 runner 的不透明 KV 句柄，但没有真实 KV 前向、不持久化、不保存原始 prompt，不等于跨网络会话服务。 |
+| Qwen2 prefix/suffix KV decode | 已实现进程内双角色DynamicCache并通过合成与真实模型短程对照 | KV 不跨激活边界传输；尚无网络续算、取消/deadline 集成、真实 20×32 生成验收或吞吐报告。 |
 | 模型、制品、预算存储、认证/HTTP、装配和接入 | 已创建逐文件中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
 
 现有联邦学习和差分隐私代码属于旧的参数聚合域。它们没有接入拆分推理的激活传输链路，不能复用为安全证明、隐私预算记账或 DP-SGD 实现。
@@ -175,7 +176,7 @@ safe/
 
 TODO 编号与配套方案一致：P0 可行性与版本冻结 → P1 合同/协议/认证 → P2 前后段 prefill → P3 逐 token 会话 → P4 隐私/账本/反演评估 → P5 产品接入 → P6 性能/交付。`B1` 表示方向 B 的独立后续设计。文件内编号是该阶段的本文件子任务，不是新的全局阶段。
 
-每个运行骨架写明职责、步骤、失败处理和验收条件；尚未实现的模块使用空导出列表明确拒绝运行。P3 会话服务已经有真实的进程内运行 API，但依赖声明和错误拒绝入口仍不代表模型、网络或隐私能力完成。先完成合同/codec 和模型数值对照，再接入会话/网络及隐私链路，不按目录字母顺序实现。
+每个运行骨架写明职责、步骤、失败处理和验收条件；尚未实现的模块使用空导出列表明确拒绝运行。P3 已有进程内会话事务和Qwen双角色KV组件，但还没有把会话服务、真实runner、采样和认证云端接口装配成完整生成链路；依赖声明和组件测试不代表网络或隐私能力完成。
 
 当前基础用法（在 `apps/agentOS` 目录、`src` 位于 `PYTHONPATH` 时）：
 

@@ -1,19 +1,25 @@
-"""Qwen2 CPU/FP32/eager无KV参考runner，固定decoder切口续算。
+"""Qwen2 CPU/FP32/eager runner，支持无KV参考和进程内逐token缓存。
 
 参考Transformers v4.46.3的decoder/RoPE/norm调用语义，直接复用Apache-2.0库API，
 未复制网络服务代码；来源见docs/superpowers/reports/safe/references。
-仅prefill；重复全序列计算用于正确性对照，不代表逐token KV会话完成。
-TODO(P3)：双端独立KV、取消、deadline；当前对象不能并发使用或直接发布公网。
+KV 使用 Transformers DynamicCache，prefix/suffix 各自持有独立角色缓存；激活边界不传KV。
+TODO(P3)：接入取消/deadline和执行中隔离；当前角色runner不应直接暴露公网。
 """
 
 import json
 import math
 from pathlib import Path
+import secrets
+import threading
+from dataclasses import dataclass, field
+from contextlib import contextmanager
+from typing import Iterator
 
 from safe.contracts.errors import ErrorCode, SafeError
 from safe.domain.activation_policy import checked_raw_bytes
 from safe.infrastructure.artifacts.local_store import LocalArtifactStore
 from safe.infrastructure.artifacts.safetensors import check_header, validate_qwen_state
+from safe.ports.model_runner import KVHandle
 
 
 def _load_role(directory: Path, approved_digest: str, role: str):
@@ -55,31 +61,95 @@ def _load_role(directory: Path, approved_digest: str, role: str):
     return module, rope, config, manifest
 
 
-def _layers(module, rope, hidden):
-    """从位置0开始的完整prefill；两角色保留原始layer_idx及相同causal mask。"""
+def _layers(module, rope, hidden, *, cache=None, position_offset: int = 0):
+    """运行一段连续位置；可把当前角色的KV追加到本地DynamicCache。"""
     import torch
 
     length = hidden.shape[1]
-    positions = torch.arange(length, dtype=torch.long)
+    positions = torch.arange(position_offset, position_offset + length, dtype=torch.long)
     position_ids = positions.unsqueeze(0)
-    mask = torch.full((length, length), torch.finfo(torch.float32).min, dtype=torch.float32)
-    mask = torch.triu(mask, diagonal=1)[None, None, :, :]
+    key_positions = torch.arange(position_offset + length, dtype=torch.long)
+    blocked = key_positions.unsqueeze(0) > positions.unsqueeze(1)
+    mask = torch.zeros((length, position_offset + length), dtype=torch.float32)
+    mask.masked_fill_(blocked, torch.finfo(torch.float32).min)
+    mask = mask[None, None, :, :]
     embeddings = rope(hidden, position_ids)
     for layer in module.layers.values():
-        hidden = layer(hidden, attention_mask=mask, position_ids=position_ids, past_key_value=None,
-                       use_cache=False, cache_position=positions, position_embeddings=embeddings)[0]
+        hidden = layer(hidden, attention_mask=mask, position_ids=position_ids, past_key_value=cache,
+                       use_cache=cache is not None, cache_position=positions, position_embeddings=embeddings)[0]
     return hidden
+
+
+@dataclass
+class _CacheEntry:
+    session_id: str
+    cache: object
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+
+class _CacheRegistry:
+    """按随机句柄隔离缓存；释放与正在执行的单会话前向互斥。"""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, _CacheEntry] = {}
+        self._lock = threading.RLock()
+        self._closed = False
+
+    def create(self, session_id: str) -> KVHandle:
+        from transformers.cache_utils import DynamicCache
+
+        if not isinstance(session_id, str) or not session_id:
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        handle = KVHandle(secrets.token_urlsafe(32))
+        entry = _CacheEntry(session_id=session_id, cache=DynamicCache())
+        with self._lock:
+            if self._closed:
+                raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+            self._entries[str(handle)] = entry
+        return handle
+
+    @contextmanager
+    def access(self, handle: KVHandle, session_id: str) -> Iterator[_CacheEntry]:
+        key = str(handle)
+        with self._lock:
+            entry = self._entries.get(key)
+        if entry is None or entry.session_id != session_id:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        with entry.lock:
+            with self._lock:
+                if self._entries.get(key) is not entry:
+                    raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+            yield entry
+
+    def release(self, handle: KVHandle) -> None:
+        key = str(handle)
+        with self._lock:
+            entry = self._entries.pop(key, None)
+        if entry is None:
+            return
+        with entry.lock:
+            entry.cache.key_cache.clear()
+            entry.cache.value_cache.clear()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._closed = True
+            handles = tuple(KVHandle(handle) for handle in self._entries)
+        for handle in handles:
+            self.release(handle)
 
 
 class QwenPrefixRunner:
     def __init__(self, directory: Path, *, approved_digest: str):
         self._module, self._rope, self._config, self.manifest = _load_role(directory, approved_digest, "prefix")
+        self._caches = _CacheRegistry()
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
         return tuple(name for name, _ in self._module.named_parameters()) if self._module is not None else ()
 
-    def prefill(self, token_ids: tuple[int, ...]) -> tuple[tuple[float, ...], tuple[int, int, int]]:
+    def prefill(self, token_ids: tuple[int, ...], *, kv_handle: KVHandle | None = None,
+                session_id: str | None = None) -> tuple[tuple[float, ...], tuple[int, int, int]]:
         """原始token只在本机角色使用；返回扁平激活，不返回内部tensor。"""
         import torch
 
@@ -87,13 +157,51 @@ class QwenPrefixRunner:
             raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
         if not 1 <= len(token_ids) <= 128 or any(type(t) is not int or not 0 <= t < self._config.vocab_size for t in token_ids):
             raise SafeError(ErrorCode.ACTIVATION_INVALID)
+        if (kv_handle is None) != (session_id is None):
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        if len(token_ids) > self.manifest.max_context:
+            raise SafeError(ErrorCode.ACTIVATION_INVALID)
         with torch.inference_mode():
-            hidden = _layers(self._module, self._rope, self._module.embed_tokens(torch.tensor([token_ids], dtype=torch.long)))
+            embedded = self._module.embed_tokens(torch.tensor([token_ids], dtype=torch.long))
+            if kv_handle is None:
+                hidden = _layers(self._module, self._rope, embedded)
+            else:
+                with self._caches.access(kv_handle, session_id) as entry:
+                    if entry.cache.get_seq_length(0) != 0:
+                        raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+                    hidden = _layers(self._module, self._rope, embedded, cache=entry.cache)
             if not torch.isfinite(hidden).all():
                 raise SafeError(ErrorCode.ACTIVATION_INVALID)
             return tuple(hidden.reshape(-1).tolist()), (1, len(token_ids), self.manifest.hidden_size)
 
+    def create_kv(self, session_id: str) -> KVHandle:
+        if self._module is None:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        return self._caches.create(session_id)
+
+    def decode(self, kv_handle: KVHandle, session_id: str, token_id: int) -> tuple[tuple[float, ...], tuple[int, int, int]]:
+        import torch
+
+        if self._module is None:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        if type(token_id) is not int or not 0 <= token_id < self._config.vocab_size:
+            raise SafeError(ErrorCode.ACTIVATION_INVALID)
+        with self._caches.access(kv_handle, session_id) as entry:
+            position = entry.cache.get_seq_length(0)
+            if position <= 0 or position >= self.manifest.max_context:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+            with torch.inference_mode():
+                embedded = self._module.embed_tokens(torch.tensor([[token_id]], dtype=torch.long))
+                hidden = _layers(self._module, self._rope, embedded, cache=entry.cache, position_offset=position)
+                if not torch.isfinite(hidden).all():
+                    raise SafeError(ErrorCode.ACTIVATION_INVALID)
+                return tuple(hidden.reshape(-1).tolist()), (1, 1, self.manifest.hidden_size)
+
+    def release_kv(self, handle: KVHandle) -> None:
+        self._caches.release(handle)
+
     def close(self) -> None:
+        self._caches.clear()
         self._module = None
         self._rope = None
 
@@ -101,12 +209,14 @@ class QwenPrefixRunner:
 class QwenSuffixRunner:
     def __init__(self, directory: Path, *, approved_digest: str):
         self._module, self._rope, self._config, self.manifest = _load_role(directory, approved_digest, "suffix")
+        self._caches = _CacheRegistry()
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
         return tuple(name for name, _ in self._module.named_parameters()) if self._module is not None else ()
 
-    def prefill(self, activation: tuple[float, ...], shape: tuple[int, int, int]) -> tuple[float, ...]:
+    def prefill(self, activation: tuple[float, ...], shape: tuple[int, int, int], *,
+                kv_handle: KVHandle | None = None, session_id: str | None = None) -> tuple[float, ...]:
         """接收已通过身份边界的激活，输出最后位置logits供本机对照/云端采样。"""
         import torch
 
@@ -115,16 +225,57 @@ class QwenSuffixRunner:
         expected = checked_raw_bytes(shape) // 4
         if shape[2] != self.manifest.hidden_size or len(activation) != expected or not all(math.isfinite(v) for v in activation):
             raise SafeError(ErrorCode.ACTIVATION_INVALID)
+        if (kv_handle is None) != (session_id is None):
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        if shape[1] > self.manifest.max_context:
+            raise SafeError(ErrorCode.ACTIVATION_INVALID)
         with torch.inference_mode():
             hidden = torch.tensor(activation, dtype=torch.float32).reshape(shape)
             if not torch.isfinite(hidden).all():
                 raise SafeError(ErrorCode.ACTIVATION_INVALID)
-            hidden = _layers(self._module, self._rope, hidden)
+            if kv_handle is None:
+                hidden = _layers(self._module, self._rope, hidden)
+            else:
+                with self._caches.access(kv_handle, session_id) as entry:
+                    if entry.cache.get_seq_length(self.manifest.cut_layer) != 0:
+                        raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+                    hidden = _layers(self._module, self._rope, hidden, cache=entry.cache)
             logits = self._module.lm_head(self._module.norm(hidden[:, -1:, :]))[0, -1]
             if not torch.isfinite(logits).all():
                 raise SafeError(ErrorCode.ACTIVATION_INVALID)
             return tuple(logits.tolist())
 
+    def create_kv(self, session_id: str) -> KVHandle:
+        if self._module is None:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        return self._caches.create(session_id)
+
+    def decode(self, kv_handle: KVHandle, session_id: str,
+               activation: tuple[float, ...], shape: tuple[int, int, int]) -> tuple[float, ...]:
+        import torch
+
+        if self._module is None:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        if shape != (1, 1, self.manifest.hidden_size) or len(activation) != self.manifest.hidden_size:
+            raise SafeError(ErrorCode.ACTIVATION_INVALID)
+        if not all(math.isfinite(value) for value in activation):
+            raise SafeError(ErrorCode.ACTIVATION_INVALID)
+        with self._caches.access(kv_handle, session_id) as entry:
+            position = entry.cache.get_seq_length(self.manifest.cut_layer)
+            if position <= 0 or position >= self.manifest.max_context:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+            with torch.inference_mode():
+                hidden = torch.tensor(activation, dtype=torch.float32).reshape(1, 1, -1)
+                hidden = _layers(self._module, self._rope, hidden, cache=entry.cache, position_offset=position)
+                logits = self._module.lm_head(self._module.norm(hidden[:, -1:, :]))[0, -1]
+                if not torch.isfinite(logits).all():
+                    raise SafeError(ErrorCode.ACTIVATION_INVALID)
+                return tuple(logits.tolist())
+
+    def release_kv(self, handle: KVHandle) -> None:
+        self._caches.release(handle)
+
     def close(self) -> None:
+        self._caches.clear()
         self._module = None
         self._rope = None

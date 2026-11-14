@@ -15,6 +15,7 @@ from safe.contracts.errors import SafeError
 from safe.infrastructure.artifacts.export import export_qwen_artifacts
 from safe.infrastructure.artifacts.local_store import LocalArtifactStore
 from safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
+from safe.contracts.errors import ErrorCode
 
 
 @pytest.fixture
@@ -133,3 +134,63 @@ def test_export_rejects_conflicting_tied_head(exported, tmp_path):
         export_qwen_artifacts(source, target, model_id="synthetic/qwen2", revision="a" * 40,
                               cut_layer=2, license_id="Apache-2.0")
     assert not target.exists()
+
+
+def test_kv_decode_matches_full_model_and_released_handles_cannot_decode(exported):
+    """prefix/suffix 各自只保留本角色 KV，逐 token 续算应与完整模型对齐。"""
+    oracle, _, root, digest = exported
+    prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
+    suffix = QwenSuffixRunner(root / "suffix", approved_digest=digest)
+    prefix_handle = prefix.create_kv("session-1")
+    suffix_handle = suffix.create_kv("session-1")
+    ids = [1, 2, 3, 4]
+
+    def expected(current):
+        with torch.inference_mode():
+            return oracle(torch.tensor([current]), use_cache=False).logits[0, -1]
+
+    hidden, shape = prefix.prefill(tuple(ids), kv_handle=prefix_handle, session_id="session-1")
+    logits = suffix.prefill(hidden, shape, kv_handle=suffix_handle, session_id="session-1")
+    torch.testing.assert_close(torch.tensor(logits), expected(ids), atol=1e-5, rtol=1e-4)
+    for token_id in (5, 6, 7):
+        ids.append(token_id)
+        hidden, shape = prefix.decode(prefix_handle, "session-1", token_id)
+        logits = suffix.decode(suffix_handle, "session-1", hidden, shape)
+        torch.testing.assert_close(torch.tensor(logits), expected(ids), atol=1e-5, rtol=1e-4)
+
+    prefix.release_kv(prefix_handle)
+    suffix.release_kv(suffix_handle)
+    # release 要求幂等，但已释放句柄不能再次执行或创建隐藏状态。
+    prefix.release_kv(prefix_handle)
+    suffix.release_kv(suffix_handle)
+    with pytest.raises(SafeError) as error:
+        prefix.decode(prefix_handle, "session-1", 8)
+    assert error.value.code is ErrorCode.MODEL_PARTITION_UNAVAILABLE
+
+
+def test_kv_handle_is_bound_to_session_and_prefill_cannot_restart(exported):
+    _, _, root, digest = exported
+    prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
+    suffix = QwenSuffixRunner(root / "suffix", approved_digest=digest)
+    prefix_handle = prefix.create_kv("session-a")
+    suffix_handle = suffix.create_kv("session-a")
+    hidden, shape = prefix.prefill((1, 2), kv_handle=prefix_handle, session_id="session-a")
+    suffix.prefill(hidden, shape, kv_handle=suffix_handle, session_id="session-a")
+    with pytest.raises(SafeError) as error:
+        prefix.prefill((3,), kv_handle=prefix_handle, session_id="session-b")
+    assert error.value.code is ErrorCode.MODEL_PARTITION_UNAVAILABLE
+    with pytest.raises(SafeError) as error:
+        prefix.prefill((3,), kv_handle=prefix_handle, session_id="session-a")
+    assert error.value.code is ErrorCode.STEP_OUT_OF_ORDER
+
+
+def test_close_releases_all_kv_handles_and_rejects_new_sessions(exported):
+    _, _, root, digest = exported
+    prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
+    first = prefix.create_kv("session-a")
+    prefix.create_kv("session-b")
+    prefix.close()
+    prefix.release_kv(first)
+    with pytest.raises(SafeError) as error:
+        prefix.create_kv("session-c")
+    assert error.value.code is ErrorCode.MODEL_PARTITION_UNAVAILABLE
