@@ -48,7 +48,12 @@ test('请求侧：自有来源的纯音频 media 放行，其余全拒', () => {
   assert.equal(ask('media', ['audio'], 'kinlin-app://attacker/'), false)
   assert.equal(ask('media', ['audio'], undefined), false)
   assert.equal(ask('media', ['audio'], 'not a url'), false)
-  // 其他权限维持全拒
+  // 剪贴板净化写入：自有来源放行（navigator.clipboard.writeText 的权限门），非自有来源拒绝
+  assert.equal(ask('clipboard-sanitized-write', undefined, 'kinlin-app://shell/index.html'), true)
+  assert.equal(ask('clipboard-sanitized-write', undefined, 'http://127.0.0.1:5173/chat'), true)
+  assert.equal(ask('clipboard-sanitized-write', undefined, 'https://evil.example/'), false)
+  assert.equal(ask('clipboard-sanitized-write', undefined, undefined), false)
+  // 其他权限维持全拒（剪贴板读取依旧锁死）
   assert.equal(ask('geolocation', undefined, 'kinlin-app://shell/index.html'), false)
   assert.equal(ask('notifications', undefined, 'kinlin-app://shell/index.html'), false)
   assert.equal(ask('display-capture', undefined, 'kinlin-app://shell/index.html'), false)
@@ -64,6 +69,11 @@ test('检查侧：音频 media 通过，视频与其余权限拒绝', () => {
   assert.equal(check('media', 'video', 'kinlin-app://shell'), false)
   assert.equal(check('media', 'audio', 'https://evil.example'), false)
   assert.equal(check('media', 'audio', undefined), false)
+  // 剪贴板净化写入：自有来源通过能力探测，非自有来源拒绝
+  assert.equal(check('clipboard-sanitized-write', undefined, 'kinlin-app://shell'), true)
+  assert.equal(check('clipboard-sanitized-write', undefined, 'http://127.0.0.1:5173'), true)
+  assert.equal(check('clipboard-sanitized-write', undefined, 'https://evil.example'), false)
+  assert.equal(check('clipboard-sanitized-write', undefined, undefined), false)
   assert.equal(check('geolocation', undefined, 'kinlin-app://shell'), false)
   assert.equal(check('notifications', undefined, 'kinlin-app://shell'), false)
 })

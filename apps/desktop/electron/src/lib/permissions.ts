@@ -2,12 +2,16 @@
  * 桌面宿主的权限白名单决策（纯函数，供 main.ts 的会话加固接线、node --test 直测）。
  *
  * 设计边界：
- * - 唯一放行项：**应用自有页面来源**发起的 `media` 权限中的**纯音频（麦克风）**请求——
+ * - 放行项一：**应用自有页面来源**发起的 `media` 权限中的**纯音频（麦克风）**请求——
  *   Companion 的语音输入 / 语音唤醒（Web Speech API 在 Electron 里以 `media` 权限请求麦克风）。
- * - 摄像头（`video`）、屏幕捕获（`display-capture`）、定位、通知等其余权限一律拒绝，
- *   与既有 `hardenSession()` 的全拒策略保持同一收紧方向。
+ * - 放行项二：**应用自有页面来源**的 `clipboard-sanitized-write`（2026-11-14）——
+ *   Chromium 的 navigator.clipboard.writeText 走该权限检查；不授予会静默拒绝，
+ *   渲染层所有「复制」按钮弹出成功提示却写不进剪贴板。净化写入只能写入页面自己
+ *   提供的文本，无法读取剪贴板，风险面限于“页面内容本身”。
+ * - 剪贴板**读取**（clipboard-read）、摄像头（`video`）、屏幕捕获、定位、通知等
+ *   其余权限一律拒绝，与既有 `hardenSession()` 的全拒策略保持同一收紧方向。
  * - 来源校验是第二道锁：即使渲染层被注入了远程内容（导航守卫之外的场景），
- *   非自有 Origin 的麦克风请求也不会被放行。
+ *   非自有 Origin 的请求也不会被放行。
  */
 
 /**
@@ -56,9 +60,14 @@ export interface PermissionRequestInput {
 }
 
 /**
- * setPermissionRequestHandler 的同步决策：仅自有来源的纯音频 `media` 请求放行。
+ * setPermissionRequestHandler 的同步决策：自有来源的纯音频 `media` 请求与
+ * `clipboard-sanitized-write` 放行，其余全拒。
  */
 export function shouldGrantPermissionRequest(input: PermissionRequestInput): boolean {
+  if (input.permission === 'clipboard-sanitized-write') {
+    const origin = normalizeOrigin(input.requestingUrl)
+    return origin !== null && input.allowedOrigins.has(origin)
+  }
   if (input.permission !== 'media') return false
   if (!isAudioOnlyMediaRequest(input.mediaTypes)) return false
   const origin = normalizeOrigin(input.requestingUrl)
@@ -76,9 +85,14 @@ export interface PermissionCheckInput {
 
 /**
  * setPermissionCheckHandler 的同步决策：与请求侧同一口径，
- * 仅自有来源的音频 `media` 检查返回 true（`navigator.permissions.query` / 能力探测走这里）。
+ * 仅自有来源的音频 `media` 与 `clipboard-sanitized-write` 检查返回 true
+ * （`navigator.permissions.query` / Async Clipboard 能力探测走这里）。
  */
 export function shouldGrantPermissionCheck(input: PermissionCheckInput): boolean {
+  if (input.permission === 'clipboard-sanitized-write') {
+    const origin = normalizeOrigin(input.requestingOrigin)
+    return origin !== null && input.allowedOrigins.has(origin)
+  }
   if (input.permission !== 'media') return false
   if (input.mediaType === 'video') return false
   const origin = normalizeOrigin(input.requestingOrigin)
