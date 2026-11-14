@@ -7,6 +7,7 @@ opt into it without adding terminal capability to the ACG agent registry.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import re
 import signal
@@ -106,15 +107,9 @@ class WorkspaceTerminalExecutor:
             raise TerminalSecurityError("terminal command targets a protected system resource")
 
         resolved_cwd = self.resolve_cwd(cwd)
-        requested_timeout = float(
-            settings.TOOL_TERMINAL_TIMEOUT_SECONDS
-            if timeout_seconds is None
-            else timeout_seconds
-        )
-        max_timeout = max(0.1, float(settings.TOOL_TERMINAL_MAX_TIMEOUT_SECONDS))
-        if requested_timeout <= 0:
+        timeout = None if timeout_seconds is None else float(timeout_seconds)
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0 or isinstance(timeout_seconds, bool)):
             raise ValueError("terminal timeout_seconds must be positive")
-        timeout = min(requested_timeout, max_timeout)
         output_limit = max(256, int(settings.TOOL_TERMINAL_MAX_OUTPUT_BYTES))
 
         process_options: dict[str, Any] = {
@@ -175,6 +170,9 @@ class WorkspaceTerminalExecutor:
             "stdout": stdout,
             "stderr": stderr,
             "timedOut": timed_out,
+            "effectiveTimeoutSeconds": timeout,
+            "timeoutSource": "request" if timeout is not None else "unbounded",
+            "terminationReason": "timeout" if timed_out else "exited" if process.returncode == 0 else "exit_nonzero",
             "truncated": stdout_truncated or stderr_truncated,
             "durationMs": int((asyncio.get_running_loop().time() - started) * 1000),
         }

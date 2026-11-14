@@ -68,7 +68,8 @@ def model_tool_result(name: str, result: Any) -> ToolResult:
     data = result.data
     fields = {"status", "path", "text", "content", "bytes", "binary", "encoding", "version",
               "entries", "exitCode", "stdout", "stderr", "timedOut", "aborted",
-              "stdoutTruncated", "stderrTruncated", "created", "replacements"}
+              "stdoutTruncated", "stderrTruncated", "created", "replacements",
+              "terminationReason", "terminationMessage", "effectiveTimeoutSeconds", "timeoutSource"}
     output = {key: value for key, value in data.items() if key in fields}
     if getattr(result, 'record', {}).get('managedTest'):
         output['managedTest'] = True

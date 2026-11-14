@@ -20,6 +20,33 @@ import { createStandaloneHands, HandsGrantRegistry, HandsEngine, NativeFallbackP
 const workspaces: string[] = []
 const handsInstances: StandaloneHands[] = []
 
+describe('explicit process deadlines', () => {
+  it('survives the former 30 second deadline without an explicit timeout', async () => {
+    const { hands, workspace } = await makeHands()
+    const grant = fullGrant(hands, workspace)
+    expect(hands.world.resource.resolve({}).timeoutMs).toBeUndefined()
+    expect(hands.world.resource.resolve({ timeoutSeconds: null }).timeoutMs).toBeUndefined()
+    expect(hands.world.resource.resolve({ timeoutSeconds: 900 }).timeoutMs).toBe(900000)
+    const receipt = await hands.engine.execute(requestOf(hands, grant, 'shell.exec',
+      { command: 'Start-Sleep -Seconds 40; Write-Output survived' }, { limits: {} }))
+    expect(receipt.status).toBe('completed')
+    expect(receipt.output?.exitCode).toBe(0)
+    expect(receipt.output?.timedOut).toBe(false)
+    expect(receipt.output?.terminationReason).toBe('exited')
+    expect(receipt.output?.effectiveTimeoutSeconds).toBeNull()
+    expect((receipt.output?.stdout as { text: string }).text).toContain('survived')
+  }, 60000)
+
+  it('reports an explicitly requested deadline as timeout, including without streaming hooks', async () => {
+    const { hands, workspace } = await makeHands()
+    const receipt = await hands.engine.execute(requestOf(hands, fullGrant(hands, workspace), 'shell.exec',
+      { command: 'Start-Sleep -Seconds 10' }, { limits: { timeoutSeconds: 0.3 } }))
+    expect(receipt.output?.timedOut).toBe(true)
+    expect(receipt.output?.terminationReason).toBe('timeout')
+    expect(receipt.output?.terminationMessage).toContain('300ms')
+  })
+})
+
 afterAll(async () => {
   await Promise.allSettled(handsInstances.splice(0).map((h) => h.dispose()))
   for (const dir of workspaces.splice(0)) rmSync(dir, { recursive: true, force: true })

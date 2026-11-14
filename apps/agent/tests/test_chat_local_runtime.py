@@ -382,6 +382,21 @@ def test_chat_catalog_only_advertises_runtime_granted_file_capabilities(monkeypa
     assert catalog.availability()["patch_file"]["available"] is False
 
 
+def test_command_timeout_receipt_is_not_reported_as_a_crash():
+    class TimeoutClient(_ShellClient):
+        async def stream_events(self, **kwargs):
+            yield SimpleNamespace(event_type='failed', data={'exitCode': 1, 'timedOut': True})
+    executor = _executor(client=TimeoutClient())
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    with pytest.raises(LocalRuntimeToolError) as error:
+        asyncio.run(executor.execute('run_command', {'command': 'sleep', 'timeout': 900},
+            call_id='timeout', request_id='request'))
+    assert error.value.code == 'COMMAND_TIMEOUT'
+    assert error.value.terminal['timedOut'] is True
+    assert error.value.terminal['terminationReason'] == 'timeout'
+    assert '900s' in str(error.value)
+
+
 def test_run_command_uses_host_approved_local_runtime_and_streams_events(monkeypatch):
     monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
     plane = _resource_plane((*_FILE_CAPABILITIES, "shell.exec"))
@@ -433,6 +448,15 @@ def test_run_command_uses_host_approved_local_runtime_and_streams_events(monkeyp
         event_sink=sink,
     ))
     assert "timeout" not in client.calls[1][0].input
+    assert request['limits'].timeout_seconds is None
+    assert client.calls[1][1]['limits'].timeout_seconds is None
+    asyncio.run(executor.execute('run_command', {'command': 'echo hello', 'timeout': 900},
+        call_id='long-budget', request_id='chat-request', event_sink=sink))
+    assert client.calls[2][1]['limits'].timeout_seconds == 900
+    assert 'timeout' not in client.calls[2][0].input
+    context = ToolInvocationContext(catalog, frozenset({'run_command'}))
+    assert context.invocation_timeout('run_command') is None
+    assert context.sdk_tools()[0].timeout_seconds is None
 
     with pytest.raises(LocalRuntimeToolError, match="system-controlled"):
         asyncio.run(executor.execute(
