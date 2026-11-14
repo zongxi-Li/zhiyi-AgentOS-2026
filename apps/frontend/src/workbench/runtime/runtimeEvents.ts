@@ -2,6 +2,7 @@ import { localFetch } from '@/platform/api'
 import { reactive } from 'vue'
 import { apiUrl } from '@/platform'
 import { readSseFrames } from '@/utils/sse'
+import { planningContent, streamingContent } from './streamingContent'
 
 export interface RuntimeEvent {
   eventId: string
@@ -15,6 +16,7 @@ export interface RuntimeEvent {
 }
 
 export interface NodeRuntimeState {
+  outputId: string | null
   title?: string | null
   status: string
   phase: string
@@ -29,6 +31,8 @@ export interface NodeRuntimeState {
 }
 
 export interface PlanningRuntimeState {
+  outputId: string | null
+  modelStartedAt: string | null
   status: 'IDLE' | 'STARTING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
   stage: string | null
   callKey: string | null
@@ -62,11 +66,23 @@ export interface RuntimeEventStore {
   lastSequence: number
   readonly nodes: Record<string, NodeRuntimeState>
   readonly planning: PlanningRuntimeState
+  readonly outputHistory?: RuntimePublicOutput[]
   readonly activity?: { events: RuntimeEvent[]; approvalRevision: number }
   apply(event: RuntimeEvent): void
 }
 
+export interface RuntimePublicOutput {
+  id: string
+  kind: 'planning' | 'node'
+  title: string
+  timestamp: string | null
+  text: string
+  failed: boolean
+}
+
 const createPlanningState = (): PlanningRuntimeState => ({
+  outputId: null,
+  modelStartedAt: null,
   status: 'IDLE',
   stage: null,
   callKey: null,
@@ -120,6 +136,7 @@ export class RunRuntimeStore {
   lastSequence = -1
   readonly nodes = reactive<Record<string, NodeRuntimeState>>({})
   readonly planning = reactive<PlanningRuntimeState>(createPlanningState())
+  readonly outputHistory = reactive<RuntimePublicOutput[]>([])
   readonly activity = reactive({ events: [] as RuntimeEvent[], approvalRevision: 0 })
   private pending = new Map<string, string>()
   private frame = 0
@@ -128,6 +145,7 @@ export class RunRuntimeStore {
 
   private node(id: string): NodeRuntimeState {
     return this.nodes[id] ||= {
+      outputId: null,
       status: 'WAITING',
       phase: 'WAITING',
       currentAttemptId: null,
@@ -168,21 +186,27 @@ export class RunRuntimeStore {
     const attempt = event.attemptId || n.currentAttemptId
     const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
     if (attempt && n.currentAttemptId !== attempt) {
+      this.archiveNode(id)
       n.currentAttemptId = attempt
       n.status = 'WAITING'
       n.phase = 'WAITING'
       n.outputBuffer = ''
       n.chunkCount = 0
+      n.outputId = null
+      n.modelStartedAt = null
       this.pending.delete(id)
     }
     if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
     if (event.eventType === 'node.started') n.status = 'RUNNING'
     else if (event.eventType === 'model.started') {
+      this.archiveNode(id)
+      n.outputId = event.eventId
       n.status = 'RUNNING'
       n.phase = 'MODEL_STARTING'
       n.outputBuffer = ''
       n.chunkCount = 0
       n.firstTokenAt = null
+      n.lastActivityAt = null
       this.pending.delete(id)
       n.modelStartedAt = timestampOrNow(event)
       n.modelName = String(p.model || '') || n.modelName
@@ -193,6 +217,8 @@ export class RunRuntimeStore {
       n.phase = 'STREAMING'
       n.lastActivityAt = timestampOrNow(event)
     } else if (event.eventType === 'model.output.delta') {
+      n.outputId ||= event.eventId
+      n.modelStartedAt ||= timestampOrNow(event)
       n.phase = 'STREAMING'
       n.lastActivityAt = timestampOrNow(event)
       n.chunkCount++
@@ -234,12 +260,16 @@ export class RunRuntimeStore {
       state.stage = String(p.stage || '') || state.stage
       const nextCallKey = String(p.callKey || '') || state.callKey
       if (nextCallKey !== state.callKey) {
+        this.archivePlanning()
         state.outputBuffer = ''
         state.chunkCount = 0
+        state.outputId = null
+        state.modelStartedAt = null
       }
       state.callKey = nextCallKey
       state.retryIndex = numberOrNull(p.retryIndex) ?? state.retryIndex
     } else if (event.eventType === 'planner.stage.retry') {
+      this.archivePlanning()
       state.status = 'RUNNING'
       state.modelPhase = 'STARTING'
       state.stage = String(p.stage || '') || state.stage
@@ -247,7 +277,15 @@ export class RunRuntimeStore {
       state.retryIndex = numberOrNull(p.retryIndex) ?? state.retryIndex + 1
       state.outputBuffer = ''
       state.chunkCount = 0
+      state.outputId = null
+      state.modelStartedAt = null
     } else if (event.eventType === 'planner.model.started') {
+      this.archivePlanning()
+      state.outputBuffer = ''
+      state.chunkCount = 0
+      state.outputId = event.eventId
+      state.modelStartedAt = at
+      state.firstTokenAt = null
       state.status = 'RUNNING'
       state.modelPhase = 'WAITING_FIRST_TOKEN'
       state.stage = String(p.stage || '') || state.stage
@@ -266,6 +304,8 @@ export class RunRuntimeStore {
       state.receivedChunks = numberOrNull(p.receivedChunks) ?? state.receivedChunks
       state.receivedLength = numberOrNull(p.receivedLength) ?? state.receivedLength
     } else if (event.eventType === 'planner.model.output.delta') {
+      state.outputId ||= event.eventId
+      state.modelStartedAt ||= at
       state.status = 'RUNNING'
       state.modelPhase = 'ACTIVE'
       state.lastActivityAt = at
@@ -317,6 +357,27 @@ export class RunRuntimeStore {
       state.completedAt = at
       state.errorCode = String(p.errorCode || '') || null
     }
+  }
+
+  private retainOutput(output: RuntimePublicOutput) {
+    if (!output.text || this.outputHistory.some(item => item.id === output.id)) return
+    this.outputHistory.push(output)
+    let length = this.outputHistory.reduce((sum, item) => sum + item.text.length, 0)
+    while (this.outputHistory.length > 32 || length > 262144) length -= this.outputHistory.shift()!.text.length
+  }
+
+  private archiveNode(id: string) {
+    const node = this.nodes[id]
+    if (!node?.outputId) return
+    this.retainOutput({ id: node.outputId, kind: 'node', title: node.title || '当前步骤', timestamp: node.modelStartedAt,
+      text: streamingContent(this.pending.get(id) ?? node.outputBuffer), failed: node.status === 'FAILED' })
+  }
+
+  private archivePlanning() {
+    const state = this.planning
+    if (!state.outputId) return
+    this.retainOutput({ id: state.outputId, kind: 'planning', title: '规划思路摘要', timestamp: state.modelStartedAt,
+      text: planningContent(state.outputBuffer), failed: state.status === 'FAILED' })
   }
 
   private schedule() {

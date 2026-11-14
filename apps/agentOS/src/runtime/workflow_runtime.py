@@ -892,9 +892,21 @@ class ExecutionRuntime(CollaboratorAccess):
         if run.execution_state.get("planningCommitRequired"):
             if self.planning_commit_authority is None:
                 raise ValueError("Planning Commit authority is required for this Run")
-            receipt = self.planning_commit_authority.accept_initial(run.run_id)
+            failure_reported = False
+
+            def initial_progress(event):
+                nonlocal failure_reported
+                failure_reported = failure_reported or event.get("kind") == "failed"
+                self._append_planner_event(run, event, reload_run=True)
+
+            receipt = self.planning_commit_authority.accept_initial(run.run_id, progress_callback=initial_progress)
             if receipt.status == "REJECTED":
+                if not failure_reported:
+                    initial_progress({"kind": "failed", "errorCode": receipt.code.value,
+                                      "safeSummary": receipt.reason})
                 raise ValueError(f"Planning Commit rejected: {receipt.code.value}: {receipt.reason}")
+            if receipt.status == "ACCEPTED":
+                initial_progress({"kind": "completed"})
             return
         frozen_task_acceptance(run)
         provided_explicit = run.input.get("acgBlueprint") or run.acg_blueprint or None
@@ -1445,7 +1457,7 @@ class ExecutionRuntime(CollaboratorAccess):
         if self._fault_hook is not None:
             self._fault_hook(stage)
 
-    def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any]) -> None:
+    def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any], *, reload_run: bool = False) -> None:
         """Append one planner Runtime Event as an auditable Trace entry.
 
         The payload whitelist is the security boundary: only scalar planning
@@ -1571,6 +1583,10 @@ class ExecutionRuntime(CollaboratorAccess):
         # (or a stale snapshot save) committed over its terminal state.
         with self.run_lock_manager.lock_for(run.run_id):
             self._raise_if_run_cancelled(run.run_id)
+            if reload_run:
+                # Formal initial acceptance owns no mutable Run snapshot. Merge
+                # progress into the latest state under its short write lock.
+                run = self.workflow_store.get_run(run.run_id)
             self.trace_store.append(
                 run=run,
                 event_type=TraceEventType.TASK_STATUS_CHANGED,

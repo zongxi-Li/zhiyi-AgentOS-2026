@@ -28,6 +28,7 @@
 
     <div class="task-document__body">
       <article class="task-document__canvas">
+        <slot name="progress" />
         <ArtifactVerification v-if="streamingPreview == null && stageOutputContent && (document.artifactKind === 'final_report' || (document.artifactKind !== 'unknown' && document.verification))" :verification="document.verification" />
         <section v-if="streamingPreview != null" class="task-document__blocks">
           <p role="status">正在生成结果…</p>

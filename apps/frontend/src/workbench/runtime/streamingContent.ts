@@ -1,6 +1,12 @@
 /** Read public narrative values from unfinished JSON without showing its wire format. */
 const privateKey = /reasoning|chain.?of.?thought|prompt|secret|password|api[_-]?key|authorization|access[_-]?token|credential/i
-const narrativeKey = /^(?:answer|final_answer|finalAnswer|final_report|report_markdown|report|task_summary|summary|overview|description|content|text|title|name|objective|analysis|conclusion|rationale|explanation|finding|findings|recommendation|recommendations|assumptions|constraints|success_criteria|open_questions|criterion|result|evidence|unresolvedGaps|unresolved_gaps|risks|notes)$/
+const narrativeKey = /^(?:answer|final_answer|finalAnswer|final_report|report_markdown|report|task_summary|summary|overview|description|content|text|title|name|objective|primaryGoal|keyConstraints|expectedArtifacts|acceptanceCriteria|decompositionRationale|producedArtifacts|analysis|conclusion|rationale|explanation|finding|findings|recommendation|recommendations|assumptions|constraints|success_criteria|open_questions|criterion|result|evidence|unresolvedGaps|unresolved_gaps|risks|notes)$/
+
+export function planningContent(value: string): string {
+  const source = value.trimStart()
+  // A tail-truncated planning buffer has no reliable JSON field boundary.
+  return /^(?:\{|\[|```json)/.test(source) ? streamingContent(source) : ''
+}
 
 export function streamingContent(value: string): string {
   const source = value.slice(0, 65536).trimStart().replace(/^```(?:json)?\s*/, '')

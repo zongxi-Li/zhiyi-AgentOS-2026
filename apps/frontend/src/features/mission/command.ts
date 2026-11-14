@@ -65,9 +65,6 @@ export function matchesConversationLaunchContext(request: AsyncWorkflowStartRequ
 export function workbenchLaunchCommand(draft: WorkbenchDraft, extensions: PluginUiExtension[], context?: LaunchMaterials & { input?: Record<string, unknown> }): MissionLaunchCommand {
   return admit('workbench', buildWorkbenchLaunchRequest(draft, extensions, '', context))
 }
-export function legacyAcgLaunchCommand(draft: WorkbenchDraft, extensions: PluginUiExtension[], context?: LaunchMaterials & { input?: Record<string, unknown> }): MissionLaunchCommand {
-  return admit('legacy-acg', buildWorkbenchLaunchRequest(draft, extensions, '', context))
-}
 export function restoreMissionLaunchCommand(entry: MissionLaunchEntry, request: AsyncWorkflowStartRequest): MissionLaunchCommand {
   return admit(entry, request)
 }

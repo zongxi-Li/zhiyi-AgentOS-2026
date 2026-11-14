@@ -1,15 +1,15 @@
 <template>
-  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded }" aria-label="正式运行控制">
-    <header><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
-    <LifecycleProgress v-if="embedded" :phase="lifecycle.phase" />
-    <dl v-if="!embedded" aria-live="polite">
+  <section v-if="visible" class="formal-control" :class="{ 'is-embedded': embedded, 'is-conversational': conversational }" aria-label="正式运行控制">
+    <header v-if="!conversational"><strong>{{ embedded ? '任务进展' : '运行控制' }}</strong><button type="button" :disabled="pending" @click="emit('refresh')">刷新</button></header>
+    <LifecycleProgress v-if="embedded && !conversational" :phase="lifecycle.phase" />
+    <dl v-if="!embedded && !conversational" aria-live="polite">
       <div><dt>任务</dt><dd>{{ run?.status || '状态不可用' }}</dd></div>
       <div><dt>图</dt><dd>{{ control?.status || '证据不可用' }}</dd></div>
       <div><dt>许可</dt><dd>{{ control?.permitStatus || '尚未签发' }}</dd></div>
       <div><dt>执行命令</dt><dd>{{ control?.dispatch?.status || '尚未提交' }}</dd></div>
     </dl>
-    <p class="formal-control__hint">{{ explanation }}</p>
-    <p v-if="run?.failureCode || run?.error?.code" role="status" class="formal-control__error">{{ run.failureCode || run.error?.code }}</p>
+    <p v-if="!conversational || action || waitingForApproval || !control" class="formal-control__hint">{{ explanation }}</p>
+    <p v-if="!conversational && (run?.failureCode || run?.error?.code)" role="status" class="formal-control__error">{{ run.failureCode || run.error?.code }}</p>
     <div class="formal-control__actions">
       <button v-if="action" type="button" class="formal-control__primary" :disabled="disabled" @click="submit">
         {{ pending ? '正在提交…' : error && !blocked ? '重试原操作' : reviewedPlan && action === 'materialize' ? '确认规划并继续' : formalActionLabels[action] }}
@@ -23,15 +23,19 @@
     <small v-if="(readonly || executionReadonly) && !historical && action">当前视图仅供查看，正式操作已禁用。</small>
     <WorkflowReviewPanel v-if="showReview && run?.status === 'waiting_review' && !historical && !blocked && !readonly && !executionReadonly && capabilities?.canReview" :run-id="run.runId"
       :run="reviewRun" :progress="null" compact @reviewed="emit('refresh')" @conflict="emit('refresh')" />
-    <details v-if="control"><summary>{{ embedded ? '运行状态与授权引用' : '授权与关联引用' }}</summary><dl>
-      <template v-if="embedded">
+    <div :class="{ 'formal-control__meta': conversational }">
+    <details v-if="control"><summary>{{ conversational ? '运行详情' : embedded ? '运行状态与授权引用' : '授权与关联引用' }}</summary><dl>
+      <template v-if="embedded || conversational">
         <div><dt>任务</dt><dd>{{ run?.status || '状态不可用' }}</dd></div>
         <div><dt>图</dt><dd>{{ control.status }}</dd></div>
         <div><dt>许可</dt><dd>{{ control.permitStatus || '尚未签发' }}</dd></div>
         <div><dt>执行命令</dt><dd>{{ control.dispatch?.status || '尚未提交' }}</dd></div>
+        <div v-if="run?.failureCode || run?.error?.code"><dt>失败代码</dt><dd>{{ run.failureCode || run.error?.code }}</dd></div>
       </template>
       <div v-for="(value, key) in references" :key="key"><dt>{{ key }}</dt><dd :title="String(value)">{{ value || '—' }}</dd></div>
     </dl></details>
+    <button v-if="conversational" type="button" class="formal-control__refresh" :disabled="pending" @click="emit('refresh')">刷新状态</button>
+    </div>
   </section>
 </template>
 
@@ -44,7 +48,7 @@ import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
 import WorkflowReviewPanel from '@/components/agentos/WorkflowReviewPanel.vue'
 import { formalActionLabels, formalSource, nextFormalAction, prepareFormalCommand, validFormalReceipt, type FormalOperationSuccess } from '@/features/acg/formalControl'
 
-const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; readonly?: boolean; executionReadonly?: boolean; showReview?: boolean; actionCapabilities?: RunActionCapabilities | null; reviewedPlan?: { commitId: string | null; commitmentRevision: number | null } | null; requirePlanReview?: boolean; waitingForApproval?: boolean }>(), { embedded: false, readonly: false, executionReadonly: false, showReview: true, reviewedPlan: null, requirePlanReview: false, waitingForApproval: false })
+const props = withDefaults(defineProps<{ run: WorkflowRun | null; runId: string | null; missionId: string; historical: boolean; canCancel: boolean; cancelPending: boolean; embedded?: boolean; conversational?: boolean; readonly?: boolean; executionReadonly?: boolean; showReview?: boolean; actionCapabilities?: RunActionCapabilities | null; reviewedPlan?: { commitId: string | null; commitmentRevision: number | null } | null; requirePlanReview?: boolean; waitingForApproval?: boolean }>(), { embedded: false, conversational: false, readonly: false, executionReadonly: false, showReview: true, reviewedPlan: null, requirePlanReview: false, waitingForApproval: false })
 const capabilities = computed(() => !Number.isInteger(props.run?.runtimeRevision) ? null :
   readRunCapabilities(props.actionCapabilities === undefined ? props.run?.actionCapabilities : props.actionCapabilities,
     props.missionId, props.runId, props.run?.runtimeRevision, props.run?.status))
@@ -153,4 +157,12 @@ button:disabled { opacity: .5; cursor: default; }
 .formal-control__error { color: var(--wb-danger); line-height: 1.6; overflow-wrap: anywhere; }
 details { margin-top: 10px; color: var(--wb-text-muted); }
 summary { cursor: pointer; }
+.formal-control.is-conversational { max-height: none; overflow: visible; margin: 0 0 22px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.is-conversational .formal-control__actions { justify-content: flex-start; flex-wrap: wrap; }
+.is-conversational .formal-control__hint { margin: 0 0 12px; }
+.formal-control__meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; color: var(--wb-text-muted); font-size: 11px; }
+.formal-control__meta details { min-width: 0; margin-top: 10px; }
+.formal-control__meta details[open] { flex-basis: 100%; }
+.formal-control__meta .formal-control__refresh { min-height: 24px; margin-top: 6px; padding: 0; border: 0; background: transparent; color: var(--wb-text-muted); font-size: 11px; }
+.formal-control__meta .formal-control__refresh:hover:not(:disabled) { color: var(--wb-text); }
 </style>

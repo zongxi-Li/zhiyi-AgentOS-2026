@@ -114,6 +114,22 @@ const runtimeEvent = (sequence: number, eventType: string) => ({
 })
 
 describe('RunProgressEditor', () => {
+  it('shows the selected task approach and model activity before any output arrives', async () => {
+    const store = new RunRuntimeStore('run_1')
+    store.apply({ ...runtimeEvent(1, 'model.started'), nodeId: 'node_a', timestamp: new Date().toISOString() })
+    store.apply({ ...runtimeEvent(2, 'model.activity'), nodeId: 'node_a', timestamp: new Date().toISOString() })
+    const wrapper = mountEditor({ runtimeStore: store,
+      runtimeObservation: observation([...plannerEvents(), traceEvent('task-start', {}, { stepId: 'node_a', eventType: 'step_started' })]),
+      projection: projection({ entries: [{ entryId: 'task-a', name: '需求分析', kind: 'task', group: 'steps', displayOrder: 1,
+        acgNodeId: 'node_a', semanticTaskKey: 'requirements.analysis', runId: 'run_1', objective: '先核对需求来源，再检查验收覆盖' }] }),
+    })
+    await wrapper.get('[data-symbol-type="task"] .run-symbol__main').trigger('click')
+    expect(wrapper.get('.task-work-summary').text()).toContain('先核对需求来源，再检查验收覆盖')
+    expect(wrapper.get('.task-work-summary').text()).toContain('正文尚未返回')
+    await wrapper.setProps({ runtimeStore: new RunRuntimeStore('other-run') })
+    expect(wrapper.find('.task-work-summary').exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('groups formal preparation under confirmation and accepted dispatch under execution', async () => {
     const value = observation([], 'planning')
     value.run = { runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow', domain: 'test', status: 'planning', steps: [],

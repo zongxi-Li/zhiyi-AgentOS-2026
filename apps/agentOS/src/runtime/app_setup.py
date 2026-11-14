@@ -134,38 +134,42 @@ class ApplicationSetup:
         if self._started:
             return
         if not self._registered:
-            adapters: list[tuple[OpenAICompatibleRuntime, RotatingKeyProvider]] = []
             for setup in self._setups:
                 key = self._environment.get(setup.key_env, "") if setup.key_env else None
-                provider = RotatingKeyProvider(key)
-                adapter = OpenAICompatibleRuntime(
-                    manifest=CapabilityManifest(
-                        capabilityId=setup.capability_id,
-                        kind=CapabilityKind.MODEL,
-                        displayName=setup.capability_id,
-                        provider=setup.provider,
-                        capabilities=list(setup.models),
-                        version=setup.version,
-                        metadata={"priority": setup.priority, "modelCapabilities": setup.model_capabilities},
-                    ),
-                    transport=HttpJsonTransport(
-                        base_url=setup.base_url,
-                        key_provider=provider,
-                        request_timeout=setup.request_timeout,
-                        allow_insecure=setup.allow_insecure,
-                    ),
-                )
-                adapters.append((adapter, provider))
-            for adapter, provider in adapters:
-                self._registry.register(adapter)
-                self._key_providers[adapter.manifest.capability_id] = provider
+                self.register_model(setup, api_key=key or "")
             self._registered = True
-        if not self._setups:
+        if not self._key_providers:
             self._started = True
             return
         await self._registry.refresh_health()
         self._health_task = asyncio.create_task(self._refresh_loop())
         self._started = True
+
+    def register_model(self, setup: ModelSetup, *, api_key: str) -> dict[str, str]:
+        """Add an immutable route without replacing adapters held by frozen bindings.
+
+        The application supplies a unique capability ID and version. Dynamic routes
+        share this setup's health loop and shutdown rather than creating a second
+        registry or a separate background-task owner.
+        """
+        provider = RotatingKeyProvider(api_key)
+        adapter = OpenAICompatibleRuntime(
+            manifest=CapabilityManifest(
+                capabilityId=setup.capability_id, kind=CapabilityKind.MODEL,
+                displayName=setup.capability_id, provider=setup.provider,
+                capabilities=list(setup.models), version=setup.version,
+                metadata={"priority": setup.priority, "modelCapabilities": setup.model_capabilities},
+            ),
+            transport=HttpJsonTransport(
+                base_url=setup.base_url, key_provider=provider,
+                request_timeout=setup.request_timeout, allow_insecure=setup.allow_insecure,
+            ),
+        )
+        self._registry.register(adapter)
+        self._key_providers[setup.capability_id] = provider
+        if self._started and self._health_task is None:
+            self._health_task = asyncio.create_task(self._refresh_loop())
+        return {"provider": setup.provider, "model": setup.models[0], "version": setup.version}
 
     async def close(self) -> None:
         """停止健康刷新；注册对象保留，允许同一应用实例安全重启生命周期。"""

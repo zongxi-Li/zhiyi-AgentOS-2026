@@ -16,7 +16,7 @@ it('admits raw service capabilities only through LaunchAttempt, and core constru
   expect(source.filter(file => /import.*prepareMissionLaunch\b/.test(file.text) && file.path !== 'features/mission/launchAttempt.ts').map(file => file.path)).toEqual([])
   expect(source.filter(file => /import.*\blaunchMission\b/.test(file.text) && file.path !== 'features/mission/launchAttempt.ts').map(file => file.path)).toEqual([])
   expect(source.filter(file => /restoreMissionLaunchCommand\(/.test(file.text) && !['features/mission/command.ts', 'features/mission/launchAttempt.ts'].includes(file.path)).map(file => file.path)).toEqual([])
-  expect(source.filter(file => /buildWorkbenchStartRequest\(/.test(file.text) && !['features/acg/workbench.ts', 'features/mission/request.ts', 'views/AcgVisualizationView.vue'].includes(file.path)).map(file => file.path)).toEqual([])
+  expect(source.filter(file => /buildWorkbenchStartRequest\(/.test(file.text) && !['features/acg/workbench.ts', 'features/mission/request.ts'].includes(file.path)).map(file => file.path)).toEqual([])
   expect(source.filter(file => /buildConversationLaunchRequest\(/.test(file.text) && !['features/mission/command.ts', 'features/mission/request.ts'].includes(file.path)).map(file => file.path)).toEqual([])
 })
 it('keeps persistent launch identity and policy defaults out of business components', () => {

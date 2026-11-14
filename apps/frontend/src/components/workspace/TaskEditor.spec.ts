@@ -28,6 +28,20 @@ const mountEditor = (runtimeStore: RunRuntimeStore | null = null) => mount(TaskE
 
 describe('TaskEditor stage output', () => {
   afterEach(() => vi.restoreAllMocks())
+  it('displays the task approach before model output and refuses progress from another run', async () => {
+    vi.spyOn(agentosApi, 'getRunOutput').mockResolvedValue({ runId: 'run_1', outputRef: 'output:node_1', content: {} })
+    const store = new RunRuntimeStore('run_1')
+    store.apply({ eventId: 'start', eventType: 'model.started', sequence: 1, runId: 'run_1', nodeId: 'node_1' })
+    const wrapper = mountEditor(store)
+    await wrapper.setProps({ entry: { ...task, status: 'running', objective: '先分析系统边界，再设计模块接口' } })
+    expect(wrapper.get('.task-work-summary').text()).toContain('先分析系统边界，再设计模块接口')
+    expect(wrapper.get('.task-work-summary').text()).toContain('正在等待正文')
+    const other = new RunRuntimeStore('other')
+    other.apply({ eventId: 'other-start', eventType: 'model.started', sequence: 1, runId: 'other', nodeId: 'node_1' })
+    await wrapper.setProps({ runtimeStore: other })
+    expect(wrapper.find('.task-work-summary').exists()).toBe(false)
+    wrapper.unmount()
+  })
 
   it('displays one final document with no duplicate heading or source controls', async () => {
     const report = '# 成果报告\n\n## 恢复计划\n计划只出现一次。'

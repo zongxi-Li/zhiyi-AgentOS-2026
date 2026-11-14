@@ -2,8 +2,11 @@
 from contextlib import nullcontext
 import hashlib
 import json
+import logging
 from time import monotonic
 
+from adapters.model_adapter import StructuredGenerationError
+from components.planner.complexity import transport_error_code
 from components.planner.planning_commit import PlanningCommitService
 from components.planner.service import apply_task_plan_patch
 from components.planner.task_decomposer import TaskDecompositionError
@@ -22,6 +25,9 @@ from support.acg.capabilities import CapabilityCatalog
 from runtime.planner_input_adapter import planner_input
 from support.stores.planning_commit_store import content_fingerprint
 from contracts.initial_planning import InitialPlanningSourceProvenance, initial_strategy_fingerprint
+
+
+logger = logging.getLogger(__name__)
 
 
 def fingerprint(value):
@@ -420,15 +426,48 @@ class RuntimePlanningCommitAuthority:
             return PlanningCommitRejection(code=Code.STALE_GRAPH, reason="semantic request graph changed")
         return service.accept(self._request(provider, patch, proposal_id, idempotency_key))
 
-    def accept_initial(self, run_id):
+    def accept_initial(self, run_id, *, progress_callback=None):
+        stage = "sources"
+        call_key = None
+
+        def progress(event):
+            nonlocal stage, call_key
+            if event.get("stage") and event["stage"] != stage:
+                stage, call_key = event["stage"], None
+            call_key = event.get("callKey", call_key)
+            if progress_callback:
+                progress_callback(event)
+
         try:
-            return self._accept_initial(run_id)
-        except (ValueError, KeyError, TypeError) as exc:
+            return self._accept_initial(run_id, progress_callback=progress)
+        except (ValueError, KeyError, TypeError, StructuredGenerationError) as exc:
+            error_code = transport_error_code(exc)
+            current, seen = exc, set()
+            while current is not None and id(current) not in seen:
+                seen.add(id(current))
+                if isinstance(current, StructuredGenerationError):
+                    error_code = current.code
+                    break
+                current = current.__cause__ or current.__context__
             if isinstance(exc, TaskDecompositionError) and "INITIAL_CONTROL_GRAPH_UNSUPPORTED" in str(exc):
-                return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason=(
-                    "INITIAL_CONTROL_GRAPH_UNSUPPORTED: planner still proposed a control loop after bounded repair; "
-                    "initial planning requires a forward-only DAG preserving verification obligations"))
-            return PlanningCommitRejection(code=Code.STALE_STRATEGY, reason="initial compilation sources unavailable or inconsistent")
+                error_code = "INITIAL_CONTROL_GRAPH_UNSUPPORTED"
+            elif error_code is None and isinstance(exc, TaskDecompositionError):
+                error_code = "TASK_PLAN_CONTRACT_FAILED"
+            elif error_code is None and str(exc).startswith("INTENT_PROFILE_CONTRACT_FAILED"):
+                error_code = "INTENT_PROFILE_CONTRACT_FAILED"
+            source_error = stage == "sources" and error_code is None
+            error_code = error_code or ("INITIAL_SOURCES_UNAVAILABLE" if source_error else "INITIAL_PLAN_VALIDATION_FAILED")
+            # Exception text may contain a prompt or an invalid model answer.
+            # Retain stable diagnostics instead of replacing model failures with source drift.
+            logger.error("initial_planning_failed runId=%s stage=%s code=%s exception=%s",
+                         run_id, stage, error_code, type(exc).__name__)
+            progress({"kind": "failed", "stage": stage, "errorCode": error_code,
+                      **({"callKey": call_key} if call_key else {}),
+                      "safeSummary": f"{type(exc).__name__} during initial planning",
+                      "topologyAudit": self.runtime._topology_failure_audit(exc)})
+            return PlanningCommitRejection(
+                code=Code.STALE_STRATEGY if source_error else Code.INVALID_PROPOSAL,
+                reason=f"{error_code}: initial planning failed at {stage}")
 
     def validate_initial_sources(self, commit_id):
         """Read-only preflight for future materialization, never an execution grant."""
@@ -449,7 +488,7 @@ class RuntimePlanningCommitAuthority:
         except (ValueError, KeyError, TypeError):
             return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="invalid initial source evidence")
 
-    def _accept_initial(self, run_id):
+    def _accept_initial(self, run_id, *, progress_callback):
         """Semantic planning happens outside Run lock and database write transaction."""
         key = "initial-planning:" + run_id
         with self.runtime.run_lock_manager.lock_for(run_id):
@@ -484,6 +523,9 @@ class RuntimePlanningCommitAuthority:
         engine.semantic_planner.capability_catalog = catalog
         engine.semantic_planner.task_decomposer.capability_catalog = catalog
         engine.intent_parser.capability_catalog = catalog
+        engine.intent_parser.progress_callback = progress_callback
+        engine.semantic_planner.task_decomposer.progress_callback = progress_callback
+        progress_callback({"stage": "planning", "status": "started", "kind": "started"})
         profile = None
         if workflow.planning_nodes:
             plan = engine.semantic_planner.plan_template(mission_id=run.mission_id, workflow=workflow,
@@ -497,6 +539,10 @@ class RuntimePlanningCommitAuthority:
             profile = engine.intent_parser.parse(intent=basis.objective, domain=workflow.domain,
                 task_type=workflow.intent, task_input=data, use_llm=not bool(run.input.get("deterministicIntent")),
                 declared_capabilities=list(workflow.required_capabilities or ()), planning_deadline=deadline, run_id=run_id)
+            progress_callback({"stage": "intent_profile", "status": "profile_resolved", "kind": "profile_resolved",
+                "constraintCount": len(profile.key_constraints),
+                "requiredCapabilityCount": len(profile.required_capabilities),
+                "expectedArtifactCount": len(profile.expected_artifacts)})
             plan = engine.semantic_planner.plan_profile(mission_id=run.mission_id, profile=profile,
                 strategy="initial_commit_candidate", task_input=data,
                 existing_semantic_tasks=self.runtime._existing_semantic_task_catalog(run.mission_id),
@@ -521,6 +567,7 @@ class RuntimePlanningCommitAuthority:
                 **origin.model_dump(mode="json", by_alias=True), "staticFingerprint": origin.content_fingerprint()})
             captured = captured.model_copy(update={"strategy_fingerprint":
                 initial_strategy_fingerprint(origin.runtime_fingerprint, origin)})
+        progress_callback({**engine._plan_progress_payload(plan), "kind": "plan_parsed"})
         with self.runtime.run_lock_manager.lock_for(run_id):
             provider = self._provider(run_id, plan, True)
             provider.initial_provenance = origin

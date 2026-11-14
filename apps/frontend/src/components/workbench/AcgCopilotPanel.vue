@@ -8,26 +8,20 @@
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
       <CopilotRunTimeline :key="runId || ''" :run-id="runId" :status="state?.status || runStatus || ''"
-        :plan="state?.initialPlan" :tools="state?.toolActivity" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="scrollBottom">
+        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()">
       <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
-        :can-cancel="canCancel" :cancel-pending="cancelPending" embedded
+        :can-cancel="canCancel" :cancel-pending="cancelPending" embedded conversational
         :readonly="readonly || historical || busy || loading || !state"
         :execution-readonly="permission !== 'task_collaboration'" :reviewed-plan="state?.initialPlan" require-plan-review :waiting-for-approval="hasPendingToolApproval"
         :show-review="!state?.review" @refresh="refreshRun" @cancel="emit('cancel-run')" /></template>
       <template #approvals><FormalToolApprovals v-if="runId && !historical" :run-id="runId" :active="(state?.status || runStatus) === 'running'"
         :readonly="readonly || !allows('canResolveToolApproval')" @waiting="hasPendingToolApproval = $event" @resolved="refreshRun" /></template>
-      </CopilotRunTimeline>
-      <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
-      <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval" class="empty-state">
-        <img class="empty-watermark" :src="activePack.mark" alt="" aria-hidden="true" />
-        <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
-        <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
-      </div>
-      <article v-for="message in messages" :key="message.id" v-memo="[message.content, message.planner, receipts[receiptKey(message.sourceRunId, message.proposalId)], busy, loading, permission, historical]" class="message" :class="`is-${message.role}`">
+      <template #message="{ message }">
+      <article class="message" :class="`is-${message.role}`">
         <div v-if="message.planner" class="message-meta"><small>任务澄清</small></div>
-        <div class="message-content" v-html="renderMarkdown(message.content)"></div>
+        <div class="message-content markdown-body" v-html="messageMarkup.get(message.id)"></div>
         <div v-if="message.action" class="operation-card">
           <strong>{{ actionLabel(message.action.kind) }}</strong>
           <p v-if="message.action.kind === 'user_input'">在当前执行片段结束后，由 Planner 重新观察并处理补充要求。</p>
@@ -36,7 +30,16 @@
         </div>
         <div v-if="message.receipt" class="operation-receipt"><span>{{ message.receipt.kind === 'user_input' ? '等待 Planner 处理' : '运行已提交' }}</span><button v-if="message.receipt.runId !== runId" type="button" @click="emit('select-run', message.receipt.runId)">查看新运行 <el-icon><ArrowRight /></el-icon></button></div>
       </article>
-      <article v-if="busy && pendingUser" class="stream-turn"><div v-if="!answering" class="message is-user"><div class="message-content">{{ pendingUser }}</div></div><div v-if="streamContent" class="message-content streaming-content" v-html="renderMarkdown(streamContent)"></div><div v-else class="stream-activity"><el-icon class="is-loading"><Loading /></el-icon><span>{{ answering ? '正在提交回答' : '正在生成回复' }}</span><div class="thinking-line"></div></div></article>
+      </template>
+      </CopilotRunTimeline>
+      <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
+      <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval && !hasTimelineContent && !['pending', 'planning'].includes(state?.status || runStatus || '')" class="empty-state">
+        <img class="empty-watermark" :src="activePack.mark" alt="" aria-hidden="true" />
+        <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
+        <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
+      </div>
+
+      <article v-if="busy && pendingUser" class="stream-turn"><div v-if="!answering" class="message is-user"><div class="message-content">{{ pendingUser }}</div></div><div v-if="streamContent" class="message-content markdown-body streaming-content" v-html="renderMarkdown(streamContent)"></div><div v-else class="stream-activity"><el-icon class="is-loading"><Loading /></el-icon><span>{{ answering ? '正在提交回答' : '正在生成回复' }}</span><div class="thinking-line"></div></div></article>
       <article v-if="state?.question" class="question-card">
         <div class="question-heading"><el-icon><ChatDotRound /></el-icon><span>需要你的补充</span><small>任务已暂停</small></div>
         <p>{{ state.question.prompt }}</p>
@@ -126,6 +129,7 @@ import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage, type RunActionCapabilities } from '@/services/api/agentos'
 import { readRunCapabilities, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
 import type { CopilotPermission, CopilotState, CopilotAction, CopilotActionKind } from '@/services/api/agentos/api/copilot'
+import type { CopilotConversationMessage } from './copilotConversation'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import { renderMarkdown } from '@/utils/markdown'
 import { clearCopilotSession, getCopilotSession, saveCopilotSession } from './copilotSessionCache'
@@ -158,6 +162,7 @@ const hasFormalControl = computed(() => Boolean(controlRun.value?.formalControl 
 const refreshRun = () => { emit('refresh-run'); void refresh() }
 const state = ref<CopilotState | null>(null)
 const hasPendingToolApproval = ref(false)
+const hasTimelineContent = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
 const tab = ref<'chat' | 'trace'>('chat')
 const draft = ref(''), error = ref(''), traceSearch = ref('')
@@ -184,7 +189,8 @@ const permissionOptions = [
   { value: 'task_collaboration' as const, label: '按需确认', description: '对整个任务生效，跨运行持续协作；操作仍需确认与系统校验' }
 ]
 const modelCalls = ref<ModelCallUsage[]>([]), callCursor = ref<string | null>(null), callError = ref(''), callsLoading = ref(false)
-let generation = 0, timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
+let generation = 0, refreshSequence = 0, timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
+let validatedRunId: string | null = null
 let viewActive = true
 let viewSuspended = false
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
@@ -193,10 +199,11 @@ const failedSteps = computed(() => state.value?.steps.filter(step => step.status
 const statusLabel = computed(() => hasPendingToolApproval.value ? '等待你确认' : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
 const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
 const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
-const messages = computed(() => [
+const messages = computed<CopilotConversationMessage[]>(() => [
   ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }]),
   ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }])
 ].sort((a, b) => a.time.localeCompare(b.time)))
+const messageMarkup = computed(() => new Map(messages.value.map(message => [message.id, renderMarkdown(message.content)])))
 const lanes = ['planner', 'model', 'tool', 'execution']
 const laneLabel = (kind: string) => ({ planner: '规划', model: '模型', tool: '工具', execution: '执行' } as Record<string, string>)[kind] || kind
 const trajectory = computed(() => {
@@ -228,10 +235,13 @@ async function changePermission(value: CopilotPermission) {
 async function refresh(silent = false) {
   const id = props.runId, token = generation
   if (!id) return
-  if (!silent) loading.value = true
+  const request = ++refreshSequence
+  // An existing, validated snapshot remains usable while its replacement loads.
+  if (!silent && (!state.value || validatedRunId !== id)) loading.value = true
   try {
     const next = await agentosApi.getCopilot(id, controller?.signal)
-    if (token !== generation) return
+    if (token !== generation || request !== refreshSequence) return
+    validatedRunId = id
     const changedQuestion = next.question?.questionId !== state.value?.question?.questionId
     state.value = next
     if (next.taskPermission) permission.value = next.taskPermission
@@ -240,8 +250,8 @@ async function refresh(silent = false) {
     if (!silent) error.value = ''
     scrollBottom()
     if (tab.value === 'trace' && !silent) void loadCalls()
-  } catch (e: any) { if (token === generation && e?.code !== 'ERR_CANCELED') { error.value = errorMessage(e); if ([401, 403, 404].includes(e?.response?.status)) { state.value = null; clearCopilotSession(id) } } }
-  finally { if (token === generation) loading.value = false }
+  } catch (e: any) { if (token === generation && request === refreshSequence && e?.code !== 'ERR_CANCELED') { error.value = errorMessage(e); if ([401, 403, 404].includes(e?.response?.status)) { state.value = null; clearCopilotSession(id) } } }
+  finally { if (token === generation && request === refreshSequence) loading.value = false }
 }
 async function loadCalls(more = false) {
   const id = props.runId, token = generation
@@ -338,7 +348,9 @@ function saveSession(id = props.runId) { if (id && state.value) saveCopilotSessi
 watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
   generation++; controller?.abort(); controller = new AbortController(); clearTimeout(timer)
+  validatedRunId = null
   hasPendingToolApproval.value = false
+  hasTimelineContent.value = false
   state.value = null; draft.value = ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
   reviewComment.value = ''; reviewReceipt.value = ''; reviewRequest = undefined
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null
@@ -396,14 +408,8 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .streaming-content { min-height:24px; }
 .message.is-user { width:fit-content; max-width:92%; margin-left:auto; padding:10px 13px; border-radius:12px; background:var(--wb-surface-section); border:1px solid var(--cp-border); }
 .message-content { color:var(--wb-text-secondary); font-size:13px; line-height:1.75; overflow-wrap:anywhere; text-wrap:pretty; }
-.message-content :deep(p) { margin:0 0 10px; }
+/* 元素排版交给 github-markdown-css（global.css），字号行高继承上面的 13px/1.75 */
 .message-content :deep(p:last-child) { margin-bottom:0; }
-.message-content :deep(h1),.message-content :deep(h2),.message-content :deep(h3) { margin:16px 0 8px; font-size:14px; color:var(--wb-text); }
-.message-content :deep(ul),.message-content :deep(ol) { padding-left:20px; }
-.message-content :deep(pre) { overflow:auto; padding:10px; border-radius:8px; background:var(--wb-surface-inset); font:11px/1.6 var(--font-mono,monospace); }
-.message-content :deep(a) { color:var(--wb-accent); }
-.message-content :deep(table) { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }
-.message-content :deep(td),.message-content :deep(th) { padding:6px; border:1px solid var(--cp-border); }
 .question-card { margin:8px 0 18px; padding:14px; border:1px solid color-mix(in srgb,var(--wb-accent) 45%,var(--cp-border)); border-radius:12px; background:color-mix(in srgb,var(--wb-accent) 4%,var(--wb-surface-section)); }
 .operation-card { margin-top:12px; padding:12px; border:1px solid var(--cp-border); border-radius:10px; background:var(--wb-surface-section); font-size:12px; }
 .operation-card p { margin:9px 0; line-height:1.7; overflow-wrap:anywhere; }

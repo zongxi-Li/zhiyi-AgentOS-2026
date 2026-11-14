@@ -18,7 +18,7 @@
     @open-artifact="emit('openArtifact', $event)"
     @open-entry="emit('openEntry', $event)"
     @select-result="selectResultItem"
-  />
+  ><template #progress><TaskWorkSummary v-if="summaryNode" :node="summaryNode" :objective="entry.objective" /></template></TaskArtifactDocument>
 </template>
 
 <script setup lang="ts">
@@ -35,6 +35,7 @@ import type { RuntimeEventStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import { projectArtifactDocument, type ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import TaskArtifactDocument from './TaskArtifactDocument.vue'
+import TaskWorkSummary from './TaskWorkSummary.vue'
 import type { StageOutputSelection } from './StageOutputRenderer.vue'
 import { streamingContent } from '@/workbench/runtime/streamingContent'
 
@@ -64,7 +65,9 @@ const artifacts = computed(() => props.projection.entries
   .sort((left, right) => left.displayOrder - right.displayOrder || left.entryId.localeCompare(right.entryId)))
 const liveNode = computed(() => {
   const nodeId = graphNode.value?.acgNodeId || props.entry.acgNodeId
-  return nodeId ? props.runtimeStore?.nodes[nodeId] || null : null
+  const runId = props.entry.runId || props.projection.activeRun?.runId
+  if (!nodeId || !props.runtimeStore || props.runtimeStore.runId !== runId) return null
+  return props.runtimeStore.nodes[nodeId] || null
 })
 const outputRef = computed(() => {
   const candidates = [
@@ -74,6 +77,8 @@ const outputRef = computed(() => {
   return candidates.find(value => typeof value === 'string' && value) as string | undefined || null
 })
 const outputRunId = computed(() => props.entry.runId || props.projection.activeRun?.runId || null)
+const summaryNode = computed(() => !['completed', 'failed', 'cancelled'].includes(props.entry.status || '') && liveNode.value
+  && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(liveNode.value.status) ? liveNode.value : null)
 const persistedStageOutput = ref('')
 const stageOutputLoading = ref(false)
 const stageOutputError = ref('')

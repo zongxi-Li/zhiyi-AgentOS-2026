@@ -157,6 +157,7 @@
                   <span>ACTIVITY</span>
                   <small>{{ column.symbols.length }} 项<span v-if="column.symbols.length"> · {{ activitySummary(column.symbols) }}</span></small>
                 </div>
+                <TaskWorkSummary v-if="column.context?.type === 'task' && workNode(column.context)" :node="workNode(column.context)!" :objective="workObjective(column.context)" />
                 <p v-if="column.context?.type === 'task' && !column.symbols.length" class="run-progress__activity-empty">暂无可展示的运行活动</p>
                 <RunSymbolRow
                   v-for="item in column.symbols"
@@ -195,6 +196,7 @@ import IntentProfileArtifact from './IntentProfileArtifact.vue'
 import PlanningStageArtifact from './PlanningStageArtifact.vue'
 import RunBreadcrumb from './RunBreadcrumb.vue'
 import RunSymbolRow from './RunSymbolRow.vue'
+import TaskWorkSummary from './TaskWorkSummary.vue'
 import { findRunDocumentSymbol, projectRunDocument, type RunDocumentSymbol, type RunDocumentViewKey } from '@/workbench/runtime/runDocument'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 import { lifecycleLabels } from '@/features/workspace/runLifecycle'
@@ -491,6 +493,13 @@ const handleDetailResizeKeydown = (event: KeyboardEvent) => {
 const graphRuntimePhases = computed(() => Object.fromEntries(
   Object.entries(props.runtimeStore?.nodes || {}).map(([nodeId, state]) => [nodeId, state.phase])
 ))
+const workNode = (symbol: RunDocumentSymbol) => {
+  if (!props.runtimeStore || props.runtimeStore.runId !== resolvedRunId.value || !symbol.graphNodeId || ['completed', 'failed', 'cancelled', 'superseded'].includes(runStatus.value || '')) return null
+  const node = props.runtimeStore.nodes[symbol.graphNodeId]
+  return node && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(node.status) ? node : null
+}
+const workObjective = (symbol: RunDocumentSymbol) => props.projection.entries.find(entry => entry.kind === 'task'
+  && (!entry.runId || entry.runId === resolvedRunId.value) && entry.acgNodeId === symbol.graphNodeId)?.objective
 // SSE 只覆盖本次连接之后的事件（无历史回放），刷新后 runtimeStore 为空。
 // 图节点状态必须回落到 runtimeObservation 轮询的 run.steps 持久投影（StepStatus）。
 const graphObservedRun = computed(() => (

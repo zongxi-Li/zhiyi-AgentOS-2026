@@ -25,11 +25,11 @@ const execute = (wrapper: ReturnType<typeof render>) => wrapper.findAll('button'
 beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.stubGlobal('crypto', webcrypto) })
 
 describe('formal Workbench controls', () => {
-  it('approves only the planning commit actually displayed to the user', async () => {
+  it.each([false, true])('approves only the displayed planning commit (conversational: %s)', async conversational => {
     const run = permitted()
     run.formalControl = { ...run.formalControl!, status: 'PLANNING_ACCEPTED', permitIssued: false, permitId: null, permitStatus: null }
     const post = vi.spyOn(agentosApi, 'submitFormalControl').mockImplementation(async (_mission, _run, _action, command) => ({ operationId: command.operationId, status: 'MATERIALIZED_INACTIVE' }))
-    const w = render(run, { requirePlanReview: true, reviewedPlan: null })
+    const w = render(run, { requirePlanReview: true, reviewedPlan: null, conversational })
     expect(w.get('.formal-control__primary').attributes('disabled')).toBeDefined()
     await w.get('.formal-control__primary').trigger('click')
     expect(post).not.toHaveBeenCalled()
@@ -45,6 +45,23 @@ describe('formal Workbench controls', () => {
     await w.get('.formal-control__primary').trigger('click'); await flushPromises()
     expect(post).toHaveBeenCalledWith('mission', 'run', 'materialize', expect.objectContaining({ commitId: 'commit', expectedCommitmentRevision: 1 }))
     expect(post).toHaveBeenCalledTimes(1)
+    w.unmount()
+  })
+  it('presents conversational controls quietly while keeping refresh, read-only and cancel guards', async () => {
+    const post = vi.spyOn(agentosApi, 'submitFormalControl')
+    const w = render(permitted(), { embedded: true, conversational: true, readonly: true })
+    expect(w.classes()).toContain('is-conversational')
+    expect(w.find('header').exists()).toBe(false)
+    expect(w.find('.lifecycle-progress').exists()).toBe(false)
+    expect(w.text()).not.toContain('任务进展')
+    expect(w.get('summary').text()).toBe('运行详情')
+    expect(w.get('details').attributes('open')).toBeUndefined()
+    await execute(w).trigger('click')
+    await w.findAll('button').find(b => b.text() === '取消任务')!.trigger('click')
+    expect(post).not.toHaveBeenCalled()
+    expect(w.emitted('cancel')).toBeUndefined()
+    await w.get('.formal-control__refresh').trigger('click')
+    expect(w.emitted('refresh')).toHaveLength(1)
     w.unmount()
   })
   it('keeps embedded controls read-only and exposes technical evidence on demand', async () => {

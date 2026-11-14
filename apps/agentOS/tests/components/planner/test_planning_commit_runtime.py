@@ -173,7 +173,7 @@ def test_initial_rejection_reports_the_specific_barrier_reason(ready_boundary, m
     attach(runtime, store)
     source = store.get_run(source_id)
     _, run = runtime.prepare_run(source.mission_id, workflow_id=source.workflow_id)
-    monkeypatch.setattr(runtime.planning_commit_authority, 'accept_initial', lambda _: PlanningCommitRejection(
+    monkeypatch.setattr(runtime.planning_commit_authority, 'accept_initial', lambda _, **kwargs: PlanningCommitRejection(
         code=Code.CONTROL_BARRIER_BLOCKED, reason='control policies require later safe-cut support'))
     with pytest.raises(ValueError, match='CONTROL_BARRIER_BLOCKED: control policies require later safe-cut support'):
         asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -184,7 +184,7 @@ def test_initial_loop_repair_failure_is_not_misreported_as_stale_sources(ready_b
     from components.planner.task_decomposer import TaskDecompositionError
     runtime, store, _, _, _ = ready_boundary
     attach(runtime, store)
-    def failed(_):
+    def failed(_, **kwargs):
         raise TaskDecompositionError('TASK_PLAN_VALIDATION_FAILED: INITIAL_CONTROL_GRAPH_UNSUPPORTED')
     monkeypatch.setattr(runtime.planning_commit_authority, '_accept_initial', failed)
     receipt = runtime.planning_commit_authority.accept_initial('run-test')
@@ -505,8 +505,8 @@ def test_initial_acceptance_worker_does_not_overwrite_later_runtime_state(ready_
     source = store.get_run(source_id)
     _, run = runtime.prepare_run(source.mission_id, workflow_id=source.workflow_id)
     original = runtime.planning_commit_authority.accept_initial
-    def accept_then_operator_update(run_id):
-        receipt = original(run_id)
+    def accept_then_operator_update(run_id, **kwargs):
+        receipt = original(run_id, **kwargs)
         assert receipt.status == "ACCEPTED"
         with runtime.run_lock_manager.lock_for(run_id):
             latest = store.get_run(run_id)

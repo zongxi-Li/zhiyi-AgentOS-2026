@@ -19,11 +19,47 @@ describe('RunRuntimeStore streaming projection', () => {
       expect(store.nodes.A.outputBuffer).toBe('{"answer":"第一轮"}')
       store.apply(event(4, 'model.started'))
       expect(store.nodes.A.outputBuffer).toBe('')
+      expect(store.outputHistory).toMatchObject([{ id: 'e1', text: '第一轮', kind: 'node' }])
       store.apply(event(5, 'model.output.delta', 'A', 'a1', '{"answer":"第二轮"}'))
       store.apply(event(6, 'node.completed'))
       callbacks.forEach(callback => callback(0))
       expect(store.nodes.A.outputBuffer).toBe('{"answer":"第二轮"}')
       expect(store.nodes.A.status).toBe('COMPLETED')
+    } finally { raf.mockRestore() }
+  })
+  it('preserves public planning summaries across stages and retries without retaining private text', () => {
+    const store = new RunRuntimeStore('run')
+    const apply = (sequence: number, eventType: string, payload: Record<string, unknown>) => store.apply({
+      ...event(sequence, eventType, '', ''), payload,
+    })
+    apply(1, 'planner.stage.started', { stage: 'intent_profile', callKey: 'profile' })
+    apply(2, 'planner.model.started', { stage: 'intent_profile', callKey: 'profile' })
+    apply(3, 'planner.model.output.delta', { delta: '{"reasoning_content":"PRIVATE","primaryGoal":"先确认三个校区的数据边界。"}' })
+    apply(4, 'planner.stage.started', { stage: 'decompose', callKey: 'tasks' })
+    apply(5, 'planner.model.started', { stage: 'decompose', callKey: 'tasks' })
+    apply(6, 'planner.model.output.delta', { delta: '{"decompositionRationale":"先统一数据口径，再设计权限。"}' })
+    apply(7, 'planner.stage.retry', { stage: 'decompose', callKey: 'tasks' })
+    apply(8, 'planner.model.started', { stage: 'decompose', callKey: 'tasks' })
+    expect(store.outputHistory.map(item => item.text)).toEqual(['先确认三个校区的数据边界。', '先统一数据口径，再设计权限。'])
+    expect(store.outputHistory.map(item => item.id)).toEqual(['e2', 'e5'])
+    expect(store.outputHistory[0].timestamp).toBe(event(2, '').timestamp)
+    expect(JSON.stringify(store.outputHistory)).not.toContain('PRIVATE')
+    expect(store.planning.outputBuffer).toBe('')
+  })
+  it('bounds retained explanations and archives a pending frame before the next model turn', () => {
+    const callbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { callbacks.push(cb); return callbacks.length })
+    try {
+      const store = new RunRuntimeStore('run')
+      for (let i = 0; i < 40; i++) {
+        store.apply(event(i * 2 + 1, 'model.started'))
+        store.apply(event(i * 2 + 2, 'model.output.delta', 'A', 'a1', `说明 ${i}：${'内容'.repeat(4500)}`))
+      }
+      expect(store.outputHistory.length).toBeLessThanOrEqual(32)
+      expect(store.outputHistory.reduce((sum, item) => sum + item.text.length, 0)).toBeLessThanOrEqual(262144)
+      expect(store.outputHistory[store.outputHistory.length - 1].text).toContain('说明 38')
+      callbacks.forEach(callback => callback(0))
+      expect(store.nodes.A.outputBuffer).toContain('说明 39')
     } finally { raf.mockRestore() }
   })
   it('notifies inline approval consumers without changing the durable Run revision', () => {

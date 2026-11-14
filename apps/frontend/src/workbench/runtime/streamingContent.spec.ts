@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { streamingContent } from './streamingContent'
+import { planningContent, streamingContent } from './streamingContent'
 
 describe('public streaming text', () => {
+  it('requires a complete planning field boundary before exposing a live or archived summary', () => {
+    expect(planningContent('tail of a truncated JSON string"}')).toBe('')
+    expect(planningContent('{"reasoning_content":"PRIVATE","decompositionRationale":"先验证来源，再汇总结果')).toBe('先验证来源，再汇总结果')
+  })
   it('displays unfinished narrative strings before JSON completion', () => {
     expect(streamingContent('{"answer":"正在检查')).toBe('正在检查')
     expect(streamingContent('{"answer":"正在检查，已找到原因"}')).toBe('正在检查，已找到原因')
@@ -14,6 +18,10 @@ describe('public streaming text', () => {
     const output = '{"reasoning_content":{"summary":"PRIVATE"},"authorization":[{"description":"PRIVATE"}],"answer":"可见'
     expect(streamingContent(output)).toBe('可见')
     expect(streamingContent('{"reasoning_content":"PRIVATE')).toBe('')
+  })
+  it('projects the public planner contract including an unfinished decomposition rationale', () => {
+    expect(streamingContent('{"primaryGoal":"任务目标","keyConstraints":["保留边界"],"expectedArtifacts":["设计文档"],"tasks":[{"key":"internal","title":"拆解需求","decompositionRationale":"先澄清约束'))
+      .toBe('任务目标\n\n保留边界\n\n设计文档\n\n拆解需求\n\n先澄清约束')
   })
   it('waits for incomplete escapes and decodes public unicode and newlines', () => {
     expect(streamingContent('{"content":"前缀\\u4f')).toBe('前缀')
