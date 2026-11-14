@@ -330,14 +330,14 @@ async def industrial_calculator(
     )
 
 
-@function_tool(strict_mode=False, timeout=125.0)
+@function_tool(strict_mode=False, timeout=None)
 async def terminal(
     context: ToolContext[ToolInvocationContext],
     command: str,
     cwd: str = ".",
     timeout_seconds: float | None = None,
 ) -> str:
-    """Run one bounded command inside the configured Chat workspace."""
+    """Run a workspace command. Omit timeout_seconds for no deadline; otherwise use the requested seconds."""
     return await context.context.invoke(
         "terminal",
         {
@@ -349,7 +349,7 @@ async def terminal(
     )
 
 
-@function_tool(strict_mode=False, timeout=125.0)
+@function_tool(strict_mode=False, timeout=None)
 async def run_command(
     context: ToolContext[ToolInvocationContext],
     mode: Literal["direct", "shell"] = "shell",
@@ -360,7 +360,7 @@ async def run_command(
     timeout: float | None = None,
     yield_time_ms: int = 1000,
 ) -> str:
-    """Run an approved command; long commands return a running handle. Read it with get_command_output; never resubmit it."""
+    """Run an approved command. Omit timeout for no deadline; a positive timeout is seconds and is honored without clipping. Long commands return a running handle; read it with get_command_output, never resubmit it."""
     return await context.context.invoke(
         "run_command",
         {
