@@ -1,37 +1,53 @@
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
+import { colorSchemes, isDarkColorScheme, type ColorSchemeId } from '@/themes/presets'
+import { useTheme } from './useTheme'
 
 /**
- * 公开介绍页与认证页的独立明暗状态。
+ * 公开介绍页与认证页的明暗状态——直接跟随工作台主题（单一事实源）。
  *
- * 工作台默认使用 codex-dark，而恢复的浅蓝白介绍页/登录页属于另一套视觉系统：
- * 若直接跟随全局 currentScheme，用户一进介绍页就会看到 darkbg.webp 的暗色版本。
- * 因此公开页默认浅色，明暗只在公开页之间共享（sessionStorage），
- * 不读写 appSettings，也不改变工作台主题。
+ * 2026-11-14 用户裁定：操作界面是暗色介绍页就暗色，浅色就都浅色。
+ * 取代原先「公开页独立浅色、sessionStorage 共享」的设计。
+ * 页面上的明暗切换按钮直接改全局主题并持久化（appSettings.colorScheme），
+ * 工作台与设置页随之同步；浅色变体沿用 useTheme 的记忆键。
  */
-const PUBLIC_DARK_KEY = 'kinlin.public.dark.v1'
+const LIGHT_SCHEME_KEY = 'theme.public_light_scheme'
+const LAST_DARK_KEY = 'theme.public_last_dark_scheme'
 
-const readDark = (): boolean => {
+function savedLightScheme(): ColorSchemeId {
   try {
-    return sessionStorage.getItem(PUBLIC_DARK_KEY) === '1'
+    const saved = localStorage.getItem(LIGHT_SCHEME_KEY)
+    const scheme = colorSchemes.find(item => item.id === saved)
+    if (scheme && !isDarkColorScheme(scheme.id)) return scheme.id
   } catch {
-    return false
+    // 禁用存储时回退默认浅色。
   }
+  return 'blue-purple'
+}
+
+function lastDarkScheme(): ColorSchemeId {
+  try {
+    const saved = localStorage.getItem(LAST_DARK_KEY)
+    const scheme = colorSchemes.find(item => item.id === saved)
+    if (scheme && isDarkColorScheme(scheme.id)) return scheme.id
+  } catch {
+    // 禁用存储时回退默认暗色。
+  }
+  return 'codex-dark'
 }
 
 export function usePublicTheme() {
-  const dark = ref(readDark())
+  const { currentScheme, setPersistedColorScheme } = useTheme()
 
-  watch(dark, (value) => {
-    try {
-      sessionStorage.setItem(PUBLIC_DARK_KEY, value ? '1' : '0')
-    } catch {
-      // 禁用存储时仅本次会话生效。
+  const isDarkTheme = computed(() => isDarkColorScheme(currentScheme.value))
+  const themeToggleLabel = computed(() => `切换到${isDarkTheme.value ? '明亮' : '黑暗'}模式`)
+  const toggleTheme = () => {
+    if (isDarkTheme.value) {
+      try { localStorage.setItem(LAST_DARK_KEY, currentScheme.value) } catch { /* 忽略 */ }
+      setPersistedColorScheme(savedLightScheme())
+    } else {
+      setPersistedColorScheme(lastDarkScheme())
     }
-  })
-
-  const isDarkTheme = computed(() => dark.value)
-  const themeToggleLabel = computed(() => `切换到${dark.value ? '明亮' : '黑暗'}模式`)
-  const toggleTheme = () => { dark.value = !dark.value }
+  }
 
   return { isDarkTheme, themeToggleLabel, toggleTheme }
 }

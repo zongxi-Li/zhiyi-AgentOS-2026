@@ -71,7 +71,7 @@ afterEach(() => {
 })
 
 describe('LoginView（浅色介绍页配套登录注册）', () => {
-  it('渲染浅色玻璃卡片与登录/注册双 tab', async () => {
+  it('渲染玻璃卡片与登录/注册双 tab', async () => {
     const { wrapper: view } = await mountLogin()
     expect(view.find('[data-testid="auth-card"]').exists()).toBe(true)
     expect(view.find('.auth-intro').text()).toContain('多智能体协作')
@@ -79,15 +79,19 @@ describe('LoginView（浅色介绍页配套登录注册）', () => {
     expect(view.text()).toContain('注册')
   })
 
-  it('默认呈现浅色场景，并提供可访问的主题切换与返回介绍页入口', async () => {
+  it('跟随全局主题默认暗色，切换往返并持久化到全局', async () => {
     const { wrapper: view } = await mountLogin()
-    expect(view.find('.auth-view').classes()).not.toContain('is-theme-dark')
+    expect(view.find('.auth-view').classes()).toContain('is-theme-dark')
     const toggle = view.get('[data-testid="auth-theme-toggle"]')
-    expect(toggle.attributes('aria-label')).toBe('切换到黑暗模式')
+    expect(toggle.attributes('aria-label')).toBe('切换到明亮模式')
     expect(view.get('.auth-brand').exists()).toBe(true)
     await toggle.trigger('click')
     await flushPromises()
+    expect(view.find('.auth-view').classes()).not.toContain('is-theme-dark')
+    await toggle.trigger('click')
+    await flushPromises()
     expect(view.find('.auth-view').classes()).toContain('is-theme-dark')
+    expect(JSON.parse(localStorage.getItem('appSettings')).colorScheme).toBe('codex-dark')
   })
 
   it('?mode=register 直接进入注册模式，页内切换不改变路由', async () => {

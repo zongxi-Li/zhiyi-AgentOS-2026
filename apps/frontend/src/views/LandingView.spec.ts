@@ -74,13 +74,16 @@ describe('LandingView', () => {
     expect(wrapper.find('[data-testid="glass-constellation"]').exists()).toBe(true)
   })
 
-  it('exposes an accessible public theme toggle', async () => {
+  it('跟随全局主题默认暗色，并提供可访问的明暗切换', async () => {
     const { wrapper } = await mountLanding()
 
     const toggle = wrapper.get('[data-testid="landing-theme-toggle"]')
-    expect(toggle.attributes('aria-label')).toBe('切换到黑暗模式')
-    expect(toggle.attributes('title')).toBe('切换到黑暗模式')
+    expect(toggle.attributes('aria-label')).toBe('切换到明亮模式')
+    expect(toggle.attributes('title')).toBe('切换到明亮模式')
+    expect(wrapper.find('.landing-view').classes()).toContain('is-theme-dark')
+    await toggle.trigger('click')
     expect(wrapper.find('.landing-view').classes()).not.toContain('is-theme-dark')
+    expect(toggle.attributes('aria-label')).toBe('切换到黑暗模式')
   })
 
   it('末屏 CTA 同样跳登录路由，不改变介绍页的滑动位置', async () => {
