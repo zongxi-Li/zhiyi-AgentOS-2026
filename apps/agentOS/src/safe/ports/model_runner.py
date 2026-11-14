@@ -18,7 +18,7 @@ class ModelRunner(Protocol):
         ...
 
     def release_kv(self, handle: KVHandle) -> None:
-        """等待计算结束或隔离后幂等释放；句柄不能再用于执行。"""
+        """等待计算结束或隔离后幂等释放；失败可重试，句柄不得复用。"""
         ...
 
     def close(self) -> None:

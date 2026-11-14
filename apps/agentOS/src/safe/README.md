@@ -4,7 +4,7 @@
 
 本 README 是模块目录与依赖边界的设计基线，更新于 2026-11-13。目标是让后续工作在既定分层中扩展；新模型、编码格式和存储实现通过新增适配器接入。文件位置和公开 API 应保持稳定，模型算法、协议版本及隐私参数仍须依据实验修订，不能把目录稳定等同于技术方案永不变化。
 
-2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验、`ActivationService` 的受信会话/manifest/phase/位置/shape校验，以及 P3 单进程会话事务基线。`ActivationContext` 必须来自受信会话，摘要来自批准配置；`SessionService` + `MemorySessionStore` 已覆盖 owner 隔离、严格 step、60秒空闲 TTL、300秒绝对 TTL、请求幂等、终态和 runner 异常失败。当前仍无认证、跨进程存储、KV runner 或网络服务，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
+2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验、`ActivationService` 的受信会话/manifest/phase/位置/shape校验，以及 P3 单进程会话事务基线。`ActivationContext` 必须来自受信会话，摘要来自批准配置；`SessionService` + `MemorySessionStore` 已覆盖 owner 隔离、严格 step、60秒空闲 TTL、300秒绝对 TTL、请求幂等、终态和 runner 异常失败。会话存储可注入 `ModelRunner`，分配不透明 KV 句柄并在关闭/失败/过期时释放；释放失败会保持终态并允许清理重试。当前仍无真实 KV 前向、认证、跨进程存储或网络服务，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
 
 同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并在全新锁环境完成20×16步与完整模型的logits/greedy对照。完整记录、安装方式和边界见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)。当前每步全序列重算、无KV/网络/DP，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
 
@@ -20,7 +20,7 @@
 | 七个公开门面、`contracts/`、`ports/` | 已创建轻量入口、初版严格合同和部分 Protocol | 合同只定义一次；执行/事务接口及 wire schema 仍待 P1/P2 实验冻结。 |
 | FP32 codec、形状边界、会话迁移/step/幂等规则、全局 L2 裁剪 | 已实现并有基础测试 | 仅独立基础能力；裁剪不构成 DP，摘要不构成认证。 |
 | 推理服务、隐私发布服务 | 已创建明确拒绝的入口 | 分别抛出 `MODEL_PARTITION_UNAVAILABLE` / `PRIVACY_UNAVAILABLE`；不返回模拟结果。 |
-| P3 `SessionService` + `MemorySessionStore` | 已实现并有并发/TTL/幂等测试 | 仅进程内短时状态；不持久化、不保存原始 prompt、不持有真实 KV，不等于跨网络会话服务。 |
+| P3 `SessionService` + `MemorySessionStore` | 已实现并有并发/TTL/幂等/KV生命周期测试 | 仅进程内短时状态；可管理注入 runner 的不透明 KV 句柄，但没有真实 KV 前向、不持久化、不保存原始 prompt，不等于跨网络会话服务。 |
 | 模型、制品、预算存储、认证/HTTP、装配和接入 | 已创建逐文件中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
 
 现有联邦学习和差分隐私代码属于旧的参数聚合域。它们没有接入拆分推理的激活传输链路，不能复用为安全证明、隐私预算记账或 DP-SGD 实现。

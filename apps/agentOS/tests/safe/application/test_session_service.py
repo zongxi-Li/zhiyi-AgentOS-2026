@@ -11,6 +11,7 @@ from safe.contracts.activation import ActivationEnvelope
 from safe.contracts.errors import ErrorCode, SafeError
 from safe.contracts.session import SessionStatus, StepRequest
 from safe.infrastructure.storage.memory_sessions import MemorySessionStore
+from safe.ports.model_runner import KVHandle
 
 
 class ManualClock:
@@ -43,9 +44,31 @@ def request(request_id: str = "request-0", *, step: int = 0, phase: str = "prefi
     )
 
 
-def service(clock: ManualClock | None = None) -> SessionService:
+class FakeRunner:
+    def __init__(self) -> None:
+        self.created: list[str] = []
+        self.released: list[KVHandle] = []
+        self.fail_create = False
+        self.fail_release = False
+
+    def create_kv(self, session_id: str) -> KVHandle:
+        if self.fail_create:
+            raise RuntimeError("KV allocation failed")
+        self.created.append(session_id)
+        return KVHandle(f"kv-{session_id}")
+
+    def release_kv(self, handle: KVHandle) -> None:
+        if self.fail_release:
+            raise RuntimeError("KV release failed")
+        self.released.append(handle)
+
+    def close(self) -> None:
+        pass
+
+
+def service(clock: ManualClock | None = None, runner: FakeRunner | None = None) -> SessionService:
     clock = clock or ManualClock()
-    store = MemorySessionStore(clock=clock, idle_ttl=60.0, absolute_ttl=300.0)
+    store = MemorySessionStore(clock=clock, idle_ttl=60.0, absolute_ttl=300.0, runner=runner)
     return SessionService(store)
 
 
@@ -155,4 +178,55 @@ def test_same_step_is_executed_once_under_competing_threads() -> None:
     assert calls == 1
     assert len(results) == 2
     assert results[0] == results[1]
+
+
+def test_kv_is_allocated_once_and_released_on_terminal_paths() -> None:
+    runner = FakeRunner()
+    safe = service(runner=runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    assert runner.created == ["session-1"]
+    safe.close("owner-1", "session-1")
+    assert runner.released == [KVHandle("kv-session-1")]
+    assert safe.cleanup_expired() == 0
+    assert runner.released == [KVHandle("kv-session-1")]
+
+    failed_runner = FakeRunner()
+    failed = service(runner=failed_runner)
+    failed.create("owner-1", "a" * 64, session_id="session-1")
+    with pytest.raises(RuntimeError):
+        failed.execute("owner-1", request(), lambda _: (_ for _ in ()).throw(RuntimeError("runner failed")))
+    assert failed_runner.released == [KVHandle("kv-session-1")]
+
+
+def test_kv_is_released_on_expiry_and_failed_creation_is_rolled_back() -> None:
+    clock = ManualClock()
+    runner = FakeRunner()
+    safe = service(clock, runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    clock.advance(60.0)
+    assert safe.cleanup_expired() == 1
+    assert runner.released == [KVHandle("kv-session-1")]
+
+    create_failure = FakeRunner()
+    create_failure.fail_create = True
+    failed = service(runner=create_failure)
+    with pytest.raises(RuntimeError):
+        failed.create("owner-1", "a" * 64, session_id="session-2")
+    with pytest.raises(SafeError) as error:
+        failed.view("owner-1", "session-2")
+    assert error.value.code is ErrorCode.SESSION_INVALID
+
+
+def test_failed_kv_release_remains_retryable_without_reopening_session() -> None:
+    runner = FakeRunner()
+    runner.fail_release = True
+    safe = service(runner=runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    with pytest.raises(RuntimeError, match="KV release failed"):
+        safe.close("owner-1", "session-1")
+    assert safe.view("owner-1", "session-1").status is SessionStatus.CLOSED
+
+    runner.fail_release = False
+    assert safe.cleanup_expired() == 0
+    assert runner.released == [KVHandle("kv-session-1")]
 

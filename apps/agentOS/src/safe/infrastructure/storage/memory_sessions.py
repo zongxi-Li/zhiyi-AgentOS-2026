@@ -24,6 +24,7 @@ from safe.contracts.errors import ErrorCode, SafeError
 from safe.contracts.session import SessionStatus, SessionView, StepReceipt, StepRequest
 from safe.domain.session_state import require_next_step, transition
 from safe.ports.clock import Clock
+from safe.ports.model_runner import KVHandle, ModelRunner
 from safe.ports.session_store import StepRunner
 
 class _SystemClock:
@@ -50,6 +51,8 @@ class _SessionRecord:
     created_at: float
     last_activity: float
     absolute_deadline: float
+    kv_handle: KVHandle | None = field(default=None, repr=False)
+    kv_released: bool = False
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     receipts: dict[str, _StoredReceipt] = field(default_factory=dict, repr=False)
 
@@ -63,6 +66,7 @@ class MemorySessionStore:
         clock: Clock | None = None,
         idle_ttl: float = 60.0,
         absolute_ttl: float = 300.0,
+        runner: ModelRunner | None = None,
     ) -> None:
         if type(idle_ttl) is not float or idle_ttl <= 0:
             raise ValueError("idle_ttl必须是正浮点数")
@@ -73,6 +77,7 @@ class MemorySessionStore:
         self._clock = clock or _SystemClock()
         self._idle_ttl = idle_ttl
         self._absolute_ttl = absolute_ttl
+        self._runner = runner
         self._sessions: dict[str, _SessionRecord] = {}
         self._sessions_lock = threading.RLock()
 
@@ -82,20 +87,23 @@ class MemorySessionStore:
         identifier = session_id or f"session-{secrets.token_urlsafe(18)}"
         if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", identifier):
             raise SafeError(ErrorCode.SESSION_INVALID)
-        now = self._clock.monotonic()
-        record = _SessionRecord(
-            owner_id=owner_id,
-            session_id=identifier,
-            manifest_digest=manifest_digest,
-            status=SessionStatus.CREATED,
-            next_step=0,
-            created_at=now,
-            last_activity=now,
-            absolute_deadline=now + self._absolute_ttl,
-        )
         with self._sessions_lock:
             if identifier in self._sessions:
                 raise SafeError(ErrorCode.SESSION_INVALID)
+            # 先创建KV，再发布可见会话；创建失败不会留下半初始化状态。
+            handle = self._runner.create_kv(identifier) if self._runner else None
+            now = self._clock.monotonic()
+            record = _SessionRecord(
+                owner_id=owner_id,
+                session_id=identifier,
+                manifest_digest=manifest_digest,
+                status=SessionStatus.CREATED,
+                next_step=0,
+                created_at=now,
+                last_activity=now,
+                absolute_deadline=now + self._absolute_ttl,
+                kv_handle=handle,
+            )
             self._sessions[identifier] = record
         return self._view(record)
 
@@ -147,12 +155,14 @@ class MemorySessionStore:
                 )
             except Exception:
                 record.status = SessionStatus.FAILED
+                self._release_locked(record)
                 raise
             record.receipts[request.request_id] = _StoredReceipt(fingerprint, receipt)
             record.next_step += 1
             record.last_activity = self._clock.monotonic()
             if finished:
                 record.status = transition(record.status, SessionStatus.CLOSED)
+                self._release_locked(record)
             return receipt
 
     def close(self, owner_id: str, session_id: str) -> SessionView:
@@ -162,6 +172,7 @@ class MemorySessionStore:
             if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
                 raise SafeError(ErrorCode.SESSION_INVALID)
             record.status = transition(record.status, SessionStatus.CLOSED)
+            self._release_locked(record)
             return self._view(record)
 
     def fail(self, owner_id: str, session_id: str) -> SessionView:
@@ -171,6 +182,7 @@ class MemorySessionStore:
             if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
                 raise SafeError(ErrorCode.SESSION_INVALID)
             record.status = transition(record.status, SessionStatus.FAILED)
+            self._release_locked(record)
             return self._view(record)
 
     def cleanup_expired(self) -> int:
@@ -182,6 +194,8 @@ class MemorySessionStore:
                 before = record.status
                 self._expire_locked(record)
                 count += int(before is not SessionStatus.EXPIRED and record.status is SessionStatus.EXPIRED)
+                if record.status in (SessionStatus.CLOSED, SessionStatus.FAILED, SessionStatus.EXPIRED):
+                    self._release_locked(record)
         return count
 
     def _owned(self, owner_id: str, session_id: str) -> _SessionRecord:
@@ -200,6 +214,14 @@ class MemorySessionStore:
         now = self._clock.monotonic()
         if now >= record.absolute_deadline or now - record.last_activity >= self._idle_ttl:
             record.status = transition(record.status, SessionStatus.EXPIRED)
+            self._release_locked(record)
+
+    def _release_locked(self, record: _SessionRecord) -> None:
+        if record.kv_handle is None or record.kv_released or self._runner is None:
+            return
+        # ModelRunner.release_kv 合同要求失败后可安全重试，不得复用句柄。
+        self._runner.release_kv(record.kv_handle)
+        record.kv_released = True
 
     @staticmethod
     def _view(record: _SessionRecord) -> SessionView:
