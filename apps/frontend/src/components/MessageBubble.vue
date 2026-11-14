@@ -860,68 +860,10 @@ const formatTime = (date: Date) => {
 
 .message-text.markdown-body {
   white-space: normal;
-  line-height: 1.78;
 }
 
-.message-text.markdown-body :deep(h1),
-.message-text.markdown-body :deep(h2),
-.message-text.markdown-body :deep(h3),
-.message-text.markdown-body :deep(h4),
-.message-text.markdown-body :deep(h5),
-.message-text.markdown-body :deep(h6) {
-  margin: 8px 0;
-  line-height: 1.4;
-  font-weight: 700;
-}
-
-.message-text.markdown-body :deep(h1) { font-size: 20px; }
-.message-text.markdown-body :deep(h2) { font-size: 18px; }
-.message-text.markdown-body :deep(h3) { font-size: 16px; }
-
-.message-text.markdown-body :deep(p) {
-  margin: 0 0 12px;
-}
-
-.message-text.markdown-body :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.message-text.markdown-body :deep(ul),
-.message-text.markdown-body :deep(ol) {
-  margin: 8px 0;
-  padding-left: 20px;
-}
-
-.message-text.markdown-body :deep(li) {
-  margin: 4px 0;
-}
-
-.message-text.markdown-body :deep(pre) {
-  margin: 10px 0;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #20262b;
-  color: #eef1ef;
-  overflow-x: auto;
-}
-
-.message-text.markdown-body :deep(code) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  padding: 0 4px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-}
-
-.message-text.markdown-body :deep(pre code) {
-  background: transparent;
-  padding: 0;
-}
-
-.message-text.markdown-body :deep(a) {
-  color: var(--primary-color);
-  text-decoration: underline;
-  word-break: break-all;
-}
+/* 元素排版（标题/列表/代码块/引用/表格）交给 global.css 引入的
+   github-markdown-css；字号 15.5px 与行高由 .message-content 提供并继承。 */
 
 /* Markdown 表格样式收敛到 global.css 的全局三线表 */
 

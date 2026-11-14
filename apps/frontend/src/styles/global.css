@@ -1,10 +1,13 @@
 /* Global Styles - 知弈 Gallery Minimal Design System */
-/* 
-   Design Philosophy: 
+/*
+   Design Philosophy:
    - Quiet gallery surfaces, restrained contrast, functional hierarchy
    - Content first: fewer nested frames, clearer spacing, calmer motion
    - One linear icon language and low-saturation semantic color
 */
+
+/* 回复正文排版统一交给 github-markdown-css (MIT)，颜色映射见下方 .markdown-body 块 */
+@import 'github-markdown-css';
 
 :root {
   /* Color Palette — VS Code Classic Dark (default) */
@@ -517,46 +520,51 @@ html[data-color-scheme='one-dark-modern'] .el-overlay {
 .tone-flow { --tone: var(--sem-flow); --tone-fade: var(--sem-flow-fade); }
 .tone-muted { --tone: var(--wb-text-muted); --tone-fade: color-mix(in srgb, var(--wb-text-muted) 12%, transparent); }
 
-/* Markdown 三线表 — 全局统一学术表样式：顶线/栏目线/底线构成骨架，
-   行间只留极淡的引导线，无竖线无斑马纹，单元格内容上下左右居中。
-   字号 clamp 随容器缩放（聊天正文 15.5px → 表格约 14px；工作台 13px → 12px），
-   行高与内边距在表格内自持，不继承聊天的 1.78 行高。 */
+/* GitHub Markdown — github-markdown-css (MIT) 承担回复排版：
+   标题/列表/代码块/引用/表格/任务清单均为 GitHub 渲染样式。
+   颜色变量统一映射到产品主题令牌，随明暗主题切换；画布透明融入气泡，
+   字号/行高回归容器继承（聊天 15.5px、任务对话 13px、时间线 12px）。 */
+.markdown-body {
+  background-color: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  --fgColor-default: var(--text-primary);
+  --fgColor-muted: var(--text-secondary);
+  --fgColor-accent: var(--primary-color);
+  --fgColor-success: var(--sem-success);
+  --fgColor-attention: var(--sem-waiting);
+  --fgColor-danger: var(--sem-failed);
+  --fgColor-done: var(--sem-artifact);
+  --bgColor-default: transparent;
+  --bgColor-muted: var(--bg-input);
+  --bgColor-neutral-muted: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --bgColor-attention-muted: color-mix(in srgb, var(--sem-waiting) 16%, transparent);
+  --borderColor-default: var(--border-hover);
+  --borderColor-muted: color-mix(in srgb, var(--border-light) 75%, transparent);
+  --borderColor-neutral-muted: color-mix(in srgb, var(--border-light) 80%, transparent);
+  --borderColor-accent-emphasis: var(--primary-color);
+  --borderColor-attention-emphasis: var(--sem-waiting);
+  --borderColor-danger-emphasis: var(--sem-failed);
+  --borderColor-success-emphasis: var(--sem-success);
+  --borderColor-done-emphasis: var(--sem-artifact);
+  --focus-outlineColor: var(--primary-color);
+}
+/* 聊天气泡里 GitHub 的 2em 一级标题过大，标题档位整体压一档；
+   文档视图有自己的标题覆盖，不受影响。 */
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.3em; }
+.markdown-body h3 { font-size: 1.15em; }
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 { font-size: 1em; }
+/* renderMarkdown 以 .markdown-table-wrap 包裹表格；GitHub 让表格按内容收缩，
+   窄栏横向滚动由包装层兜底。 */
 .markdown-body .markdown-table-wrap {
   width: 100%;
-  margin: 16px 0 20px;
+  margin: 16px 0;
   overflow-x: auto;
-}
-.markdown-body table {
-  width: 100%;
-  min-width: 560px;
-  border-collapse: collapse;
-  font-size: clamp(12px, 0.9em, 14.5px);
-  line-height: 1.55;
-}
-.markdown-body th,
-.markdown-body td {
-  padding: 8px 14px;
-  text-align: center;
-  vertical-align: middle;
-  overflow-wrap: anywhere;
-}
-.markdown-body thead th {
-  border-top: 2px solid var(--wb-border-strong);
-  border-bottom: 1.5px solid var(--wb-border-strong);
-  color: var(--wb-text);
-  font-weight: 650;
-  letter-spacing: .02em;
-  white-space: nowrap;
-}
-.markdown-body tbody td {
-  border-bottom: 1px solid color-mix(in srgb, var(--wb-border-strong) 28%, transparent);
-  color: var(--wb-text-secondary);
-}
-.markdown-body tbody tr:last-child td {
-  border-bottom: 2px solid var(--wb-border-strong);
-}
-.markdown-body td code {
-  font: 11.5px var(--font-mono, monospace);
 }
 
 /* Workbench status bar — spans the viewport edge-to-edge when present.
