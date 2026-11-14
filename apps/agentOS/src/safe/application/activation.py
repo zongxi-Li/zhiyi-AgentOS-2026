@@ -1,15 +1,62 @@
-"""激活用例编排；只依赖 codec port 和纯规则。
+"""受信manifest/会话驱动的激活编解码用例；不执行模型、网络或DP。
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
-
-TODO(P1-1)：注入 ActivationCodec；先验证 shape/raw bytes，不能接受任意 Python 对象。
-TODO(P1-2)：从受信 manifest 和会话取得 hidden size/phase/position，不采信请求自报的策略。
-TODO(P1-3)：本地出站顺序固定为隐私变换→编码→摘要→release 固定→签名；重试复用字节。
-TODO(P1-4)：云端完成验签与会话绑定后解码；内部 tensor 只能由 runner 自行构造。
-
-验收：不依赖 Torch/HTTP；畸形信封与超限输入不进入 runner。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
+本服务核实格式/边界，不创建会话、不检查owner凭据；上层先认证再传入会话上下文。
+TODO(P3)：会话管理器在锁内取得ActivationContext，幂等查回执先于next_step验证。
+TODO(P4)：隐私发布完成后将固定字节/回执交签名传输；禁止直接当作DP出站接口。
 """
 
-__all__: list[str] = []
+from collections.abc import Iterable
+
+from pydantic import ValidationError
+
+from safe.contracts.errors import ErrorCode, SafeError
+from safe.contracts.manifest import SplitModelManifest
+from safe.contracts.session import ActivationContext, StepRequest
+from safe.domain.activation_policy import require_activation_boundary
+from safe.domain.compatibility import require_manifest_digest
+from safe.domain.session_state import require_next_step
+from safe.ports.activation_codec import ActivationCodec
+
+
+class ActivationService:
+    def __init__(self, *, codec: ActivationCodec, manifest: SplitModelManifest, approved_digest: str):
+        self._manifest = require_manifest_digest(manifest, approved_digest)
+        self._digest = approved_digest
+        self._codec = codec
+
+    def _context(self, context: ActivationContext) -> ActivationContext:
+        try:
+            value = ActivationContext.model_validate(context.model_dump())
+        except (ValidationError, AttributeError):
+            raise SafeError(ErrorCode.SESSION_INVALID) from None
+        if value.manifest_digest != self._digest:
+            raise SafeError(ErrorCode.MANIFEST_INCOMPATIBLE)
+        return value
+
+    def encode(self, values: Iterable[float], shape: tuple[int, int, int], *,
+               context: ActivationContext, request_id: str) -> StepRequest:
+        trusted = self._context(context)
+        require_activation_boundary(shape, self._manifest, trusted)
+        envelope = self._codec.encode(values, shape)
+        try:
+            return StepRequest(request_id=request_id, session_id=trusted.session_id,
+                manifest_digest=self._digest, step=trusted.next_step, phase=trusted.phase,
+                position_offset=trusted.position_offset, activation=envelope)
+        except ValidationError:
+            raise SafeError(ErrorCode.ACTIVATION_INVALID) from None
+
+    def decode(self, request: StepRequest, *, context: ActivationContext) -> tuple[float, ...]:
+        trusted = self._context(context)
+        try:
+            value = StepRequest.model_validate(request.model_dump())
+        except (ValidationError, AttributeError):
+            raise SafeError(ErrorCode.ACTIVATION_INVALID) from None
+        if value.session_id != trusted.session_id:
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        if value.manifest_digest != self._digest:
+            raise SafeError(ErrorCode.MANIFEST_INCOMPATIBLE)
+        require_next_step(expected=trusted.next_step, received=value.step)
+        if value.phase != trusted.phase or value.position_offset != trusted.position_offset:
+            raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+        require_activation_boundary(value.activation.shape, self._manifest, trusted)
+        return self._codec.decode(value.activation)

@@ -1,0 +1,26 @@
+{
+  "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+  "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "license_id": "Apache-2.0",
+  "license_sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+  "model_safetensors_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+  "model_safetensors_bytes": 988097824,
+  "source_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/tree/7ae557604adf67be50417f59c2c2f167def9a775",
+  "manifest": {
+    "schema_version": "manifest-v1",
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "config_digest": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+    "tokenizer_digest": "a5d5bf7238d3fa650c6f6aff4c07f35f1673c28e6c6a075c9d78185057493194",
+    "template_digest": "cd8e9439f0570856fd70470bf8889ebd8b5d1107207f67a5efb46e342330527f",
+    "prefix_digest": "cf92c0318775a636d3ccc05aa55162b9602451fae646b2d5f435663661f765d1",
+    "suffix_digest": "a1e412b9f3cdc38b67bff017093368d92649f366a771384ea987d741bad4ccaa",
+    "total_layers": 24,
+    "cut_layer": 2,
+    "hidden_size": 896,
+    "dtype": "float32",
+    "max_context": 160,
+    "license_id": "Apache-2.0"
+  },
+  "manifest_digest": "154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f"
+}

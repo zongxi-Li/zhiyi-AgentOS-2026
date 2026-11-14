@@ -6,6 +6,8 @@ TODO(P6)：覆盖最大合法张量、恶意超长维数与分配前拒绝的资
 
 from safe.contracts.activation import MAX_RAW_BYTES
 from safe.contracts.errors import ErrorCode, SafeError
+from safe.contracts.manifest import SplitModelManifest
+from safe.contracts.session import ActivationContext
 
 
 def checked_raw_bytes(shape: tuple[int, int, int]) -> int:
@@ -20,3 +22,23 @@ def checked_raw_bytes(shape: tuple[int, int, int]) -> int:
             raise SafeError(ErrorCode.ACTIVATION_INVALID)
         size *= dimension
     return size
+
+
+def require_activation_boundary(shape: tuple[int, int, int], manifest: SplitModelManifest,
+                                context: ActivationContext) -> None:
+    """校验受信上下文的阶段、位置、长度和hidden size；不读取张量。"""
+    checked_raw_bytes(shape)
+    if shape[2] != manifest.hidden_size:
+        raise SafeError(ErrorCode.ACTIVATION_INVALID)
+    if context.phase == "prefill":
+        if context.next_step != 0 or context.position_offset != 0:
+            raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+    elif context.phase == "decode":
+        if (not 1 <= context.next_step <= 31 or shape[1] != 1
+                or context.position_offset < context.next_step):
+            raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+    else:
+        raise SafeError(ErrorCode.ACTIVATION_INVALID)
+    # 首期固定总context≤160，即使模型配置允许更长也不动态放宽。
+    if context.position_offset + shape[1] > min(160, manifest.max_context):
+        raise SafeError(ErrorCode.ACTIVATION_INVALID)
