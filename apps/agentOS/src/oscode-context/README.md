@@ -26,6 +26,22 @@ In OScode, type `/compact` and send, or type `/` and choose the command suggesti
 
 Manual summary budgets are relative to replaceable history after fixed/protected input and checkpoint overhead are accounted for. If useful savings cannot fit a minimal summary, `unchanged` with `INSUFFICIENT_SAVINGS` is returned without calling the Provider. `no_safe_range` with `NO_COMPLETED_HISTORY` means no completed span can safely be replaced. Schema, budget and Provider failures have separate `failureCode` values and retain the original history. An oversized structured summary gets at most one measured rewrite, within the existing total summary-call budget; JSON is never truncated. UTF-8 allowance units are explicitly distinguished from the Provider's output-token cap.
 
+The Python host requests JSON Object output when the selected Provider declares that capability.
+The prompt includes the exact eight-field JSON Schema. Invalid structure, incomplete JSON, empty
+content and oversized summaries share a single bounded correction attempt using the original source;
+this does not retry the Runner or tools, and still counts against the global summary-call budget.
+The default summary allowance is 8192 meter units (UTF-8 bytes with the conservative fallback).
+It is still limited by the replaceable-history savings target and remaining context capacity.
+Provider output capacity is not reduced by a measured byte ratio during correction: those units
+are different, and doing so could truncate an otherwise complete JSON object.
+The engine also accepts one complete enclosing JSON code fence for compatibility; it never extracts
+objects from surrounding prose or accepts truncated JSON. All eight summary fields and the measured
+size still pass the same validation. A checkpoint remains an untrusted `user` message, not a system
+instruction. The SDK journal adapter recognizes this exact checkpoint envelope separately from
+original user turns, restores the full confirmed protocol tail for retained turns, and leaves the
+original archive unchanged. A successful summary alone is not sufficient evidence of delivery:
+integration tests also run the next two SDK turns with the actual engine-produced projection.
+
 Validated projections are held in the current page's Chat store and supplied as `context` on later streaming/text requests, with new complete messages appended. They are scoped to the conversation and model settings; source-prefix edits invalidate them. Switching conversations discards late results. Refreshing the page restores full raw context; there is no durable checkpoint database or cross-device sync.
 
 The UI distinguishes the previous execution's Provider usage (which includes its temporary tool loop) from the next request's text-history estimate. The latter counts the actual checkpoint plus subsequent messages using the host's conservative UTF-8 allowance and fixed instruction/tool-schema allowance. New user input will be added to that estimate. Model/role changes invalidate the estimate; older history without allowance metadata is labelled as previous-call usage. Fixed allowance metadata travels in existing usage events and is retained by the Node backend for history reloads.
@@ -47,7 +63,7 @@ Optional model overrides use `OSCODE_CONTEXT_COMPACTION_MODELS`, a JSON object k
     "target_ratio": 0.65,
     "retain_turns": 2,
     "retain_ratio": 0.2,
-    "summary_max_tokens": 2048,
+    "summary_max_tokens": 8192,
     "max_summary_calls": 16
   }
 }

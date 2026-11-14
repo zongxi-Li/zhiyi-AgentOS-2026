@@ -23,7 +23,9 @@ export interface Config {
 }
 export const DEFAULTS: Readonly<Config> = Object.freeze({
   triggerRatio: .85, targetRatio: .65, retainTurns: 2, retainRatio: .20,
-  summaryMaxTokens: 2048, maxSummaryCalls: 16,
+  // The fallback meter counts UTF-8 bytes; 2048 was too small for eight
+  // multilingual fields. The engine still caps this by actual savings/window.
+  summaryMaxTokens: 8192, maxSummaryCalls: 16,
   thresholdChars: 8192, headChars: 4096, tailChars: 1024,
 })
 export interface ProjectionRequest {

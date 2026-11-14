@@ -3,6 +3,43 @@ import assert from 'node:assert/strict'
 import { ContextCompactionEngine, TokenMeter, DEFAULTS, SUMMARY_FIELDS, inputLimit, modelMeter,
   balancedCuts, selectRange, pruneContent, pruneResults, PRUNE_MARKER, wire, LLMSummarizer, sourceReferences } from '../src/index.ts'
 import type { Message, ProjectionRequest, Summary, Summarize } from '../src/index.ts'
+import { parseSummary } from '../src/summarizer.ts'
+
+test('summary parsing accepts only a complete JSON value or its single enclosing fence', () => {
+  const value = { facts: ['keep src/main.ts'] }
+  assert.deepEqual(parseSummary(JSON.stringify(value)), value)
+  assert.deepEqual(parseSummary('```json\n' + JSON.stringify(value) + '\n```'), value)
+  assert.deepEqual(parseSummary(' \n```\r\n' + JSON.stringify(value) + '\r\n```\n'), value)
+  for (const text of ['Prose\n```json\n{}\n```', '```json\n{}\n```\ntrailing prose', '{"facts":[', '{} {}']) {
+    assert.throws(() => parseSummary(text), (error: any) => error.code === 'SUMMARY_INVALID_JSON')
+  }
+})
+
+test('fenced JSON still passes the full summary schema and budget checks', async () => {
+  const input = { ...request(history(3, 500)), force: true }
+  const valid = await make(async () => ({ text: '```json\n' + JSON.stringify(summary()) + '\n```' })).project(input)
+  assert.equal(valid.status, 'summarized')
+  const invalid = await make(async () => ({ text: '```json\n{"facts":["incomplete schema"]}\n```' })).project(input)
+  assert.equal(invalid.status, 'failed_passthrough')
+  assert.equal(invalid.metrics.failureCode, 'SUMMARY_INVALID_SCHEMA')
+  assert.deepEqual(invalid.messages, input.messages)
+})
+
+test('invalid structure gets only one schema-guided correction with the original source', async () => {
+  const seen: string[] = []
+  let calls = 0
+  const result = await make(async (text, _cap, instruction) => {
+    seen.push(text)
+    calls++
+    assert.match(instruction, /JSON Schema/)
+    if (calls === 1) return { text: '{"summary":{"facts":["wrong wrapper"]}}' }
+    assert.match(instruction, /SUMMARY_INVALID_SCHEMA/)
+    return { text: JSON.stringify(summary()) }
+  }).project({ ...request(history(3, 500)), force: true })
+  assert.equal(result.status, 'summarized')
+  assert.equal(calls, 2)
+  assert.equal(seen[0], seen[1])
+})
 
 const summary = (value = 'decision: preserve src/main.ts, unresolved: add tests'): Summary => Object.fromEntries(SUMMARY_FIELDS.map(key => [key, key === 'facts' ? [value] : []])) as Summary
 const invoke: Summarize = async () => ({ text: JSON.stringify(summary()), totalTokens: 200 })
@@ -89,7 +126,7 @@ test('oversized multilingual summaries get one measured rewrite and account for 
   const result = await engine.project({ ...request(history(2, 1500).slice(0, -1)), force: true })
   assert.equal(result.status, 'summarized')
   assert.equal(caps.length, 2)
-  assert.ok(caps[1] < caps[0])
+  assert.equal(caps[1], caps[0], 'UTF-8 admission bytes must not proportionally shrink Provider token capacity')
   assert.match(instructions[0], /UTF-8 bytes/)
   assert.match(instructions[1], /previous response measured/)
   assert.equal(result.metrics.summaryCostTokens, 100)
