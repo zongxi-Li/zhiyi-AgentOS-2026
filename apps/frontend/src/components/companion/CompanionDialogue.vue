@@ -1,15 +1,5 @@
 <template>
   <div class="companion-dialogue" data-testid="companion-dialogue">
-    <div class="companion-messages" data-testid="companion-messages">
-      <p v-if="!messages.length" class="companion-empty">点麦克风说一句，或者直接叫我的名字。</p>
-      <div
-        v-for="message in messages"
-        :key="message.id"
-        class="companion-msg"
-        :class="`companion-msg--${message.role}`"
-      >{{ message.content }}</div>
-      <div v-if="pending" class="companion-msg companion-msg--companion">正在想…</div>
-    </div>
 
     <div v-if="card" class="companion-card" data-testid="companion-card">
       <span class="companion-card-title">任务意图卡</span>

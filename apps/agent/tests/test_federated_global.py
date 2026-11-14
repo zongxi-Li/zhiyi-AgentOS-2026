@@ -56,7 +56,7 @@ class TestGlobalModelManager:
                 client_info={"name": f"client {client_id}"},
             )
 
-        from app.services.encryptionservice import encryption_service
+        from apps.agentOS.src.safe.encryptionservice import encryption_service
 
         for client_id in clients:
             encrypted = encryption_service.encrypt_parameters(
@@ -87,7 +87,7 @@ class TestGlobalModelManager:
 
 
 def test_differential_privacy():
-    from app.services.encryptionservice import encryption_service
+    from apps.agentOS.src.safe.encryptionservice import encryption_service
 
     original_params = {"weights": [1.0, 2.0, 3.0, 4.0, 5.0]}
     noisy_params = encryption_service.add_differential_privacy(
@@ -101,7 +101,7 @@ def test_differential_privacy():
 
 
 def test_parameter_encryption():
-    from app.services.encryptionservice import encryption_service
+    from apps.agentOS.src.safe.encryptionservice import encryption_service
 
     original_params = {"param1": [1.0, 2.0, 3.0], "param2": "test_value"}
     encrypted = encryption_service.encrypt_parameters(original_params)
