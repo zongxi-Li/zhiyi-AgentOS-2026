@@ -6,7 +6,7 @@
 
 2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验、`ActivationService` 的受信会话/manifest/phase/位置/shape校验，以及 P3 单进程会话事务基线。`ActivationContext` 必须来自受信会话，摘要来自批准配置；`SessionService` + `MemorySessionStore` 已覆盖 owner 隔离、严格 step、60秒空闲 TTL、300秒绝对 TTL、请求幂等、终态和 runner 异常失败。会话存储可注入 `ModelRunner`，分配不透明 KV 句柄并在关闭/失败/过期时释放；释放失败会保持终态并允许清理重试。当前仍无真实 KV 前向、认证、跨进程存储或网络服务，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
 
-同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并完成20×16步无KV基线；另完成真实权重逐token KV 短程核验，验证 prefix/suffix 分别持有本角色缓存、每步 greedy 与完整模型一致。基线和KV验证记录分别见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)和[KV续算报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-kv.md)。KV报告目前为2条合成输入×4步，尚非完整20×32验收；KV runner 与完整模型的 `DynamicCache` oracle 使用 `atol=1e-5, rtol=1e-4`，并单独记录与无KV全序列重算的数值差异，greedy 必须完全一致。网络、认证和DP仍未接通，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
+同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并完成20×16步无KV基线和KV缓存对照；KV评估20条中英文合成输入×16步共320个logits，greedy `320/320` 一致，最大绝对误差为0。基线和KV验证记录分别见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)和[KV续算报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-kv.md)。KV runner 与完整模型的 `DynamicCache` oracle 使用 `atol=1e-5, rtol=1e-4`，并单独记录与无KV全序列重算的数值差异。网络、认证和DP仍未接通，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
 
 ## 当前状态
 
