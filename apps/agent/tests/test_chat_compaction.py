@@ -41,6 +41,23 @@ def payload(rounds=6):
                 {'role': 'assistant', 'content': 'Keep API stable ' + 'y' * 1500})]}
 
 
+async def test_context_snapshot_http_reuses_the_existing_scoped_store_without_model_calls(manual, monkeypatch):
+    from app.llm import chat_session
+    app,calls=manual
+    observed=[]
+    async def read(context_id,model,base_url,role_id):
+        observed.append((context_id,model,base_url,role_id))
+        return {'usedTokens':500,'maxTokens':1000000,'measurement':'provider','source':'model'}
+    monkeypatch.setattr(chat_session,'read_context_usage',read)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+        response=await client.get('/ai/chat/context/usage',params={
+            'context_id':'scoped','model':'mock','base_url':'https://mock.test','role_id':'role'})
+    assert response.status_code==200
+    assert response.json()['contextUsage']['usedTokens']==500
+    assert observed==[('scoped','mock','https://mock.test','role')]
+    assert calls==[]
+
+
 async def test_manual_http_forces_below_threshold_without_changing_original(manual):
     app, calls = manual
     body = payload(); original = copy.deepcopy(body)

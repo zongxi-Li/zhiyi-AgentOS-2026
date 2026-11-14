@@ -312,7 +312,8 @@ def build_input_filter(*, agent, context_id: str, model: str, base_url: str, api
         if not policy.get("tokenizer_json") or not policy.get("tokenizer_config"):
             raise CompactionBridgeError("Tokenizer JSON and config must be configured together")
         tokenizer = {"json": policy["tokenizer_json"], "config": policy["tokenizer_config"]}
-    agent.model_settings = replace(agent.model_settings, max_tokens=reserve)
+    if not measure_only:
+        agent.model_settings = replace(agent.model_settings, max_tokens=reserve)
     budget = {"contextWindow": window, "outputReserve": reserve, "safetyMargin": margin}
     for source, target in [('working_set_trigger_tokens', 'workingSetTriggerTokens'), ('working_set_target_tokens', 'workingSetTargetTokens')]:
         if source in policy:

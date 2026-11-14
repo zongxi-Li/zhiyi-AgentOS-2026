@@ -191,6 +191,8 @@ async def test_each_model_call_publishes_context_usage_before_the_turn_finishes(
                     break
         assert event.data['last_input_tokens'] == 100
         assert event.data['last_output_tokens'] == 10
+        assert event.data['contextUsage']['usedTokens'] == 110
+        assert event.data['contextUsage']['measurement'] == 'provider'
         assert not release.is_set()
         release.set()
         events = [event async for event in iterator]
@@ -198,6 +200,7 @@ async def test_each_model_call_publishes_context_usage_before_the_turn_finishes(
             and e.data.get('contextMeasurement') == 'provider-usage']
         assert measured[-1].data['last_input_tokens'] == 240
         assert measured[-1].data['last_output_tokens'] == 12
+        assert measured[-1].data['contextUsage']['usedTokens'] == 252
         assert events[-1].event.value == 'done'
     finally:
         release.set()

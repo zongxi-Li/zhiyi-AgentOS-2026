@@ -14,7 +14,7 @@ from app.tools.runtime import _provider_for_model
 router = APIRouter()
 
 
-@router.get('/context/usage')
+@router.get('/chat/context/usage')
 async def get_context_usage(context_id: str, model: str = '', base_url: str = '', role_id: str | None = None):
     from app.llm.chat_session import read_context_usage
     if not base_url:
