@@ -320,7 +320,7 @@ def test_runtime_stream_emits_approval_events_while_original_tool_waits(monkeypa
             return _Result(context)
 
         def fake_build_agent_sync(*args, **kwargs):
-            return None, _Client(), {"effectiveModel": "test-model"}
+            return SimpleNamespace(model=None), _Client(), {"effectiveModel": "test-model"}
 
         monkeypatch.setattr(runtime, "_build_agent", fake_build_agent_sync)
         monkeypatch.setattr(runtime_module.Runner, "run_streamed", fake_run_streamed)

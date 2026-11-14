@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from support.model_stream_policy import ModelStreamPolicy
 
 
 @dataclass(frozen=True)
@@ -15,11 +16,13 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        timeout_raw = (os.getenv("AGENTOS_LLM_TIMEOUT_SECONDS") or "120").strip()
+        policy = ModelStreamPolicy.from_environment()
+        default_timeout = max(policy.first_response, policy.idle)
+        timeout_raw = (os.getenv("AGENTOS_LLM_TIMEOUT_SECONDS") or str(default_timeout)).strip()
         try:
             timeout_seconds = max(1.0, float(timeout_raw))
         except ValueError:
-            timeout_seconds = 120.0
+            timeout_seconds = default_timeout
 
         # 零级配置：热切换的激活供应商档案优先于一切环境变量；
         # 档案缺失或不可用时回落到既有环境变量逻辑，行为不变。

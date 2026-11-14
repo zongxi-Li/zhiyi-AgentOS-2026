@@ -408,6 +408,8 @@ class NativeGeneralAgent(BaseAgent):
                     commit_id=context.commit_id)
                 invocations.extend(tool_session.invocations[:-1])
             elif callable(streamer):
+                from support.model_stream_policy import ModelStreamPolicy
+                stream_policy = ModelStreamPolicy.from_environment()
                 streamed_data = None
                 stream_completed_payload: dict[str, Any] = {}
                 async for runtime_event in streamer(
@@ -416,7 +418,8 @@ class NativeGeneralAgent(BaseAgent):
                     prompt_metadata=prompt_metadata,
                     node_id=context.step.step_id,
                     attempt_id=context.attempt_id or context.commit_id or context.step.step_id,
-                    ttft_timeout=min(30.0, timeout_seconds), idle_timeout=min(60.0, timeout_seconds),
+                    ttft_timeout=min(stream_policy.first_response, timeout_seconds),
+                    idle_timeout=min(stream_policy.idle, timeout_seconds),
                     total_timeout=timeout_seconds, thinking_mode=thinking_mode,
                     reasoning_effort=_requested_reasoning_effort(context),
                     prompt_version=base_prompt_version,

@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     TOOL_MAX_TURNS: int = 0
     TOOL_MAX_CALLS: int = 0
     TOOL_TIMEOUT_SECONDS: float = 15.0
+    # Provider waits are not tool execution deadlines. Total is per HTTP attempt,
+    # not a whole Agent loop; approvals and tools keep their existing budgets.
+    MODEL_CONNECT_TIMEOUT_SECONDS: float = 10.0
+    MODEL_FIRST_RESPONSE_TIMEOUT_SECONDS: float = 300.0
+    MODEL_STREAM_IDLE_TIMEOUT_SECONDS: float = 300.0
+    MODEL_REQUEST_TOTAL_TIMEOUT_SECONDS: float = 900.0
+    MODEL_REQUEST_MAX_RETRIES: int = 2
     TOOL_SEARCH_MAX_RESULTS: int = 5
     TOOL_EXTRACT_MAX_URLS: int = 3
     TOOL_CODEBASE_ROOT: str = ""

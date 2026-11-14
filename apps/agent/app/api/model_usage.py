@@ -2,26 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
-
-
-def _number(value: Any) -> int | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-        return int(value)
-    return None
-
-
-def cache_usage(usage: dict[str, Any]) -> tuple[int, bool]:
-    # Use the first reported alias, including an explicit zero. Never add aliases.
-    for key in ("cache_read_tokens", "cache_read_input_tokens", "cached_tokens", "cacheReadTokens", "prompt_cache_hit_tokens"):
-        value = _number(usage.get(key))
-        if value is not None:
-            return value, True
-    for key in ("prompt_tokens_details", "input_tokens_details"):
-        details = usage.get(key)
-        value = _number(details.get("cached_tokens")) if isinstance(details, dict) else None
-        if value is not None:
-            return value, True
-    return 0, False
+from support.cache_usage import cache_usage
 
 
 def cache_summary(calls: list[dict[str, Any]]) -> dict[str, Any]:

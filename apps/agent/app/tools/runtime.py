@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import httpx
 from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Iterable, Literal
 from uuid import uuid4
@@ -34,6 +35,10 @@ from app.tools.contracts import (
 )
 from app.tools.local_runtime import LocalRuntimeToolExecutor
 from app.tools.permissions import ChatApprovalMode, get_chat_permission_service
+from app.llm.stream_transport import ModelStreamClient
+from support.model_stream_policy import ModelStreamPolicy
+from app.llm.observable_chat_model import ObservableChatModel
+from contracts.local_runtime import LocalRuntimeExecutionLimits
 
 
 SYSTEM_INSTRUCTIONS = """You are a careful Coding Agent with access only to the tools listed below.
@@ -65,12 +70,20 @@ def _configured_limit(value: int | float | None) -> int | None:
 
 
 def _usage_dict(usage: Any) -> dict[str, Any]:
-    return {
+    data = {
         "requests": int(getattr(usage, "requests", 0) or 0),
         "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
         "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
         "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
     }
+    details = getattr(usage, 'input_tokens_details', None)
+    if details is not None:
+        data['cached_tokens'] = int(getattr(details, 'cached_tokens', 0) or 0)
+    entries = getattr(usage, 'request_usage_entries', None) or []
+    if entries:
+        data['last_input_tokens'] = entries[-1].input_tokens
+        data['last_output_tokens'] = entries[-1].output_tokens
+    return data
 
 
 def _tool_call_id(item: Any) -> str:
@@ -110,13 +123,13 @@ class ToolInvocationContext:
     _call_count: int = 0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def invocation_timeout(self, name: str) -> float:
+    def invocation_timeout(self, name: str) -> float | None:
+        if name in (*ChatToolCatalog.COMMAND_TOOL_NAMES, 'terminal'):
+            return None  # Process deadlines belong to the accepted command request.
         execution = max(0.1, float(settings.TOOL_TIMEOUT_SECONDS))
-        if name in {"terminal", "run_command"}:
-            execution = max(execution, float(settings.TOOL_TERMINAL_MAX_TIMEOUT_SECONDS) + 5.0)
         service = getattr(self.catalog, "permission_service", None)
         ttl = getattr(service, "approval_ttl", None)
-        if name in (*ChatToolCatalog.FILE_TOOL_NAMES, *ChatToolCatalog.COMMAND_TOOL_NAMES) and ttl is not None:
+        if name in (*ChatToolCatalog.FILE_TOOL_NAMES, 'run_command') and ttl is not None:
             return execution + float(ttl.total_seconds())
         return execution
 
@@ -126,7 +139,10 @@ class ToolInvocationContext:
             if name not in SDK_TOOLS:
                 continue
             tool = SDK_TOOLS[name]
-            if (name in (*ChatToolCatalog.FILE_TOOL_NAMES, *ChatToolCatalog.COMMAND_TOOL_NAMES)
+            if name in (*ChatToolCatalog.COMMAND_TOOL_NAMES, 'terminal'):
+                tools.append(replace(tool, timeout_seconds=None))
+                continue
+            if (name in (*ChatToolCatalog.FILE_TOOL_NAMES, 'run_command')
                     and getattr(self.catalog, "permission_service", None) is not None):
                 # SDK applies an independent timeout outside invoke(). Its envelope
                 # must include the same human approval budget, without changing
@@ -319,7 +335,7 @@ async def terminal(
     context: ToolContext[ToolInvocationContext],
     command: str,
     cwd: str = ".",
-    timeout_seconds: float = 30.0,
+    timeout_seconds: float | None = None,
 ) -> str:
     """Run one bounded command inside the configured Chat workspace."""
     return await context.context.invoke(
@@ -342,8 +358,9 @@ async def run_command(
     command: str | None = None,
     cwd: str = ".",
     timeout: float | None = None,
+    yield_time_ms: int = 1000,
 ) -> str:
-    """Run one approved command through the Windows Local Runtime."""
+    """Run an approved command; long commands return a running handle. Read it with get_command_output; never resubmit it."""
     return await context.context.invoke(
         "run_command",
         {
@@ -353,9 +370,22 @@ async def run_command(
             "command": command,
             "cwd": cwd,
             "timeout": timeout,
+            "yield_time_ms": yield_time_ms,
         },
         call_id=context.tool_call_id,
     )
+
+
+@function_tool(strict_mode=False, timeout=15.0)
+async def get_command_output(context: ToolContext[ToolInvocationContext], execution_id: str, after: int = 0, wait_ms: int = 1000) -> str:
+    """Read an existing command's bounded output/status, optionally waiting up to 10 seconds. Never starts a command."""
+    return await context.context.invoke('get_command_output', {'execution_id': execution_id, 'after': after, 'wait_ms': wait_ms}, call_id=context.tool_call_id)
+
+
+@function_tool(strict_mode=False, timeout=15.0)
+async def cancel_command(context: ToolContext[ToolInvocationContext], execution_id: str) -> str:
+    """Cancel an existing command owned by this conversation. Does not grant command execution authority."""
+    return await context.context.invoke('cancel_command', {'execution_id': execution_id}, call_id=context.tool_call_id)
 
 
 @function_tool(strict_mode=False, timeout=30.0)
@@ -442,6 +472,8 @@ SDK_TOOLS = {
     "industrial_calculator": industrial_calculator,
     "terminal": terminal,
     "run_command": run_command,
+    "get_command_output": get_command_output,
+    "cancel_command": cancel_command,
     "read_file": read_file,
     "list_files": list_files,
     "write_file": write_file,
@@ -556,13 +588,24 @@ class AgentsToolRuntime:
             parameters=parameters,
         )
         model = normalized.effective_model
+        policy = ModelStreamPolicy(
+            connect=settings.MODEL_CONNECT_TIMEOUT_SECONDS,
+            first_response=settings.MODEL_FIRST_RESPONSE_TIMEOUT_SECONDS,
+            idle=settings.MODEL_STREAM_IDLE_TIMEOUT_SECONDS,
+            total=settings.MODEL_REQUEST_TOTAL_TIMEOUT_SECONDS,
+        )
+        # SDK request retries apply before a streaming response is returned.
+        # Never retry Runner.run_streamed: that would replay completed tools.
+        http_timeout = httpx.Timeout(connect=policy.connect, read=None, write=policy.connect, pool=policy.connect)
         client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url.rstrip("/"),
-            timeout=max(float(settings.TOOL_TIMEOUT_SECONDS) * 2, 30.0),
+            timeout=http_timeout,
+            max_retries=max(0, min(int(settings.MODEL_REQUEST_MAX_RETRIES), 5)),
+            http_client=ModelStreamClient(policy, timeout=http_timeout),
         )
-        replay_reasoning = model.lower().startswith("deepseek") or "deepseek" in base_url.lower()
-        sdk_model = OpenAIChatCompletionsModel(
+        replay_reasoning = provider_model_capabilities(model, base_url).requires_reasoning_content_for_tool_calls
+        sdk_model = ObservableChatModel(
             model=model,
             openai_client=client,
             should_replay_reasoning_content=(lambda _: replay_reasoning),
@@ -664,7 +707,16 @@ class AgentsToolRuntime:
             base_url=base_url, api_key=api_key,
             model_policies=settings.OSCODE_CONTEXT_COMPACTION_MODELS)}
 
-    async def run(
+    async def run(self, text, **kwargs):
+        from app.llm.chat_session import open_chat_session
+        if not any(kwargs.get(k) for k in ('model', 'base_url', 'api_key')):
+            kwargs['model'], kwargs['base_url'], kwargs['api_key'] = resolve_system_runtime_config()
+        async with open_chat_session(kwargs.get('session_id'), kwargs.get('model'),
+                kwargs.get('base_url', ''), kwargs.get('role_id'), kwargs.get('history'),
+                kwargs.pop('context_projection', False)) as session:
+            return await self._run(text, _session=session, **kwargs)
+
+    async def _run(
         self,
         text: str,
         *,
@@ -679,6 +731,7 @@ class AgentsToolRuntime:
         session_id: str | None = None,
         approval_mode: ChatApprovalMode = "ask",
         oscode_context_compaction: bool = False,
+        _session=None,
     ) -> ToolRunResult:
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
@@ -704,8 +757,9 @@ class AgentsToolRuntime:
                 model=str(metadata.get("effectiveModel") or model), base_url=base_url, api_key=api_key)
             result = await Runner.run(
                 agent,
-                self._input(text, history),
+                text if _session else self._input(text, history),
                 context=context,
+                **({'session': _session} if _session else {}),
                 max_turns=_configured_limit(settings.TOOL_MAX_TURNS),
                 run_config=RunConfig(
                     tracing_disabled=True,
@@ -719,7 +773,7 @@ class AgentsToolRuntime:
                 text=str(result.final_output or ""),
                 model=str(metadata.get("effectiveModel") or model),
                 usage=usage,
-                metadata=metadata,
+                metadata={**metadata, 'protocolSession': _session is not None},
                 sources=list(context.sources.values()),
                 toolExecutions=context.records,
             )
@@ -729,7 +783,31 @@ class AgentsToolRuntime:
                 await projection.close()
             await client.close()
 
-    async def stream(
+    async def stream(self, text, **kwargs):
+        from app.llm.chat_session import open_chat_session
+        started_at = time.perf_counter()
+        if not any(kwargs.get(k) for k in ('model', 'base_url', 'api_key')):
+            kwargs['model'], kwargs['base_url'], kwargs['api_key'] = resolve_system_runtime_config()
+        history = kwargs.get('history')
+        partial = ''
+        complete = False
+        async with open_chat_session(kwargs.get('session_id'), kwargs.get('model'),
+                kwargs.get('base_url', ''), kwargs.get('role_id'), history,
+                kwargs.pop('context_projection', False)) as session:
+            chunks = self._stream(text, _session=session, _started_at=started_at, **kwargs)
+            try:
+                async for event in chunks:
+                    if event.event == ChatStreamEventType.CONTENT_DELTA:
+                        partial += event.data.get('delta', '')
+                    if event.event == ChatStreamEventType.DONE:
+                        complete = event.data.get('status') == 'completed'
+                    yield event
+            finally:
+                await chunks.aclose()
+                if session and not complete and partial:
+                    await session.add_items([{'role': 'assistant', 'content': '[回复中断，未确认任务完成]\n' + partial}])
+
+    async def _stream(
         self,
         text: str,
         *,
@@ -744,14 +822,14 @@ class AgentsToolRuntime:
         session_id: str | None = None,
         approval_mode: ChatApprovalMode = "ask",
         oscode_context_compaction: bool = False,
+        _session=None,
+        _started_at=None,
     ) -> AsyncIterator[ChatStreamEvent]:
+        started_at = _started_at if _started_at is not None else time.perf_counter()
+        response_timings = {}
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
-        permission_queue = (
-            asyncio.Queue()
-            if getattr(self.catalog, "supports_permission_events", False)
-            else None
-        )
+        permission_queue = asyncio.Queue()
         context = self._context(
             role_id,
             provider=_provider_for_model(model, base_url),
@@ -770,6 +848,20 @@ class AgentsToolRuntime:
             parameters=parameters,
         )
         sequence = 0
+        def report_progress(name, payload):
+            if name == 'model_context' and payload.get('providerRequest') == 1:
+                response_timings['contextPreparationMs'] = int((time.perf_counter() - started_at) * 1000)
+                payload = {**payload, 'responseTimings': dict(response_timings)}
+            if name in ('model_phase', 'model_context'):
+                payload = {**payload, 'contextWindowTokens': provider_model_capabilities(model, base_url).context_window_tokens,
+                           'effectiveModel': model}
+            permission_queue.put_nowait((name, payload))
+        if isinstance(agent.model, ObservableChatModel):
+            agent.model.on_progress = report_progress
+        provider_client = getattr(client, '_client', None)
+        if isinstance(provider_client, ModelStreamClient):
+            provider_client.on_activity = report_progress
+            provider_client.on_context = report_progress
         emitted_content = False
         compaction_options = {}
         try:
@@ -781,8 +873,9 @@ class AgentsToolRuntime:
             raise
         result = Runner.run_streamed(
             agent,
-            self._input(text, history),
+            text if _session else self._input(text, history),
             context=context,
+            **({'session': _session} if _session else {}),
             max_turns=_configured_limit(settings.TOOL_MAX_TURNS),
             run_config=RunConfig(
                 tracing_disabled=True,
@@ -796,6 +889,8 @@ class AgentsToolRuntime:
         permission_queue = context.permission_event_queue
         permission_task = asyncio.create_task(permission_queue.get()) if permission_queue else None
         stream_done = False
+        reasoning_attempt = None
+        reasoning_started_at = 0.0
         try:
             while True:
                 if stream_done:
@@ -806,6 +901,9 @@ class AgentsToolRuntime:
                         while not permission_queue.empty():
                             approval_name, approval_payload = permission_queue.get_nowait()
                             event_type = {
+                                "model_phase": ChatStreamEventType.MODEL_PHASE,
+                                "model_activity": ChatStreamEventType.MODEL_ACTIVITY,
+                                "model_context": ChatStreamEventType.MODEL_CONTEXT,
                                 "approval_required": ChatStreamEventType.APPROVAL_REQUIRED,
                                 "approval_resolved": ChatStreamEventType.APPROVAL_RESOLVED,
                                 "execution_started": ChatStreamEventType.EXECUTION_STARTED,
@@ -836,6 +934,9 @@ class AgentsToolRuntime:
                 if permission_task is not None and permission_task in done_tasks:
                     approval_name, approval_payload = permission_task.result()
                     event_type = {
+                        "model_phase": ChatStreamEventType.MODEL_PHASE,
+                        "model_activity": ChatStreamEventType.MODEL_ACTIVITY,
+                        "model_context": ChatStreamEventType.MODEL_CONTEXT,
                         "approval_required": ChatStreamEventType.APPROVAL_REQUIRED,
                         "approval_resolved": ChatStreamEventType.APPROVAL_RESOLVED,
                         "execution_started": ChatStreamEventType.EXECUTION_STARTED,
@@ -865,22 +966,41 @@ class AgentsToolRuntime:
                     if event.type == "raw_response_event":
                         raw_type = str(getattr(event.data, "type", ""))
                         delta = getattr(event.data, "delta", None)
-                        if raw_type == "response.output_text.delta" and isinstance(delta, str):
+                        attempt_id = getattr(event.data, 'kinlin_attempt_id', request_id)
+                        identity = {'attemptId': attempt_id, 'turn': getattr(event.data, 'kinlin_turn', 1)}
+                        if reasoning_attempt and (raw_type == 'response.completed'
+                                or (raw_type == 'response.output_text.delta' and isinstance(delta, str) and delta)):
+                            sequence += 1
+                            yield ChatStreamEvent(event=ChatStreamEventType.REASONING_END,
+                                request_id=request_id, sequence=sequence,
+                                data={'attemptId': reasoning_attempt, 'reasoningPhaseMs': int((time.perf_counter() - reasoning_started_at) * 1000)})
+                            reasoning_attempt = None
+                        if raw_type == "response.output_text.delta" and isinstance(delta, str) and delta:
+                            response_timings.setdefault('firstContentMs', int((time.perf_counter() - started_at) * 1000))
                             sequence += 1
                             emitted_content = True
                             yield ChatStreamEvent(
                                 event=ChatStreamEventType.CONTENT_DELTA,
                                 request_id=request_id,
                                 sequence=sequence,
-                                data={"delta": delta},
+                                data={"delta": delta, **identity, 'responseTimings': dict(response_timings),
+                                    'partId': f"{attempt_id}:text:{getattr(event.data, 'output_index', 0)}"},
                             )
-                        elif "reasoning" in raw_type and raw_type.endswith(".delta") and isinstance(delta, str):
+                        elif "reasoning" in raw_type and raw_type.endswith(".delta") and isinstance(delta, str) and delta:
+                            response_timings.setdefault('firstReasoningMs', int((time.perf_counter() - started_at) * 1000))
+                            if reasoning_attempt != attempt_id:
+                                reasoning_attempt = attempt_id
+                                reasoning_started_at = time.perf_counter()
+                                sequence += 1
+                                yield ChatStreamEvent(event=ChatStreamEventType.REASONING_START,
+                                    request_id=request_id, sequence=sequence, data={**metadata, **identity, 'responseTimings': dict(response_timings)})
                             sequence += 1
                             yield ChatStreamEvent(
                                 event=ChatStreamEventType.REASONING_DELTA,
                                 request_id=request_id,
                                 sequence=sequence,
-                                data={"delta": delta},
+                                data={"delta": delta, **identity,
+                                    'partId': f"{attempt_id}:reasoning:{getattr(event.data, 'output_index', 0)}"},
                             )
                     elif event.type == "run_item_stream_event":
                         if event.name == "tool_called":
@@ -932,6 +1052,12 @@ class AgentsToolRuntime:
                     data={"delta": final_text},
                 )
             usage = _usage_dict(result.context_wrapper.usage)
+            if isinstance(agent.model, ObservableChatModel):
+                values = agent.model.cache_tokens or []
+                usage.pop('cached_tokens', None)
+                usage['cacheUsageAvailable'] = bool(values) and all(value is not None for value in values)
+                if usage['cacheUsageAvailable']:
+                    usage['cached_tokens'] = sum(values)
             sequence += 1
             yield ChatStreamEvent(
                 event=ChatStreamEventType.USAGE,
@@ -940,6 +1066,9 @@ class AgentsToolRuntime:
                 data={
                     **usage,
                     **metadata,
+                    'protocolSession': _session is not None,
+                    'latencyMs': int((time.perf_counter() - started_at) * 1000),
+                    'responseTimings': {**response_timings, **(provider_client.timings if isinstance(provider_client, ModelStreamClient) else {})},
                     "contextWindowTokens": provider_model_capabilities(
                         model, base_url
                     ).context_window_tokens,
@@ -958,6 +1087,13 @@ class AgentsToolRuntime:
                 },
             )
         finally:
+            if not stream_done:
+                cancel_run = getattr(result, "cancel", None)
+                if callable(cancel_run):
+                    cancel_run(mode="immediate")
+                run_task = getattr(result, "run_loop_task", None)
+                if isinstance(run_task, asyncio.Task):
+                    await asyncio.gather(run_task, return_exceptions=True)
             # Cancel every owned waiter before awaiting SDK teardown. A second
             # downstream cancellation must not strand the permission Queue.get.
             waiters = [task for task in (stream_task, permission_task) if task is not None]
@@ -966,8 +1102,11 @@ class AgentsToolRuntime:
             await asyncio.gather(*waiters, return_exceptions=True)
             permission_service = getattr(self.catalog, "permission_service", None)
             cancel = getattr(self.catalog, "cancel", None)
-            if cancel is not None:
+            if cancel is not None and not stream_done:
                 await cancel(request_id)
+            detach = getattr(self.catalog, 'detach_commands', None)
+            if detach is not None:
+                detach(request_id)
             if permission_service is not None:
                 await permission_service.cancel_session(context.session_id)
             projection = compaction_options.get("call_model_input_filter")
@@ -1024,6 +1163,11 @@ def configure_chat_tool_runtime(execution_runtime: object) -> AgentsToolRuntime:
             health_transport=health_transport,
             resource_id=str(resource_id),
             authorization=authorization,
+            limits=LocalRuntimeExecutionLimits(
+                timeoutSeconds=None,
+                maxStdoutBytes=settings.TOOL_TERMINAL_MAX_OUTPUT_BYTES,
+                maxStderrBytes=settings.TOOL_TERMINAL_MAX_OUTPUT_BYTES,
+            ),
         )
     workspace_executor_factory = None
     authority = getattr(execution_runtime, 'workspace_authority', None)

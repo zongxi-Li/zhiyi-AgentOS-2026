@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from app.api.model_usage import cache_usage, cache_summary, cache_groups
 
@@ -15,6 +16,27 @@ from app.api.model_usage import cache_usage, cache_summary, cache_groups
 ])
 def test_cache_usage_preserves_zero_missing_and_aliases(usage, expected):
     assert cache_usage(usage) == expected
+
+
+@pytest.mark.parametrize('usage,expected', [
+    ({'cached_tokens': 0, 'prompt_cache_hit_tokens': 20}, (0, True)),
+    ({'cache_read_input_tokens': 30}, (30, True)),
+    ({'prompt_tokens_details': {}, 'input_tokens_details': {'cached_tokens': 8}}, (8, True)),
+    ({'cached_tokens': True}, (0, False)),
+    ({'cached_tokens': float('nan')}, (0, False)),
+    ({'cached_tokens': float('inf')}, (0, False)),
+    ({'cached_tokens': -1, 'prompt_tokens_details': {'cached_tokens': 4}}, (4, True)),
+    ({}, (0, False)),
+])
+def test_oscode_sdk_and_acg_dictionary_use_identical_cache_rules(usage, expected):
+    from app.llm.observable_chat_model import ObservableChatModel
+    def sdk(value):
+        return SimpleNamespace(**{k: sdk(v) for k, v in value.items()}) if isinstance(value, dict) else value
+    model = ObservableChatModel.__new__(ObservableChatModel)
+    model.cache_tokens = [None]
+    model.record_usage(sdk(usage))
+    assert cache_usage(usage) == expected
+    assert model.cache_tokens == [expected[0] if expected[1] else None]
 
 
 def call(tokens, hits, reported=True, prefix="p", capability="analysis"):

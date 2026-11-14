@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 
 class ChatStreamEventType(str, Enum):
     HEARTBEAT = "heartbeat"
+    MODEL_PHASE = "model_phase"
+    MODEL_ACTIVITY = "model_activity"
+    MODEL_CONTEXT = "model_context"
     REASONING_START = "reasoning_start"
     REASONING_DELTA = "reasoning_delta"
     REASONING_END = "reasoning_end"
