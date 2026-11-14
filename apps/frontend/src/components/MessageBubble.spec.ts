@@ -1,4 +1,4 @@
-import { shallowMount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import MessageBubble from './MessageBubble.vue'
 
@@ -42,6 +42,60 @@ describe('MessageBubble Markdown rendering', () => {
     expect(blocks.map(block=>block.props('block').id)).toEqual(['a','tool:x','b'])
     expect(blocks[1].props('item').stage).toBe('tool:read_file:x')
     expect(blocks[0].props('item')).toBeUndefined()
+  })
+
+  it('folds consecutive repeated tool blocks into one expandable group', () => {
+    const wrapper = shallowMount(MessageBubble, {props: {message: {
+      id: 'repeated', role: 'assistant', content: '', transcript: [
+        {id:'tool:a',kind:'tool',callId:'a',toolName:'get_command_output',state:'background'},
+        {id:'tool:b',kind:'tool',callId:'b',toolName:'get_command_output',state:'background'},
+        {id:'tool:c',kind:'tool',callId:'c',toolName:'get_command_output',state:'background'},
+        {id:'tool:d',kind:'tool',callId:'d',toolName:'run_command',state:'completed'},
+      ], executionSummary: [
+        {stage:'tool:get_command_output:a',status:'completed',durationMs:100},
+        {stage:'tool:get_command_output:b',status:'completed',durationMs:200},
+        {stage:'tool:get_command_output:c',status:'completed',durationMs:300},
+        {stage:'tool:run_command:d',status:'completed',durationMs:400},
+      ],
+    }}, global: {stubs: {'el-icon':true, 'el-tooltip':true, 'el-progress':true, ImageViewer:true}}})
+    const fold = wrapper.get('.chat-step-fold')
+    expect(fold.text()).toContain('已转后台：读取任务输出')
+    expect(fold.text()).toContain('×3')
+    expect(fold.text()).toContain('0.6 秒')
+    const blocks = wrapper.findAllComponents({name:'ChatTranscriptBlock'})
+    expect(blocks.map(block=>block.props('block').id)).toEqual(['tool:a','tool:b','tool:c','tool:d'])
+  })
+
+  it('folds consecutive reasoning segments into one group with their text inline', () => {
+    const wrapper = shallowMount(MessageBubble, {props: {message: {
+      id: 'reasoning-fold', role: 'assistant', content: '', transcript: [
+        {id:'r1',kind:'reasoning',state:'completed',text:'第一段思考'},
+        {id:'r2',kind:'reasoning',state:'completed',text:'第二段思考'},
+      ]
+    }}, global: {stubs: {'el-icon':true, 'el-tooltip':true, 'el-progress':true, ImageViewer:true}}})
+    const fold = wrapper.get('.chat-step-fold')
+    expect(fold.text()).toContain('思考记录')
+    expect(fold.text()).toContain('×2')
+    expect(fold.text()).toContain('第一段思考')
+    expect(fold.text()).toContain('第二段思考')
+    expect(fold.text()).not.toContain('工具操作')
+  })
+
+  it('renders status dots only on live tool entries', () => {
+    const idle = mount(MessageBubble, {props: {message: {
+      id: 'dots-idle', role: 'assistant', content: '', transcript: [
+        {id:'t1',kind:'tool',callId:'t1',toolName:'get_command_output',state:'background'},
+      ]
+    }}, global: {stubs: {'el-icon':true, 'el-tooltip':true, 'el-progress':true, ImageViewer:true, ConversationWorkFeed:true}}})
+    expect(idle.find('.chat-step__signal').exists()).toBe(false)
+    idle.unmount()
+    const live = mount(MessageBubble, {props: {message: {
+      id: 'dots-live', role: 'assistant', content: '', transcript: [
+        {id:'t2',kind:'tool',callId:'t2',toolName:'run_command',state:'running'},
+      ]
+    }}, global: {stubs: {'el-icon':true, 'el-tooltip':true, 'el-progress':true, ImageViewer:true, ConversationWorkFeed:true}}})
+    expect(live.get('.chat-step__signal').classes()).toContain('active')
+    live.unmount()
   })
 
   it('follows the newest reasoning delta while retaining the full expanded text', async () => {

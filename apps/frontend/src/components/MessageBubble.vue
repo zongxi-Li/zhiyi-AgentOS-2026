@@ -203,7 +203,25 @@
         <p v-if="message.streamError && (hasTranscript || message.streamError !== message.content)" class="stream-error" role="status">{{ message.streamError }}</p>
 
         <template v-if="hasTranscript">
-          <ChatTranscriptBlock v-for="block in message.transcript" :key="block.id" :block="block" :item="transcriptItems.get(`tool:${block.toolName}:${block.callId}`)" />
+          <template v-for="entry in foldedTranscriptView" :key="entry.kind === 'fold-group' ? entry.key : entry.id">
+            <details v-if="entry.kind === 'fold-group'" class="chat-step-fold">
+              <summary>
+                <span>{{ entry.label }}</span>
+                <span class="chat-step-fold__count">×{{ entry.blocks.length }}</span>
+                <span v-if="entry.durationSeconds" class="chat-step-fold__duration">{{ entry.durationSeconds }} 秒</span>
+              </summary>
+              <div v-if="entry.reasoning" class="chat-step-fold__body chat-step-fold__body--reasoning">
+                <div v-for="block in entry.blocks" :key="block.id" class="chat-step-fold__fragment">
+                  <pre>{{ block.text }}</pre>
+                  <small v-if="block.truncated">展示记录已达到长度上限，后续片段已截断</small>
+                </div>
+              </div>
+              <div v-else class="chat-step-fold__body">
+                <ChatTranscriptBlock v-for="block in entry.blocks" :key="block.id" :block="block" :item="transcriptItems.get(`tool:${block.toolName}:${block.callId}`)" />
+              </div>
+            </details>
+            <ChatTranscriptBlock v-else :block="entry" :item="transcriptItems.get(`tool:${entry.toolName}:${entry.callId}`)" />
+          </template>
         </template>
         <div
           v-else-if="message.content"
@@ -269,6 +287,7 @@ import { apiUrl, localFetch } from '@/platform/api'
 import { renderMarkdown } from '@/utils/markdown'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import ChatTranscriptBlock from './ChatTranscriptBlock.vue'
+import { foldRepeatedTranscriptBlocks, transcriptFoldGroupLabel, type TranscriptFoldGroup } from '@/utils/transcript-fold'
 import type { TranscriptBlock } from '../../../backend/src/shared/chat-stream/index.mjs'
 
 interface Source {
@@ -524,6 +543,20 @@ const executionTotalDuration = computed(() => (props.message.executionSummary ||
   .reduce((total, item) => total + (item.durationMs || 0), 0))
 const toolWorkItems = computed(() => (props.message.executionSummary || []).filter(item => item.stage.startsWith('tool:')))
 const transcriptItems = computed(() => new Map(toolWorkItems.value.map(item => [item.stage, item])))
+// 连续重复的工具条目与思考分段折叠为一组，进行中的条目不折叠。
+type TranscriptFoldView = TranscriptFoldGroup & { label: string; reasoning: boolean; durationSeconds: string | null }
+type TranscriptRenderEntry = TranscriptBlock | TranscriptFoldView
+const foldedTranscriptView = computed<TranscriptRenderEntry[]>(() => foldRepeatedTranscriptBlocks(props.message.transcript || [])
+  .map((entry): TranscriptRenderEntry => {
+    if (entry.kind !== 'fold-group') return entry
+    const totalMs = entry.blocks.reduce((sum, block) => sum + (transcriptItems.value.get(`tool:${block.toolName}:${block.callId}`)?.durationMs || 0), 0)
+    return {
+      ...entry,
+      label: transcriptFoldGroupLabel(entry),
+      reasoning: entry.blocks[0].kind === 'reasoning',
+      durationSeconds: totalMs ? Math.max(0.1, totalMs / 1000).toFixed(1) : null,
+    }
+  }))
 const toolWorkLabel = computed(() => {
   const items = toolWorkItems.value
   const completed = items.filter(item => item.status === 'completed').length
@@ -631,6 +664,81 @@ const formatTime = (date: Date) => {
 </script>
 
 <style scoped lang="scss">
+/* 连续重复工具条目的折叠卡（如轮询类「已转后台」） */
+.chat-step-fold {
+  margin: 16px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+
+  summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    cursor: pointer;
+    list-style: none;
+    transition: color 140ms var(--ease-out);
+
+    &::before {
+      content: '›';
+      font-size: 17px;
+      transition: transform 140ms;
+    }
+
+    &:hover { color: var(--text-primary); }
+  }
+
+  &[open] > summary::before { transform: rotate(90deg); }
+  &[open] > summary { margin-bottom: 10px; }
+
+  .chat-step-fold__count {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--primary-fade);
+    color: var(--primary-color);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .chat-step-fold__duration {
+    color: var(--text-disabled);
+    font-size: 11px;
+  }
+
+  .chat-step-fold__body {
+    margin-left: 15px;
+    padding-left: 12px;
+    border-left: 1px solid color-mix(in srgb, var(--border-light) 55%, transparent);
+  }
+
+  .chat-step-fold__body--reasoning {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .chat-step-fold__fragment + .chat-step-fold__fragment {
+    padding-top: 10px;
+    border-top: 1px dashed color-mix(in srgb, var(--border-light) 45%, transparent);
+  }
+
+  .chat-step-fold__fragment pre {
+    max-height: 240px;
+    margin: 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    line-height: 1.6;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .chat-step-fold__fragment small {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-secondary);
+    font-size: 11px;
+  }
+}
 .stream-error {
   color: var(--danger, #b54735);
   font-size: 13px;
