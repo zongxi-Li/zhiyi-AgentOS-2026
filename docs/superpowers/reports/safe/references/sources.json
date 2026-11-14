@@ -1,0 +1,42 @@
+[
+  {
+    "id": "transformers-qwen2",
+    "fetched_date": "2026-11-13",
+    "source_url": "https://raw.githubusercontent.com/huggingface/transformers/v4.46.3/src/transformers/models/qwen2/modeling_qwen2.py",
+    "tag": "v4.46.3",
+    "license": "Apache-2.0",
+    "full_source_sha256": "4568d588b45dd28152d97c37300a5e227589bc70b9fef5224af29977ecf6abdc",
+    "excerpt_lines": [
+      [
+        870,
+        916
+      ],
+      [
+        1173,
+        1183
+      ]
+    ],
+    "modification": "原样摘录，新增中文说明；未接入运行",
+    "hash_scope": "UTF-8源码正文；换行按获取到的LF文本计算；可校验固定tag地址内容，未声称已解析commit SHA"
+  },
+  {
+    "id": "diffprivlib-gaussian",
+    "fetched_date": "2026-11-13",
+    "source_url": "https://raw.githubusercontent.com/IBM/differential-privacy-library/0.6.6/diffprivlib/mechanisms/gaussian.py",
+    "tag": "0.6.6",
+    "license": "MIT",
+    "full_source_sha256": "fddc08e4454c56910f14a8d4987704268a229dd0d3e9a5a7b1245828d49db38d",
+    "excerpt_lines": [
+      [
+        64,
+        77
+      ],
+      [
+        108,
+        117
+      ]
+    ],
+    "modification": "原样摘录，新增中文说明；未接入运行",
+    "hash_scope": "UTF-8源码正文；换行按获取到的LF文本计算；可校验固定tag地址内容，未声称已解析commit SHA"
+  }
+]

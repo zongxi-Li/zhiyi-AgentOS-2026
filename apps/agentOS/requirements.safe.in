@@ -1,0 +1,9 @@
+# safe轻量合同/骨架依赖；本轮在Python3.10、Pydantic2.12.5验证。
+# 本清单不是已完成模型/DP运行时的依赖锁；不会安装Torch/Transformers等重依赖。
+pydantic==2.12.5
+
+# TODO(P0)：选择Python/平台/CPU参考矩阵，固定Torch/Transformers/Safetensors版本。
+# TODO(P1/P5)：HTTP角色启用前固定FastAPI/HTTPX及传递依赖。
+# TODO(P4)：正式选择机制/会计实现后固定可选DP依赖；不得启用旧fallback。
+# TODO(P0)：在隔离环境用pip-tools/uv生成带哈希requirements.safe.lock，并验证全新安装。
+# 当前不创建伪造或空的.lock；研究摘录的tag不等于运行时锁定版本。

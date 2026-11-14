@@ -207,7 +207,7 @@ class GlobalModelManager:
         logger.info(f"开始聚合{len(self.pending_updates)}个客户端的参数更新")
         
         # 1. 解密参数(使用加密服务)
-        from app.services.encryptionservice import encryption_service
+        from apps.agentOS.src.safe.encryptionservice import encryption_service
         decrypted_updates = []
         for update_info in self.pending_updates:
             decrypted = encryption_service.decrypt_parameters(
