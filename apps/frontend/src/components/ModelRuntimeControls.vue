@@ -100,6 +100,7 @@
             :style="{ '--segment-color': reasoningColor(option.value) }"
             type="button"
             role="radio"
+            :disabled="!activeCapability"
             :aria-checked="isSelectedReasoningOption(option)"
             @click="selectReasoningOption(option.value)"
           >
@@ -155,6 +156,7 @@
     <el-select
       v-model="reasoningSelection"
       class="reasoning-select"
+      :disabled="!activeCapability"
       aria-label="选择思考程度"
       @change="persistSettings"
     >
@@ -178,12 +180,10 @@ import {
   MODEL_SETTINGS_EVENT,
   applyProviderPreset,
   capabilityFromPayload,
-  defaultReasoningEffortFromCapability,
-  effortValuesFromOptions,
   fetchModelCapability,
-  isEffortKindOption,
   loadModelSettings,
   modelProviderPresets,
+  normalizeModelReasoning,
   reasoningOptionsFromCapability,
   saveModelSettings,
   type ReasoningEffort,
@@ -201,40 +201,39 @@ const providerMenuOpen = ref(false)
 let systemModelsRequest = 0
 const availableModels = computed(() => settings.value.models)
 const modelCapability = ref<ModelCapability | null>(null)
-const reasoningOptions = computed(() => reasoningOptionsFromCapability(modelCapability.value))
-const usesEffortOptions = computed(() => isEffortKindOption(reasoningOptions.value))
+const capabilityKey = ref('')
+let capabilityRequest = 0
+function modelKey(): string {
+  return JSON.stringify([settings.value.provider, settings.value.selectedModel, settings.value.baseUrl])
+}
+const activeCapability = computed(() => capabilityKey.value === modelKey() ? modelCapability.value : null)
+const reasoningOptions = computed(() => reasoningOptionsFromCapability(activeCapability.value))
+watch(() => [activeCapability.value, settings.value] as const, ([capability, current]) => {
+  const normalized = normalizeModelReasoning(current, capability)
+  if (normalized === current) return
+  settings.value = normalized
+  saveModelSettings(normalized)
+}, { flush: 'sync' })
 const reasoningSelection = computed<ThinkingMode | ReasoningEffort>({
-  get: () => {
-    if (usesEffortOptions.value) {
-      const stored = settings.value.reasoningEffort
-      const effortOptions = effortValuesFromOptions(reasoningOptions.value)
-      if (stored && effortOptions.includes(stored)) return stored as ReasoningEffort
-      if (settings.value.thinkingMode === 'disabled' && reasoningOptions.value.some(option => option.value === 'disabled')) {
-        return 'disabled'
-      }
-      if (settings.value.thinkingMode === 'standard' && effortOptions.includes('low')) return 'low'
-      if (settings.value.thinkingMode === 'deep' && effortOptions.includes('max')) return 'max'
-      return defaultReasoningEffortFromCapability(modelCapability.value, reasoningOptions.value) as ReasoningEffort
-    }
-    return settings.value.thinkingMode
-  },
+  get: () => settings.value.reasoningEffort || settings.value.thinkingMode,
   set: value => {
     const selected = reasoningOptions.value.find(option => option.value === value)
     if (selected?.kind === 'effort') {
       const effort = value as ReasoningEffort
-      settings.value.reasoningEffort = effort
-      settings.value.thinkingMode = effort === 'low' ? 'standard' : 'deep'
+      settings.value = { ...settings.value, reasoningEffort: effort,
+        thinkingMode: effort === 'low' ? 'standard' : 'deep' }
       return
     }
-    settings.value.thinkingMode = value as ThinkingMode
-    settings.value.reasoningEffort = undefined
+    settings.value = { ...settings.value, thinkingMode: value as ThinkingMode, reasoningEffort: undefined }
   }
 })
 const selectedReasoningOption = computed(() => {
   const selected = reasoningOptions.value.find(option => String(option.value) === String(reasoningSelection.value))
-  return selected || reasoningOptions.value[0]
+  return selected || { value: reasoningSelection.value, label: String(reasoningSelection.value),
+    shortLabel: String(reasoningSelection.value) }
 })
 const reasoningHint = computed(() => {
+  if (!activeCapability.value) return '尚未确认模型能力'
   const option = selectedReasoningOption.value
   return option ? reasoningDescription(option.value) : '按模型能力调整推理深度'
 })
@@ -286,10 +285,12 @@ const REASONING_COLORS: Record<string, string> = {
   max: 'var(--sem-artifact)'
 }
 const activeReasoningLabel = computed(() => {
+  if (!activeCapability.value) return '能力待确认'
   const option = selectedReasoningOption.value
   return option ? reasoningLabel(option.value) : '标准'
 })
 const activeReasoningShortLabel = computed(() => {
+  if (!activeCapability.value) return '待确认'
   const option = selectedReasoningOption.value
   return option ? reasoningShortLabel(option) : '标准'
 })
@@ -412,29 +413,35 @@ function syncCapabilityFromCatalog(catalog: unknown, model: string): void {
   const entry = catalog && typeof catalog === 'object'
     ? (catalog as Record<string, unknown>)[model]
     : undefined
-  modelCapability.value = capabilityFromPayload(entry)
+  applyCapability(capabilityFromPayload(entry))
+}
+
+function applyCapability(capability: ModelCapability | null): void {
+  if (!capability) return
+  modelCapability.value = null
+  capabilityKey.value = modelKey()
+  modelCapability.value = capability
 }
 
 // 档位选择器随服务端能力元数据变化：system 供应商的目录响应已携带 capabilities，
 // 其余供应商（自定义 base_url）按需走 /ai/chat/model-capabilities 单查。
 watch(
-  () => [settings.value.provider, settings.value.selectedModel, settings.value.baseUrl] as const,
-  ([provider, model, baseUrl]) => {
-    if (provider === 'system') {
-      // 目录尚未拉取时不主动清空已有能力；loadSystemModels 会带目录回填。
-      if (!modelCapability.value && model) void refreshCapability(model)
-      return
-    }
+  modelKey,
+  () => {
+    capabilityRequest++
     modelCapability.value = null
-    if (model) void refreshCapability(model, baseUrl)
+    const { provider, selectedModel, baseUrl } = settings.value
+    if (selectedModel) void refreshCapability(selectedModel, provider === 'system' ? '' : baseUrl)
   },
   { immediate: true }
 )
 
 async function refreshCapability(model: string, baseUrl = ''): Promise<void> {
+  const key = modelKey()
+  const request = ++capabilityRequest
   const capability = await fetchModelCapability(model, baseUrl)
-  if (model === settings.value.selectedModel && (settings.value.provider === 'system' || baseUrl === settings.value.baseUrl)) {
-    modelCapability.value = capability
+  if (request === capabilityRequest && key === modelKey()) {
+    applyCapability(capability)
   }
 }
 
@@ -442,7 +449,11 @@ onMounted(() => {
   window.addEventListener(MODEL_SETTINGS_EVENT, syncSettings)
   void loadSystemModels()
 })
-onUnmounted(() => window.removeEventListener(MODEL_SETTINGS_EVENT, syncSettings))
+onUnmounted(() => {
+  capabilityRequest++
+  systemModelsRequest++
+  window.removeEventListener(MODEL_SETTINGS_EVENT, syncSettings)
+})
 
 function handleComposerOpen(): void {
   providerMenuOpen.value = false

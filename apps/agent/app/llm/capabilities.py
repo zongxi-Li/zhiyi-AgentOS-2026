@@ -211,6 +211,9 @@ def provider_model_capabilities(
                 list(overrides["reasoning_efforts"]) if always_thinking and overrides.get("reasoning_efforts") else None
             ),
             supports_tools=True,
+            # GLM interleaved thinking requires the original reasoning alongside
+            # each assistant tool call when continuing with the tool result.
+            requires_reasoning_content_for_tool_calls=True,
             supports_json_object=True,
             supports_json_schema=False,
             supports_stream_usage=False,

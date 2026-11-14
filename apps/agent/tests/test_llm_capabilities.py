@@ -84,6 +84,7 @@ def test_glm_capabilities_use_openai_compatible_thinking_protocol():
     assert capabilities.supports_tools is True
     assert capabilities.supports_json_object is True
     assert capabilities.supports_reasoning_effort is False
+    assert capabilities.requires_reasoning_content_for_tool_calls is True
 
     adapted = adapt_chat_completion_parameters(
         model="glm-5.2",
@@ -289,7 +290,7 @@ def test_openai_compatible_provider_uses_one_explicit_request_budget(monkeypatch
 
 def test_llm_config_default_budget_supports_deep_report_generation(monkeypatch):
     monkeypatch.delenv("AGENTOS_LLM_TIMEOUT_SECONDS", raising=False)
-    assert LLMConfig.from_env().timeout_seconds == 120
+    assert LLMConfig.from_env().timeout_seconds == 300
 
 
 def test_llm_config_can_select_glm_without_removing_deepseek_fallback(monkeypatch):

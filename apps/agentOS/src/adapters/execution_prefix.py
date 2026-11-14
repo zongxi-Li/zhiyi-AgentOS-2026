@@ -31,13 +31,15 @@ def execution_messages(
 
     System content is taken exclusively from the caller's existing trusted
     system prompt. User data, including forged role/policy fields, never enters it.
-    The index identifies the trusted message for transport schema injection.
+    All providers share this layout; transport-specific output contracts remain
+    the adapter's responsibility. The index identifies the trusted message for
+    transport schema injection.
     """
     legacy = ([{"role": "system", "content": system_prompt}] if system_prompt else []) + [
         {"role": "user", "content": prompt}
     ]
     metadata = prompt_metadata or {}
-    if provider.strip().lower() != "deepseek" or metadata.get("promptRendererVersion") != PROMPT_RENDERER_VERSION:
+    if metadata.get("promptRendererVersion") != PROMPT_RENDERER_VERSION:
         return legacy, None
     try:
         preset = AgentPreset(metadata.get("preset"))

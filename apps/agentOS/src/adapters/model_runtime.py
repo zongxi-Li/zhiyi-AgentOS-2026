@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Any
@@ -24,6 +25,7 @@ from contracts.capability import (
     ModelInvocationRequest,
 )
 from contracts.runtime_events import RuntimeEvent
+from support.model_stream_policy import ModelStreamPolicy
 
 
 # 允许透传的思考档位：GLM 5.3 low/high/max 与 OpenAI 系 low/medium/high 的并集。
@@ -37,6 +39,17 @@ def _validated_reasoning_effort(value: Any) -> str | None:
         if normalized in _REASONING_EFFORT_VALUES:
             return normalized
     return None
+
+
+@dataclass(frozen=True)
+class _PreparedRequest:
+    request: ModelInvocationRequest
+    template_metadata: dict[str, Any]
+    instance_metadata: dict[str, str]
+    audit: dict[str, Any]
+    output_policy: ModelOutputPolicy
+    effective_tokens: int | None
+    effective_reason: str
 
 
 class RegisteredModelRuntime:
@@ -190,24 +203,11 @@ class RegisteredModelRuntime:
         # reasoning_effort（OpenAI 兼容参数），是否外发由适配器按提供方裁决。
         del thinking_mode
         reasoning_effort = _validated_reasoning_effort(reasoning_effort)
-        if temperature is not None and (
-            isinstance(temperature, bool)
-            or not isinstance(temperature, (int, float))
-            or not math.isfinite(float(temperature))
-            or not 0 <= float(temperature) <= 2
-        ):
-            raise StructuredGenerationError(
-                "MODEL_TEMPERATURE_INVALID", "temperature must be between 0 and 2"
-            )
+        self._validate_generation_options(temperature, max_output_tokens)
         if timeout_seconds <= 0:
             raise StructuredGenerationError(
                 "MODEL_TIMEOUT_INVALID",
                 "timeout_seconds must be greater than zero",
-            )
-        if max_output_tokens is not None and max_output_tokens <= 0:
-            raise StructuredGenerationError(
-                "MODEL_OUTPUT_BUDGET_INVALID",
-                "max_output_tokens must be greater than zero",
             )
         request_id = commit_id or f"model:{uuid4().hex}"
         started = self._clock()
@@ -230,25 +230,6 @@ class RegisteredModelRuntime:
         selected_reason = "provider_default"
         selected_prompt_identity: dict[str, str] = {}
         last_prompt_audit: dict[str, Any] = {}
-        messages, schema_message_index = execution_messages(
-            prompt=prompt, system_prompt=system_prompt, provider=self.provider, prompt_metadata=prompt_metadata,
-        )
-        if continuation is not None:
-            if not isinstance(continuation, list) or not continuation or any(
-                not isinstance(item, dict) or set(item) != {"role", "content"} or item["role"] not in {"assistant", "user"}
-                or not isinstance(item["content"], str) for item in continuation
-            ) or continuation[-1]["role"] != "user":
-                raise StructuredGenerationError("MODEL_CONTINUATION_INVALID", "continuation must end in user data")
-            messages.extend(dict(item) for item in continuation)
-        if prefix_schema is not None and not continuation:
-            raise StructuredGenerationError("MODEL_CONTINUATION_INVALID", "a prefix contract requires continuation messages")
-        safe_prompt_metadata = self._prompt_metadata(
-            prompt_metadata=prompt_metadata,
-            system_prompt=system_prompt,
-            prompt_version=prompt_version,
-        )
-        if schema_message_index is not None:
-            safe_prompt_metadata["stablePrefixHash"] = canonical_hash(messages[:schema_message_index])
         for index, adapter in enumerate(candidates):
             # ``timeout_seconds`` 是整个模型选择动作的上限，而不是每个候选各自的
             # 上限。剩余时间在尚未尝试的候选之间均分：主实现慢超时时备实现仍有机会
@@ -270,70 +251,21 @@ class RegisteredModelRuntime:
                     version=self.version,
                 )
             )
-            options: dict[str, Any] = {}
-            policy = ModelOutputPolicy.API_CONTROLLED
-            effective_tokens: int | None = None
-            effective_reason = "provider_default"
-            if max_output_tokens is not None:
-                field = capability.max_tokens_field or "max_tokens"
-                options[field] = max_output_tokens
-                policy = ModelOutputPolicy.EXPLICIT
-                effective_tokens = max_output_tokens
-                effective_reason = "explicit_request"
-            elif capability.max_tokens_required:
-                if capability.max_output_tokens is None:
-                    raise StructuredGenerationError(
-                        "MODEL_CAPABILITY_INVALID",
-                        "provider requires an output token field but declares no value",
-                    )
-                field = capability.max_tokens_field or "max_tokens"
-                options[field] = capability.max_output_tokens
-                policy = ModelOutputPolicy.PROVIDER_REQUIRED
-                effective_tokens = capability.max_output_tokens
-                effective_reason = "provider_required"
-            elif capability.max_output_tokens is not None:
-                # 调用方未指定时，能力目录登记的输出上限必须显式随请求发送：
-                # "未指定"不得等价于供应商服务端默认额度（结构化 JSON 会被静默截断）。
-                field = capability.max_tokens_field or "max_tokens"
-                options[field] = capability.max_output_tokens
-                policy = ModelOutputPolicy.CATALOG_DEFAULT
-                effective_tokens = capability.max_output_tokens
-                effective_reason = "catalog_default"
-            if reasoning_effort:
-                options["reasoning_effort"] = reasoning_effort
-            if temperature is not None:
-                options["temperature"] = float(temperature)
-            invocation_identity = prompt_instance_metadata(
-                messages=messages,
-                response_schema=dict(schema),
-                provider_family=capability.provider or self.provider,
-                model=capability.model or self.model,
-                model_version=capability.version or self.version,
-                behavior_options={**options, **({"prefixResponseSchemaHash": canonical_hash(prefix_schema)}
-                                               if prefix_schema is not None else {})},
+            prepared = self._prepare_request(
+                prompt=prompt, schema=schema, system_prompt=system_prompt,
+                prompt_metadata=prompt_metadata, prompt_version=prompt_version,
+                capability=capability, request_id=request_id, commit_id=commit_id,
+                max_output_tokens=max_output_tokens, reasoning_effort=reasoning_effort,
+                temperature=temperature, streaming=False,
+                continuation=continuation, prefix_schema=prefix_schema,
             )
-            candidate_prompt_audit = {
-                **safe_prompt_metadata,
-                **invocation_identity,
-                "promptVersion": prompt_version,
-                "requestType": self._request_type(prompt),
-                "providerFamily": capability.provider or self.provider,
-                "modelVersion": capability.version or self.version,
-                "streaming": False,
-                "trustSummary": trust_summary(prompt),
-            }
-            last_prompt_audit = candidate_prompt_audit
-            request = ModelInvocationRequest(
-                requestId=request_id,
-                model=self.model,
-                messages=messages,
-                responseSchema=dict(schema),
-                prefixResponseSchema=prefix_schema,
-                schemaMessageIndex=schema_message_index,
-                requestBudget=(prompt_metadata or {}).get("requestBudget"),
-                options=options,
-                commitId=commit_id,
-            )
+            request = prepared.request
+            safe_prompt_metadata = prepared.template_metadata
+            invocation_identity = prepared.instance_metadata
+            candidate_prompt_audit = last_prompt_audit = prepared.audit
+            policy = prepared.output_policy
+            effective_tokens = prepared.effective_tokens
+            effective_reason = prepared.effective_reason
             try:
                 response = await self._wait_for(
                     adapter.invoke(request),
@@ -471,9 +403,9 @@ class RegisteredModelRuntime:
         run_id: str,
         node_id: str | None = None,
         attempt_id: str | None = None,
-        ttft_timeout: float = 30.0,
-        idle_timeout: float = 60.0,
-        total_timeout: float = 300.0,
+        ttft_timeout: float | None = None,
+        idle_timeout: float | None = None,
+        total_timeout: float | None = None,
         thinking_mode: str = "disabled",
         reasoning_effort: str | None = None,
         temperature: float | None = None,
@@ -486,15 +418,11 @@ class RegisteredModelRuntime:
         """Consume a provider stream while keeping structured output private when requested."""
         del thinking_mode
         reasoning_effort = _validated_reasoning_effort(reasoning_effort)
-        if temperature is not None and (
-            isinstance(temperature, bool)
-            or not isinstance(temperature, (int, float))
-            or not math.isfinite(float(temperature))
-            or not 0 <= float(temperature) <= 2
-        ):
-            raise StructuredGenerationError(
-                "MODEL_TEMPERATURE_INVALID", "temperature must be between 0 and 2"
-            )
+        self._validate_generation_options(temperature, max_output_tokens)
+        policy = ModelStreamPolicy.from_environment()
+        ttft_timeout = policy.first_response if ttft_timeout is None else ttft_timeout
+        idle_timeout = policy.idle if idle_timeout is None else idle_timeout
+        total_timeout = policy.total if total_timeout is None else total_timeout
         if min(ttft_timeout, idle_timeout, total_timeout) <= 0:
             raise StructuredGenerationError("MODEL_TIMEOUT_INVALID", "stream timeouts must be positive")
         try:
@@ -511,56 +439,15 @@ class RegisteredModelRuntime:
             capability = ModelCapabilityEnvelope.unknown(
                 provider=self.provider, model=self.model, version=self.version
             )
-        options: dict[str, Any] = {}
-        if max_output_tokens is not None:
-            options[capability.max_tokens_field or "max_tokens"] = max_output_tokens
-        elif capability.max_tokens_required and capability.max_output_tokens is not None:
-            options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
-        elif capability.max_output_tokens is not None:
-            options[capability.max_tokens_field or "max_tokens"] = capability.max_output_tokens
-        if reasoning_effort:
-            options["reasoning_effort"] = reasoning_effort
-        if temperature is not None:
-            options["temperature"] = float(temperature)
         request_id = commit_id or f"model:{uuid4().hex}"
-        messages, schema_message_index = execution_messages(
-            prompt=prompt, system_prompt=system_prompt, provider=self.provider, prompt_metadata=prompt_metadata,
+        prepared = self._prepare_request(
+            prompt=prompt, schema=schema, system_prompt=system_prompt,
+            prompt_metadata=prompt_metadata, prompt_version=prompt_version,
+            capability=capability, request_id=request_id, commit_id=commit_id,
+            max_output_tokens=max_output_tokens, reasoning_effort=reasoning_effort,
+            temperature=temperature, streaming=True,
         )
-        safe_prompt_metadata = self._prompt_metadata(
-            prompt_metadata=prompt_metadata,
-            system_prompt=system_prompt,
-            prompt_version=prompt_version,
-        )
-        if schema_message_index is not None:
-            safe_prompt_metadata["stablePrefixHash"] = canonical_hash(messages[:schema_message_index])
-        invocation_identity = prompt_instance_metadata(
-            messages=messages,
-            response_schema=dict(schema),
-            provider_family=capability.provider or self.provider,
-            model=capability.model or self.model,
-            model_version=capability.version or self.version,
-            behavior_options=options,
-        )
-        safe_audit = {
-            **safe_prompt_metadata,
-            **invocation_identity,
-            "promptVersion": prompt_version,
-            "requestType": self._request_type(prompt),
-            "providerFamily": capability.provider or self.provider,
-            "modelVersion": capability.version or self.version,
-            "streaming": True,
-            "trustSummary": trust_summary(prompt),
-        }
-        request = ModelInvocationRequest(
-            requestId=request_id,
-            model=self.model,
-            messages=messages,
-            responseSchema=dict(schema),
-            schemaMessageIndex=schema_message_index,
-            requestBudget=(prompt_metadata or {}).get("requestBudget"),
-            options=options,
-            commitId=commit_id,
-        )
+        request, safe_audit = prepared.request, prepared.audit
         seq = 0
         started = self._clock()
         last_activity = started
@@ -743,6 +630,123 @@ class RegisteredModelRuntime:
             "streamDiagnostics": dict(stream_diagnostics),
             **safe_audit,
         })
+
+    @staticmethod
+    def _validate_generation_options(temperature, max_output_tokens):
+        if temperature is not None and (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(float(temperature))
+            or not 0 <= float(temperature) <= 2
+        ):
+            raise StructuredGenerationError(
+                "MODEL_TEMPERATURE_INVALID", "temperature must be between 0 and 2"
+            )
+        if max_output_tokens is not None and max_output_tokens <= 0:
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_BUDGET_INVALID", "max_output_tokens must be greater than zero"
+            )
+
+    def _prepare_request(
+        self, *, prompt: str, schema: dict[str, Any], system_prompt: str | None,
+        prompt_metadata: dict[str, Any] | None, prompt_version: str,
+        capability: ModelCapabilityEnvelope, request_id: str, commit_id: str | None,
+        max_output_tokens: int | None, reasoning_effort: str | None,
+        temperature: float | None, streaming: bool,
+        continuation: list[dict[str, str]] | None = None,
+        prefix_schema: dict[str, Any] | None = None,
+    ) -> _PreparedRequest:
+        """Build the same protocol input and audit identity for every transport mode.
+
+        Candidate-specific capabilities are resolved by the caller; failover and
+        streaming lifetime remain outside request construction.
+        """
+        messages, schema_message_index = execution_messages(
+            prompt=prompt, system_prompt=system_prompt, provider=self.provider, prompt_metadata=prompt_metadata,
+        )
+        if continuation is not None:
+            if not isinstance(continuation, list) or not continuation or any(
+                not isinstance(item, dict) or set(item) != {"role", "content"} or item["role"] not in {"assistant", "user"}
+                or not isinstance(item["content"], str) for item in continuation
+            ) or continuation[-1]["role"] != "user":
+                raise StructuredGenerationError("MODEL_CONTINUATION_INVALID", "continuation must end in user data")
+            messages.extend(dict(item) for item in continuation)
+        if prefix_schema is not None and not continuation:
+            raise StructuredGenerationError("MODEL_CONTINUATION_INVALID", "a prefix contract requires continuation messages")
+        safe_prompt_metadata = self._prompt_metadata(
+            prompt_metadata=prompt_metadata,
+            system_prompt=system_prompt,
+            prompt_version=prompt_version,
+        )
+        if schema_message_index is not None:
+            safe_prompt_metadata["stablePrefixHash"] = canonical_hash(messages[:schema_message_index])
+        options: dict[str, Any] = {}
+        policy = ModelOutputPolicy.API_CONTROLLED
+        effective_tokens: int | None = None
+        effective_reason = "provider_default"
+        if max_output_tokens is not None:
+            field = capability.max_tokens_field or "max_tokens"
+            options[field] = max_output_tokens
+            policy = ModelOutputPolicy.EXPLICIT
+            effective_tokens = max_output_tokens
+            effective_reason = "explicit_request"
+        elif capability.max_tokens_required:
+            if capability.max_output_tokens is None:
+                raise StructuredGenerationError(
+                    "MODEL_CAPABILITY_INVALID",
+                    "provider requires an output token field but declares no value",
+                )
+            field = capability.max_tokens_field or "max_tokens"
+            options[field] = capability.max_output_tokens
+            policy = ModelOutputPolicy.PROVIDER_REQUIRED
+            effective_tokens = capability.max_output_tokens
+            effective_reason = "provider_required"
+        elif capability.max_output_tokens is not None:
+            # 调用方未指定时，能力目录登记的输出上限必须显式随请求发送：
+            # "未指定"不得等价于供应商服务端默认额度（结构化 JSON 会被静默截断）。
+            field = capability.max_tokens_field or "max_tokens"
+            options[field] = capability.max_output_tokens
+            policy = ModelOutputPolicy.CATALOG_DEFAULT
+            effective_tokens = capability.max_output_tokens
+            effective_reason = "catalog_default"
+        if reasoning_effort:
+            options["reasoning_effort"] = reasoning_effort
+        if temperature is not None:
+            options["temperature"] = float(temperature)
+        invocation_identity = prompt_instance_metadata(
+            messages=messages,
+            response_schema=dict(schema),
+            provider_family=capability.provider or self.provider,
+            model=capability.model or self.model,
+            model_version=capability.version or self.version,
+            behavior_options={**options, **({"prefixResponseSchemaHash": canonical_hash(prefix_schema)}
+                                           if prefix_schema is not None else {})},
+        )
+        candidate_prompt_audit = {
+            **safe_prompt_metadata,
+            **invocation_identity,
+            "promptVersion": prompt_version,
+            "requestType": self._request_type(prompt),
+            "providerFamily": capability.provider or self.provider,
+            "modelVersion": capability.version or self.version,
+            "streaming": streaming,
+            "trustSummary": trust_summary(prompt),
+        }
+        request = ModelInvocationRequest(
+            requestId=request_id,
+            model=self.model,
+            messages=messages,
+            responseSchema=dict(schema),
+            prefixResponseSchema=prefix_schema,
+            schemaMessageIndex=schema_message_index,
+            requestBudget=(prompt_metadata or {}).get("requestBudget"),
+            options=options,
+            commitId=commit_id,
+        )
+        return _PreparedRequest(
+            request, safe_prompt_metadata, invocation_identity, candidate_prompt_audit,
+            policy, effective_tokens, effective_reason,
+        )
 
     @staticmethod
     def _prompt_metadata(

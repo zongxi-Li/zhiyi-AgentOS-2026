@@ -191,6 +191,36 @@ export function defaultReasoningEffortFromCapability(
   return efforts.includes('high') ? 'high' : efforts[efforts.length - 1]
 }
 
+/** Resolve legacy modes against declared capabilities before displaying or saving.
+ * Explicit supported effort wins. Without one, follow the backend's coarse-mode
+ * mapping instead of inventing a display-only default. Unknown capabilities must
+ * never erase a user's exact provider value.
+ */
+export function normalizeModelReasoning(settings: ModelSettings, capability: ModelCapability | null): ModelSettings {
+  if (!capability) return settings
+  const options = reasoningOptionsFromCapability(capability)
+  const efforts = effortValuesFromOptions(options)
+  let thinkingMode = settings.thinkingMode
+  let reasoningEffort: ReasoningEffort | undefined
+  if (efforts.length) {
+    if (settings.reasoningEffort && efforts.includes(settings.reasoningEffort)) {
+      reasoningEffort = settings.reasoningEffort
+    } else if (thinkingMode === 'disabled' && options.some(option => option.value === 'disabled')) {
+      reasoningEffort = undefined
+    } else {
+      const declared = capability.defaultReasoningEffort
+      reasoningEffort = thinkingMode === 'deep' ? efforts[efforts.length - 1]
+        : declared && efforts.includes(declared) ? declared : efforts[0]
+    }
+    if (reasoningEffort) thinkingMode = thinkingModeForEffort(reasoningEffort)
+  } else if (!options.some(option => option.value === thinkingMode)) {
+    thinkingMode = options.some(option => option.value === 'standard') ? 'standard'
+      : options[0]?.value as ThinkingMode || 'disabled'
+  }
+  if (thinkingMode === settings.thinkingMode && reasoningEffort === settings.reasoningEffort) return settings
+  return { ...settings, thinkingMode, reasoningEffort }
+}
+
 export async function fetchModelCapability(model: string, baseUrl = ''): Promise<ModelCapability | null> {
   const trimmed = model.trim()
   if (!trimmed) return null
@@ -245,12 +275,13 @@ export function loadModelSettings(): ModelSettings {
     const provider = modelProviderPresets.some(item => item.id === parsed.provider)
       ? parsed.provider as ModelProviderId
       : fallback.provider
-    // system 供应商的清单一律以服务端目录为准，旧的本地残留（含"系统默认"占位）清空重拉。
-    const storedModels = provider === 'system'
-      ? []
-      : Array.isArray(parsed.models)
-        ? parsed.models.filter(model => typeof model === 'string' && model.trim())
-        : []
+    // 保留上次服务端目录与选择，供切页和发送请求使用；组件会异步刷新目录。
+    // 仅移除旧版的“系统默认”占位，它不是可发送给供应商的模型 ID。
+    const storedModels = Array.isArray(parsed.models)
+      ? parsed.models.filter(model => typeof model === 'string' && model.trim())
+        .map(model => model.trim())
+        .filter(model => provider !== 'system' || model !== '系统默认')
+      : []
     const models = [...new Set(storedModels)]
     const selectedModel = parsed.selectedModel?.trim() && models.includes(parsed.selectedModel.trim())
       ? parsed.selectedModel.trim()

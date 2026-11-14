@@ -183,6 +183,8 @@ class RegisteredPlannerLLM:
 
 def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
     """Switch the production planner to the same registry used by node runtime."""
+    # At construction time adapters have not yet been registered by setup.start().
+    _sync_model_endpoints_from_registry(runtime)
     current = getattr(runtime, "_intent_llm", None)
     if not isinstance(current, GatewayIntentLLM):
         return False
@@ -193,6 +195,29 @@ def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
         return False
     runtime.set_intent_llm(candidate)
     return True
+
+
+def sync_active_model_profile(runtime: ExecutionRuntime, setup: ApplicationSetup, config) -> None:
+    """Publish a new default route while preserving every previously frozen version."""
+    from time import time_ns
+    from uuid import uuid4
+    from runtime.app_setup import ModelSetup
+    from app.llm.capabilities import provider_model_capabilities
+
+    if config.provider in {"", "mock", "unavailable"} or not all((config.model, config.base_url, config.api_key)):
+        runtime.default_model_binding = None
+        _sync_model_endpoints_from_registry(runtime)
+        return
+    caps = provider_model_capabilities(config.model, config.base_url, config.provider)
+    binding = setup.register_model(ModelSetup(
+        capability_id=f"model.profile.{uuid4().hex}",
+        provider=config.provider, models=(config.model,), base_url=config.base_url,
+        key_env=None, version=f"1.0.{time_ns()}", priority=100,
+        request_timeout=config.timeout_seconds, allow_insecure=False,
+        model_capabilities={config.model: {"features": {"tools": caps.supports_tools}}},
+    ), api_key=config.api_key)
+    runtime.default_model_binding = binding
+    bind_registered_planner_llm(runtime)
 
 
 def _workflow_db_path(environment: Mapping[str, str]) -> Path:
@@ -320,7 +345,8 @@ def _sync_model_endpoints_from_registry(runtime: ExecutionRuntime) -> None:
             return None
 
     routes = [
-        {"provider": route.get("provider"), "model": route.get("model")}
+        {"provider": route["provider"], "model": route["model"],
+         "version": runtime.model_registry.resolve(route["provider"], route["model"]).manifest.version}
         for route in runtime.model_registry.list_models()
     ]
     plane = getattr(runtime, "resource_plane", None)

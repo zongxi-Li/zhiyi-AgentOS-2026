@@ -84,6 +84,8 @@ app.include_router(chat.router, prefix="/ai", tags=["AI"])
 app.include_router(tts.router, prefix="/ai", tags=["TTS"])
 app.include_router(asr.router, prefix="/ai", tags=["ASR"])
 app.include_router(llm_admin.router, prefix="/ai", tags=["AI"])
+from app.execution.wiring import sync_active_model_profile
+app.state.sync_llm_profile = lambda config: sync_active_model_profile(runtime, model_setup, config)
 from app.api.local_workspace import create_router as create_local_workspace_router
 app.include_router(create_local_workspace_router(runtime), prefix="/ai", tags=["LocalWorkspace"])
 app.include_router(

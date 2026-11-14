@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import contextmanager
+from copy import deepcopy
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.llm.profiles import (
@@ -23,6 +25,32 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _ALLOWED_PROVIDERS = {"deepseek", "glm", "qwen", "openai-compatible"}
+
+
+@contextmanager
+def _profile_update(http_request: Request, *, force: bool = False):
+    """Commit profile, gateway and ACG changes in one non-awaiting request section."""
+    store = get_profile_store()
+    previous = deepcopy(store.load())
+
+    def active_config(data):
+        active = str(data.get("active") or "").lower()
+        return next((p for p in data.get("profiles", []) if p["name"].lower() == active), None)
+
+    try:
+        yield
+        if force or active_config(previous) != active_config(store.load()):
+            gateway = get_llm_gateway(refresh=True)
+            synchronize = getattr(http_request.app.state, "sync_llm_profile", None)
+            if synchronize is not None:
+                synchronize(gateway.config)
+    except BaseException as exc:
+        store.save(previous)
+        get_llm_gateway(refresh=True)
+        if isinstance(exc, (HTTPException, KeyError)) or not isinstance(exc, Exception):
+            raise
+        logger.error("Model profile synchronization failed. type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="模型配置同步失败，已保留原供应商配置") from None
 
 
 class SwitchActiveRequest(BaseModel):
@@ -62,25 +90,25 @@ async def list_llm_profiles():
 
 
 @router.post("/llm/profiles/active")
-async def switch_llm_profile(request: SwitchActiveRequest):
+async def switch_llm_profile(request: SwitchActiveRequest, http_request: Request):
     """热切换激活供应商：写档案并重建执行链路 gateway，新请求立即生效。"""
     store = get_profile_store()
-    try:
-        profile = store.set_active(request.name)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if not profile.is_usable():
-        raise HTTPException(
-            status_code=400,
-            detail=f"供应商 {profile.name} 缺少可用的 API Key 或模型配置，无法激活",
-        )
-    get_llm_gateway(refresh=True)
+    with _profile_update(http_request, force=True):
+        try:
+            profile = store.set_active(request.name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not profile.is_usable():
+            raise HTTPException(
+                status_code=400,
+                detail=f"供应商 {profile.name} 缺少可用的 API Key 或模型配置，无法激活",
+            )
     logger.info("LLM provider switched to %s (%s/%s)", profile.name, profile.provider, profile.model)
     return _store_payload()
 
 
 @router.post("/llm/profiles")
-async def upsert_llm_profile(request: UpsertProfileRequest):
+async def upsert_llm_profile(request: UpsertProfileRequest, http_request: Request):
     """新增或更新供应商档案；密钥只落本地数据卷，响应中永不回显。"""
     name = request.name.strip()
     if not name or len(name) > 64:
@@ -112,19 +140,19 @@ async def upsert_llm_profile(request: UpsertProfileRequest):
             status_code=400,
             detail="未提供 API Key：请填写 api_key，或指定 api_key_env 引用服务端已有密钥变量",
         )
-    get_profile_store().upsert(profile)
+    with _profile_update(http_request):
+        get_profile_store().upsert(profile)
     return _store_payload()
 
 
 @router.delete("/llm/profiles/{name}")
-async def delete_llm_profile(name: str):
+async def delete_llm_profile(name: str, http_request: Request):
     store = get_profile_store()
-    try:
-        store.delete(name)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if store.active_name():
-        get_llm_gateway(refresh=True)
+    with _profile_update(http_request):
+        try:
+            store.delete(name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _store_payload()
 
 
