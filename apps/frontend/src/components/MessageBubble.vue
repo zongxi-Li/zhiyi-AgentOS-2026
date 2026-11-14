@@ -258,6 +258,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ImageViewer from '@/components/common/ImageViewer.vue'
 import { apiUrl, localFetch } from '@/platform/api'
 import { renderMarkdown } from '@/utils/markdown'
+import { copyTextToClipboard } from '@/utils/clipboard'
 
 interface Source {
   title?: string
@@ -382,8 +383,9 @@ const openImageViewer = () => {
 
 const handleAction = (type: 'copy' | 'quote' | 'delete' | 'tts' | 'export') => {
   if (type === 'copy') {
-    navigator.clipboard.writeText(props.message.content)
-    ElMessage.success('已复制到剪贴板')
+    copyTextToClipboard(props.message.content)
+      .then(() => ElMessage.success('已复制到剪贴板'))
+      .catch(() => ElMessage.error('复制失败，请手动选择文本复制'))
   } else if (type === 'delete') {
     ElMessageBox.confirm('确定要删除这条消息吗？', '提示', {
       confirmButtonText: '确定',
