@@ -4,7 +4,7 @@
 
 本 README 是模块目录与依赖边界的设计基线，更新于 2026-11-13。目标是让后续工作在既定分层中扩展；新模型、编码格式和存储实现通过新增适配器接入。文件位置和公开 API 应保持稳定，模型算法、协议版本及隐私参数仍须依据实验修订，不能把目录稳定等同于技术方案永不变化。
 
-2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验及 `ActivationService` 的受信会话/manifest/phase/位置/shape校验，见[阶段记录](../../../../docs/superpowers/reports/safe/2026-11-14-activation-boundary.md)。`ActivationContext` 必须来自受信会话，摘要来自批准配置；当前尚无认证/会话执行器，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
+2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验、`ActivationService` 的受信会话/manifest/phase/位置/shape校验，以及 P3 单进程会话事务基线。`ActivationContext` 必须来自受信会话，摘要来自批准配置；`SessionService` + `MemorySessionStore` 已覆盖 owner 隔离、严格 step、60秒空闲 TTL、300秒绝对 TTL、请求幂等、终态和 runner 异常失败。当前仍无认证、跨进程存储、KV runner 或网络服务，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
 
 同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并在全新锁环境完成20×16步与完整模型的logits/greedy对照。完整记录、安装方式和边界见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)。当前每步全序列重算、无KV/网络/DP，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
 
@@ -20,7 +20,8 @@
 | 七个公开门面、`contracts/`、`ports/` | 已创建轻量入口、初版严格合同和部分 Protocol | 合同只定义一次；执行/事务接口及 wire schema 仍待 P1/P2 实验冻结。 |
 | FP32 codec、形状边界、会话迁移/step/幂等规则、全局 L2 裁剪 | 已实现并有基础测试 | 仅独立基础能力；裁剪不构成 DP，摘要不构成认证。 |
 | 推理服务、隐私发布服务 | 已创建明确拒绝的入口 | 分别抛出 `MODEL_PARTITION_UNAVAILABLE` / `PRIVACY_UNAVAILABLE`；不返回模拟结果。 |
-| 模型、制品、会话/预算存储、认证/HTTP、装配和接入 | 已创建逐文件中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
+| P3 `SessionService` + `MemorySessionStore` | 已实现并有并发/TTL/幂等测试 | 仅进程内短时状态；不持久化、不保存原始 prompt、不持有真实 KV，不等于跨网络会话服务。 |
+| 模型、制品、预算存储、认证/HTTP、装配和接入 | 已创建逐文件中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
 
 现有联邦学习和差分隐私代码属于旧的参数聚合域。它们没有接入拆分推理的激活传输链路，不能复用为安全证明、隐私预算记账或 DP-SGD 实现。
 
@@ -165,7 +166,7 @@ safe/
 | `safe.manifest` | `SplitModelManifest`、制品核验服务 | 数据在 `contracts.manifest`，兼容规则在 `domain.compatibility` |
 | `safe.privacy` | `PrivacyProfile`、`PrivacyReceipt`、出站发布服务 | 规则在 `domain.privacy_policy`，发布用例在 `application.privacy` |
 | `safe.privacy_ledger` | 预算预留、已发布消费、余额查询服务 | 规则在 `domain.budget`，用例在 `application.privacy_ledger`，持久化在 `sqlite_budget` |
-| `safe.session` | 会话视图、状态、步骤回执与管理服务 | 状态机在 `domain.session_state`，存储/锁经 port 注入 |
+| `safe.session` | 会话视图、状态、步骤回执与 `SessionService` | 状态机在 `domain.session_state`，存储/锁经 port 注入 |
 | `safe.transport` | 远端 transport 协议、能力/回执 DTO 和稳定错误 | HTTP 实现在 `infrastructure.transport.http_client`；门面不创建客户端 |
 
 表中的服务名称是后续 API 基线；当前门面只导出已经定义的合同、部分端口及明确拒绝的推理/发布服务，不提前导出其余未实现服务。端口目前也只冻结已列出的方法，不代表事务或模型执行签名已完整。`manifest` 的定义只有一份：`inference.py` 从 `contracts.manifest` 重导出，相同类型不能在两个门面分别定义。
@@ -174,7 +175,7 @@ safe/
 
 TODO 编号与配套方案一致：P0 可行性与版本冻结 → P1 合同/协议/认证 → P2 前后段 prefill → P3 逐 token 会话 → P4 隐私/账本/反演评估 → P5 产品接入 → P6 性能/交付。`B1` 表示方向 B 的独立后续设计。文件内编号是该阶段的本文件子任务，不是新的全局阶段。
 
-每个运行骨架写明职责、步骤、失败处理和验收条件；`__all__ = []` 表示当前没有运行 API。依赖声明和错误拒绝入口不是已实现的模型能力。先完成合同/codec 和模型数值对照，再接入会话/网络及隐私链路，不按目录字母顺序实现。
+每个运行骨架写明职责、步骤、失败处理和验收条件；尚未实现的模块使用空导出列表明确拒绝运行。P3 会话服务已经有真实的进程内运行 API，但依赖声明和错误拒绝入口仍不代表模型、网络或隐私能力完成。先完成合同/codec 和模型数值对照，再接入会话/网络及隐私链路，不按目录字母顺序实现。
 
 当前基础用法（在 `apps/agentOS` 目录、`src` 位于 `PYTHONPATH` 时）：
 
