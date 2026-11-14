@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
+import asyncio
 
 from app.config import settings
 from app.tools.catalog import ReadOnlyToolCatalog
@@ -18,7 +19,7 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
 
     FILE_TOOL_NAMES = ("read_file", "list_files", "write_file", "patch_file")
     COMMAND_TOOL_NAMES = ("run_command", "get_command_output", "cancel_command")
-    TOOL_NAMES = (*ReadOnlyToolCatalog.TOOL_NAMES, *FILE_TOOL_NAMES, "terminal")
+    TOOL_NAMES = (*ReadOnlyToolCatalog.TOOL_NAMES, *FILE_TOOL_NAMES, "terminal", "read_archived_tool_result")
     supports_call_id = True
     supports_permission_events = True
 
@@ -51,7 +52,7 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
             WorkspaceTerminalExecutor() if self._legacy_terminal_enabled else None
         )
         supports_shell = self._supports_capability("shell.exec")
-        names = [*ReadOnlyToolCatalog.TOOL_NAMES]
+        names = [*ReadOnlyToolCatalog.TOOL_NAMES, 'read_archived_tool_result']
         if self._local_runtime_executor is not None:
             names.extend(
                 name
@@ -68,6 +69,8 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
 
     def availability(self, provider: str | None = None) -> dict[str, dict[str, Any]]:
         result = super().availability(provider)
+        result['read_archived_tool_result'] = {'available': bool(settings.TOOL_RUNTIME_ENABLED),
+            'provider': 'oscode-journal', 'readOnly': True, 'scope': 'authenticated conversation route'}
         for name, capability_id in {
             "read_file": "fs.read",
             "list_files": "fs.list",
@@ -136,8 +139,21 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
         session_id: str | None = None,
         request_id: str | None = None,
         approval_mode: ChatApprovalMode = "ask",
+        protocol_session=None,
         permission_event_sink: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> ToolPayload:
+        if name == 'read_archived_tool_result':
+            from app.llm.chat_session import conversation_scope
+            session = protocol_session
+            if (not settings.TOOL_RUNTIME_ENABLED or session is None or session.projection_store is None
+                    or conversation_scope(session.context_id) != session.session_id.split(':')[0]):
+                raise ToolUnavailableError('Authenticated protocol journal is unavailable')
+            reference = str(arguments.get('reference') or '')
+            if not reference.startswith('journal:'):
+                raise ValueError('ARCHIVED_RESULT_REFERENCE_INVALID')
+            data = await asyncio.to_thread(session.projection_store.result, reference[8:],
+                                          arguments.get('offset', 0), arguments.get('limit', 8192))
+            return ToolPayload(summary='Archived original tool result (bounded read)', data=data)
         if name in (*self.FILE_TOOL_NAMES, *self.COMMAND_TOOL_NAMES):
             if not settings.TOOL_RUNTIME_ENABLED:
                 raise ToolUnavailableError(f"local runtime tool is unavailable: {name}")

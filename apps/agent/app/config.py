@@ -87,7 +87,15 @@ class Settings(BaseSettings):
     # Explicit /compact is independently available; automatic compaction stays opt-in.
     OSCODE_CONTEXT_COMPACTION_MANUAL_ENABLED: bool = True
     # Exact keys: "https://provider.example/v1::model-id"; no global guessed window.
-    OSCODE_CONTEXT_COMPACTION_MODELS: dict = {}
+    OSCODE_CONTEXT_COMPACTION_MODELS: dict = {
+        # Initial route-scoped latency trial, not a model-capacity override.
+        "https://open.bigmodel.cn/api/coding/paas/v4::glm-5.3-flash": {
+            "enabled": True, "working_set_trigger_tokens": 65_536,
+            "working_set_target_tokens": 40_960, "recent_tool_groups": 5,
+            "recent_tail_tokens": 14_000, "summary_max_tokens": 4096,
+            "max_summary_calls": 2, "output_reserve": 65_536,
+        }
+    }
     OSCODE_CONTEXT_COMPACTION_NODE: str = ""
     TOOL_RUNTIME_ENABLED: bool = True
     TAVILY_API_KEY: str = ""

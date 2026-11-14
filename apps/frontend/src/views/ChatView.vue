@@ -352,6 +352,7 @@
                       <div>{{ contextUsage.label }}</div>
                       <div>{{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : '用量待统计' }}</div>
                       <div>{{ contextUsage.usedLabel }} / {{ contextUsage.windowLabel }} Token</div>
+                      <div v-if="chatStore.isStreaming && !contextUsage.estimated">每次模型调用返回用量后更新；工具运行期间保留最近统计。</div>
                       <div v-if="contextUsage.estimated">新消息会在此基础上追加。</div>
                     </div>
                   </template>
@@ -361,7 +362,7 @@
                     type="button"
                     :title="contextUsage.label"
                   >
-                    {{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : contextUsage.windowLabel }}
+                    {{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : contextUsage.historicalNote ? '待统计' : contextUsage.windowLabel }}
                   </button>
                 </el-tooltip>
               </div>
@@ -462,7 +463,7 @@
               </dl>
 
               <section v-if="contextUsage.visible" class="chat-info-usage__context" aria-label="上下文用量">
-                <div class="chat-info-usage__heading"><span>{{ contextUsage.label }}</span><span class="chat-info-usage__tag">{{ contextUsage.estimated ? '估算' : '容量' }}</span></div>
+                <div class="chat-info-usage__heading"><span>{{ contextUsage.label }}</span><span class="chat-info-usage__tag">{{ contextUsage.historicalNote ? '未测量' : contextUsage.estimated ? '估算' : '容量' }}</span></div>
                 <div class="chat-info-usage__reading">
                   <strong>{{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : '待统计' }}</strong>
                   <span>{{ contextUsage.usedLabel }} / {{ contextUsage.windowLabel }} Token</span>
@@ -471,6 +472,7 @@
                   :aria-label="contextUsage.label" :aria-valuenow="contextUsage.percent" :aria-valuemin="0" :aria-valuemax="100">
                   <span :style="{ width: `${contextUsage.percent}%` }"></span>
                 </div>
+                <p v-if="contextUsage.historicalNote" class="chat-info-usage__measurement-note">{{ contextUsage.historicalNote }}</p>
               </section>
 
               <div class="chat-info-usage__grid">
@@ -483,6 +485,21 @@
               </div>
               <p class="chat-info-usage__note" role="status">{{ cacheMetric.detail }}</p>
               <p v-if="requestSizeLabel" class="chat-info-usage__note">最近请求体 {{ requestSizeLabel }} · 含历史及工具信息，不代表 Token 数</p>
+              <section v-if="workingSetUsage" class="chat-info-usage__context" aria-label="工作上下文预算">
+                <div class="chat-info-usage__heading"><span>最近请求工作集</span><span class="chat-info-usage__tag">{{ workingSetUsage.method }}</span></div>
+                <div class="chat-info-usage__reading"><strong>{{ workingSetUsage.used }}</strong><span>/ {{ workingSetUsage.trigger }} 软触发预算</span></div>
+                <div v-if="workingSetUsage.ratio" class="chat-info-usage__track" :class="{ danger: workingSetUsage.over }" role="progressbar"
+                  aria-label="最近请求工作集占软触发预算比例" :aria-valuenow="Math.min(workingSetUsage.ratio, 100)" :aria-valuemin="0" :aria-valuemax="100">
+                  <span :style="{ width: `${Math.min(100, workingSetUsage.ratio)}%` }"></span>
+                </div>
+                <dl class="chat-info-usage__meta">
+                  <div class="chat-info-card__row"><dt>收缩目标</dt><dd>{{ workingSetUsage.target }}</dd></div>
+                  <div class="chat-info-card__row"><dt>协议记录</dt><dd>已覆盖 {{ latestAssistantMessage?.archivedItems || 0 }} 条</dd></div>
+                  <div class="chat-info-card__row"><dt>整理版本</dt><dd>{{ latestAssistantMessage?.projectionVersion || 0 }} · 模型容量另列于上方</dd></div>
+                </dl>
+                <p v-if="workingSetUsage.failed" class="chat-info-usage__status is-danger" role="status">本次整理未完成，继续使用上次有效上下文。</p>
+                <p v-else-if="workingSetUsage.over" class="chat-info-usage__status is-warning" role="status">当前工作集仍超过软预算，完整内容继续保留。</p>
+              </section>
               <details v-if="responseTimingRows.length" class="chat-info-usage__timings">
                 <summary>响应耗时</summary>
                 <dl class="chat-info-card__overview">
@@ -597,6 +614,7 @@ import { useRunDelivery } from '@/composables/useRunDelivery'
 import { useChatWorkflowPresentation } from '@/composables/useChatWorkflowPresentation'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
 import { setConversationWorkspace } from '@/utils/conversationWorkspace'
+import { nextFollowState } from '@/utils/scroll-follow'
 import { wasErrorUserNotified } from '@/utils/request'
 import { plainMissionTitle } from '@/utils/missionTitle'
 import { loadModelSettings } from '@/config/modelSettings'
@@ -1302,16 +1320,23 @@ const formatContextTokens = (value: number): string => {
 }
 
 const contextUsage = computed(() => {
-  const nextEstimated = typeof chatStore.nextContextTokens === 'number'
-  const estimated = nextEstimated
-  const used = nextEstimated ? chatStore.nextContextTokens
-    : chatStore.contextMeasurement === 'protocol-utf8-upper-bound' ? null : chatStore.contextUsedTokens
-  const label = nextEstimated ? '下次上下文估算（保守上界）' : chatStore.isStreaming ? '上下文占用（最近统计）' : '上下文窗口'
-  const windowTokens = chatStore.contextWindowTokens
+  const state = chatStore.contextUsageState
+  const replies = [...chatStore.messages].reverse().filter(message => message.role === 'assistant')
+  const measured = replies.find(message => typeof (message.lastInputTokens ?? message.inputTokens) === 'number')
+  const historicalNote = !state && measured && replies[0] !== measured
+    ? `上次已测 ${formatContextTokens((measured.lastInputTokens ?? measured.inputTokens)! + (measured.lastOutputTokens ?? measured.outputTokens ?? 0))} Token（历史值）。最近一轮未返回用量，当前占用未知。` : ''
+  const nextEstimated = !state && typeof chatStore.nextContextTokens === 'number'
+  const estimated = state?.measurement === 'upper-bound' || nextEstimated
+  const used = state ? state.usedTokens : nextEstimated ? chatStore.nextContextTokens
+    : historicalNote || chatStore.contextMeasurement === 'protocol-utf8-upper-bound' ? null : chatStore.contextUsedTokens
+  const label = state ? state.measurement === 'provider' ? '上下文水位（最近实测）'
+    : state.measurement === 'upper-bound' ? '当前上下文（估算上界）' : '当前上下文（未测量）'
+    : nextEstimated ? '下次上下文估算（保守上界）' : historicalNote ? '当前上下文（未测量）' : chatStore.isStreaming ? '上下文占用（最近模型调用）' : '上下文窗口'
+  const windowTokens = state?.maxTokens ?? chatStore.contextWindowTokens
   if (typeof used !== 'number' || typeof windowTokens !== 'number' || windowTokens <= 0) {
     const knownWindow = typeof windowTokens === 'number' && windowTokens > 0
     return { visible: knownWindow, hasUsage: false, percent: 0, level: 'normal', usedLabel: '待统计',
-      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label }
+      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label, historicalNote }
   }
   const ratio = Math.min(1, used / windowTokens)
   const percent = Math.round(ratio * 100)
@@ -1321,6 +1346,7 @@ const contextUsage = computed(() => {
     hasUsage: true,
     estimated,
     label,
+    historicalNote: nextEstimated ? '' : historicalNote,
     percent,
     level,
     usedLabel: formatContextTokens(used),
@@ -1331,6 +1357,19 @@ const contextUsage = computed(() => {
 const latestAssistantMessage = computed(() => [...chatStore.messages]
   .reverse()
   .find(message => message.role === 'assistant'))
+const workingSetUsage = computed(() => {
+  const context = latestAssistantMessage.value?.workingContext
+  if (!context?.workingSetTriggerTokens || typeof context.outputTokens !== 'number') return null
+  const actual = typeof context.actualInputTokens === 'number'
+  const usedTokens = context.actualInputTokens ?? context.outputTokens
+  const triggerTokens = context.workingSetTriggerTokens
+  return {used: formatContextTokens(usedTokens), trigger: formatContextTokens(triggerTokens),
+    target: formatContextTokens(context.workingSetTargetTokens || 0),
+    method: actual ? '供应商单次用量' : context.tokenMethod?.startsWith('single-request-usage') ? '单次用量校准上界'
+      : context.tokenMethod?.includes('utf8-upper-bound') ? 'UTF-8 保守上界' : 'Tokenizer 估算',
+    over: actual ? usedTokens > triggerTokens : context.softOverBudget, failed: context.failed,
+    ratio: triggerTokens > 0 ? Math.round((usedTokens / triggerTokens) * 100) : 0}
+})
 const requestSizeLabel = computed(() => {
   const message = latestAssistantMessage.value
   const bytes = message?.requestBodyBytes ?? (message?.contextMeasurement === 'protocol-utf8-upper-bound' ? message.contextInputTokens : undefined)
@@ -1340,6 +1379,13 @@ const responseTimingRows = computed(() => {
   const message = latestAssistantMessage.value
   const timings = message?.responseTimings || {}
   const labels = {gatewayPrepareMs:'网关准备',contextPreparationMs:'本地上下文准备',providerHeadersMs:'供应商响应头（最近请求）',
+    profileResolveMs:'配置解析',journalOpenMs:'协议库打开',journalReadMs:'投影及增量日志读取',agentBuildMs:'Agent 与 HTTP 客户端构建',
+    catalogBuildMs:'工具目录准备',providerAdapterMs:'模型参数解析',httpClientBuildMs:'HTTP 客户端构建',agentConstructionMs:'Agent 与工具 schema 构建',
+    contextMeasureMs:'工作输入测量',contextProjectionMs:'工作输入整理',contextSummaryMs:'摘要调用',sdkRequestBuildMs:'SDK 请求构建（最近请求）',
+    firstProviderHeadersMs:'供应商响应头（首次请求）',firstProviderFirstByteMs:'供应商首字节（首次请求）',
+    browserFirstReceiveMs:'浏览器首段接收（本轮）',browserFirstFrameMs:'首段 DOM 提交及帧回调（本轮）',
+    providerConnectMs:'连接建立（最近请求）',providerTlsMs:'TLS 握手（最近请求）',
+    providerUploadMs:'请求体发送（最近请求）',providerHeaderWaitMs:'发送后等待响应头（最近请求）',
     providerFirstByteMs:'供应商首字节（最近请求）',firstReasoningMs:'首段进展（整轮）',firstContentMs:'首段正文（整轮）'} as const
   const rows: Array<{label:string;value:string}> = Object.entries(labels).flatMap(([key,label]) => {
     const ms = timings[key as keyof typeof labels]
@@ -1984,20 +2030,31 @@ watch(
   }
 )
 
-watch(
-  () => chatStore.messages[chatStore.messages.length - 1]?.content,
-  () => {
-    if (isNearBottom.value) scrollToBottom()
-  },
-  { flush: 'post' }
-)
+// 尾部增长签名：正文、思考、时间线新增块与尾块文本任一变化都触发跟随。
+// transcript 由 applyTranscript 原地修改，按引用 watch 不会触发，必须比对长度与尾块标识。
+const tailGrowthSignature = computed(() => {
+  const last = chatStore.messages[chatStore.messages.length - 1]
+  if (!last) return ''
+  const transcript = last.transcript || []
+  const tail = transcript[transcript.length - 1]
+  return [chatStore.messages.length, last.content.length, (last.reasoningContent || '').length,
+    transcript.length, tail?.id || '', (tail?.text || '').length].join('|')
+})
 
+watch(tailGrowthSignature, () => {
+  if (isNearBottom.value) scrollToBottom()
+}, { flush: 'post' })
+
+// 跟随迟滞：只有用户主动上滚才脱离跟随，只有真正触底才恢复；
+// 流式增长落在滚动事件之间时位置短暂偏离底部，不再误判为「用户已离开」。
+let lastMessagesScrollTop = 0
 const checkScrollState = () => {
   if (!messagesRef.value) return
   const { scrollTop, scrollHeight, clientHeight } = messagesRef.value
-  const isAtBottom = Math.abs(scrollHeight - clientHeight - scrollTop) < 24
-  isNearBottom.value = isAtBottom
-  if (isAtBottom) pendingMessageCount.value = 0
+  isNearBottom.value = nextFollowState(isNearBottom.value, scrollTop, lastMessagesScrollTop,
+    scrollHeight - clientHeight - scrollTop)
+  lastMessagesScrollTop = scrollTop
+  if (isNearBottom.value) pendingMessageCount.value = 0
   updateRailOverflow()
   updateRailActiveTick()
 }
@@ -3661,7 +3718,12 @@ const handleHeroLogoPointerUp = () => {
 .chat-info-usage__stat > strong { font-size: clamp(18px, 1.8vw, 26px); letter-spacing: -.03em; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .chat-info-usage__stat > strong.is-unavailable { font-size: 18px; color: var(--text-secondary); letter-spacing: 0; }
 .chat-info-usage__stat > small, .chat-info-usage__note { font-size: 10px; color: var(--text-secondary); line-height: 1.6; }
+.chat-info-usage__measurement-note { margin: 10px 0 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; overflow-wrap: anywhere; }
 .chat-info-usage__note { margin: -8px 0 0; overflow-wrap: anywhere; }
+.chat-info-usage__meta { margin: 2px 0 0; display: grid; gap: 6px; }
+.chat-info-usage__status { margin: 8px 0 0; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.chat-info-usage__status.is-warning { color: var(--warning); }
+.chat-info-usage__status.is-danger { color: var(--danger, #dc6464); }
 
 /* 响应耗时：折叠卡 + 行虚线分隔 + 旋转箭头 */
 .chat-info-usage__timings {

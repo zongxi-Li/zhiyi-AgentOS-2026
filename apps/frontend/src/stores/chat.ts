@@ -1,13 +1,13 @@
 import { localFetch } from '@/platform/api'
 import type { ChatApprovalMode } from '@/config/chatApproval'
 import { defineStore } from 'pinia'
-import { computed, onScopeDispose, ref } from 'vue'
+import { computed, nextTick, onScopeDispose, ref } from 'vue'
 import { chatStreamErrorMessage, type ChatStreamEvent } from '@/utils/sse'
 import { startChatExecution, followChatExecution } from '@/features/chat/executionStream'
 import { apiUrl } from '@/platform'
 import type { AsyncWorkflowStartResponse } from '@/services/api/workflow'
 import type { ConversationLaunchContext } from '@/features/mission/request'
-import { compactionFailureMessage, conversationInput, estimateContextInput, projectedInput, type ContextCheckpoint } from '@/features/chat/compaction'
+import { compactionFailureMessage, conversationInput, estimateContextInput } from '@/features/chat/compaction'
 import { conversationLaunchCommand, matchesConversationLaunchContext } from '@/features/mission/command'
 import { createMissionLaunchAttempt, MissionLaunchStateError } from '@/features/mission/launchAttempt'
 import type { MissionLaunchResult } from '@/features/mission/launch'
@@ -17,7 +17,7 @@ import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { conversationApi } from '@/services/api/conversation'
 import { getConversationWorkspace, setConversationWorkspace, type ConversationWorkspaceMode } from '@/utils/conversationWorkspace'
 import { conversationBindings, mergeDraftBindings, isActiveRunStatus } from '@/features/workspace/session'
-import { applyTranscript, restoreTranscript, createStreamBatcher, mergeResponseTimings, type TranscriptBlock, type ResponseTimings } from '../../../backend/src/shared/chat-stream/index.mjs'
+import { applyTranscript, restoreTranscript, createStreamBatcher, mergeResponseTimings, workingContext, contextUsage, type ContextUsage, type WorkingContext, type TranscriptBlock, type ResponseTimings } from '../../../backend/src/shared/chat-stream/index.mjs'
 
 export interface TerminalExecution {
   command: string
@@ -77,6 +77,12 @@ export interface CompactionStatus {
 }
 
 export interface Message {
+  workingContext?: WorkingContext
+  contextUsage?: ContextUsage
+  projectionVersion?: number
+  archivedItems?: number
+  providerRequest?: number
+  attemptId?: string
   id: number | string
   role: 'user' | 'assistant'
   content: string
@@ -198,7 +204,6 @@ export const useChatStore = defineStore('chat', () => {
     return status.detail ? `${status.title}：${status.detail}` : status.title
   })
   // Page-lifetime projections only; raw messages and stored history stay intact.
-  const contextCheckpoints = new Map<string, ContextCheckpoint>()
   const workflowBindings = ref<Record<string, ChatWorkflowBinding[]>>(loadWorkflowBindings())
   const workflowRunsStore = useWorkflowRunsStore()
   let activeStreamController: AbortController | null = null
@@ -227,6 +232,7 @@ export const useChatStore = defineStore('chat', () => {
   const contextUsedTokens = ref<number | null>(null)
   const contextWindowTokens = ref<number | null>(null)
   const contextMeasurement = ref('usage')
+  const contextUsageState = ref<ContextUsage | null>(null)
   const contextModel = ref<string | null>(null)
   const contextModels = ref<Record<string, number>>({})
   const contextEstimateBasis = ref<{
@@ -246,6 +252,15 @@ export const useChatStore = defineStore('chat', () => {
       contextWindowTokens.value = contextModels.value[model]
     }
     contextUsedTokens.value = typeof used === 'number' && used >= 0 ? used : null
+  }
+
+  const applyContextSnapshot = (value: unknown) => {
+    const state = contextUsage(value)
+    if (!state) return false
+    contextUsageState.value = state
+    applyContextUsage(state.usedTokens, undefined, state.maxTokens, state.measurement)
+    invalidateContextEstimate()
+    return true
   }
 
   const fetchContextWindows = async () => {
@@ -367,13 +382,9 @@ export const useChatStore = defineStore('chat', () => {
     settings.provider, settings.selectedModel, settings.provider === 'system' ? '' : settings.baseUrl, currentRoleId.value
   ])
 
-  const currentProjectedInput = (settings: ModelSettings) => {
+  const checkContextModel = (settings: ModelSettings) => {
     if (!contextId.value || conversationWorkspaceMode.value === 'agent') return
-    const checkpoint = contextCheckpoints.get(contextId.value)
-    const projected = projectedInput(checkpoint, conversationInput(messages.value), compactionModelKey(settings))
-    if (checkpoint && !projected) contextCheckpoints.delete(contextId.value)
     if (contextEstimateBasis.value?.modelKey !== compactionModelKey(settings)) invalidateContextEstimate()
-    return projected
   }
 
   const setContextEstimate = (fixedTokens: unknown, method: unknown, settings: ModelSettings) => {
@@ -397,8 +408,7 @@ export const useChatStore = defineStore('chat', () => {
     const basis = contextEstimateBasis.value
     if (!basis || basis.owner !== contextId.value || basis.roleId !== currentRoleId.value) return null
     const source = conversationInput(messages.value)
-    const projected = projectedInput(contextCheckpoints.get(basis.owner), source, basis.modelKey)
-    return estimateContextInput(projected || source, basis.fixedTokens)
+    return estimateContextInput(source, basis.fixedTokens)
   })
 
   const compactContext = async (settings: ModelSettings = loadModelSettings()) => {
@@ -413,7 +423,6 @@ export const useChatStore = defineStore('chat', () => {
     }
     const generation = ++messageGeneration
     const isCurrent = () => generation === messageGeneration && contextId.value === owner
-    const modelKey = compactionModelKey(settings)
     const controller = new AbortController()
     activeStreamController = controller
     loading.value = true
@@ -422,7 +431,7 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const model = toModelRequestSettings(settings)
       const response = await chatApi.compactContext({
-        context_id: owner, context: currentProjectedInput(settings) || source,
+        context_id: owner, context: source,
         role_id: currentRoleId.value || undefined, model: model.model,
         base_url: settings.provider === 'system' ? undefined : settings.baseUrl,
         api_key: settings.provider === 'system' ? undefined : settings.apiKey
@@ -432,13 +441,10 @@ export const useChatStore = defineStore('chat', () => {
         throw new Error('对话内容已变化，本次压缩结果未应用，请重试。')
       }
       if (response.status === 'summarized' || response.status === 'pruned') {
-        if (contextCheckpoints.size >= 8 && !contextCheckpoints.has(owner)) {
-          contextCheckpoints.delete(contextCheckpoints.keys().next().value!)
-        }
-        contextCheckpoints.set(owner, { source, projected: response.messages, modelKey })
         const before = Number(response.metrics.inputTokens), after = Number(response.metrics.outputTokens)
-        compactionStatus.value = { kind: 'success', title: '上下文已压缩',
-          detail: `估算 ${before.toLocaleString()} → ${after.toLocaleString()} Token · 本页后续对话使用摘要，完整记录保留` }
+        compactionStatus.value = response.durable
+          ? { kind: 'success', title: '上下文已压缩', detail: `估算 ${before.toLocaleString()} → ${after.toLocaleString()} Token · 后端已保存版本 ${response.projectionVersion}，完整记录保留` }
+          : { kind: 'warning', title: '压缩结果尚未持久化', detail: '请升级后端后重试，原始对话已保留。' }
       } else if (response.status === 'failed_passthrough') {
         compactionStatus.value = { kind: 'warning', title: compactionFailureMessage(response.metrics.failureCode) }
       } else if (response.metrics.reasonCode === 'INSUFFICIENT_SAVINGS') {
@@ -450,7 +456,9 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (response.model) contextModel.value = response.model
       if (response.contextWindowTokens > 0) contextWindowTokens.value = response.contextWindowTokens
-      setContextEstimate(response.contextFixedTokens ?? response.metrics.fixedTokens,
+      applyContextSnapshot(response.contextUsage)
+      if (response.durable) invalidateContextEstimate()
+      else setContextEstimate(response.contextFixedTokens ?? response.metrics.fixedTokens,
         response.contextTokenMethod ?? response.metrics.tokenMethod, settings)
       return response
     } catch (error: any) {
@@ -480,7 +488,7 @@ export const useChatStore = defineStore('chat', () => {
     const generation = ++messageGeneration
     const isCurrent = () => generation === messageGeneration
     const settings = runtimeSettings || loadModelSettings()
-    const compacted = workspaceMode === 'chat' ? currentProjectedInput(settings) : undefined
+    if (workspaceMode === 'chat') checkContextModel(settings)
     pushUserMessage(text, fileUrl)
 
     loading.value = true
@@ -491,7 +499,6 @@ export const useChatStore = defineStore('chat', () => {
         contextId: contextId.value || undefined,
         workspaceMode: contextId.value ? conversationWorkspaceMode.value || workspaceMode : workspaceMode,
         fileUrl: fileUrl || undefined,
-        context: compacted,
         ...toModelRequestSettings(runtimeSettings || loadModelSettings())
       }
 
@@ -544,11 +551,13 @@ export const useChatStore = defineStore('chat', () => {
   ) => {
     if (!resumeMessage && ((!text.trim()) || loading.value)) return
     if (historyError.value) throw new Error(historyError.value)
+    const browserStartedAt = performance.now()
+    let browserReceived = false, browserFrameScheduled = false
 
     const generation = ++messageGeneration
     const isCurrent = () => generation === messageGeneration
     const modelRequestSettings = toModelRequestSettings(runtimeSettings)
-    const compacted = workspaceMode === 'chat' ? currentProjectedInput(runtimeSettings) : undefined
+    if (workspaceMode === 'chat') checkContextModel(runtimeSettings)
 
     if (!resumeMessage) pushUserMessage(text)
     loading.value = true
@@ -605,6 +614,10 @@ export const useChatStore = defineStore('chat', () => {
       message.streamPhase = state === 'cancelled' ? '已停止生成' : '请求未完成'
       message.streamError = description
       message.chatExecutionState = state === 'cancelled' ? 'cancelled' : 'failed'
+      if (!contextUsageState.value && typeof (message.lastInputTokens ?? message.inputTokens) !== 'number') {
+        applyContextUsage(null, message.modelInfo, message.contextWindowTokens)
+        invalidateContextEstimate()
+      }
       if (!message.content) message.content = description
     }
     const applyStreamEvent = (event: ChatStreamEvent) => {
@@ -615,6 +628,26 @@ export const useChatStore = defineStore('chat', () => {
       applyTranscript(message.transcript, event)
       const data = event.data || {}
       if (data.responseTimings) message.responseTimings = mergeResponseTimings({...message.responseTimings}, data.responseTimings)
+      const budget = workingContext(data.workingContext)
+      if (budget) message.workingContext = budget
+      const watermark = contextUsage(data.contextUsage)
+      if (watermark) {
+        message.contextUsage = watermark
+        applyContextSnapshot(watermark)
+      }
+      for (const key of ['projectionVersion', 'archivedItems', 'providerRequest', 'attemptId'] as const) {
+        if (data[key] !== undefined) (message as any)[key] = data[key]
+      }
+      if (!resumeMessage && !browserFrameScheduled && ['reasoning_delta', 'content_delta'].includes(event.event) && data.delta) {
+        browserFrameScheduled = true
+        void nextTick().then(() => {
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => {
+            const owned = ownedMessage()
+            if (owned) owned.responseTimings = mergeResponseTimings({...owned.responseTimings},
+              {browserFirstFrameMs: performance.now() - browserStartedAt})
+          })
+        })
+      }
       if (event.event !== 'heartbeat' && event.event !== 'model_activity' && event.event !== 'tool_result' && event.event !== 'done' && event.event !== 'error') {
         message.streamActivity = 'receiving'
       }
@@ -700,6 +733,8 @@ export const useChatStore = defineStore('chat', () => {
           message.sources = metadata.sources
           message.thinkingDurationMs = metadata.reasoningPhaseMs
           message.responseTimings = mergeResponseTimings({}, metadata.responseTimings)
+          message.workingContext = workingContext(metadata.workingContext)
+          if (applyContextSnapshot(metadata.contextUsage)) message.contextUsage = contextUsageState.value!
           message.requestBodyBytes = metadata.requestBodyBytes ?? (metadata.contextMeasurement === 'protocol-utf8-upper-bound' ? metadata.contextInputTokens : undefined)
           message.chatExecutionId = data.chatExecutionId
           message.chatExecutionState = metadata.chatExecutionState
@@ -710,13 +745,17 @@ export const useChatStore = defineStore('chat', () => {
             'effectiveThinkingMode', 'effectiveReasoningEffort', 'reasoningTruncated', 'cacheUsageAvailable', 'protocolSession'] as const) {
             if (metadata[key] !== undefined) (message as any)[key] = metadata[key]
           }
+          message.projectionVersion = metadata.projectionVersion
+          message.archivedItems = metadata.archivedItems
+          message.providerRequest = metadata.providerRequest
+          message.attemptId = metadata.attemptId
           message.tokensUsed = metadata.totalTokens
           message.modelInfo = metadata.effectiveModel || message.modelInfo
           message.cachedTokens = metadata.cached_tokens
           message.lastInputTokens = metadata.last_input_tokens
           message.lastOutputTokens = metadata.last_output_tokens
           const usedInput = message.lastInputTokens ?? message.inputTokens
-          if (typeof usedInput === 'number') applyContextUsage(usedInput + (message.lastOutputTokens ?? message.outputTokens ?? 0),
+          if (!contextUsageState.value) applyContextUsage(typeof usedInput === 'number' ? usedInput + (message.lastOutputTokens ?? message.outputTokens ?? 0) : null,
             message.modelInfo || null, message.contextWindowTokens)
           if (message.protocolSession) invalidateContextEstimate()
           if (typeof data.contextId === 'string') contextId.value = data.contextId
@@ -728,18 +767,38 @@ export const useChatStore = defineStore('chat', () => {
         case 'model_activity':
           message.lastProviderActivityAt = Date.now()
           break
-        case 'model_context':
-          message.contextInputTokens = data.contextInputTokens
-          message.requestBodyBytes = data.requestBodyBytes ?? (data.contextMeasurement === 'protocol-utf8-upper-bound' ? data.contextInputTokens : undefined)
-          message.contextMeasurement = data.contextMeasurement
-          message.contextWindowTokens = data.contextWindowTokens
+        case 'model_context': {
+          if (typeof data.requestBodyBytes === 'number') message.requestBodyBytes = data.requestBodyBytes
+          else if (data.contextMeasurement === 'protocol-utf8-upper-bound') message.requestBodyBytes = data.contextInputTokens
+          if (typeof data.contextWindowTokens === 'number') message.contextWindowTokens = data.contextWindowTokens
           invalidateContextEstimate()
-          // Wire bytes include JSON/schema overhead; they are not token usage.
-          applyContextUsage(contextUsedTokens.value, data.effectiveModel, data.contextWindowTokens)
+          if (data.contextMeasurement === 'provider-usage' && typeof data.last_input_tokens === 'number') {
+            message.contextInputTokens = data.last_input_tokens
+            message.contextMeasurement = data.contextMeasurement
+            message.lastInputTokens = data.last_input_tokens
+            message.lastOutputTokens = data.last_output_tokens ?? 0
+            if (typeof data.protocolSession === 'boolean') message.protocolSession = data.protocolSession
+            if (message.workingContext) message.workingContext = {...message.workingContext, actualInputTokens: data.last_input_tokens}
+            if (!watermark) applyContextUsage(message.lastInputTokens! + message.lastOutputTokens!, data.effectiveModel, data.contextWindowTokens)
+          } else {
+            // Request bytes include JSON/schema overhead, never replace measured tokens.
+            if (message.contextMeasurement !== 'provider-usage') {
+              message.contextInputTokens = data.contextInputTokens
+              message.contextMeasurement = data.contextMeasurement
+            }
+            if (!contextUsageState.value) applyContextUsage(contextUsedTokens.value, data.effectiveModel, data.contextWindowTokens)
+          }
           break
+        }
         case 'model_phase':
+          if (data.phase === 'context_journal') setPhase('读取已保存的工作上下文')
+          else if (data.phase === 'context_pruning') setPhase('整理旧工具输出')
+          else if (data.phase === 'context_summary') setPhase('正在生成历史摘要，可停止')
+          else if (data.phase === 'context_ready') setPhase('工作上下文已准备')
+          else if (data.phase === 'context_committed') setPhase('工作上下文已保存')
+          else if (data.phase === 'context_stale' || data.phase === 'context_failed') setPhase('本次工作上下文未保存，完整记录仍保留')
           if (data.contextWindowTokens > 0) message.contextWindowTokens = data.contextWindowTokens
-          if (data.phase === 'waiting') applyContextUsage(contextModel.value && data.effectiveModel !== contextModel.value
+          if (data.phase === 'waiting' && !contextUsageState.value) applyContextUsage(contextModel.value && data.effectiveModel !== contextModel.value
             ? null : contextUsedTokens.value, data.effectiveModel, data.contextWindowTokens)
           if (data.phase === 'waiting') {
             message.lastProviderActivityAt = undefined
@@ -849,7 +908,7 @@ export const useChatStore = defineStore('chat', () => {
             const contextUsed = typeof usedInput === 'number'
               ? usedInput + (typeof usedOutput === 'number' ? usedOutput : 0)
               : (typeof message.tokensUsed === 'number' ? message.tokensUsed : null)
-            applyContextUsage(
+            if (!contextUsageState.value) applyContextUsage(
               contextUsed,
               message.modelInfo || null,
               data.contextWindowTokens ?? data.context_window_tokens
@@ -910,7 +969,7 @@ export const useChatStore = defineStore('chat', () => {
           api_key: runtimeSettings.provider === 'system' ? undefined : runtimeSettings.apiKey,
           thinking_mode: runtimeSettings.thinkingMode, reasoning_effort: modelRequestSettings.reasoningEffort,
           tool_mode: 'auto', approval_mode: approvalMode.value,
-          context_id: contextId.value || undefined, context: compacted,
+          context_id: contextId.value || undefined,
           workspace_mode: contextId.value ? conversationWorkspaceMode.value || workspaceMode : workspaceMode
         }, streamController.signal)
       }
@@ -934,6 +993,11 @@ export const useChatStore = defineStore('chat', () => {
         if (message) { message.streamActivity = 'waiting'; message.streamPhase = '连接已断开，正在恢复进度' }
       })) {
         if (!isCurrent()) return
+        if (!resumeMessage && !browserReceived && ['reasoning_delta', 'content_delta'].includes(event.event) && event.data?.delta) {
+          browserReceived = true
+          streamMessage.responseTimings = mergeResponseTimings({...streamMessage.responseTimings},
+            {browserFirstReceiveMs: performance.now() - browserStartedAt})
+        }
         batcher.accept(event)
       }
       batcher.flush()
@@ -1086,7 +1150,6 @@ export const useChatStore = defineStore('chat', () => {
     invalidateMessageRequest()
     const owner = messageGeneration
     if (targetContextId) await chatApi.clearHistory(targetContextId)
-    if (targetContextId) contextCheckpoints.delete(targetContextId)
     if (generation === historyGeneration && owner === messageGeneration && contextId.value === targetContextId) clearMessages()
   }
 
@@ -1103,6 +1166,7 @@ export const useChatStore = defineStore('chat', () => {
     contextId.value = targetContextId
     messages.value = []
     currentRoleId.value = null
+    contextUsageState.value = null
     historyError.value = null
     conversationWorkspaceMode.value = getConversationWorkspace(targetContextId,
       new Set(conversationBindings(workflowBindings.value, targetContextId).filter(item => item.source === 'agent').map(() => targetContextId)))
@@ -1146,6 +1210,12 @@ export const useChatStore = defineStore('chat', () => {
         contextInputTokens: msg.metadata?.contextInputTokens,
         requestBodyBytes: msg.metadata?.requestBodyBytes ?? (msg.metadata?.contextMeasurement === 'protocol-utf8-upper-bound' ? msg.metadata?.contextInputTokens : undefined),
         responseTimings: mergeResponseTimings({}, msg.metadata?.responseTimings),
+        workingContext: workingContext(msg.metadata?.workingContext),
+        contextUsage: contextUsage(msg.metadata?.contextUsage),
+        projectionVersion: msg.metadata?.projectionVersion,
+        archivedItems: msg.metadata?.archivedItems,
+        providerRequest: msg.metadata?.providerRequest,
+        attemptId: msg.metadata?.attemptId,
         contextMeasurement: msg.metadata?.contextMeasurement,
         contextTokenMethod: msg.metadata?.contextTokenMethod,
         requestedThinkingMode: msg.metadata?.requestedThinkingMode,
@@ -1171,14 +1241,15 @@ export const useChatStore = defineStore('chat', () => {
       contextId.value = targetContextId
 
 
+      const latestReply = [...messages.value].reverse().find(message => message.role === 'assistant')
       const lastWithUsage = [...messages.value]
         .reverse()
         .find(msg => msg.role === 'assistant' && (
-          typeof msg.inputTokens === 'number' ||
+          typeof msg.lastInputTokens === 'number' || typeof msg.inputTokens === 'number' ||
           typeof msg.outputTokens === 'number' ||
           typeof msg.tokensUsed === 'number'
         ))
-      if (lastWithUsage) {
+      if (lastWithUsage && lastWithUsage === latestReply) {
         const used = typeof (lastWithUsage.lastInputTokens ?? lastWithUsage.inputTokens) === 'number'
           ? (lastWithUsage.lastInputTokens ?? lastWithUsage.inputTokens)! + (lastWithUsage.lastOutputTokens ?? lastWithUsage.outputTokens ?? 0)
           : (lastWithUsage.tokensUsed ?? null)
@@ -1190,15 +1261,34 @@ export const useChatStore = defineStore('chat', () => {
           else setContextEstimate(lastWithUsage.contextFixedTokens, lastWithUsage.contextTokenMethod, settings)
         } else invalidateContextEstimate()
       } else {
-        contextUsedTokens.value = null
+        // An older successful turn cannot describe a newer unmeasured/failed input.
+        applyContextUsage(null, latestReply?.modelInfo || lastWithUsage?.modelInfo,
+          latestReply?.contextWindowTokens ?? lastWithUsage?.contextWindowTokens)
         invalidateContextEstimate()
       }
       const lastContext = [...messages.value].reverse().find(message => typeof message.contextInputTokens === 'number')
-      const latestReply = [...messages.value].reverse().find(message => message.role === 'assistant')
       if (lastContext && lastContext === latestReply && typeof lastContext.inputTokens !== 'number'
-        && lastContext.contextMeasurement !== 'protocol-utf8-upper-bound') {
+        && lastContext.contextMeasurement !== 'protocol-utf8-upper-bound'
+        && lastContext.contextMeasurement !== 'provider-usage') {
         applyContextUsage(lastContext.contextInputTokens!, lastContext.modelInfo, lastContext.contextWindowTokens, lastContext.contextMeasurement)
         invalidateContextEstimate()
+      }
+      const savedWatermark = [...messages.value].reverse().find(message => message.contextUsage)?.contextUsage
+      if (savedWatermark) applyContextSnapshot(savedWatermark)
+      // 投影存储才知道空闲压缩/分支边界；消息 metadata 只是同一状态的投递副本。
+      if (typeof chatApi.getContextUsage === 'function') {
+        const modelSettings = loadModelSettings()
+        const selected = modelSettings.selectedModel === '系统默认' ? '' : modelSettings.selectedModel
+        try {
+          const beforeSnapshot = contextUsageState.value
+          const snapshot = await chatApi.getContextUsage(targetContextId, selected,
+            modelSettings.provider === 'system' ? undefined : modelSettings.baseUrl, currentRoleId.value)
+          if (generation === historyGeneration && contextId.value === targetContextId && contextUsageState.value === beforeSnapshot) {
+            if (!applyContextSnapshot(snapshot.contextUsage) && snapshot.contextUsage === null) {
+              contextUsageState.value = null
+            }
+          }
+        } catch { /* Preserve the last confirmed delivery if the snapshot read is unavailable. */ }
       }
     } catch (error: any) {
       if (generation !== historyGeneration || contextId.value !== targetContextId) return
@@ -1229,6 +1319,7 @@ export const useChatStore = defineStore('chat', () => {
       messages.value = []
       contextUsedTokens.value = null
       contextWindowTokens.value = null
+      contextUsageState.value = null
     }
   }
 
@@ -1262,6 +1353,7 @@ export const useChatStore = defineStore('chat', () => {
     contextId.value = null
     contextUsedTokens.value = null
     contextWindowTokens.value = null
+    contextUsageState.value = null
   }
 
   return {
@@ -1284,6 +1376,7 @@ export const useChatStore = defineStore('chat', () => {
     nextContextTokens,
     contextWindowTokens,
     contextMeasurement,
+    contextUsageState,
     contextModel,
     contextModels,
     fetchContextWindows,

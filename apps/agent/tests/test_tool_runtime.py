@@ -81,6 +81,18 @@ class _CatalogStub:
         return ToolPayload(summary="stub completed", data={"name": name}, sources=[source])
 
 
+def test_command_model_payload_contains_output_once_while_ui_receipt_stays_complete():
+    terminal = {'stdout': 'full output', 'stderr': 'full error', 'exitCode': 7, 'truncated': False}
+    class Catalog:
+        async def execute(self, name, arguments, **kwargs):
+            return ToolPayload(summary='command finished', data={'result': terminal, 'terminal': terminal})
+    context = ToolInvocationContext(Catalog(), frozenset({'run_command'}))
+    output = json.loads(asyncio.run(context.invoke('run_command', {}, call_id='synthetic')))
+    assert output['data']['result'] == terminal
+    assert 'terminal' not in output['data']
+    assert context.records[0].terminal == terminal
+
+
 def test_tavily_search_normalizes_sources_and_skips_local_urls(monkeypatch):
     monkeypatch.setattr(settings, "TOOL_RUNTIME_ENABLED", True)
     monkeypatch.setattr(settings, "TAVILY_API_KEY", "test-key")

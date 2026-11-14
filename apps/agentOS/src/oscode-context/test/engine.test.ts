@@ -277,7 +277,7 @@ test('tool-result pruning keeps opaque multimodal data blocks untouched', () => 
   const output = [{ type: 'function_call_output', call_id: 'picture', output: [image, { type: 'text', text: 'x'.repeat(15000) }] }]
   const result = pruneResults(output, DEFAULTS, 1)
   assert.deepEqual(result.messages[0].output[0], image)
-  assert.ok(result.removedChars > 0)
+  assert.equal(result.removedChars, 0) // The whole multimodal result is protected.
 })
 test('pruning alone can clear pressure without any summary call', async () => {
   const messages = [{ role: 'user', content: 'read' }, { type: 'function_call', call_id: 'c' },

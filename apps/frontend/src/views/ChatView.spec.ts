@@ -59,6 +59,7 @@ function createChatStoreMock() {
     conversationWorkspaceMode: null as 'agent' | 'chat' | null,
     migrateDraftBindings: vi.fn(),
     contextUsedTokens: null as number | null,
+    contextUsageState: null as any,
     contextMeasurement: 'usage',
     nextContextTokens: null as number | null,
     contextWindowTokens: null as number | null,
@@ -593,19 +594,83 @@ describe('ChatView ACG progress integration', () => {
     expect(wrapper.text()).toContain('816.7 KiB')
     wrapper.unmount()
   })
+  it('renders the server watermark without inferring it from the latest failed message', async () => {
+    chatStoreMock.contextUsageState = {usedTokens:200000,maxTokens:1000000,measurement:'provider',source:'model'}
+    chatStoreMock.messages = [{id:'failed',role:'assistant',content:'failed',chatExecutionState:'failed'}]
+    const {wrapper} = await mountPage('?workspace=chat')
+    const card = wrapper.get('[aria-label="上下文用量"]')
+    expect(card.text()).toContain('上下文水位（最近实测）')
+    expect(card.text()).toContain('20%')
+    expect(card.text()).not.toContain('未知')
+    wrapper.unmount()
+  })
+  it('labels an older measured context as historical after a newer turn failed without usage', async () => {
+    chatStoreMock.contextUsedTokens = 207793
+    chatStoreMock.contextWindowTokens = 1000000
+    chatStoreMock.messages = [
+      {id:'old',role:'assistant',content:'old',lastInputTokens:207000,lastOutputTokens:793},
+      {id:'failed',role:'assistant',content:'failed',chatExecutionState:'failed'},
+    ]
+    const {wrapper} = await mountPage('?workspace=chat')
+    const context = wrapper.get('[aria-label="上下文用量"]')
+    expect(context.text()).toContain('当前上下文（未测量）')
+    expect(context.text()).toContain('上次已测 208k Token（历史值）')
+    expect(context.text()).toContain('当前占用未知')
+    expect(context.text()).not.toContain('20%')
+    expect(context.find('[role="progressbar"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
 
   it('shows response stages with explicit request and turn timing scopes', async () => {
     chatStoreMock.messages = [{ id: 'timed', role: 'assistant', content: 'answer', latencyMs: 57000,
       responseTimings: { gatewayPrepareMs: 12, contextPreparationMs: 40, providerHeadersMs: 17000,
-        providerFirstByteMs: 17100, firstReasoningMs: 17200, firstContentMs: 24000 } }]
+        providerFirstByteMs: 17100, providerConnectMs: 10, providerTlsMs: 20, providerUploadMs: 1,
+        providerHeaderWaitMs: 16969, firstReasoningMs: 17200, firstContentMs: 24000 } }]
     const { wrapper } = await mountPage('?workspace=chat')
     const timing = wrapper.get('.chat-info-usage__timings')
     expect(timing.text()).toContain('响应耗时')
     expect(timing.text()).toContain('网关准备12 ms')
     expect(timing.text()).toContain('供应商首字节（最近请求）17.1 秒')
+    expect(timing.text()).toContain('连接建立（最近请求）10 ms')
+    expect(timing.text()).toContain('TLS 握手（最近请求）20 ms')
+    expect(timing.text()).toContain('请求体发送（最近请求）1 ms')
     expect(timing.text()).toContain('首段正文（整轮）24.0 秒')
     expect(timing.text()).toContain('本轮服务端总耗时57.0 秒')
     expect(timing.text()).toContain('不能相加')
+    wrapper.unmount()
+  })
+
+  it('separates the working budget from model capacity and exposes preparation timings', async () => {
+    chatStoreMock.contextWindowTokens=1_000_000
+    chatStoreMock.contextUsedTokens=200_000
+    chatStoreMock.messages=[{id:'working',role:'assistant',content:'answer',projectionVersion:3,archivedItems:262,
+      workingContext:{outputTokens:40000,workingSetTriggerTokens:65536,workingSetTargetTokens:40960,tokenMethod:'utf8-upper-bound'},
+      responseTimings:{journalReadMs:5,httpClientBuildMs:1,firstProviderFirstByteMs:3000,browserFirstReceiveMs:3100}}]
+    const {wrapper}=await mountPage('?workspace=chat')
+    const budget=wrapper.get('[aria-label="工作上下文预算"]').text()
+    expect(budget).toContain('40k'); expect(budget).toContain('66k 软触发预算')
+    expect(budget).toContain('UTF-8 保守上界'); expect(budget).toContain('已覆盖 262 条')
+    expect(budget).toContain('收缩目标'); expect(budget).toContain('41k')
+    expect(wrapper.get('[aria-label="上下文用量"]').text()).toContain('20%')
+    expect(wrapper.get('.chat-info-usage__timings').text()).toContain('HTTP 客户端构建1 ms')
+    wrapper.unmount()
+  })
+
+  it('follows the tail when a polling tool block joins the live transcript', async () => {
+    chatStoreMock.messages=[{id:'polling',role:'assistant',content:'',transcript:[
+      {id:'tool:a',kind:'tool',callId:'a',toolName:'get_command_output',state:'background'}]}]
+    const {wrapper}=await mountPage('?workspace=chat')
+    const scroller=wrapper.get('.messages').element as HTMLElement & {scrollTo: (options:{top:number}) => void}
+    const scrollTo=vi.fn(scroller.scrollTo.bind(scroller))
+    scroller.scrollTo=scrollTo
+    chatStoreMock.messages[0]!.transcript!.push(
+      {id:'tool:b',kind:'tool',callId:'b',toolName:'get_command_output',state:'background'})
+    await flushPromises()
+    await new Promise(resolve=>requestAnimationFrame(()=>resolve(null)))
+    await flushPromises()
+    expect(scrollTo).toHaveBeenCalled()
+    const lastCall=scrollTo.mock.calls.at(-1)![0] as {top?:number}
+    expect(typeof lastCall.top).toBe('number')
     wrapper.unmount()
   })
 

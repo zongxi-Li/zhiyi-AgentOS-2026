@@ -9,10 +9,36 @@ const toolStates = {
 
 export function mergeResponseTimings(target, source) {
   if (!source || typeof source !== 'object') return target;
-  for (const key of ['gatewayPrepareMs', 'contextPreparationMs', 'providerHeadersMs', 'providerFirstByteMs', 'firstReasoningMs', 'firstContentMs']) {
+  for (const key of ['gatewayPrepareMs', 'contextPreparationMs', 'providerHeadersMs', 'providerFirstByteMs',
+    'providerConnectMs', 'providerTlsMs', 'providerUploadMs', 'providerHeaderWaitMs', 'firstReasoningMs', 'firstContentMs',
+    'profileResolveMs', 'catalogBuildMs', 'journalOpenMs', 'journalReadMs', 'agentBuildMs', 'providerAdapterMs', 'httpClientBuildMs', 'agentConstructionMs',
+    'contextMeasureMs', 'contextProjectionMs', 'contextSummaryMs',
+    'sdkRequestBuildMs', 'firstProviderHeadersMs', 'firstProviderFirstByteMs', 'browserFirstReceiveMs', 'browserFirstFrameMs']) {
     if (typeof source[key] === 'number' && Number.isFinite(source[key]) && source[key] >= 0) target[key] = source[key];
   }
   return target;
+}
+
+export function workingContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const result = {};
+  for (const key of ['inputTokens', 'outputTokens', 'actualInputTokens', 'fixedTokens', 'workingSetTriggerTokens', 'workingSetTargetTokens',
+    'hardInputLimit', 'protectedTokens', 'summaryCalls', 'summaryLatencyMs', 'pruneLatencyMs', 'prunedChars']) {
+    if (typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0) result[key] = value[key];
+  }
+  for (const key of ['tokenMethod', 'status', 'failureCode']) if (typeof value[key] === 'string') result[key] = value[key].slice(0, 100);
+  for (const key of ['softOverBudget', 'failed', 'targetReachable']) if (typeof value[key] === 'boolean') result[key] = value[key];
+  return Object.keys(result).length ? result : undefined;
+}
+
+export function contextUsage(value) {
+  if (!value || typeof value !== 'object' || !['provider','upper-bound','unknown'].includes(value.measurement)
+      || !['model','prepared','compaction'].includes(value.source)) return undefined;
+  const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+  if (!valid(value.maxTokens) || value.maxTokens <= 0 || (value.usedTokens !== null && !valid(value.usedTokens))) return undefined;
+  const result = {usedTokens:value.usedTokens,maxTokens:value.maxTokens,measurement:value.measurement,source:value.source};
+  for (const key of ['confirmedTokens','projectionVersion']) if (valid(value[key])) result[key] = value[key];
+  return result;
 }
 
 export function applyTranscript(blocks, event) {

@@ -1,4 +1,4 @@
-import { applyTranscript, mergeResponseTimings, type TranscriptBlock, type StreamEvent, type ResponseTimings } from './shared/chat-stream/index.mjs';
+import { applyTranscript, mergeResponseTimings, workingContext, contextUsage, type TranscriptBlock, type StreamEvent, type ResponseTimings } from './shared/chat-stream/index.mjs';
 
 export class StreamCapture {
   content = ''; reasoning = ''; completed = false; cancelled = false;
@@ -40,6 +40,8 @@ export class StreamCapture {
   apply(envelope: StreamEvent) {
       const kind = envelope.event, payload = envelope.data;
       mergeResponseTimings(this.responseTimings, payload.responseTimings);
+      const watermark = contextUsage(payload.contextUsage);
+      if (watermark) this.usage.contextUsage = watermark;
       // The browser and durable history use exactly the same ordering fold.
       if (kind === 'reasoning_delta' && typeof payload.delta === 'string') {
         const remaining = Math.max(0, 200000 - this.reasoning.length);
@@ -51,6 +53,11 @@ export class StreamCapture {
       if (typeof envelope.requestId === 'string') this.requestId = envelope.requestId;
       if (typeof envelope.sequence === 'number') this.sequence = Math.max(this.sequence, envelope.sequence);
       const copy = (...keys: string[]) => { for (const key of keys) if (payload[key] !== undefined && payload[key] !== null) this.usage[key] = payload[key]; };
+      if (['model_phase', 'model_context', 'model_activity', 'usage'].includes(kind)) {
+        const budget = workingContext(payload.workingContext);
+        if (budget) this.usage.workingContext = budget;
+        copy('projectionVersion', 'archivedItems', 'providerRequest', 'attemptId', 'turn', 'retryAttempt');
+      }
       if (kind === 'reasoning_start') { this.reasoningStarted = true; copy('requestedThinkingMode', 'effectiveThinkingMode', 'effectiveReasoningEffort'); }
       if (kind === 'reasoning_delta' && typeof payload.delta === 'string') {
         this.reasoningStarted = true;
@@ -64,7 +71,16 @@ export class StreamCapture {
       }
       if (kind === 'usage') copy('inputTokens', 'input_tokens', 'reasoningTokens', 'reasoning_tokens', 'outputTokens', 'output_tokens',
         'totalTokens', 'total_tokens', 'latencyMs', 'effectiveModel', 'requestedModel', 'requestedThinkingMode', 'effectiveThinkingMode', 'effectiveReasoningEffort', 'resolutionReasons', 'contextFixedTokens', 'contextTokenMethod', 'contextWindowTokens', 'cached_tokens', 'cacheUsageAvailable', 'last_input_tokens', 'last_output_tokens', 'protocolSession');
-      if (kind === 'model_context') copy('contextInputTokens', 'contextMeasurement', 'requestBodyBytes', 'contextWindowTokens', 'effectiveModel');
+      if (kind === 'model_context') {
+        copy('requestBodyBytes', 'contextWindowTokens', 'effectiveModel');
+        if (payload.contextMeasurement === 'provider-usage') {
+          copy('contextInputTokens', 'contextMeasurement', 'last_input_tokens', 'last_output_tokens', 'protocolSession');
+          const context = workingContext(this.usage.workingContext);
+          if (context && typeof payload.last_input_tokens === 'number') {
+            this.usage.workingContext = {...context, actualInputTokens: payload.last_input_tokens};
+          }
+        } else if (this.usage.contextMeasurement !== 'provider-usage') copy('contextInputTokens', 'contextMeasurement');
+      }
       if (['tool_start', 'tool_result', 'tool_error', 'approval_required', 'approval_resolved',
         'execution_started', 'stdout_delta', 'stderr_delta', 'execution_completed', 'execution_failed', 'execution_cancelled'].includes(kind)) {
         const status = kind === 'approval_required' ? 'approval_required'

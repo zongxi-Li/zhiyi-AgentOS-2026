@@ -82,7 +82,8 @@ const metadataKeys = new Set(['confidence', 'tokens_used', 'totalTokens', 'effec
   'inputTokens', 'reasoningTokens', 'outputTokens', 'latencyMs', 'thinkingEnabled', 'reasoningContent',
   'reasoningTruncated', 'executionSummary', 'sources', 'transcript', 'chatExecutionId', 'chatExecutionState', 'chatExecutionCursor', 'streamPhase',
   'cached_tokens', 'cacheUsageAvailable', 'protocolSession', 'last_input_tokens', 'last_output_tokens',
-  'contextWindowTokens', 'contextInputTokens', 'contextMeasurement', 'requestBodyBytes', 'responseTimings', 'contextFixedTokens', 'contextTokenMethod']);
+  'contextWindowTokens', 'contextInputTokens', 'contextMeasurement', 'requestBodyBytes', 'responseTimings', 'contextFixedTokens', 'contextTokenMethod',
+  'workingContext', 'contextUsage', 'projectionVersion', 'archivedItems', 'providerRequest', 'attemptId', 'turn', 'retryAttempt']);
 export function messageWire(row: MessageRow) {
   const metadata = row.metadata === null ? null : Object.fromEntries(Object.entries(row.metadata).filter(([key]) => metadataKeys.has(key)));
   return { id: row.id, conversationId: row.conversation_id, role: row.role, content: row.content,

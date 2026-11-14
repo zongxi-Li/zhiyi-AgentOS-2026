@@ -5,12 +5,11 @@ import { useChatStore } from './chat'
 import { chatApi, type CompactResponse } from '@/services/api/chat'
 import type { ModelSettings } from '@/config/modelSettings'
 import { MODEL_SETTINGS_EVENT } from '@/config/modelSettings'
-import { estimateContextInput } from '@/features/chat/compaction'
 
 const settings: ModelSettings = {
   provider: 'system', selectedModel: 'deepseek-flash', models: [], apiKey: '', baseUrl: '', thinkingMode: 'disabled'
 }
-const result: CompactResponse = { contextId: 'ctx-a', status: 'summarized', model: 'deepseek-flash',
+const result: CompactResponse = { contextId: 'ctx-a', status: 'summarized', model: 'deepseek-flash', durable: true, projectionVersion: 1,
   contextWindowTokens: 1_000_000, messages: [{ role: 'user', content: 'checkpoint: preserve REST' }],
   contextFixedTokens: 100, contextTokenMethod: 'utf8-upper-bound',
   metrics: { inputTokens: 12000, outputTokens: 400 } }
@@ -29,7 +28,7 @@ describe('manual OScode context compaction', () => {
   beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()) })
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-  it('preserves raw records and sends checkpoint plus later turns on subsequent HTTP requests', async () => {
+  it('preserves display records and lets the backend own subsequent projected requests', async () => {
     const compact = vi.spyOn(chatApi, 'compactContext').mockResolvedValue(result)
     respond()
     const store = ready(), original = JSON.stringify(store.messages)
@@ -40,15 +39,15 @@ describe('manual OScode context compaction', () => {
     expect(store.compactionNotice).toContain('12,000 → 400')
     await store.sendMessageStream('next request', 'default', settings)
     const first = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)
-    expect(first.context).toEqual(result.messages)
+    expect(first.context).toBeUndefined()
     expect(first.text).toBe('next request')
     await store.sendMessageStream('third request', 'default', settings)
     const next = JSON.parse(vi.mocked(fetch).mock.calls[2][1]!.body as string)
-    expect(next.context).toEqual([...result.messages, { role: 'user', content: 'next request' },
-      { role: 'assistant', content: 'next answer' }])
+    expect(next.context).toBeUndefined()
+    expect(store.compactionNotice).toContain('后端已保存版本 1')
   })
 
-  it('invalidates checkpoint if the original history was edited', async () => {
+  it('never promotes edited display history into a model projection', async () => {
     vi.spyOn(chatApi, 'compactContext').mockResolvedValue(result); respond()
     const store = ready(); await store.compactContext(settings)
     store.messages[0].content = 'switch to GraphQL'
@@ -86,45 +85,34 @@ describe('manual OScode context compaction', () => {
     expect(store.nextContextTokens).toBeNull()
   })
 
-  it('estimates the projected next input while retaining separate Provider usage', async () => {
+  it('shows real Provider usage and leaves durable working estimates to the backend', async () => {
     vi.spyOn(chatApi, 'compactContext').mockResolvedValue(result)
     const store = ready()
     store.contextUsedTokens = 93146
     await store.compactContext(settings)
     expect(store.contextUsedTokens).toBe(93146)
-    expect(store.nextContextTokens).toBe(estimateContextInput(result.messages, 100))
+    expect(store.nextContextTokens).toBeNull()
     const sse = [
       { event: 'content_delta', data: { delta: 'next answer' } },
       { event: 'usage', data: { input_tokens: 90000, output_tokens: 1000,
-        contextFixedTokens: 100, contextTokenMethod: 'utf8-upper-bound' } },
+        protocolSession: true, contextFixedTokens: 100, contextTokenMethod: 'utf8-upper-bound' } },
       { event: 'done', data: { status: 'completed', contextId: 'ctx-a' } }
     ].map(value => `data:${JSON.stringify(value)}\n\n`).join('')
     vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockResolvedValue(new Response(sse))))
     await store.sendMessageStream('next request', 'default', settings)
     expect(store.contextUsedTokens).toBe(91000)
-    expect(store.nextContextTokens).toBe(estimateContextInput([...result.messages,
-      { role: 'user', content: 'next request' }, { role: 'assistant', content: 'next answer' }], 100))
-    expect(store.nextContextTokens).toBeLessThan(1000)
-    // A service started before the metadata change still supplies Provider
-    // usage only; the validated manual allowance remains usable.
-    vi.stubGlobal('fetch', chatExecutionFetch(() => new Response(sse.replace(
-      ',"contextFixedTokens":100,"contextTokenMethod":"utf8-upper-bound"', ''))))
-    await store.sendMessageStream('third request', 'default', settings)
-    expect(store.nextContextTokens).toBe(estimateContextInput([...result.messages,
-      { role: 'user', content: 'next request' }, { role: 'assistant', content: 'next answer' },
-      { role: 'user', content: 'third request' }, { role: 'assistant', content: 'next answer' }], 100))
+    expect(store.nextContextTokens).toBeNull()
     window.dispatchEvent(new Event(MODEL_SETTINGS_EVENT))
     expect(store.nextContextTokens).toBeNull()
   })
 
-  it('explains insufficient savings and estimates original input without saving a checkpoint', async () => {
+  it('explains insufficient savings without inventing a display-history estimate', async () => {
     vi.spyOn(chatApi, 'compactContext').mockResolvedValue({ ...result, status: 'unchanged',
       metrics: { reasonCode: 'INSUFFICIENT_SAVINGS' } })
     const store = ready()
     await store.compactContext(settings)
     expect(store.compactionNotice).toContain('无需压缩')
-    expect(store.nextContextTokens).toBe(estimateContextInput([
-      { role: 'user', content: 'preserve REST' }, { role: 'assistant', content: 'agreed' }], 100))
+    expect(store.nextContextTokens).toBeNull()
     respond()
     await store.sendMessageStream('continue', 'default', settings)
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).context).toBeUndefined()

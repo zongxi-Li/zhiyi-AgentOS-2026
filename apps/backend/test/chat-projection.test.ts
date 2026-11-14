@@ -3,6 +3,27 @@ import { applyTranscript, restoreTranscript, createStreamBatcher, type Transcrip
 import { StreamCapture } from '../src/chatCapture.js';
 
 describe('shared chat projection', () => {
+  it('preserves the authoritative watermark through failure and a newer compact boundary', () => {
+    const capture = new StreamCapture();
+    capture.apply({event:'model_context',data:{contextUsage:{usedTokens:205000,maxTokens:1000000,measurement:'provider',source:'model'}}});
+    capture.apply({event:'error',data:{message:'failed'}});
+    expect(capture.metadata().contextUsage).toMatchObject({usedTokens:205000,source:'model'});
+    capture.apply({event:'model_phase',data:{phase:'context_committed',contextUsage:{usedTokens:40000,maxTokens:1000000,
+      measurement:'upper-bound',source:'compaction',projectionVersion:2}}});
+    expect(capture.metadata().contextUsage).toMatchObject({usedTokens:40000,projectionVersion:2});
+  });
+  it('persists the last individual model usage before done and preserves it across request byte events', () => {
+    const capture = new StreamCapture();
+    capture.apply({event:'model_context',data:{contextMeasurement:'provider-usage',contextInputTokens:200000,
+      last_input_tokens:200000,last_output_tokens:1000,contextWindowTokens:1000000}});
+    capture.apply({event:'model_context',data:{contextMeasurement:'request-bytes',requestBodyBytes:850000}});
+    expect(capture.metadata()).toMatchObject({contextMeasurement:'provider-usage',contextInputTokens:200000,
+      last_input_tokens:200000,last_output_tokens:1000,requestBodyBytes:850000});
+    capture.apply({event:'model_context',data:{contextMeasurement:'provider-usage',contextInputTokens:40000,
+      last_input_tokens:40000,last_output_tokens:100}});
+    expect(capture.metadata()).toMatchObject({contextInputTokens:40000,last_input_tokens:40000,last_output_tokens:100});
+    expect(capture.metadata().totalTokens).toBeUndefined();
+  });
   it('publishes the same bounded reasoning delta that is retained in history', () => {
     const capture = new StreamCapture();
     const forwarded = capture.apply({event:'reasoning_delta', data:{delta:'x'.repeat(200005)}});

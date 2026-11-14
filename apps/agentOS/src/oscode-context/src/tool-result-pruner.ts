@@ -3,7 +3,7 @@
  */
 import type { Config, Message } from './contracts.ts'
 import { CompactionError } from './contracts.ts'
-import { resultId } from './history-segmenter.ts'
+import { balancedCuts, resultId, unsafeResult } from './history-segmenter.ts'
 export const PRUNE_MARKER = '\n\n[... tool result middle pruned ...]\n\n'
 type Block = Record<string, any>
 export function pruneContent(blocks: Block[], config: Pick<Config, 'thresholdChars' | 'headChars' | 'tailChars'>): Block[] | undefined {
@@ -33,6 +33,7 @@ export function pruneResults(messages: Message[], config: Config, safeEnd: numbe
   const projected = structuredClone(messages)
   let removedChars = 0
   const text = (value: string): string => {
+    if (value.includes(PRUNE_MARKER)) return value
     const pruned = pruneContent([{ type: 'text', text: value }], config)
     if (!pruned) return value
     const replacement = pruned[0]?.text || ''
@@ -48,18 +49,45 @@ export function pruneResults(messages: Message[], config: Config, safeEnd: numbe
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k,
       ['stdout', 'stderr', 'output', 'text', 'content', 'body', 'snippet'].includes(k) && typeof v === 'string' ? text(v) : visit(v)]))
   }
+  const cuts = config.recentToolGroups > 0 ? balancedCuts(messages) : []
+  const groups: number[][] = []
+  let group: number[] = []
+  messages.forEach((item, i) => {
+    if (resultId(item) !== undefined) group.push(i)
+    if (group.length && cuts[i + 1]) { groups.push(group); group = [] }
+  })
+  const recent = new Set(groups.slice(Math.max(0, groups.length - config.recentToolGroups)).flat())
+  const names = new Map<string,string>()
+  messages.forEach(m=>{
+    if (m.type === 'function_call') names.set(m.call_id,m.name)
+    for (const call of m.tool_calls || []) names.set(call.id,call.function?.name)
+  })
   projected.forEach((item, i) => {
-    if (i >= safeEnd || resultId(item) === undefined || item.is_error) return
+    if (i >= safeEnd || resultId(item) === undefined || item.is_error || recent.has(i)) return
     const key = item.type === 'function_call_output' ? 'output' : 'content'
     const value = item[key]
+    if (unsafeResult(value)) return
+    // A completed tool wrapper alone does not establish command success.
+    if (['run_command', 'terminal'].includes(names.get(resultId(item)!) || '')) {
+      let data: any
+      try { data = typeof value === 'string' ? JSON.parse(value) : value } catch { return }
+      const result = data?.data?.result ?? data?.data?.terminal ?? data?.result ?? data
+      if ((result?.exitCode ?? result?.exit_code) !== 0 || result?.timedOut) return
+    }
+    const before = removedChars
     if (typeof value === 'string') {
       let parsed: any
       try { parsed = JSON.parse(value) } catch {
-        item[key] = /error|exception|failed/i.test(value) ? value : text(value); return
+        item[key] = text(value)
+        if (removedChars > before) item[key] += `\n[Archived original: journal:${resultId(item)}; read_archived_tool_result]`
+        return
       }
       const next = visit(parsed)
       // Do not reserialize untouched JSON (including errors).
-      if (JSON.stringify(next) !== JSON.stringify(parsed)) item[key] = JSON.stringify(next)
+      if (JSON.stringify(next) !== JSON.stringify(parsed)) {
+        if (next && typeof next === 'object' && !Array.isArray(next)) next.oscode_archive_reference = `journal:${resultId(item)}`
+        item[key] = JSON.stringify(next)
+      }
     } else item[key] = visit(value)
   })
   return { messages: projected, removedChars }

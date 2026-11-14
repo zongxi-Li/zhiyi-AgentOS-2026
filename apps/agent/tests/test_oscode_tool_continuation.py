@@ -144,3 +144,61 @@ async def test_reasoning_is_forwarded_before_provider_response_finishes(monkeypa
         release.set()
         await iterator.aclose()
     assert closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_each_model_call_publishes_context_usage_before_the_turn_finishes(monkeypatch):
+    release = asyncio.Event()
+    requests = []
+    def usage(prompt, completion):
+        return ('data: ' + json.dumps({'id':'measured', 'object':'chat.completion.chunk', 'created':0,
+            'model':'glm-5.3-flash', 'choices':[], 'usage':{'prompt_tokens':prompt,
+                'completion_tokens':completion,'total_tokens':prompt+completion}}) + '\n\n').encode()
+    @function_tool
+    async def inspect_usage() -> str:
+        """Return a deterministic observation."""
+        return 'observed'
+    class Final(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await release.wait()
+            yield frame({'role':'assistant','content':'finished'}, 'stop')
+            yield usage(240, 12)
+            yield b'data: [DONE]\n\n'
+    async def handler(request):
+        requests.append(request)
+        if len(requests) == 1:
+            data = frame({'role':'assistant','tool_calls':[{'index':0,'id':'inspect','type':'function',
+                'function':{'name':'inspect_usage','arguments':'{}'}}]}, 'tool_calls')
+            return httpx.Response(200, headers={'content-type':'text/event-stream'},
+                content=data + usage(100, 10) + b'data: [DONE]\n\n')
+        return httpx.Response(200, headers={'content-type':'text/event-stream'}, stream=Final())
+    install_client(monkeypatch, handler)
+    runtime = runtime_module.AgentsToolRuntime(allowed_tools=set())
+    build = runtime._build_agent
+    def with_tool(*args, **kwargs):
+        agent, client, metadata = build(*args, **kwargs)
+        agent.tools = [inspect_usage]
+        return agent, client, metadata
+    monkeypatch.setattr(runtime, '_build_agent', with_tool)
+    iterator = runtime.stream('inspect', model='glm-5.3-flash',
+        base_url='https://open.bigmodel.cn/api/coding/paas/v4', api_key='offline',
+        request_id='per-call-usage').__aiter__()
+    try:
+        async with asyncio.timeout(10):
+            while True:
+                event = await anext(iterator)
+                if event.event.value == 'model_context' and event.data.get('contextMeasurement') == 'provider-usage':
+                    break
+        assert event.data['last_input_tokens'] == 100
+        assert event.data['last_output_tokens'] == 10
+        assert not release.is_set()
+        release.set()
+        events = [event async for event in iterator]
+        measured = [e for e in events if e.event.value == 'model_context'
+            and e.data.get('contextMeasurement') == 'provider-usage']
+        assert measured[-1].data['last_input_tokens'] == 240
+        assert measured[-1].data['last_output_tokens'] == 12
+        assert events[-1].event.value == 'done'
+    finally:
+        release.set()
+        await iterator.aclose()

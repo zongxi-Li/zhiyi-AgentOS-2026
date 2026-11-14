@@ -98,9 +98,9 @@ class ChatExecutionCancelRequest(BaseModel):
 
 @router.delete('/chat/sessions/{context_id}')
 async def delete_chat_protocol_session(context_id: str):
-    from app.llm.chat_session import forget_chat_sessions
+    from app.llm.chat_session import forget_chat_sessions_safely
     try:
-        forget_chat_sessions(context_id)
+        await forget_chat_sessions_safely(context_id)
     except RuntimeError:
         raise HTTPException(409, '会话仍在执行，请先停止生成') from None
     return {'deleted': True}
@@ -230,6 +230,8 @@ def _stream_failure(error: BaseException) -> Dict[str, object]:
     the client receives only a fixed message and a retry hint, so a stream that
     dies mid-generation is still diagnosable from the code alone.
     """
+    if getattr(error, 'code', None) == 'CONTEXT_HARD_LIMIT':
+        return {'code': 'AI_CONTEXT_OVERFLOW', 'message': '工作输入超出模型硬上限，且无法安全收缩。请压缩历史或缩小当前材料。', 'retryable': False}
     if str(error) == 'CHAT_SESSION_BUSY':
         return {'code': 'CHAT_SESSION_BUSY', 'message': '这个对话仍在回复，请先停止生成再继续', 'retryable': False}
     if str(error) == 'CHAT_CONTEXT_PROJECTION_STALE':
@@ -377,10 +379,12 @@ async def _stream_sse_events(
 async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
     """流式文本对话 (SSE)"""
     async def event_stream():
+        preparation_started = time.perf_counter()
         request_id = f"chat_{uuid4().hex}"
         session_id = chat_request.context_id or request_id
         if chat_request.model and not chat_request.base_url and not chat_request.api_key:
             chat_request.model, chat_request.base_url, chat_request.api_key = resolve_system_runtime_config(chat_request.model)
+        config_resolved = time.perf_counter()
         runtime = get_chat_tool_runtime() if chat_request.tool_mode == "auto" else get_chat_tool_runtime().scoped([])
         chunks = runtime.stream(
             chat_request.text,
@@ -395,6 +399,9 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
             session_id=session_id,
             approval_mode=chat_request.approval_mode,
             context_projection=chat_request.context_projection,
+            _started_at=preparation_started,
+            _preparation_timings={'profileResolveMs': round((config_resolved - preparation_started) * 1000),
+                'catalogBuildMs': round((time.perf_counter() - config_resolved) * 1000)},
             **({"oscode_context_compaction": True} if settings.OSCODE_CONTEXT_COMPACTION_ENABLED else {}),
         )
         async for event in _stream_sse_events(

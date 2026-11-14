@@ -21,6 +21,8 @@ export async function evaluate() {
     messages.push({ role: 'user', content: 'What were the decision, file path and unfinished work?' })
     const request: ProjectionRequest = { contextId: scenario.name, model: 'mock', provider: 'mock://evaluation', messages,
       instructions: 'Keep source facts; never guess.', tools: [], budget: { contextWindow: 16000, outputReserve: 1000, safetyMargin: 500 } }
+    // A 15k failure is intentionally retained verbatim, not pruned/summarized.
+    if (scenario.name === 'tool-conversation') request.budget.contextWindow = 50000
     const engine = new ContextCompactionEngine(new TokenMeter(), async text => {
       const keys = text.match(/KEY\[[^\]]+\]/g) || []
       return { text: JSON.stringify(Object.fromEntries(SUMMARY_FIELDS.map(field => [field, field === 'facts' ? (keys.length ? [...new Set(keys)] : ['No additional confirmed facts in this fragment']) : []]))), totalTokens: 200 }

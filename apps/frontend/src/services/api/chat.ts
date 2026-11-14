@@ -3,6 +3,9 @@ import type { ReasoningEffort, ThinkingMode } from '@/config/modelSettings'
 import type { ContextMessage } from '@/features/chat/compaction'
 
 export interface CompactResponse {
+  contextUsage?: import('../../../../backend/src/shared/chat-stream/index.mjs').ContextUsage
+  durable?: boolean
+  projectionVersion?: number
   contextId: string
   status: 'unchanged' | 'pruned' | 'summarized' | 'no_safe_range' | 'failed_passthrough'
   messages: ContextMessage[]
@@ -61,6 +64,12 @@ export interface ChatResponse {
 export type ChatApprovalDecision = 'allow_once' | 'allow_session' | 'deny'
 
 export const chatApi = {
+  async getContextUsage(contextId: string, model?: string, baseUrl?: string, roleId?: string | null) {
+    const response = await request.get('/ai/chat/context/usage', {
+      params: {context_id:contextId, model:model || undefined, base_url:baseUrl || undefined, role_id:roleId || undefined}, timeout:10000
+    })
+    return response.data as {contextUsage: import('../../../../backend/src/shared/chat-stream/index.mjs').ContextUsage | null}
+  },
   async compactContext(payload: {
     context_id: string; context: ContextMessage[]; role_id?: string
     model?: string; base_url?: string; api_key?: string

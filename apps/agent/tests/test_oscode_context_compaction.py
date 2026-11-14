@@ -58,6 +58,23 @@ async def test_short_input_does_not_start_node_or_call_summary():
     assert projection.process is None
 
 
+async def test_summary_call_budget_is_shared_across_sdk_steps_in_one_worker():
+    calls=[]
+    async def counted(**kwargs):
+        calls.append(True); return await fake_summary(**kwargs)
+    projection=TypeScriptInputFilter(context_id='bounded',model='mock',base_url='https://mock.test',api_key='unused',
+        budget={'contextWindow':1_000_000,'outputReserve':1000,'safetyMargin':500,
+                'workingSetTriggerTokens':16000,'workingSetTargetTokens':10000},
+        config={'retainTurns':1,'retainRatio':0,'maxSummaryCalls':2},tools=[],invoke=counted)
+    try:
+        for name in ('alpha','beta','gamma'):
+            await projection(call(history(name)+[{'role':'user','content':'current'}]))
+        assert len(calls)==2
+        assert projection.last_metrics['status']=='no_safe_range'
+        assert projection.last_metrics['reasonCode']=='SUMMARY_CALL_BUDGET_EXHAUSTED'
+    finally: await projection.close()
+
+
 async def test_real_node_projection_keeps_source_and_memo_across_tool_steps():
     invokes = []
     async def summarize(**kwargs):

@@ -40,7 +40,7 @@ lines.on('line', line => {
       send({ type: 'result', projection: await engine.project(request) })
     } catch (error) {
       // No payloads or credentials in protocol errors.
-      send({ type: 'error', code: error instanceof Error ? error.name : 'COMPACTION_FAILED' })
+      send({ type: 'error', code: error instanceof CompactionError ? error.code : 'COMPACTION_FAILED' })
     } finally { busy = false }
   })()
 })

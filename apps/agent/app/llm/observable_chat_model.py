@@ -12,6 +12,16 @@ class ObservableChatModel(OpenAIChatCompletionsModel):
     on_progress = None
     request_number = 0
     cache_tokens = None
+    on_usage = None
+    on_response = None
+
+    async def get_response(self, *args, **kwargs):
+        from types import SimpleNamespace
+        result = await super().get_response(*args, **kwargs)
+        self.record_usage(SimpleNamespace(prompt_tokens=result.usage.input_tokens, completion_tokens=result.usage.output_tokens))
+        if self.on_response:
+            await self.on_response(SimpleNamespace(output=result.output, id=result.response_id))
+        return result
 
     async def stream_response(self, *args, **kwargs):
         self.request_number += 1
@@ -28,6 +38,8 @@ class ObservableChatModel(OpenAIChatCompletionsModel):
             try:
                 async for event in super().stream_response(*args, **kwargs):
                     completed |= getattr(event, 'type', '') == 'response.completed'
+                    if getattr(event, 'type', '') == 'response.completed' and self.on_response:
+                        await self.on_response(event.response)
                     # Runner waits for response.completed before executing this response's tools.
                     yield event.model_copy(update={'kinlin_attempt_id': attempt_id, 'kinlin_turn': turn})
                 return
@@ -52,6 +64,19 @@ class ObservableChatModel(OpenAIChatCompletionsModel):
         return response, _ObservedChunks(stream, progress, self.record_usage)
 
     def record_usage(self, usage):
+        context_usage = self.on_usage(usage) if self.on_usage else None
+        prompt = getattr(usage, 'prompt_tokens', None)
+        completion = getattr(usage, 'completion_tokens', None)
+        if self.on_progress and type(prompt) is int and prompt > 0:
+            # Capacity is a single model call, not the Runner's accumulated usage.
+            # Publish before tools execute; a user turn can contain many calls.
+            self.on_progress('model_context', {
+                'contextMeasurement': 'provider-usage', 'contextInputTokens': prompt,
+                'last_input_tokens': prompt,
+                'last_output_tokens': completion if type(completion) is int and completion >= 0 else 0,
+                'attemptId': self.attempt_id, 'turn': self.request_number,
+                **({'contextUsage': context_usage} if context_usage else {}),
+            })
         cached, reported = cache_usage(usage)
         if reported and self.cache_tokens:
             self.cache_tokens[-1] = cached

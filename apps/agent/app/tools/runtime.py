@@ -38,6 +38,7 @@ from app.tools.permissions import ChatApprovalMode, get_chat_permission_service
 from app.llm.stream_transport import ModelStreamClient
 from support.model_stream_policy import ModelStreamPolicy
 from app.llm.observable_chat_model import ObservableChatModel
+from app.context_compaction.protocol import model_tool_data
 from contracts.local_runtime import LocalRuntimeExecutionLimits
 
 
@@ -116,6 +117,7 @@ class ToolInvocationContext:
     approval_mode: ChatApprovalMode = "ask"
     session_id: str = "anonymous"
     request_id: str = ""
+    protocol_session: Any = None
     permission_event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None
     max_calls: int | None = None
     records: list[ToolExecutionRecord] = field(default_factory=list)
@@ -174,6 +176,8 @@ class ToolInvocationContext:
             if name not in self.allowed_tools:
                 raise PermissionError(f"tool is not allowed in this run: {name}")
             catalog_kwargs: dict[str, Any] = {"role_id": self.role_id}
+            if name == 'read_archived_tool_result':
+                catalog_kwargs['protocol_session'] = self.protocol_session
             if self.provider:
                 catalog_kwargs["provider"] = self.provider
             invocation_timeout = self.invocation_timeout(name)
@@ -219,7 +223,7 @@ class ToolInvocationContext:
                     "ok": True,
                     "tool": name,
                     "summary": payload.summary,
-                    "data": payload.data,
+                    "data": model_tool_data(name, payload.data),
                     "sources": [source.public_dict() for source in payload.sources],
                 },
                 ensure_ascii=False,
@@ -463,7 +467,14 @@ async def patch_file(
     )
 
 
+@function_tool
+async def read_archived_tool_result(context: ToolContext[ToolInvocationContext], reference: str, offset: int = 0, limit: int = 8192) -> str:
+    """Read an original result referenced as journal:CALL_ID in this conversation. Bounded characters, limit <=16384; use nextOffset to continue."""
+    return await context.context.invoke('read_archived_tool_result', {'reference': reference, 'offset': offset, 'limit': limit}, call_id=context.tool_call_id)
+
+
 SDK_TOOLS = {
+    'read_archived_tool_result': read_archived_tool_result,
     "web_search": web_search,
     "web_extract": web_extract,
     "knowledge_search": knowledge_search,
@@ -579,6 +590,7 @@ class AgentsToolRuntime:
         thinking_mode: str,
         parameters: dict[str, Any] | None = None,
     ) -> tuple[Agent[ToolInvocationContext], AsyncOpenAI, dict[str, Any]]:
+        adapter_started = time.perf_counter()
         validate_runtime_config(model, base_url, api_key)
         normalized = normalize_model_request(model, thinking_mode)
         adapted = adapt_chat_completion_parameters(
@@ -597,6 +609,7 @@ class AgentsToolRuntime:
         # SDK request retries apply before a streaming response is returned.
         # Never retry Runner.run_streamed: that would replay completed tools.
         http_timeout = httpx.Timeout(connect=policy.connect, read=None, write=policy.connect, pool=policy.connect)
+        client_started = time.perf_counter()
         client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url.rstrip("/"),
@@ -604,6 +617,7 @@ class AgentsToolRuntime:
             max_retries=max(0, min(int(settings.MODEL_REQUEST_MAX_RETRIES), 5)),
             http_client=ModelStreamClient(policy, timeout=http_timeout),
         )
+        client_built = time.perf_counter()
         replay_reasoning = provider_model_capabilities(model, base_url).requires_reasoning_content_for_tool_calls
         sdk_model = ObservableChatModel(
             model=model,
@@ -674,6 +688,9 @@ class AgentsToolRuntime:
         )
         from app.context_compaction.runtime import context_budget_metadata
         return agent, client, {
+            '_preparationTimings': {'providerAdapterMs': round((client_started - adapter_started) * 1000),
+                'httpClientBuildMs': round((client_built - client_started) * 1000),
+                'agentConstructionMs': round((time.perf_counter() - client_built) * 1000)},
             **context_budget_metadata(agent),
             "requestedModel": normalized.requested_model,
             "effectiveModel": normalized.effective_model,
@@ -698,14 +715,18 @@ class AgentsToolRuntime:
         return messages
 
     @staticmethod
-    def _compaction_options(*, enabled, agent, context, model, base_url, api_key) -> dict:
-        if not enabled:
-            return {}
+    def _compaction_options(*, enabled, agent, context, model, base_url, api_key, session=None, notify=None) -> dict:
+        policy = settings.OSCODE_CONTEXT_COMPACTION_MODELS.get(f"{base_url.rstrip('/')}::{model}", {})
         from app.context_compaction.runtime import build_input_filter
-        return {"call_model_input_filter": build_input_filter(
+        projection = build_input_filter(
             agent=agent, context_id=context.session_id, model=model,
             base_url=base_url, api_key=api_key,
-            model_policies=settings.OSCODE_CONTEXT_COMPACTION_MODELS)}
+            model_policies=settings.OSCODE_CONTEXT_COMPACTION_MODELS, session=session, notify=notify,
+            measure_only=not (enabled or policy.get('enabled', False)))
+        if isinstance(agent.model, ObservableChatModel):
+            agent.model.on_usage = projection.record_usage
+            agent.model.on_response = projection.record_response
+        return {"call_model_input_filter": projection}
 
     async def run(self, text, **kwargs):
         from app.llm.chat_session import open_chat_session
@@ -714,7 +735,15 @@ class AgentsToolRuntime:
         async with open_chat_session(kwargs.get('session_id'), kwargs.get('model'),
                 kwargs.get('base_url', ''), kwargs.get('role_id'), kwargs.get('history'),
                 kwargs.pop('context_projection', False)) as session:
-            return await self._run(text, _session=session, **kwargs)
+            result = await self._run(text, _session=session, **kwargs)
+        self._schedule_idle_context(session, kwargs)
+        return result
+
+    def _schedule_idle_context(self, session, options):
+        from app.llm.chat_session import prepare_when_idle
+        policy = settings.OSCODE_CONTEXT_COMPACTION_MODELS.get(f"{options.get('base_url', '').rstrip('/')}::{options.get('model')}", {})
+        if session and (options.get('oscode_context_compaction') or policy.get('enabled')) and policy.get('idle_compaction', True):
+            prepare_when_idle(session.session_id, lambda: self._prepare_idle_context(dict(options)))
 
     async def _run(
         self,
@@ -741,6 +770,7 @@ class AgentsToolRuntime:
             approval_mode=approval_mode,
             session_id=session_id,
         )
+        context.protocol_session = _session
         agent, client, metadata = self._build_agent(
             context,
             model=model,
@@ -754,7 +784,7 @@ class AgentsToolRuntime:
         try:
             compaction_options = self._compaction_options(
                 enabled=oscode_context_compaction, agent=agent, context=context,
-                model=str(metadata.get("effectiveModel") or model), base_url=base_url, api_key=api_key)
+                model=str(metadata.get("effectiveModel") or model), base_url=base_url, api_key=api_key, session=_session)
             result = await Runner.run(
                 agent,
                 text if _session else self._input(text, history),
@@ -769,11 +799,20 @@ class AgentsToolRuntime:
                 ),
             )
             usage = _usage_dict(result.context_wrapper.usage)
+            preparation = metadata.pop('_preparationTimings', {})
+            projection = compaction_options.get('call_model_input_filter')
+            if projection:
+                if not isinstance(agent.model, ObservableChatModel):
+                    projection.record_input_tokens(usage.get('last_input_tokens') or (usage['input_tokens'] if usage['requests'] == 1 else None))
+                await projection.save_usage_anchor()
+            if _session:
+                await _session.flush_projection()
             return ToolRunResult(
                 text=str(result.final_output or ""),
                 model=str(metadata.get("effectiveModel") or model),
                 usage=usage,
-                metadata={**metadata, 'protocolSession': _session is not None},
+                metadata={**metadata, 'protocolSession': _session is not None, 'responseTimings': preparation,
+                    **({'contextUsage': projection.context_usage} if projection else {})},
                 sources=list(context.sources.values()),
                 toolExecutions=context.records,
             )
@@ -785,16 +824,21 @@ class AgentsToolRuntime:
 
     async def stream(self, text, **kwargs):
         from app.llm.chat_session import open_chat_session
-        started_at = time.perf_counter()
+        started_at = kwargs.pop('_started_at', None) or time.perf_counter()
+        outer_preparation = kwargs.pop('_preparation_timings', {})
+        profile_started = time.perf_counter()
         if not any(kwargs.get(k) for k in ('model', 'base_url', 'api_key')):
             kwargs['model'], kwargs['base_url'], kwargs['api_key'] = resolve_system_runtime_config()
+        profile_resolve_ms = round((time.perf_counter() - profile_started) * 1000)
         history = kwargs.get('history')
         partial = ''
         complete = False
         async with open_chat_session(kwargs.get('session_id'), kwargs.get('model'),
                 kwargs.get('base_url', ''), kwargs.get('role_id'), history,
                 kwargs.pop('context_projection', False)) as session:
-            chunks = self._stream(text, _session=session, _started_at=started_at, **kwargs)
+            chunks = self._stream(text, _session=session, _started_at=started_at,
+                _preparation_timings={'profileResolveMs': profile_resolve_ms,
+                    **outer_preparation, **(getattr(session, 'preparation_timings', {}))}, **kwargs)
             try:
                 async for event in chunks:
                     if event.event == ChatStreamEventType.CONTENT_DELTA:
@@ -806,6 +850,32 @@ class AgentsToolRuntime:
                 await chunks.aclose()
                 if session and not complete and partial:
                     await session.add_items([{'role': 'assistant', 'content': '[回复中断，未确认任务完成]\n' + partial}])
+        if session and complete:
+            self._schedule_idle_context(session, kwargs)
+
+    async def _prepare_idle_context(self, options):
+        """One cancellable job per scoped route, reusing the same input filter/summary engine."""
+        from app.llm.chat_session import open_chat_session
+        from agents.run import ModelInputData
+        model, base_url, api_key = (options.get(key, '') for key in ('model', 'base_url', 'api_key'))
+        async with open_chat_session(options.get('session_id'), model, base_url, options.get('role_id'), None) as session:
+            if session is None:
+                return
+            context = self._context(options.get('role_id'), provider=_provider_for_model(model, base_url), session_id=options.get('session_id'))
+            agent, client, metadata = self._build_agent(context, model=model, base_url=base_url, api_key=api_key,
+                require_evidence=False, thinking_mode=options.get('thinking_mode', 'disabled'), parameters=options.get('parameters'))
+            hook = None
+            try:
+                hook = self._compaction_options(enabled=options.get('oscode_context_compaction'), agent=agent, context=context,
+                    model=str(metadata.get('effectiveModel') or model), base_url=base_url, api_key=api_key, session=session).get('call_model_input_filter')
+                if hook:
+                    source = await session.get_items()
+                    result = await hook.project(ModelInputData(input=source, instructions=agent.instructions))
+                    await session.commit_projection(source, result.input, hook.last_metrics or {})
+            finally:
+                if hook:
+                    await hook.close()
+                await client.close()
 
     async def _stream(
         self,
@@ -824,12 +894,14 @@ class AgentsToolRuntime:
         oscode_context_compaction: bool = False,
         _session=None,
         _started_at=None,
+        _preparation_timings=None,
     ) -> AsyncIterator[ChatStreamEvent]:
         started_at = _started_at if _started_at is not None else time.perf_counter()
-        response_timings = {}
+        response_timings = dict(_preparation_timings or {})
         if not model and not base_url and not api_key:
             model, base_url, api_key = resolve_system_runtime_config()
         permission_queue = asyncio.Queue()
+        build_started = time.perf_counter()
         context = self._context(
             role_id,
             provider=_provider_for_model(model, base_url),
@@ -838,6 +910,7 @@ class AgentsToolRuntime:
             request_id=request_id,
             permission_event_queue=permission_queue,
         )
+        context.protocol_session = _session
         agent, client, metadata = self._build_agent(
             context,
             model=model,
@@ -847,8 +920,16 @@ class AgentsToolRuntime:
             thinking_mode=thinking_mode,
             parameters=parameters,
         )
+        response_timings['agentBuildMs'] = round((time.perf_counter() - build_started) * 1000)
+        response_timings.update(metadata.pop('_preparationTimings', {}))
         sequence = 0
         def report_progress(name, payload):
+            if name == 'model_context' and payload.get('contextMeasurement') == 'provider-usage':
+                payload = {**payload, 'protocolSession': bool(_session)}
+            response_timings.update(payload.get('responseTimings') or {})
+            if name == 'model_phase' and payload.get('phase') == 'waiting' and isinstance(provider_client, ModelStreamClient):
+                provider_client.request_identity = {key: payload[key] for key in ('attemptId', 'turn', 'retryAttempt') if key in payload}
+                provider_client.sdk_started = time.monotonic()
             if name == 'model_context' and payload.get('providerRequest') == 1:
                 response_timings['contextPreparationMs'] = int((time.perf_counter() - started_at) * 1000)
                 payload = {**payload, 'responseTimings': dict(response_timings)}
@@ -862,15 +943,19 @@ class AgentsToolRuntime:
         if isinstance(provider_client, ModelStreamClient):
             provider_client.on_activity = report_progress
             provider_client.on_context = report_progress
+        if _session:
+            _session.on_progress = report_progress
         emitted_content = False
         compaction_options = {}
         try:
             compaction_options = self._compaction_options(
                 enabled=oscode_context_compaction, agent=agent, context=context,
-                model=str(metadata.get("effectiveModel") or model), base_url=base_url, api_key=api_key)
+                model=str(metadata.get("effectiveModel") or model), base_url=base_url, api_key=api_key,
+                session=_session, notify=report_progress)
         except Exception:
             await client.close()
             raise
+        projection = compaction_options.get('call_model_input_filter')
         result = Runner.run_streamed(
             agent,
             text if _session else self._input(text, history),
@@ -1052,6 +1137,17 @@ class AgentsToolRuntime:
                     data={"delta": final_text},
                 )
             usage = _usage_dict(result.context_wrapper.usage)
+            projection = compaction_options.get('call_model_input_filter')
+            if projection:
+                await projection.save_usage_anchor()
+            had_candidate = bool(_session and _session.pending_projection)
+            committed = await _session.flush_projection() if _session else False
+            if had_candidate:
+                sequence += 1
+                yield ChatStreamEvent(event=ChatStreamEventType.MODEL_PHASE, request_id=request_id, sequence=sequence,
+                    data={'phase': 'context_committed' if committed else 'context_stale',
+                          'projectionVersion': _session.last_view.metadata.get('projectionVersion', 0),
+                          'archivedItems': _session.last_view.metadata.get('archivedItems', 0)})
             if isinstance(agent.model, ObservableChatModel):
                 values = agent.model.cache_tokens or []
                 usage.pop('cached_tokens', None)
@@ -1066,6 +1162,11 @@ class AgentsToolRuntime:
                 data={
                     **usage,
                     **metadata,
+                    **({'contextUsage': projection.context_usage} if projection else {}),
+                    **({'workingContext': projection.last_metrics} if projection and projection.last_metrics else {}),
+                    **({'projectionVersion': _session.last_view.metadata.get('projectionVersion', 0),
+                        'archivedItems': _session.last_view.metadata.get('archivedItems', 0)}
+                        if _session and _session.last_view else {}),
                     'protocolSession': _session is not None,
                     'latencyMs': int((time.perf_counter() - started_at) * 1000),
                     'responseTimings': {**response_timings, **(provider_client.timings if isinstance(provider_client, ModelStreamClient) else {})},

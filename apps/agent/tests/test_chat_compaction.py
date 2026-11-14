@@ -107,3 +107,24 @@ async def test_manual_provider_failure_returns_original_context(manual, monkeypa
     assert response.json()['status'] == 'failed_passthrough'
     assert response.json()['metrics']['failureCode'] == 'SUMMARY_PROVIDER_FAILED'
     assert response.json()['messages'] == body['context']
+
+
+async def test_manual_command_uses_durable_protocol_and_survives_browser_reload(manual, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app.llm import chat_session
+    app,calls=manual
+    monkeypatch.setattr(chat_session,'APP_DATA_DIR',tmp_path)
+    monkeypatch.setattr(chat_session,'current_trusted_user',lambda:SimpleNamespace(user_id='owner',tenant_id='tenant'))
+    body=payload(); raw=body['context']
+    async with chat_session.open_chat_session(body['context_id'],'mock',body['base_url'],None,raw): pass
+    # Old page display context cannot override the protocol journal.
+    body['context']=[{'role':'user','content':'stale display data'}]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+        response=await client.post('/ai/chat/compact',json=body)
+    assert response.status_code==200, response.text
+    data=response.json()
+    assert data['durable'] is True and data['projectionVersion']==1 and data['status']=='summarized'
+    assert 'stale display data' not in str(calls)
+    async with chat_session.open_chat_session(body['context_id'],'mock',body['base_url'],None,[]) as restored:
+        assert await restored.get_items()==data['messages']
+        assert await chat_session.SQLiteSession.get_items(restored)==raw

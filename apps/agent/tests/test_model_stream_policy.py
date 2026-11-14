@@ -82,6 +82,42 @@ async def test_request_size_is_bytes_and_provider_timings_are_separate_from_toke
 
 
 @pytest.mark.asyncio
+async def test_real_http_transport_separates_header_wait_without_exposing_trace_details():
+    traces, activities = [], []
+    async def serve(reader, writer):
+        try:
+            head = await reader.readuntil(b'\r\n\r\n')
+            length = next(int(line.split(b':', 1)[1]) for line in head.split(b'\r\n') if line.lower().startswith(b'content-length:'))
+            await reader.readexactly(length)
+            await asyncio.sleep(.04)
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst')
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    async def existing_trace(name, _info):
+        traces.append(name)
+    server = await asyncio.start_server(serve, '127.0.0.1', 0)
+    try:
+        async with ModelStreamClient(ModelStreamPolicy(first_response=2, total=3), trust_env=False) as client:
+            client.on_activity = lambda name, data: activities.append(data)
+            request = client.build_request('POST', f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/test',
+                                           json={'content': 'private-input'}, extensions={'trace': existing_trace})
+            response = await client.send(request)
+            assert response.content == b'first'
+            assert request.extensions['trace'] is existing_trace
+            assert 0 <= client.timings['providerConnectMs'] <= client.timings['providerHeadersMs']
+            assert 0 <= client.timings['providerUploadMs'] <= client.timings['providerHeadersMs']
+            assert 25 <= client.timings['providerHeaderWaitMs'] <= client.timings['providerHeadersMs']
+            assert 'providerTlsMs' not in client.timings  # No TLS on this loopback fixture.
+            assert 'http11.receive_response_headers.complete' in traces
+            assert 'private-input' not in json.dumps(activities)
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("packets,policy,phase", [
     ([(.2, b'a')], ModelStreamPolicy(first_response=.04, idle=.1, total=1), 'first_response'),
     ([(0, b'a'), (.2, b'b')], ModelStreamPolicy(first_response=.1, idle=.04, total=1), 'idle'),

@@ -11,7 +11,7 @@ import { workflowApi } from '@/services/api/workflow'
 import { agentosRequest } from '@/services/api/agentos/client'
 import request from '@/utils/request'
 
-vi.mock('@/services/api/chat', () => ({ chatApi: { getHistory: vi.fn(), sendMessage: vi.fn() } }))
+vi.mock('@/services/api/chat', () => ({ chatApi: { getHistory: vi.fn(), sendMessage: vi.fn(), getContextUsage:vi.fn() } }))
 vi.mock('@/services/api/conversation', () => ({ conversationApi: { getConversation: vi.fn() } }))
 const deferred = <T>() => {
   let resolve!: (value: T) => void
@@ -22,6 +22,43 @@ const deferred = <T>() => {
 describe('Conversation history continuity', () => {
   beforeEach(() => { localStorage.clear(); localStorage.setItem('userId', 'local-owner'); sessionStorage.clear(); setActivePinia(createPinia()); vi.resetAllMocks() })
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+  it('restores the last model capacity even when the user turn failed before cumulative usage', async () => {
+    vi.mocked(chatApi.getHistory).mockResolvedValue([{id:'measured',role:'assistant',content:'partial',metadata:{
+      contextMeasurement:'provider-usage',contextInputTokens:250000,last_input_tokens:250000,last_output_tokens:500,
+      contextWindowTokens:1000000,chatExecutionState:'failed',protocolSession:true}} as any])
+    vi.mocked(conversationApi.getConversation).mockResolvedValue({contextId:'ctx-measured',roleId:'role'} as any)
+    const store = useChatStore()
+    await store.loadHistory('ctx-measured')
+    expect(store.contextUsedTokens).toBe(250500)
+    expect(store.messages[0].tokensUsed).toBeUndefined()
+    expect(store.nextContextTokens).toBeNull()
+  })
+  it('does not present an earlier successful turn as the capacity of a later unmeasured failed turn', async () => {
+    vi.mocked(chatApi.getHistory).mockResolvedValue([
+      {id:'old',role:'assistant',content:'old',metadata:{last_input_tokens:207000,last_output_tokens:793,
+        contextWindowTokens:1000000,protocolSession:true}},
+      {id:'latest',role:'assistant',content:'failed',metadata:{chatExecutionState:'failed',contextWindowTokens:1000000}},
+    ] as any)
+    vi.mocked(conversationApi.getConversation).mockResolvedValue({contextId:'ctx-stale',roleId:'role'} as any)
+    const store = useChatStore()
+    await store.loadHistory('ctx-stale')
+    expect(store.contextUsedTokens).toBeNull()
+    expect(store.contextWindowTokens).toBe(1000000)
+    expect(store.messages[0].lastInputTokens).toBe(207000)
+  })
+  it('uses the authoritative compact boundary instead of an older message watermark', async () => {
+    vi.mocked(chatApi.getHistory).mockResolvedValue([{id:'old',role:'assistant',content:'old',metadata:{
+      contextUsage:{usedTokens:200000,maxTokens:1000000,measurement:'provider',source:'model'}}},
+      {id:'failed',role:'assistant',content:'failed',metadata:{chatExecutionState:'failed'}}] as any)
+    vi.mocked(conversationApi.getConversation).mockResolvedValue({contextId:'ctx-authority',roleId:'role'} as any)
+    vi.mocked(chatApi.getContextUsage).mockResolvedValue({contextUsage:{usedTokens:40000,maxTokens:1000000,
+      measurement:'upper-bound',source:'compaction',projectionVersion:2}})
+    const store = useChatStore()
+    await store.loadHistory('ctx-authority')
+    expect(store.contextUsedTokens).toBe(40000)
+    expect(store.contextUsageState?.source).toBe('compaction')
+    expect(store.contextUsageState?.projectionVersion).toBe(2)
+  })
   it('restores the context key and its role rather than the database UUID', async () => {
     const agentPost = vi.spyOn(agentosRequest, 'post'); const chatPost = vi.spyOn(request, 'post')
     const uuid = vi.spyOn(crypto, 'randomUUID')

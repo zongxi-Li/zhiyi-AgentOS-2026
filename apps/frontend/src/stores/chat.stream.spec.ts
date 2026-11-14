@@ -20,6 +20,47 @@ const respond = (chunks: string[], status = 200) => {
   }), {status}))))
 }
 describe('Chat stream termination', () => {
+  it('keeps the server watermark after a later failed call and ignores old cumulative usage', async () => {
+    respond([frame('model_context',{contextUsage:{usedTokens:205000,maxTokens:1000000,measurement:'provider',source:'model'}}),
+      frame('usage',{input_tokens:3000000,output_tokens:100000}),
+      frame('error',{message:'later model request failed'})])
+    const store = useChatStore()
+    await store.sendMessageStream('task','default',settings)
+    expect(store.contextUsedTokens).toBe(205000)
+    expect(store.contextUsageState?.source).toBe('model')
+    expect(store.messages.at(-1)?.chatExecutionState).toBe('failed')
+  })
+  it('updates capacity between model calls before the user turn ends, without accumulating input or bytes', async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({start(value) { controller = value }})
+    vi.stubGlobal('fetch', chatExecutionFetch(() => new Response(stream)))
+    const store = useChatStore()
+    const running = store.sendMessageStream('long task', 'default', settings)
+    const send = (data: object) => controller.enqueue(new TextEncoder().encode(frame('model_context', data)))
+    try {
+      send({contextMeasurement:'provider-usage',last_input_tokens:200000,last_output_tokens:1000,
+        contextInputTokens:200000,contextWindowTokens:1000000,effectiveModel:'deepseek-flash'})
+      await vi.waitFor(() => expect(store.contextUsedTokens).toBe(201000))
+      expect(store.isStreaming).toBe(true)
+      send({contextMeasurement:'request-bytes',requestBodyBytes:850000,contextWindowTokens:1000000})
+      await vi.waitFor(() => expect(store.messages.at(-1)?.requestBodyBytes).toBe(850000))
+      expect(store.contextUsedTokens).toBe(201000)
+      send({contextMeasurement:'provider-usage',last_input_tokens:250000,last_output_tokens:500,
+        contextInputTokens:250000,contextWindowTokens:1000000,effectiveModel:'deepseek-flash'})
+      await vi.waitFor(() => expect(store.contextUsedTokens).toBe(250500))
+      expect(store.isStreaming).toBe(true)
+      expect(store.messages.at(-1)?.lastInputTokens).toBe(250000)
+      expect(store.messages.at(-1)?.tokensUsed).toBeUndefined()
+      // Compaction can decrease occupancy; the counter is not a cumulative sum.
+      send({contextMeasurement:'provider-usage',last_input_tokens:40000,last_output_tokens:100,
+        contextWindowTokens:1000000})
+      await vi.waitFor(() => expect(store.contextUsedTokens).toBe(40100))
+    } finally {
+      controller.enqueue(new TextEncoder().encode(frame('done',{status:'completed'})))
+      controller.close()
+      await running
+    }
+  })
   it('uses full protocol input and last model call instead of summed multi-call input for capacity', async () => {
     respond([frame('model_context', { contextInputTokens: 4096, contextWindowTokens: 1048576,
       contextMeasurement: 'protocol-utf8-upper-bound', effectiveModel: 'glm-5.3-flash' }),

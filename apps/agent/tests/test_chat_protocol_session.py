@@ -75,6 +75,35 @@ def test_unrecorded_tool_outcome_is_unknown_not_a_fabricated_success():
 
 
 @pytest.mark.asyncio
+async def test_model_view_removes_only_identical_command_alias_without_changing_journal(journal):
+    terminal = {'stdout': 'important output', 'stderr': 'error details', 'exitCode': 7,
+                'timedOut': False, 'truncated': False}
+    envelope = {'ok': True, 'tool': 'run_command', 'data': {
+        'result': terminal, 'terminal': terminal, 'activity': {'status': 'completed'}}}
+    raw = [{'type': 'function_call', 'name': 'run_command', 'call_id': 'command', 'arguments': '{}'},
+           {'type': 'function_call_output', 'call_id': 'command', 'output': json.dumps(envelope)}]
+    async with session() as source:
+        await source.add_items(raw)
+        view = await source.get_items()
+        projected = json.loads(view[1]['output'])
+        assert projected['data']['result'] == terminal
+        assert 'terminal' not in projected['data']
+        assert projected['data']['activity'] == envelope['data']['activity']
+        assert await chat_session.SQLiteSession.get_items(source) == raw
+        assert chat_session.balanced_view(view) == view
+
+
+@pytest.mark.parametrize('tool,terminal', [('run_command', {'stdout': 'different'}),
+                                         ('other_tool', {'stdout': 'original', 'exitCode': 0}),
+                                         ('run_command', {'stdout': 'original', 'exitCode': False})])
+def test_model_view_preserves_distinct_or_unknown_tool_data(tool, terminal):
+    envelope = {'ok': True, 'tool': tool, 'data': {'result': {'stdout': 'original', 'exitCode': 0}, 'terminal': terminal}}
+    raw = [{'type': 'function_call', 'name': tool, 'call_id': 'c', 'arguments': '{}'},
+           {'type': 'function_call_output', 'call_id': 'c', 'output': json.dumps(envelope)}]
+    assert chat_session.balanced_view(raw) == raw
+
+
+@pytest.mark.asyncio
 async def test_compaction_projects_a_balanced_tail_without_rewriting_journal(journal):
     raw = [{'role': 'user', 'content': 'old'}, {'role': 'assistant', 'content': 'old reply'},
            {'role': 'user', 'content': 'tail'},
@@ -95,6 +124,33 @@ def frame(delta, finish=None, usage=None):
     return ('data: ' + json.dumps({'id': 'test', 'object': 'chat.completion.chunk', 'created': 0,
       'model': 'glm-5.3-flash', 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}],
       **({'usage': usage} if usage else {})}) + '\n\n').encode()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_sse_restores_session_across_iterator_tasks(journal, monkeypatch):
+    from fastapi import FastAPI
+    from app.api import chat
+    from app.config import settings
+    async def provider(request):
+        return httpx.Response(200,headers={'content-type':'text/event-stream'},
+            content=frame({'content':'loopback answer'},'stop',{'prompt_tokens':100,'completion_tokens':1,'total_tokens':101})+b'data: [DONE]\n\n')
+    class Client(ModelStreamClient):
+        def __init__(self,policy,**kwargs):
+            super().__init__(policy,transport=httpx.MockTransport(provider),**kwargs)
+    monkeypatch.setattr(runtime_module,'ModelStreamClient',Client)
+    monkeypatch.setattr(settings,'OSCODE_CONTEXT_COMPACTION_MODELS',{})
+    monkeypatch.setattr(chat,'get_chat_tool_runtime',lambda:runtime_module.AgentsToolRuntime(allowed_tools=[]))
+    app=FastAPI();app.include_router(chat.router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+        response=await client.post('/chat/text/stream',json={'text':'loopback only','context_id':'conversation',
+            'model':'glm-5.3-flash','base_url':'https://open.bigmodel.cn/api/coding/paas/v4','api_key':'not-used'})
+    assert response.status_code==200
+    assert 'loopback answer' in response.text and 'event: done' in response.text
+    assert 'event: error' not in response.text
+    async with session() as restored:
+        items=await restored.get_items()
+        assert items[0]['content']=='loopback only'
+        assert any('loopback answer' in str(item) for item in items)
 
 
 @pytest.mark.asyncio

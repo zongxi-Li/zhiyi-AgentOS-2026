@@ -4,12 +4,28 @@ import { messageWire } from '../src/db.js';
 import { recommendations } from '../src/platform.js';
 
 describe('stream history capture', () => {
+  it('restores working budgets, projection version and request-scoped timings without arbitrary payloads', () => {
+    const capture = new StreamCapture();
+    capture.apply({event:'model_phase', data:{phase:'context_ready', projectionVersion:3, archivedItems:262,
+      workingContext:{outputTokens:40000,workingSetTriggerTokens:65536,workingSetTargetTokens:40960,
+        tokenMethod:'single-request-usage+utf8-delta-upper-bound',softOverBudget:false,apiKey:'private'},
+      responseTimings:{journalReadMs:5,httpClientBuildMs:1,contextSummaryMs:40}}});
+    capture.apply({event:'model_context', data:{providerRequest:2,attemptId:'attempt-2',turn:2,
+      responseTimings:{firstProviderFirstByteMs:100,providerFirstByteMs:300,sdkRequestBuildMs:4}}});
+    const wire=messageWire({metadata:capture.metadata()} as any);
+    expect(wire.metadata).toMatchObject({projectionVersion:3,archivedItems:262,providerRequest:2,attemptId:'attempt-2',
+      workingContext:{outputTokens:40000,workingSetTriggerTokens:65536},
+      responseTimings:{journalReadMs:5,httpClientBuildMs:1,firstProviderFirstByteMs:100,providerFirstByteMs:300}});
+    expect(wire.metadata?.workingContext).not.toHaveProperty('apiKey');
+  });
   it('retains byte units and validated latency stages separately from token usage', () => {
     const capture = new StreamCapture();
     capture.apply({event:'model_context',data:{requestBodyBytes:836280, contextMeasurement:'request-bytes', responseTimings:{contextPreparationMs:12,apiKey:'private'}}});
-    capture.apply({event:'model_activity',data:{responseTimings:{providerHeadersMs:17000,providerFirstByteMs:17100}}});
+    capture.apply({event:'model_activity',data:{responseTimings:{providerHeadersMs:17000,providerFirstByteMs:17100,
+      providerConnectMs:12,providerTlsMs:25,providerUploadMs:1,providerHeaderWaitMs:16962}}});
     const wire = messageWire({metadata:capture.metadata()} as any);
-    expect(wire.metadata).toMatchObject({requestBodyBytes:836280,responseTimings:{contextPreparationMs:12,providerHeadersMs:17000,providerFirstByteMs:17100}});
+    expect(wire.metadata).toMatchObject({requestBodyBytes:836280,responseTimings:{contextPreparationMs:12,providerHeadersMs:17000,providerFirstByteMs:17100,
+      providerConnectMs:12,providerTlsMs:25,providerUploadMs:1,providerHeaderWaitMs:16962}});
     expect(wire.metadata?.responseTimings).not.toHaveProperty('apiKey');
   });
   it('returns saved cache and context statistics through history without exposing private metadata', () => {
