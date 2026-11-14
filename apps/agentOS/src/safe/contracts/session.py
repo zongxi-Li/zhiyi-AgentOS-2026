@@ -35,7 +35,18 @@ class StepRequest(SafeContract):
     manifest_digest: Digest
     step: int = Field(ge=0)
     phase: Literal["prefill", "decode"]
+    position_offset: int = Field(default=0, ge=0, le=159)
     activation: ActivationEnvelope
+
+
+class ActivationContext(SafeContract):
+    """由受信会话管理器构造的预期边界；不能从请求体原样复制后用于验证。"""
+
+    session_id: Identifier
+    manifest_digest: Digest
+    next_step: int = Field(ge=0, le=32)
+    phase: Literal["prefill", "decode"]
+    position_offset: int = Field(ge=0, le=159)
 
 
 class StepReceipt(SafeContract):

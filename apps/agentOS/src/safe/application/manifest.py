@@ -1,15 +1,20 @@
-"""制品校验/导出用例；显式调用才读磁盘。
+"""manifest身份和兼容核验；当前不读取磁盘或证明权重文件真实。
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
-
-TODO(P2-1)：经 ArtifactStore 读取批准清单，逐项校验模型、分词器、模板和角色权重哈希。
-TODO(P2-2)：调用纯兼容规则生成已核验身份；digest 规范版本需独立于模型版本。
-TODO(P2-3)：离线导出拒绝任意 URL 和 trust_remote_code；临时目录完成后原子发布。
-TODO(P2-4)：不得在校验失败时回退在线下载或加载完整模型；清理失败的导出临时文件。
-
-验收：路径穿越、篡改、符号链接逃逸、前后段互换和半完成制品均拒绝。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
+approved_digest必须来自受信配置/安装结果，不能直接取请求自报的值。
+TODO(P2)：经ArtifactStore校验实际权重/配置/tokenizer/template后再发布runner。
+TODO(P2)：离线导出原子发布与失败清理由制品适配器实现；不自动下载补齐。
 """
 
-__all__: list[str] = []
+from safe.contracts.manifest import SplitModelManifest
+from safe.domain.compatibility import manifest_digest, require_manifest_digest
+
+
+class ManifestService:
+    """纯身份核验入口；同一摘要表示整个已声明manifest一致。"""
+
+    digest = staticmethod(manifest_digest)
+    verify = staticmethod(require_manifest_digest)
+
+    @staticmethod
+    def require_compatible(local: SplitModelManifest, remote: SplitModelManifest) -> None:
+        require_manifest_digest(remote, manifest_digest(local))

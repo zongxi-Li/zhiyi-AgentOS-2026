@@ -1,15 +1,39 @@
-"""纯模型兼容规则，不打开制品、不信任客户端声明。
+"""纯manifest身份规则，不打开文件，不将摘要比较当作制品认证。
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
-
-TODO(P2-1)：比较 revision/config/tokenizer/template 与前后段权重摘要，核验批准 manifestDigest。
-TODO(P2-2)：核对 [0,K)、[K,N) 连续且无重叠，dtype、hidden size、位置与 RoPE 语义相同。
-TODO(P2-3)：验证上下文上限160及首期 FP32/eager 配置；tied weights 的两个角色需分别验真。
-TODO(P2-4)：返回稳定的 MANIFEST_INCOMPATIBLE；不在异常中回显真实路径或模型内容。
-
-验收：单字段错配全部拒绝；不同序列化字段顺序不改变 canonical digest。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
+manifest-v1规范：严格校验→包含所有默认字段的JSON对象→键排序、UTF-8、
+ensure_ascii=False、无空白、禁止NaN→SHA256。不是通用RFC8785实现。
+config_digest必须绑定完整配置（包括RoPE）；digest字段不属于manifest本体。
+TODO(P2)：制品存储实测每个文件哈希、角色权重及tied weights；批准摘要由配置注入。
 """
 
-__all__: list[str] = []
+import hashlib
+import hmac
+import json
+
+from pydantic import ValidationError
+
+from safe.contracts.errors import ErrorCode, SafeError
+from safe.contracts.manifest import SplitModelManifest
+
+
+def validated_manifest(manifest: SplitModelManifest) -> SplitModelManifest:
+    """重新校验不可变合同，拒绝model_copy/model_construct绕过验证的对象。"""
+    try:
+        return SplitModelManifest.model_validate(manifest.model_dump())
+    except (ValidationError, AttributeError):
+        raise SafeError(ErrorCode.MANIFEST_INCOMPATIBLE) from None
+
+
+def manifest_digest(manifest: SplitModelManifest) -> str:
+    value = validated_manifest(manifest)
+    canonical = json.dumps(value.model_dump(mode="json"), sort_keys=True, ensure_ascii=False,
+                           separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def require_manifest_digest(manifest: SplitModelManifest, approved_digest: str) -> SplitModelManifest:
+    actual = manifest_digest(manifest)
+    if (not isinstance(approved_digest, str) or len(approved_digest) != 64
+            or not approved_digest.isascii() or not hmac.compare_digest(actual, approved_digest)):
+        raise SafeError(ErrorCode.MANIFEST_INCOMPATIBLE)
+    return validated_manifest(manifest)
