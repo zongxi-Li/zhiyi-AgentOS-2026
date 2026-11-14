@@ -6,7 +6,10 @@ TODO(P2)：离线导出原子发布与失败清理由制品适配器实现；不
 """
 
 from safe.contracts.manifest import SplitModelManifest
+from safe.contracts.errors import ErrorCode, SafeError
 from safe.domain.compatibility import manifest_digest, require_manifest_digest
+from safe.ports.artifact_store import ArtifactExporter
+from pathlib import Path
 
 
 class ManifestService:
@@ -14,6 +17,17 @@ class ManifestService:
 
     digest = staticmethod(manifest_digest)
     verify = staticmethod(require_manifest_digest)
+
+    def __init__(self, *, exporter: ArtifactExporter | None = None):
+        self._exporter = exporter
+
+    def export(self, source: Path, destination: Path, *, model_id: str, revision: str,
+               cut_layer: int, license_id: str) -> str:
+        """显式调用注入的离线导出；不从请求推导路径或批准来源。"""
+        if self._exporter is None:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        return self._exporter(source, destination, model_id=model_id, revision=revision,
+                              cut_layer=cut_layer, license_id=license_id)
 
     @staticmethod
     def require_compatible(local: SplitModelManifest, remote: SplitModelManifest) -> None:

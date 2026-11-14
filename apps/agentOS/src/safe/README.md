@@ -6,6 +6,8 @@
 
 2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验及 `ActivationService` 的受信会话/manifest/phase/位置/shape校验，见[阶段记录](../../../../docs/superpowers/reports/safe/2026-11-14-activation-boundary.md)。`ActivationContext` 必须来自受信会话，摘要来自批准配置；当前尚无认证/会话执行器，不能将此用例直接发布为云端服务。后续按功能在C4分阶段提交，保留各次验收证据。
 
+同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并在全新锁环境完成20×16步与完整模型的logits/greedy对照。完整记录、安装方式和边界见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)。当前每步全序列重算、无KV/网络/DP，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
+
 ## 当前状态
 
 截至 2026-11-13，已按下文架构创建全部模块文件、显式包入口和中文 TODO。本目录是**可导入、部分基础行为已测试的开发骨架**，尚未完成拆分推理运行时。
@@ -252,7 +254,7 @@ flowchart TD
 - 配置、manifest、wire protocol、privacy profile 和预算 schema 分别有版本，不能用单一“模块版本”代替兼容检查。
 - 数据目录由 `bootstrap.settings` 注入，默认位于应用数据根的 `safe/`：`artifacts/`、`privacy/budget.sqlite3`；临时会话只在内存。代码目录不存权重、数据库、激活或真实密钥。
 - 新模型新增 `infrastructure/models/<architecture>.py`，新编码新增 `infrastructure/codecs/<format>.py`，新存储新增 `infrastructure/storage/<backend>.py`；由 manifest/capability 白名单明确启用，不按请求动态 import。
-- DP 库是 `infrastructure/privacy` 的可选依赖；Torch/Transformers 是模型后端的可选依赖。已创建 `apps/agentOS/requirements.safe.in`，当前仅固定测试过的轻量合同依赖。`apps/agentOS/requirements.safe.lock` 须在 P0 平台/后端版本确定后实际解析生成并验证全新安装，本轮不创建虚假锁文件。依赖文件不放在 `src/safe` 内。
+- DP库仍为待选的可选依赖；Torch/Transformers是模型角色的可选依赖。`apps/agentOS/requirements.safe.in` 已固定CPU参考依赖，`requirements.safe.lock` 已从实际wheel生成SHA256平台锁并在全新环境验证。仅支持本轮验收的Windows x64/Python3.10；新平台/后端须单独锁定。轻量门面导入仍不要求模型依赖，文件放在应用根而非 `src/safe` 内。
 - CLI 由 `bootstrap.cli` 显式注入制品/推理用例；`interfaces.cli` 只解析参数、调用注入用例和输出报告，不绕过 application 直接操作模型或数据库。配置拒绝任意网络下载地址与可执行模型代码。
 - 批处理、动态切分、跨设备调度、联合训练和权重聚合需要独立能力协议；不能通过任意 `metadata` 或额外 JSON 字段绕开协议演进。
 

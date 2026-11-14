@@ -6,6 +6,8 @@
 
 本轮骨架交付与逐文件状态见[交付报告](../reports/safe/2026-11-13-scaffold.md)。已实现的基础行为不代表 P0–P6 任一完整阶段验收通过；代码中的阶段号沿用本文定义，方向 B 以 `B1` 单独标识。
 
+2026-11-14执行更新：C4已按独立功能提交测试入口、manifest/激活边界，并完成真实Qwen2.5角色制品与20×16无KV同进程对照；证据见[模型阶段报告](../reports/safe/2026-11-14-qwen-prefill.md)。P0已有可用数值基线，逐层KV、独立角色峰值及Linux/CUDA支持仍未验收；P1的AgentOS转换/完整协议、P2远程和P3会话不能据此勾为全部完成。
+
 **Goal:** 用户原始输入先在本机经过模型前导网络，只把模型中间激活值发送到受控云端，由同一模型的后续网络继续计算并返回结果。
 
 **Architecture:** 第一方向采用同一模型固定层切分，在 `safe` 内按 contracts/domain/ports/application/infrastructure/interfaces/bootstrap 分层，使用 integration 接入 AgentOS 与 Agent 应用。七个根级门面提供稳定公开入口，本地 prefix runner 与云端 suffix runner 独立装配。先证明无扰动数值等价，再实现会话、隐私与产品接入；第二方向“上传权重或适配器”在既定扩展位置另行实施。
@@ -227,9 +229,9 @@ sequenceDiagram
 
 依赖：无。产物：模型清单、环境锁定、切分可行性报告。
 
-- [ ] 核验候选模型许可证、revision、tokenizer 与模板，下载仅在显式制品准备步骤执行，运行禁止远程动态代码与自动下载。
+- [x] 核验候选模型许可证、revision、tokenizer 与模板，下载仅在显式制品准备步骤执行，运行禁止远程动态代码与自动下载。2026-11-14已固定Qwen2.5-0.5B revision并验证源权重LFS SHA256。
 - [ ] 创建独立运行环境并锁定 PyTorch/Transformers/Safetensors；验证本机可用 Python 与 Windows/Linux 支持。现有环境不满足时使用独立解释器，不改坏默认运行链。
-- [ ] 完整模型跑 20 条公开/合成中英文短输入，记录 logits、greedy token、RAM/VRAM 与耗时作为 reference。
+- [x] 完整模型跑20条合成中英文短输入，记录逐步logits误差、greedy token、CPU RAM和耗时作为reference。2026-11-14全新锁环境20×16对照通过；未运行GPU，VRAM不适用。
 - [ ] 核实模型能输出并接续第 K 层 hidden states、位置编码和逐层 KV；完成一次完整模型与同进程 prefix/suffix 对比。
 - [ ] 导出角色制品并确认 tied weights、tokenizer 和 config 的一致性；记录启动峰值，证明两端运行不加载完整权重。
 - [ ] 冻结实验上限、机器配置和切口。模型不支持时出具 no-go，不用伪造向量或普通 API 回复替代。
