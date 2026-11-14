@@ -10,6 +10,8 @@ from typing import List, Dict, Literal, Optional
 import asyncio
 import logging
 import time
+import httpx
+from support.model_stream_policy import ModelStreamTimeout
 from uuid import uuid4
 from app.services.aiservice import AIService
 from app.config import settings
@@ -43,6 +45,7 @@ class ChatRequest(BaseModel):
     role_id: Optional[str] = None
     context_id: Optional[str] = None
     context: Optional[List[Dict[str, str]]] = None
+    context_projection: bool = False
     model: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
@@ -91,6 +94,16 @@ class ChatExecutionCancelRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     request_id: str = Field(alias="requestId", min_length=1)
+
+
+@router.delete('/chat/sessions/{context_id}')
+async def delete_chat_protocol_session(context_id: str):
+    from app.llm.chat_session import forget_chat_sessions
+    try:
+        forget_chat_sessions(context_id)
+    except RuntimeError:
+        raise HTTPException(409, '会话仍在执行，请先停止生成') from None
+    return {'deleted': True}
 
 
 @router.post("/chat/approvals/{approval_id}")
@@ -166,6 +179,7 @@ async def chat_text(request: ChatRequest):
         parameters=request.provider_parameters(),
         session_id=session_id,
         approval_mode=request.approval_mode,
+        context_projection=request.context_projection,
         **({"oscode_context_compaction": True} if settings.OSCODE_CONTEXT_COMPACTION_ENABLED else {}),
     )
     usage = response.usage
@@ -216,15 +230,32 @@ def _stream_failure(error: BaseException) -> Dict[str, object]:
     the client receives only a fixed message and a retry hint, so a stream that
     dies mid-generation is still diagnosable from the code alone.
     """
+    if str(error) == 'CHAT_SESSION_BUSY':
+        return {'code': 'CHAT_SESSION_BUSY', 'message': '这个对话仍在回复，请先停止生成再继续', 'retryable': False}
+    if str(error) == 'CHAT_CONTEXT_PROJECTION_STALE':
+        return {'code': 'CHAT_CONTEXT_PROJECTION_STALE', 'message': '压缩投影与会话日志不一致，请刷新后重新压缩', 'retryable': False}
     if isinstance(error, MaxTurnsExceeded):
         return {
             "code": "AI_TURN_LIMIT_EXCEEDED",
             "message": "本次回复达到工具轮数上限，请重试",
             "retryable": False,
         }
-    if isinstance(error, (asyncio.TimeoutError, TimeoutError, APITimeoutError)):
+    cause = error
+    seen = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, ModelStreamTimeout):
+            codes = {
+                "first_response": ("AI_MODEL_FIRST_RESPONSE_TIMEOUT", "等待模型开始响应超时，请重试"),
+                "idle": ("AI_MODEL_IDLE_TIMEOUT", "模型输出长时间停顿，本次回复已中断"),
+                "total": ("AI_MODEL_TOTAL_TIMEOUT", "本次模型请求已达到时间上限"),
+            }
+            code, message = codes[cause.phase]
+            return {"code": code, "message": message, "retryable": False}
+        cause = cause.__cause__
+    if isinstance(error, (asyncio.TimeoutError, TimeoutError, APITimeoutError, httpx.TimeoutException)):
         return {"code": "AI_UPSTREAM_TIMEOUT", "message": "模型响应超时，请重试", "retryable": True}
-    if isinstance(error, APIConnectionError):
+    if isinstance(error, (APIConnectionError, httpx.TransportError)):
         return {
             "code": "AI_UPSTREAM_UNREACHABLE",
             "message": "无法连接模型服务，请检查网络或代理后重试",
@@ -299,17 +330,18 @@ async def _stream_sse_events(
                     yield f"event: {done.event.value}\ndata: {done.sse_data()}\n\n"
                 return
 
+            sequence += 1
             if isinstance(chunk, ChatStreamEvent):
-                stream_event = chunk
+                # 心跳也占用传输序号。沿用 Runtime 的局部序号会在等待后倒退，
+                # 因此由 SSE 边界统一编号，保留原事件供协议日志等调用方使用。
+                stream_event = chunk.model_copy(update={"sequence": sequence})
             else:
-                sequence += 1
                 stream_event = ChatStreamEvent(
                     event=ChatStreamEventType.CONTENT_DELTA,
                     request_id=request_id,
                     sequence=sequence,
                     data={"delta": str(chunk)},
                 )
-            sequence = max(sequence, stream_event.sequence)
             if stream_event.event == ChatStreamEventType.DONE:
                 saw_done = True
                 if context_id:
@@ -362,6 +394,7 @@ async def chat_text_stream(chat_request: ChatRequest, http_request: Request):
             request_id=request_id,
             session_id=session_id,
             approval_mode=chat_request.approval_mode,
+            context_projection=chat_request.context_projection,
             **({"oscode_context_compaction": True} if settings.OSCODE_CONTEXT_COMPACTION_ENABLED else {}),
         )
         async for event in _stream_sse_events(

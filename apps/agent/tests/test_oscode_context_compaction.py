@@ -31,6 +31,7 @@ def history(context='alpha', rounds=8):
 async def fake_summary(**kwargs):
     assert kwargs['reasoning_effort'] == 'disabled'
     assert kwargs['parameters']['max_tokens'] > 0
+    assert kwargs['parameters']['response_format'] == {'type': 'json_object'}
     assert 'tools' not in kwargs
     assert 'UNTRUSTED' in kwargs['context'][0]['content']
     values = {name: [] for name in FIELDS}
@@ -222,9 +223,11 @@ async def test_http_chat_stream_uses_real_sdk_filter_and_preserves_sse_contract(
                   {**base, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]}]
         return httpx.Response(200, headers={'Content-Type': 'text/event-stream'},
                               content=''.join('data: ' + json.dumps(chunk) + '\n\n' for chunk in chunks) + 'data: [DONE]\n\n')
-    def client(**kwargs):
-        return AsyncOpenAI(**kwargs, http_client=httpx.AsyncClient(transport=httpx.MockTransport(provider)))
-    monkeypatch.setattr(runtime_module, 'AsyncOpenAI', client)
+    from app.llm.stream_transport import ModelStreamClient
+    class Client(ModelStreamClient):
+        def __init__(self, policy, **kwargs):
+            super().__init__(policy, transport=httpx.MockTransport(provider), **kwargs)
+    monkeypatch.setattr(runtime_module, 'ModelStreamClient', Client)
     monkeypatch.setattr(model_runtime, 'generate_with_runtime_model', fake_summary)
     monkeypatch.setattr(settings, 'OSCODE_CONTEXT_COMPACTION_ENABLED', True)
     monkeypatch.setattr(settings, 'OSCODE_CONTEXT_COMPACTION_MODELS', {

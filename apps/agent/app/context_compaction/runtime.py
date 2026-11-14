@@ -100,11 +100,15 @@ class TypeScriptInputFilter:
                         if reply.get("type") == "summarize":
                             try:
                                 from app.ai_engine.model_runtime import generate_with_runtime_model
+                                from app.llm.capabilities import provider_model_capabilities
                                 invoke = self.invoke or generate_with_runtime_model
+                                parameters = {"max_tokens": reply["maxTokens"]}
+                                if provider_model_capabilities(self.model, self.base_url).supports_json_object:
+                                    parameters["response_format"] = {"type": "json_object"}
                                 async with asyncio.timeout(45):
                                     summary = await invoke(text=reply["text"], context=[{"role": "system", "content": reply["instruction"]}],
                                                            model=self.model, base_url=self.base_url, api_key=self.api_key,
-                                                           reasoning_effort="disabled", parameters={"max_tokens": reply["maxTokens"]})
+                                                           reasoning_effort="disabled", parameters=parameters)
                                 await self._send({"type": "summary", "id": reply["id"], "result": {
                                     "text": summary["text"], "totalTokens": summary.get("total_tokens") or summary.get("tokens_used") or 0}})
                             except asyncio.CancelledError:
