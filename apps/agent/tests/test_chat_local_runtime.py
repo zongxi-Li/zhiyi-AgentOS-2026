@@ -395,6 +395,147 @@ def test_command_timeout_receipt_is_not_reported_as_a_crash():
     assert error.value.terminal['timedOut'] is True
     assert error.value.terminal['terminationReason'] == 'timeout'
     assert '900s' in str(error.value)
+    assert error.value.terminal['effectiveTimeoutSeconds'] is None
+    assert error.value.terminal['timeoutConfirmed'] is False
+    assert 'effective deadline was not reported' in str(error.value)
+
+
+def test_timeout_in_immediate_failed_receipt_keeps_termination_details():
+    class Client(_ShellClient):
+        async def execute(self, invocation, **kwargs):
+            return LocalRuntimeExecutionResult(requestId='r', invocationId=invocation.invocation_id,
+                status='failed', output={'exitCode': 1, 'timedOut': True, 'stderr': 'partial output'},
+                error={'code': 'EXECUTION_TIMEOUT', 'message': 'deadline', 'retryable': False},
+                startedAt=datetime.now(timezone.utc), completedAt=datetime.now(timezone.utc))
+    executor = _executor(client=Client())
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    with pytest.raises(LocalRuntimeToolError) as error:
+        asyncio.run(executor.execute('run_command', {'command': 'sleep', 'timeout': 0.1}, call_id='fast'))
+    assert error.value.code == 'COMMAND_TIMEOUT'
+    assert error.value.terminal['timedOut'] is True
+    assert error.value.terminal['stderr'] == 'partial output'
+    assert error.value.terminal['effectiveTimeoutSeconds'] is None
+    assert error.value.terminal['requestedTimeoutSeconds'] == 0.1
+
+
+@pytest.mark.parametrize('immediate', [False, True])
+def test_actual_deadline_from_receipt_overrides_requested_budget(immediate):
+    receipt = {'exitCode': 1, 'timedOut': True, 'effectiveTimeoutSeconds': 600,
+        'timeoutSource': 'backend_policy', 'terminationMessage': 'stale deadline (1800s)'}
+    class Client(_ShellClient):
+        async def execute(self, invocation, **kwargs):
+            if not immediate:
+                return await super().execute(invocation, **kwargs)
+            return LocalRuntimeExecutionResult(requestId='r', invocationId=invocation.invocation_id,
+                status='failed', output=receipt, error={'code': 'COMMAND_TIMEOUT', 'message': 'timeout', 'retryable': False},
+                startedAt=datetime.now(timezone.utc), completedAt=datetime.now(timezone.utc))
+        async def stream_events(self, **kwargs):
+            yield SimpleNamespace(event_type='failed', data=receipt)
+    executor = _executor(client=Client())
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    with pytest.raises(LocalRuntimeToolError) as error:
+        asyncio.run(executor.execute('run_command', {'command': 'sleep', 'timeout': 1800}, call_id='actual'))
+    terminal = error.value.terminal
+    assert terminal['requestedTimeoutSeconds'] == 1800
+    assert terminal['effectiveTimeoutSeconds'] == 600
+    assert terminal['timeoutConfirmed'] is True
+    assert terminal['timeoutSource'] == 'backend_policy'
+    assert 'backend deadline (600s)' in str(error.value)
+    assert 'requested 1800s' in str(error.value)
+
+
+@pytest.mark.parametrize('timeout', [True, 0, -1, float('nan'), float('inf'), '900', 'invalid'])
+def test_invalid_command_timeout_is_rejected_before_execution(timeout):
+    client = _ShellClient()
+    executor = _executor(client=client)
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    with pytest.raises(LocalRuntimeToolError) as error:
+        asyncio.run(executor.execute('run_command', {'command': 'echo', 'timeout': timeout}, call_id='bad'))
+    assert error.value.code == 'COMMAND_TIMEOUT_INVALID'
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_timeout_over_real_hands_http_terminates_process(monkeypatch, tmp_path):
+    """Chat invocation -> job -> envelope -> signed HTTP -> real PowerShell -> receipt."""
+    import json
+    import shutil
+    import subprocess
+    import time
+    from pathlib import Path
+    from adapters.hands_http import HandsHttpTransport
+    from adapters.local_runtime import LocalRuntimeClient
+    hands = Path(__file__).resolve().parents[2] / 'agentOS' / 'src' / 'hands'
+    node = shutil.which('node')
+    tsx = hands / 'node_modules' / 'tsx' / 'dist' / 'cli.mjs'
+    if not node or not tsx.exists() or not shutil.which('pwsh'):
+        pytest.skip('real Hands test requires Node, local tsx and PowerShell')
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (tmp_path / 'keys.json').write_text(json.dumps({'credentials': [
+        {'credentialId': 'timeout-test', 'secret': 'isolated-timeout-test-secret'}]}))
+    (tmp_path / 'grants.json').write_text(json.dumps({'grants': [{
+        'grantId': 'grant-1', 'workspaceId': 'workspace-1', 'canonicalRoot': str(workspace.resolve()),
+        'capabilities': ['shell.exec'], 'allowedCallers': ['timeout-test']}]}))
+    config = tmp_path / 'config.json'
+    config.write_text(json.dumps({'workspaceRoot': str(workspace), 'credentialsFile': 'keys.json',
+        'grantsFile': 'grants.json', 'dataDir': 'ledger', 'port': 0}))
+    # Import tsx in this process: its CLI may fork, leaving a service behind
+    # when Windows terminates only the launcher during fixture cleanup.
+    process = subprocess.Popen([node, '--import', 'tsx', 'hands/service-main.ts', '--config', str(config)],
+        cwd=hands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    transport = None
+    try:
+        ready = await asyncio.wait_for(asyncio.to_thread(process.stdout.readline), 30)
+        assert ready.startswith('READY '), ready
+        address = json.loads(ready[6:])
+        transport = HandsHttpTransport(resource_id='runtime-1',
+            address=f"http://127.0.0.1:{address['port']}/v1/executions",
+            credential_provider=SimpleNamespace(current_signing_credential=lambda _: (
+                'timeout-test', 'isolated-timeout-test-secret')))
+        executor = _executor(client=LocalRuntimeClient(transport))
+        executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+        monkeypatch.setattr(settings, 'TOOL_RUNTIME_ENABLED', True)
+        context = ToolInvocationContext(ChatToolCatalog(local_runtime_executor=executor,
+            legacy_terminal_enabled=False), frozenset({'run_command', 'get_command_output'}))
+        started = time.monotonic()
+        response = json.loads(await context.invoke('run_command', {'command':
+            "Start-Sleep -Seconds 8; Set-Content should-not-exist.txt late", 'timeout': 0.5,
+            'yield_time_ms': 0}, call_id='real-timeout'))
+        assert response['ok'], response
+        result = response['data']
+        # Polling for output must not disable the process deadline.
+        assert result['status'] == 'running', result
+        while result['status'] == 'running':
+            assert time.monotonic() - started < 7, result
+            response = json.loads(await context.invoke('get_command_output', {
+                'execution_id': result['executionId'], 'after': result['outputCursor'], 'wait_ms': 1000},
+                call_id='poll'))
+            assert response['ok'], response
+            result = response['data']
+        assert result['status'] == 'failed', result
+        assert result['errorCode'] == 'COMMAND_TIMEOUT', result
+        assert result['terminal']['timedOut'] is True
+        assert result['terminal']['effectiveTimeoutSeconds'] == 0.5
+        assert result['terminal']['terminationReason'] == 'timeout'
+        assert not (workspace / 'should-not-exist.txt').exists()
+        record = await transport.query_execution(result['executionId'])
+        assert record['receipt']['output']['timedOut'] is True
+        assert record['receipt']['output']['effectiveTimeoutSeconds'] == 0.5
+        # A long requested budget must survive resource resolution unchanged.
+        completed = await executor.execute('run_command', {'command': 'Write-Output long-budget-ok',
+            'timeout': 1800}, call_id='long-budget-http', request_id='long-budget-http')
+        terminal = completed.data['terminal']
+        assert terminal['requestedTimeoutSeconds'] == 1800
+        assert terminal['effectiveTimeoutSeconds'] == 1800
+        assert terminal['timeoutConfirmed'] is True
+        assert terminal['exitCode'] == 0
+    finally:
+        if transport:
+            await transport.aclose()
+        process.terminate()
+        await asyncio.to_thread(process.wait, timeout=10)
 
 
 def test_run_command_uses_host_approved_local_runtime_and_streams_events(monkeypatch):

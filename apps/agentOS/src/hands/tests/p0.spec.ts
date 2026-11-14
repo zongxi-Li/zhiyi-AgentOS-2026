@@ -27,6 +27,7 @@ describe('explicit process deadlines', () => {
     expect(hands.world.resource.resolve({}).timeoutMs).toBeUndefined()
     expect(hands.world.resource.resolve({ timeoutSeconds: null }).timeoutMs).toBeUndefined()
     expect(hands.world.resource.resolve({ timeoutSeconds: 900 }).timeoutMs).toBe(900000)
+    expect(hands.world.resource.resolve({ timeoutSeconds: 1800 }).timeoutMs).toBe(1800000)
     const receipt = await hands.engine.execute(requestOf(hands, grant, 'shell.exec',
       { command: 'Start-Sleep -Seconds 40; Write-Output survived' }, { limits: {} }))
     expect(receipt.status).toBe('completed')
@@ -44,6 +45,8 @@ describe('explicit process deadlines', () => {
     expect(receipt.output?.timedOut).toBe(true)
     expect(receipt.output?.terminationReason).toBe('timeout')
     expect(receipt.output?.terminationMessage).toContain('300ms')
+    expect(receipt.output?.requestedTimeoutSeconds).toBe(0.3)
+    expect(receipt.output?.effectiveTimeoutSeconds).toBe(0.3)
   })
 })
 

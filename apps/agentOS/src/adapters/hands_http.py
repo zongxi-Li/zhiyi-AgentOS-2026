@@ -295,12 +295,13 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
             raise HandsOutcomeUnknown('Hands receipt checksum mismatch for ' + execution_id)
         output = receipt.get('output') or {}
         if isinstance(output.get('exitCode'), int):
-            merged.setdefault('exitCode', output['exitCode'])
-        if output.get('timedOut'):
-            merged.setdefault('timedOut', True)
+            merged['exitCode'] = output['exitCode']
+        if 'timedOut' in output:
+            merged['timedOut'] = bool(output['timedOut'])
         for key in ('terminationReason', 'terminationMessage', 'effectiveTimeoutSeconds', 'timeoutSource', 'aborted'):
             if key in output:
-                merged.setdefault(key, output[key])
+                # Verified terminal receipt is authoritative over event hints.
+                merged[key] = output[key]
         if output.get('truncated'):
             merged.setdefault('truncated', True)
         error = receipt.get('error') or {}

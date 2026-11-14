@@ -131,6 +131,9 @@ export class HandsEngine {
 
     try {
       const output = await this.#dispatch(request.capabilityId, request.input, limits, controller.signal, hooks)
+      if (request.capabilityId === 'shell.exec') {
+        output.requestedTimeoutSeconds = request.limits.timeoutSeconds ?? null
+      }
       const aborted = (output as { __aborted?: boolean }).__aborted === true
       delete (output as { __aborted?: boolean }).__aborted
       if (aborted) {

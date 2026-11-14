@@ -255,12 +255,13 @@ class LocalRuntimeToolExecutor:
             process_input["securityProfile"] = ExecutionSecurityProfile.HOST_APPROVED.value
             timeout = process_input.pop("timeout", None)
             if timeout is not None:
-                if isinstance(timeout, bool) or not math.isfinite(float(timeout)) or float(timeout) <= 0:
+                if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
                     raise LocalRuntimeToolError('COMMAND_TIMEOUT_INVALID', 'timeout must be positive and finite, or omitted')
                 timeout = float(timeout)
             limits = self.limits.model_copy(update={'timeout_seconds': timeout})
-            terminal.update(requestedTimeoutSeconds=timeout, effectiveTimeoutSeconds=timeout,
-                            timeoutSource='model_request' if timeout is not None else 'unbounded', terminationReason=None)
+            # Requested budget is intent, not proof of what the backend accepted.
+            terminal.update(requestedTimeoutSeconds=timeout, effectiveTimeoutSeconds=None,
+                            timeoutSource='unconfirmed', timeoutConfirmed=False, terminationReason=None)
             invocation = CapabilityInvocation(
                 invocationId=str(call_id),
                 capabilityId=capability,
@@ -276,9 +277,21 @@ class LocalRuntimeToolExecutor:
             if result.status == "failed":
                 error = result.error
                 code = str(error.code if error else "LOCAL_RUNTIME_FAILED")
+                output = result.output if isinstance(result.output, dict) else {}
+                terminal.update({key: output[key] for key in (
+                    'exitCode', 'stdout', 'stderr', 'timedOut', 'aborted', 'terminationReason',
+                    'terminationMessage',
+                ) if key in output})
+                if terminal['timedOut'] or code in {'EXECUTION_TIMEOUT', 'COMMAND_TIMEOUT'}:
+                    code = 'COMMAND_TIMEOUT'
+                    terminal.update(timedOut=True, terminationReason='timeout')
+                    self._apply_timeout_receipt(terminal, output)
+                    terminal['terminationMessage'] = self._timeout_message(terminal)
+                else:
+                    self._apply_timeout_receipt(terminal, output)
                 raise LocalRuntimeToolError(
                     code,
-                    str(error.message if error else "Local Runtime execution failed."),
+                    str(terminal.get('terminationMessage') or (error.message if error else "Local Runtime execution failed.")),
                     activity=self._activity(
                         "run_command", capability, cwd, status="failed", error_code=code,
                         arguments=input_payload,
@@ -344,13 +357,13 @@ class LocalRuntimeToolExecutor:
                         terminal["exitCode"] = data["exitCode"]
                     timed_out = bool(data.get('timedOut')) or data.get('code') in {'EXECUTION_TIMEOUT', 'COMMAND_TIMEOUT'}
                     terminal['timedOut'] = timed_out
+                    self._apply_timeout_receipt(terminal, data)
                     reason = data.get('terminationReason') or ('timeout' if timed_out else
                         'cancelled' if event.event_type == 'cancelled' else
                         'exit_nonzero' if terminal.get('exitCode') not in (None, 0) else
                         'runtime_failure' if event.event_type == 'failed' else 'exited')
                     terminal['terminationReason'] = reason
-                    terminal['terminationMessage'] = data.get('terminationMessage') or (
-                        f'Command terminated at its explicitly requested deadline ({timeout:g}s)' if timed_out and timeout is not None else reason)
+                    terminal['terminationMessage'] = self._timeout_message(terminal) if timed_out else data.get('terminationMessage') or reason
                     terminal["durationMs"] = int((time.perf_counter() - started) * 1000)
                     terminal["truncated"] = bool(terminal.get("truncated") or data.get("truncated"))
                     mapped = "execution_failed" if timed_out else "execution_completed" if event.event_type == "completed" else (
@@ -524,6 +537,31 @@ class LocalRuntimeToolExecutor:
         if error_code:
             activity["errorCode"] = error_code
         return activity
+
+    @staticmethod
+    def _apply_timeout_receipt(terminal: dict[str, Any], receipt: Mapping[str, Any]) -> None:
+        effective = receipt.get('effectiveTimeoutSeconds')
+        confirmed = ('effectiveTimeoutSeconds' in receipt and (
+            (effective is None and not terminal.get('timedOut') and receipt.get('timeoutSource') == 'unbounded')
+            or (isinstance(effective, (int, float)) and not isinstance(effective, bool)
+                and math.isfinite(effective) and effective > 0)))
+        terminal['timeoutConfirmed'] = confirmed
+        terminal['effectiveTimeoutSeconds'] = effective if confirmed else None
+        terminal['timeoutSource'] = str(receipt.get('timeoutSource') or 'backend') if confirmed else 'unconfirmed'
+
+    @staticmethod
+    def _timeout_message(terminal: Mapping[str, Any]) -> str:
+        effective = terminal.get('effectiveTimeoutSeconds')
+        requested = terminal.get('requestedTimeoutSeconds')
+        if terminal.get('timeoutConfirmed') and effective is not None:
+            message = f'Command terminated at execution backend deadline ({effective:g}s)'
+            if requested is not None and requested != effective:
+                message += f'; requested {requested:g}s'
+            return message
+        message = 'Command timed out in execution backend; effective deadline was not reported'
+        if requested is not None:
+            message += f' (requested {requested:g}s)'
+        return message
 
     @staticmethod
     def _command_display(arguments: Mapping[str, Any]) -> str:

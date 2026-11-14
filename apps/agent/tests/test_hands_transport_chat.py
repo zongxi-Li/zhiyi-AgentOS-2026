@@ -38,6 +38,21 @@ def _request(capability, payload):
 
 
 @pytest.mark.asyncio
+async def test_verified_receipt_deadline_overrides_event_hints(monkeypatch):
+    wire = _request('shell.exec', {'command': 'sleep'}).model_dump(by_alias=True, mode='json')
+    receipt = _receipt(wire, output={'timedOut': True, 'effectiveTimeoutSeconds': 600,
+        'timeoutSource': 'backend_policy', 'terminationReason': 'timeout'})
+    async def call(*args, **kwargs):
+        return {'receipt': receipt}
+    transport = _hands_transport(monkeypatch, call)
+    data = await transport._enrich_terminal_data('execution', {
+        'timedOut': False, 'effectiveTimeoutSeconds': 1800, 'timeoutSource': 'request'})
+    assert data['timedOut'] is True
+    assert data['effectiveTimeoutSeconds'] == 600
+    assert data['timeoutSource'] == 'backend_policy'
+
+
+@pytest.mark.asyncio
 async def test_events_translate_hands_wire_to_local_runtime_contract(monkeypatch):
     from contracts.local_runtime import LocalRuntimeExecutionEvent
     calls = []
