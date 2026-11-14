@@ -9,6 +9,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { armDeadline } from './deadline.ts'
 import { existsSync, realpathSync } from 'node:fs'
 import * as pathModule from 'node:path'
 import {
@@ -170,7 +171,7 @@ export class HandsEngine {
   async #dispatch(
     capabilityId: HandsCapabilityId,
     input: Record<string, unknown>,
-    limits: { timeoutMs: number; stdoutMaxBytes: number; stderrMaxBytes: number },
+    limits: { timeoutMs?: number; stdoutMaxBytes: number; stderrMaxBytes: number },
     signal: AbortSignal,
     hooks?: HandsExecutionHooks,
   ): Promise<Record<string, unknown>> {
@@ -229,7 +230,7 @@ export class HandsEngine {
 
   async #dispatchShell(
     input: Record<string, unknown>,
-    limits: { timeoutMs: number; stdoutMaxBytes: number; stderrMaxBytes: number },
+    limits: { timeoutMs?: number; stdoutMaxBytes: number; stderrMaxBytes: number },
     signal: AbortSignal,
     hooks?: HandsExecutionHooks,
   ): Promise<Record<string, unknown>> {
@@ -242,9 +243,7 @@ export class HandsEngine {
       signal,
     }
     spec.workdir = resolvedWorkdir
-    const result: HandsProcessResult = hooks?.onOutput !== undefined
-      ? await this.#runObserved(spec, limits.timeoutMs, hooks)
-      : await this.#world.process.run(spec)
+    const result = await this.#runObserved(spec, limits.timeoutMs, hooks ?? {})
     const identity = this.#world.process.identity
     return {
       command,
@@ -254,6 +253,13 @@ export class HandsEngine {
       signal: result.signal,
       timedOut: result.timedOut,
       aborted: result.aborted,
+      effectiveTimeoutSeconds: limits.timeoutMs === undefined ? null : limits.timeoutMs / 1000,
+      timeoutSource: limits.timeoutMs === undefined ? 'unbounded' : 'request',
+      terminationReason: result.timedOut ? 'timeout' : result.aborted ? 'cancelled' : result.signal ? 'signal'
+        : result.exitCode === 0 ? 'exited' : 'exit_nonzero',
+      terminationMessage: result.timedOut ? `Command killed at explicitly requested deadline (${limits.timeoutMs}ms)`
+        : result.aborted ? 'Command cancelled by caller' : result.signal ? `Command ended by signal ${result.signal}`
+          : `Command exited with code ${result.exitCode}`,
       stdout: result.stdout,
       stderr: result.stderr,
       ...(result.sandbox === undefined ? {} : { sandbox: result.sandbox }),
@@ -265,23 +271,23 @@ export class HandsEngine {
   }
 
   /**
-   * Streaming variant over provider.start(): the engine owns the deadline
-   * (background handles arm no executor deadline), polls the non-consuming
-   * observed readers, and classifies the first cause itself — executor
-   * `timedOut` is a foreground-only fact. Non-hooked callers keep the
-   * foreground path and DSH's native first-cause classification untouched.
+   * All shell calls use provider.start(): only the engine owns the requested
+   * deadline. This avoids substrate defaults and keeps termination attribution
+   * identical for streaming and non-streaming callers.
    */
   async #runObserved(
     spec: Parameters<HandsWorld['process']['run']>[0],
-    timeoutMs: number,
+    timeoutMs: number | undefined,
     hooks: HandsExecutionHooks,
   ): Promise<HandsProcessResult> {
     const handle = await this.#world.process.start({ ...spec, timeoutMs: undefined })
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
+    const termination: { cause?: 'timeout' | 'cancelled' } = { cause: spec.signal?.aborted ? 'cancelled' : undefined }
+    const onAbort = (): void => { termination.cause ??= 'cancelled' }
+    spec.signal?.addEventListener('abort', onAbort, { once: true })
+    const cancelDeadline = armDeadline(timeoutMs, () => {
+      termination.cause ??= 'timeout'
       handle.kill()
-    }, timeoutMs)
+    })
     let settled: HandsProcessResult | undefined
     const done = handle.wait().then((result) => {
       settled = result
@@ -306,12 +312,13 @@ export class HandsEngine {
       pump('stdout')
       pump('stderr')
     } finally {
-      clearTimeout(timer)
+      cancelDeadline()
+      spec.signal?.removeEventListener('abort', onAbort)
     }
     const result = settled!
     // First-cause classification in the engine-owned-deadline path.
-    if (timedOut) return { ...result, timedOut: true, aborted: false }
-    if (spec.signal?.aborted === true) return { ...result, timedOut: false, aborted: true }
+    if (termination.cause === 'timeout') return { ...result, timedOut: true, aborted: false }
+    if (termination.cause === 'cancelled') return { ...result, timedOut: false, aborted: true }
     return result
   }
 

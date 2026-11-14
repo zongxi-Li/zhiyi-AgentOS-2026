@@ -36,7 +36,7 @@ class _Envelope(BaseModel):
 
 
 class LocalRuntimeExecutionLimits(_Envelope):
-    timeout_seconds: float = Field(alias="timeoutSeconds", gt=0)
+    timeout_seconds: float | None = Field(default=None, alias="timeoutSeconds", gt=0, allow_inf_nan=False)
     max_stdout_bytes: int = Field(alias="maxStdoutBytes", ge=0)
     max_stderr_bytes: int = Field(alias="maxStderrBytes", ge=0)
 

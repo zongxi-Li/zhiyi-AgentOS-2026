@@ -9,8 +9,10 @@ reference.  Model arguments remain business arguments only.
 from __future__ import annotations
 
 import logging
+import asyncio
 import re
 import time
+import math
 from typing import Any, Awaitable, Callable, Mapping
 
 from adapters.local_runtime import LocalRuntimeClient
@@ -79,7 +81,7 @@ class LocalRuntimeToolExecutor:
         self.resource_id = str(resource_id).strip()
         self.authorization = authorization
         self.limits = limits or LocalRuntimeExecutionLimits(
-            timeoutSeconds=30.0,
+            timeoutSeconds=None,
             maxStdoutBytes=12_000,
             maxStderrBytes=12_000,
         )
@@ -251,11 +253,14 @@ class LocalRuntimeToolExecutor:
             await self._ensure_healthy_candidate(capability)
             process_input = dict(input_payload)
             process_input["securityProfile"] = ExecutionSecurityProfile.HOST_APPROVED.value
-            timeout = process_input.get("timeout")
+            timeout = process_input.pop("timeout", None)
             if timeout is not None:
-                process_input["timeout"] = min(float(timeout), self.limits.timeout_seconds)
-            else:
-                process_input.pop("timeout", None)
+                if isinstance(timeout, bool) or not math.isfinite(float(timeout)) or float(timeout) <= 0:
+                    raise LocalRuntimeToolError('COMMAND_TIMEOUT_INVALID', 'timeout must be positive and finite, or omitted')
+                timeout = float(timeout)
+            limits = self.limits.model_copy(update={'timeout_seconds': timeout})
+            terminal.update(requestedTimeoutSeconds=timeout, effectiveTimeoutSeconds=timeout,
+                            timeoutSource='model_request' if timeout is not None else 'unbounded', terminationReason=None)
             invocation = CapabilityInvocation(
                 invocationId=str(call_id),
                 capabilityId=capability,
@@ -265,7 +270,7 @@ class LocalRuntimeToolExecutor:
                 invocation,
                 resource_id=self.resource_id,
                 authorization=self.authorization,
-                limits=self.limits,
+                limits=limits,
                 idempotency_key=f"chat:{call_id}",
             )
             if result.status == "failed":
@@ -292,7 +297,8 @@ class LocalRuntimeToolExecutor:
                     ),
                     terminal=terminal,
                 )
-            self._active[request_id] = (result.request_id, execution_id, result.invocation_id)
+            active_key = f'{request_id}:{call_id}'
+            self._active[active_key] = (result.request_id, execution_id, result.invocation_id)
             await self._emit_execution(
                 event_sink,
                 "execution_started",
@@ -313,7 +319,10 @@ class LocalRuntimeToolExecutor:
                 if event.event_type in {"stdout_delta", "stderr_delta"}:
                     delta = str(data.get("delta") or "")
                     stream_name = "stdout" if event.event_type == "stdout_delta" else "stderr"
-                    terminal[stream_name] = str(terminal.get(stream_name) or "") + delta
+                    limit = self.limits.max_stdout_bytes if stream_name == 'stdout' else self.limits.max_stderr_bytes
+                    output_bytes = (str(terminal.get(stream_name) or '') + delta).encode('utf-8')
+                    terminal[stream_name] = output_bytes[:limit].decode('utf-8', errors='ignore')
+                    terminal['truncated'] |= len(output_bytes) > limit
                     if data.get("truncated"):
                         terminal["truncated"] = True
                     await self._emit_execution(
@@ -333,11 +342,18 @@ class LocalRuntimeToolExecutor:
                     terminal_state = event.event_type
                     if isinstance(data.get("exitCode"), int):
                         terminal["exitCode"] = data["exitCode"]
-                    if data.get("code") == "EXECUTION_TIMEOUT":
-                        terminal["timedOut"] = True
+                    timed_out = bool(data.get('timedOut')) or data.get('code') in {'EXECUTION_TIMEOUT', 'COMMAND_TIMEOUT'}
+                    terminal['timedOut'] = timed_out
+                    reason = data.get('terminationReason') or ('timeout' if timed_out else
+                        'cancelled' if event.event_type == 'cancelled' else
+                        'exit_nonzero' if terminal.get('exitCode') not in (None, 0) else
+                        'runtime_failure' if event.event_type == 'failed' else 'exited')
+                    terminal['terminationReason'] = reason
+                    terminal['terminationMessage'] = data.get('terminationMessage') or (
+                        f'Command terminated at its explicitly requested deadline ({timeout:g}s)' if timed_out and timeout is not None else reason)
                     terminal["durationMs"] = int((time.perf_counter() - started) * 1000)
                     terminal["truncated"] = bool(terminal.get("truncated") or data.get("truncated"))
-                    mapped = "execution_completed" if event.event_type == "completed" else (
+                    mapped = "execution_failed" if timed_out else "execution_completed" if event.event_type == "completed" else (
                         "execution_cancelled" if event.event_type == "cancelled" else "execution_failed"
                     )
                     await self._emit_execution(
@@ -347,10 +363,12 @@ class LocalRuntimeToolExecutor:
                             "callId": call_id,
                             "toolName": "run_command",
                             "executionId": execution_id,
-                            "errorCode": data.get("code"),
+                            "errorCode": "COMMAND_TIMEOUT" if timed_out else data.get("code"),
                             "terminal": dict(terminal),
                         },
                     )
+                    if timed_out:
+                        raise LocalRuntimeToolError('COMMAND_TIMEOUT', terminal['terminationMessage'], terminal=terminal)
                     if event.event_type == "cancelled":
                         raise LocalRuntimeToolError(
                             "EXECUTION_CANCELLED", "command execution was cancelled",
@@ -388,6 +406,16 @@ class LocalRuntimeToolExecutor:
                 summary=f"Command completed (exit code {terminal.get('exitCode')})",
                 data={"result": terminal, "terminal": terminal, "activity": completed_activity},
             )
+        except asyncio.CancelledError:
+            active = self._active.get(f'{request_id}:{call_id}')
+            if active is not None:
+                runtime_request_id, execution_id, invocation_id = active
+                try:
+                    await asyncio.wait_for(self.client.cancel(execution_id=execution_id,
+                        request_id=runtime_request_id, invocation_id=invocation_id), timeout=5)
+                except Exception:
+                    LOGGER.warning('Command cancellation could not be confirmed')
+            raise
         except LocalRuntimeToolError as exc:
             if exc.activity is None:
                 exc.activity = self._activity(
@@ -409,19 +437,13 @@ class LocalRuntimeToolExecutor:
                 terminal=terminal,
             ) from exc
         finally:
-            self._active.pop(request_id, None)
+            self._active.pop(f'{request_id}:{call_id}', None)
 
     async def cancel(self, request_id: str) -> bool:
-        active = self._active.get(str(request_id or ""))
-        if active is None:
-            return False
-        runtime_request_id, execution_id, invocation_id = active
-        await self.client.cancel(
-            execution_id=execution_id,
-            request_id=runtime_request_id,
-            invocation_id=invocation_id,
-        )
-        return True
+        active = [item for key, item in self._active.items() if key == request_id or key.startswith(f'{request_id}:')]
+        for runtime_request_id, execution_id, invocation_id in active:
+            await self.client.cancel(execution_id=execution_id, request_id=runtime_request_id, invocation_id=invocation_id)
+        return bool(active)
 
     def supports_capability(self, capability_id: str) -> bool:
         try:

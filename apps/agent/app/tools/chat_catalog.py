@@ -10,13 +10,14 @@ from app.tools.contracts import ToolPayload, ToolUnavailableError
 from app.tools.local_runtime import LocalRuntimeToolError, LocalRuntimeToolExecutor
 from app.tools.permissions import ChatApprovalMode, ChatPermissionService
 from app.tools.terminal import WorkspaceTerminalExecutor
+from app.tools.command_jobs import CommandJobs
 
 
 class ChatToolCatalog(ReadOnlyToolCatalog):
     """Chat tools backed by AgentOS, with legacy terminal compatibility only."""
 
     FILE_TOOL_NAMES = ("read_file", "list_files", "write_file", "patch_file")
-    COMMAND_TOOL_NAMES = ("run_command",)
+    COMMAND_TOOL_NAMES = ("run_command", "get_command_output", "cancel_command")
     TOOL_NAMES = (*ReadOnlyToolCatalog.TOOL_NAMES, *FILE_TOOL_NAMES, "terminal")
     supports_call_id = True
     supports_permission_events = True
@@ -30,6 +31,7 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
         workspace_executor_factory: Callable[[], LocalRuntimeToolExecutor] | None = None,
     ) -> None:
         super().__init__()
+        self._command_jobs = CommandJobs()
         self._local_runtime_executor = local_runtime_executor
         self._workspace_executor_factory = workspace_executor_factory
         # Composition roots explicitly inject the Chat policy. Keeping the
@@ -91,6 +93,8 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
             "capabilityId": "shell.exec",
             "securityProfile": "host_approved",
         }
+        for name in ('get_command_output', 'cancel_command'):
+            result[name] = {**result['run_command'], 'readOnly': name == 'get_command_output'}
         if self._legacy_terminal_enabled and self._terminal_executor is not None:
             result["terminal"] = {
                 "available": bool(settings.TOOL_RUNTIME_ENABLED)
@@ -143,6 +147,19 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
                 )
             executor = self._workspace_executor_factory() if self._workspace_executor_factory else self._local_runtime_executor
             workspace_id = executor.authorization.workspace_id if self._workspace_executor_factory else self._workspace_id
+            from app.security.internal_auth import current_trusted_user
+            actor = current_trusted_user()
+            owner = (getattr(actor, 'user_id', ''), getattr(actor, 'tenant_id', ''), workspace_id, str(session_id or ''))
+            if name == 'get_command_output':
+                return await self._command_jobs.output(str(arguments.get('execution_id') or ''), owner=owner,
+                    after=arguments.get('after', 0), wait_ms=arguments.get('wait_ms', 0))
+            if name == 'cancel_command':
+                job = self._command_jobs.owned(str(arguments.get('execution_id') or ''), owner)
+                if not job.task.done():
+                    await executor.cancel(f'{job.request_id}:{job.call_id}')
+                result = await self._command_jobs.output(job.execution_id, owner=owner, after=job.cursor, wait_ms=1000)
+                result.data['cancellationRequested'] = True
+                return result
             if self.permission_service is not None:
                 await self.permission_service.authorize(
                     tool_name=name,
@@ -160,6 +177,12 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
                     "request_id": str(request_id or session_id or call_id or ""),
                     "event_sink": permission_event_sink,
                 })
+            if name == 'run_command':
+                async def execute(sink):
+                    return await executor.execute(name, arguments, **{**executor_kwargs, 'event_sink': sink})
+                return await self._command_jobs.start(execute, owner=owner,
+                    request_id=executor_kwargs['request_id'], call_id=str(call_id or ''),
+                    sink=permission_event_sink, yield_ms=arguments.get('yield_time_ms', 1000))
             return await executor.execute(
                 name,
                 arguments,
@@ -206,6 +229,9 @@ class ChatToolCatalog(ReadOnlyToolCatalog):
         if cancel is None:
             return False
         return await cancel(request_id)
+
+    def detach_commands(self, request_id: str) -> None:
+        self._command_jobs.detach(request_id)
 
 
 __all__ = ["ChatToolCatalog"]

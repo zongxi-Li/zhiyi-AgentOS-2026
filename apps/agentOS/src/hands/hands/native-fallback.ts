@@ -11,6 +11,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { armDeadline } from './deadline.ts'
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
 import type {
@@ -52,8 +53,7 @@ export class NativeFallbackProcessProvider implements HandsProcessProvider {
       if (spec.signal.aborted) firstCause = 'abort'
       else spec.signal.addEventListener('abort', () => finish('abort'), { once: true })
     }
-    const timeoutMs = spec.timeoutMs ?? 120_000
-    const timer = setTimeout(() => finish('timeout'), timeoutMs)
+    const cancelDeadline = armDeadline(spec.timeoutMs, () => finish('timeout'))
 
     const child = spawn(
       WINDOWS_POWERSHELL,
@@ -95,7 +95,7 @@ export class NativeFallbackProcessProvider implements HandsProcessProvider {
           exit.code = status.exitCode
           exit.signal = status.signal
         }
-        clearTimeout(timer)
+        cancelDeadline()
         this.#live.delete(child)
         return {
           exitCode: exit.code,

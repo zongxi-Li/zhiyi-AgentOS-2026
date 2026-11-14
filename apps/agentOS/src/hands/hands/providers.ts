@@ -159,7 +159,7 @@ export interface HandsProcessProvider {
 }
 
 export interface HandsResolvedLimits {
-  timeoutMs: number
+  timeoutMs?: number
   stdoutMaxBytes: number
   stderrMaxBytes: number
 }
@@ -170,7 +170,7 @@ export interface HandsResolvedLimits {
  */
 export interface HandsResourceProvider {
   readonly name: string
-  resolve(limits: { timeoutSeconds?: number; maxStdoutBytes?: number; maxStderrBytes?: number }): HandsResolvedLimits
+  resolve(limits: { timeoutSeconds?: number | null; maxStdoutBytes?: number; maxStderrBytes?: number }): HandsResolvedLimits
 }
 
 /** The whole replaceable execution world handed to the engine. */

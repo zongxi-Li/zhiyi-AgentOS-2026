@@ -151,9 +151,10 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
                     status='accepted', output={'executionId': execution_id},
                     startedAt=accepted_at, completedAt=accepted_at)
             cursor = -1
-            deadline = asyncio.get_running_loop().time()+request.limits.timeout_seconds+30
+            deadline = (asyncio.get_running_loop().time()+request.limits.timeout_seconds+30
+                        if request.limits.timeout_seconds is not None else None)
             while record['state'] not in {'COMPLETED','FAILED','CANCELLED','UNKNOWN'}:
-                if asyncio.get_running_loop().time() > deadline:
+                if deadline is not None and asyncio.get_running_loop().time() > deadline:
                     await self._call('POST','/'+execution_id+'/cancel',{'executionId':execution_id})
                     raise HandsOutcomeUnknown('Hands deadline reached; cancellation requested, reconciliation required')
                 if event_sink:
@@ -297,6 +298,9 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
             merged.setdefault('exitCode', output['exitCode'])
         if output.get('timedOut'):
             merged.setdefault('timedOut', True)
+        for key in ('terminationReason', 'terminationMessage', 'effectiveTimeoutSeconds', 'timeoutSource', 'aborted'):
+            if key in output:
+                merged.setdefault(key, output[key])
         if output.get('truncated'):
             merged.setdefault('truncated', True)
         error = receipt.get('error') or {}

@@ -48,6 +48,96 @@ def test_chat_composition_uses_the_authenticated_users_current_workspace(monkeyp
     assert catalog._local_runtime_executor.authorization == template.authorization
 
 
+@pytest.mark.asyncio
+async def test_background_command_reuses_approved_execution_and_enforces_output_ownership(monkeypatch):
+    monkeypatch.setattr(settings, 'TOOL_RUNTIME_ENABLED', True)
+    release = asyncio.Event()
+    class Client(_ShellClient):
+        async def stream_events(self, **kwargs):
+            yield SimpleNamespace(event_type='stdout_delta', data={'delta': 'first output'})
+            await release.wait()
+            yield SimpleNamespace(event_type='completed', data={'exitCode': 7})
+    client = Client()
+    executor = _executor(client=client)
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    events = []
+    async def sink(name, data):
+        events.append(name)
+    catalog = ChatToolCatalog(local_runtime_executor=executor, legacy_terminal_enabled=False)
+    running = await catalog.execute('run_command', {'command': 'synthetic', 'yield_time_ms': 0},
+        call_id='background-one', session_id='session', request_id='request', permission_event_sink=sink)
+    assert running.data['status'] == 'running'
+    identity = running.data['executionId']
+    partial = await catalog.execute('get_command_output', {'execution_id': identity}, session_id='session')
+    assert partial.data['terminal']['stdout'] == 'first output'
+    with pytest.raises(ValueError, match='COMMAND_JOB_UNKNOWN'):
+        await catalog.execute('get_command_output', {'execution_id': identity}, session_id='other-session')
+    with pytest.raises(ValueError, match='COMMAND_CURSOR_INVALID'):
+        await catalog.execute('get_command_output', {'execution_id': identity, 'after': 9999}, session_id='session')
+    catalog.detach_commands('request')
+    previous_events = len(events)
+    release.set()
+    final = await catalog.execute('get_command_output', {'execution_id': identity,
+        'after': partial.data['outputCursor'], 'wait_ms': 1000}, session_id='session')
+    assert final.data['status'] == 'completed'
+    assert final.data['terminal']['exitCode'] == 7
+    assert len(client.calls) == 1
+    assert len(events) == previous_events
+    assert client.calls[0][0].input['securityProfile'] == 'host_approved'
+
+
+@pytest.mark.asyncio
+async def test_background_command_denial_and_invalid_wait_never_start_execution(monkeypatch):
+    monkeypatch.setattr(settings, 'TOOL_RUNTIME_ENABLED', True)
+    executor = _executor(client=_ShellClient())
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    async def deny(**kwargs):
+        raise PermissionError('denied')
+    catalog = ChatToolCatalog(local_runtime_executor=executor, legacy_terminal_enabled=False,
+        permission_service=SimpleNamespace(authorize=deny))
+    with pytest.raises(PermissionError):
+        await catalog.execute('run_command', {'command': 'synthetic', 'yield_time_ms': 0}, call_id='denied', session_id='session')
+    assert executor.client.calls == []
+    catalog.permission_service = None
+    with pytest.raises(ValueError, match='COMMAND_WAIT_INVALID'):
+        await catalog.execute('run_command', {'command': 'synthetic', 'yield_time_ms': float('nan')}, call_id='invalid', session_id='session')
+    assert executor.client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancel_tool', [True, False])
+async def test_command_cancellation_reaches_the_original_runtime_and_closes_waiters(monkeypatch, cancel_tool):
+    monkeypatch.setattr(settings, 'TOOL_RUNTIME_ENABLED', True)
+    release, accepted = asyncio.Event(), asyncio.Event()
+    class Client(_ShellClient):
+        async def stream_events(self, **kwargs):
+            accepted.set()
+            await release.wait()
+            yield SimpleNamespace(event_type='cancelled', data={})
+        async def cancel(self, **kwargs):
+            self.cancel_calls.append(kwargs)
+            release.set()
+            return 'cancelling'
+    client = Client()
+    executor = _executor(client=client)
+    executor.resource_plane = _resource_plane((*_FILE_CAPABILITIES, 'shell.exec'))
+    catalog = ChatToolCatalog(local_runtime_executor=executor, legacy_terminal_enabled=False)
+    running = asyncio.create_task(catalog.execute('run_command', {'command': 'synthetic',
+        'yield_time_ms': 0 if cancel_tool else 10000}, call_id='cancel-me', session_id='session', request_id='request'))
+    await accepted.wait()
+    if cancel_tool:
+        handle = await running
+        cancelled = await catalog.execute('cancel_command', {'execution_id': handle.data['executionId']}, session_id='session')
+        assert cancelled.data['status'] == 'cancelled'
+    else:
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+    assert len(client.calls) == 1
+    assert client.cancel_calls[0]['execution_id'] == 'execution-1'
+    assert executor._active == {}
+
+
 def test_dynamic_workspace_is_pinned_before_permission_wait():
     first_client, second_client = _Client(), _Client()
     first, second = _executor(client=first_client), _executor(client=second_client)

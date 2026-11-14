@@ -38,7 +38,7 @@ export interface HandsIdentityRef {
 }
 
 export interface HandsLimits {
-  timeoutSeconds?: number
+  timeoutSeconds?: number | null
   maxStdoutBytes?: number
   maxStderrBytes?: number
 }
@@ -168,6 +168,7 @@ function sanitizeLimits(raw: unknown): HandsLimits {
   const out: HandsLimits = {}
   for (const key of ['timeoutSeconds', 'maxStdoutBytes', 'maxStderrBytes'] as const) {
     const v = l[key]
+    if (key === 'timeoutSeconds' && v === null) continue
     if (v === undefined) continue
     if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
       throw new HandsProtocolError(HANDS_ERROR_CODES.INVALID_REQUEST, `limits.${key} must be a positive finite number`)

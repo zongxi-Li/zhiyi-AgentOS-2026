@@ -67,10 +67,8 @@ import type {
   HandsWriteOutcome,
 } from './providers.ts'
 
-/** Default process limits — the DSH executor defaults, restated as Hands resource policy. */
+/** Output retention policy; process deadlines come only from explicit requests. */
 export const HANDS_DEFAULT_LIMITS = {
-  timeoutSeconds: 120,
-  maxTimeoutSeconds: 600,
   maxOutputBytes: 64_000,
   maxOutputBytesHardCap: 64 * 1024 * 1024,
 } as const
@@ -309,7 +307,7 @@ class DshShellProcessProvider implements HandsProcessProvider {
       signal: spec.signal,
       stdin: spec.stdin,
       env: spec.env,
-      onExpiry: background ? 'none' : undefined,
+      onExpiry: background || spec.timeoutMs === undefined ? 'none' : undefined,
     }
     return this.executor.resolve(request)
   }
@@ -360,10 +358,11 @@ function toHandsStream(output: CollectedOutput): HandsCapturedStream {
 class DefaultResourceProvider implements HandsResourceProvider {
   readonly name = 'hands-default-resource'
 
-  resolve(limits: { timeoutSeconds?: number; maxStdoutBytes?: number; maxStderrBytes?: number }): HandsResolvedLimits {
-    const timeoutSeconds = clamp(limits.timeoutSeconds ?? HANDS_DEFAULT_LIMITS.timeoutSeconds, 1, HANDS_DEFAULT_LIMITS.maxTimeoutSeconds)
+  resolve(limits: { timeoutSeconds?: number | null; maxStdoutBytes?: number; maxStderrBytes?: number }): HandsResolvedLimits {
+    const timeoutMs = limits.timeoutSeconds == null ? undefined : limits.timeoutSeconds * 1000
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) throw new RangeError('Invalid explicit command deadline')
     return {
-      timeoutMs: timeoutSeconds * 1000,
+      timeoutMs,
       stdoutMaxBytes: Math.round(clamp(limits.maxStdoutBytes ?? HANDS_DEFAULT_LIMITS.maxOutputBytes, 1, HANDS_DEFAULT_LIMITS.maxOutputBytesHardCap)),
       stderrMaxBytes: Math.round(clamp(limits.maxStderrBytes ?? HANDS_DEFAULT_LIMITS.maxOutputBytes, 1, HANDS_DEFAULT_LIMITS.maxOutputBytesHardCap)),
     }
