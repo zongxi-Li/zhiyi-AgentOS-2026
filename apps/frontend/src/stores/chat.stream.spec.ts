@@ -1,3 +1,4 @@
+import { chatExecutionFetch } from './chatTestFetch'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from './chat'
@@ -11,16 +12,81 @@ const settings: ModelSettings = {
 }
 const frame = (event: string, data: object) => `event:${event}\ndata:${JSON.stringify({event, data})}\n\n`
 const respond = (chunks: string[], status = 200) => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new ReadableStream({
+  vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockImplementation(() => new Response(new ReadableStream({
     start(controller) {
       for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk))
       controller.close()
     }
-  }), {status})))
+  }), {status}))))
 }
 describe('Chat stream termination', () => {
+  it('uses full protocol input and last model call instead of summed multi-call input for capacity', async () => {
+    respond([frame('model_context', { contextInputTokens: 4096, contextWindowTokens: 1048576,
+      contextMeasurement: 'protocol-utf8-upper-bound', effectiveModel: 'glm-5.3-flash' }),
+      frame('content_delta', { delta: 'ok' }), frame('usage', { input_tokens: 9000, output_tokens: 100,
+      last_input_tokens: 3000, last_output_tokens: 20, cached_tokens: 2048, cacheUsageAvailable: true,
+      contextWindowTokens: 1048576, protocolSession: true }), frame('done', { status: 'completed' })])
+    const store = useChatStore()
+    await store.sendMessageStream('test', 'default', settings)
+    expect(store.contextUsedTokens).toBe(3020)
+    expect(store.contextWindowTokens).toBe(1048576)
+    expect(store.messages.at(-1)?.cachedTokens).toBe(2048)
+    expect(store.nextContextTokens).toBeNull()
+  })
+  it('keeps actual token usage while a larger request byte count is reported', async () => {
+    let finish!: () => void
+    const stream = new ReadableStream({start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame('model_context', {requestBodyBytes:836280,contextMeasurement:'request-bytes',contextWindowTokens:1048576,
+        responseTimings:{contextPreparationMs:12}})))
+      finish = () => {controller.enqueue(new TextEncoder().encode(frame('done',{status:'completed'})));controller.close()}
+    }})
+    vi.stubGlobal('fetch', chatExecutionFetch(() => new Response(stream)))
+    const store = useChatStore()
+    store.contextUsedTokens = 200862
+    const running = store.sendMessageStream('next', 'default', settings)
+    try {
+      await vi.waitFor(() => expect(store.messages.at(-1)?.requestBodyBytes).toBe(836280))
+      expect(store.contextUsedTokens).toBe(200862)
+      expect(store.contextMeasurement).toBe('usage')
+      expect(store.messages.at(-1)?.responseTimings?.contextPreparationMs).toBe(12)
+    } finally {finish(); await running}
+  })
+
+  it('does not overwrite measured reasoning time with total response time', async () => {
+    respond([frame('reasoning_start',{}),frame('reasoning_end',{reasoningPhaseMs:17}),
+      frame('content_delta',{delta:'answer'}),frame('done',{status:'completed'})])
+    const store = useChatStore()
+    await store.sendMessageStream('next', 'default', settings)
+    expect(store.messages.at(-1)?.thinkingDurationMs).toBe(17)
+  })
   beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()) })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it.each([
+    [frame('approval_required', { toolName: 'write_file' }), '等待你的确认'],
+    [frame('execution_started', { toolName: 'run_command' }), '执行受控命令'],
+    [frame('model_phase', { phase: 'tool_arguments' }), '正在准备工具调用'],
+    [frame('model_phase', { phase: 'waiting', turn: 2 }), '操作已完成，等待模型处理结果'],
+    [frame('model_phase', { phase: 'waiting', turn: 2 }) + frame('tool_result', {toolName:'read_file',callId:'late'}), '操作已完成，等待模型处理结果'],
+    [frame('content_delta', { delta: '正文' }), '正在生成回复'],
+  ])('does not let a heartbeat replace the current phase', async (phase, expected) => {
+    let finish!: () => void
+    const stream = new ReadableStream({ start(controller) {
+      for (const value of [frame('content_delta', { delta: '部分正文' }), phase, frame('heartbeat', {}), frame('model_activity', {})]) {
+        controller.enqueue(new TextEncoder().encode(value))
+      }
+      finish = () => { controller.enqueue(new TextEncoder().encode(frame('done', { status: 'completed' }))); controller.close() }
+    } })
+    vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockResolvedValue(new Response(stream))))
+    const store = useChatStore()
+    const running = store.sendMessageStream('测试', 'default', settings)
+    try {
+      await vi.waitFor(() => expect(store.messages.at(-1)?.lastProviderActivityAt).toBeTypeOf('number'))
+      const message = store.messages.at(-1)!
+      expect(message.streamPhase).toBe(expected)
+      expect(message.lastHeartbeatAt).toBeTypeOf('number')
+    } finally { finish(); await running }
+  })
 
   it.each(['ask', 'auto', 'full'] as const)('sends the selected %s approval mode with the tool request', async mode => {
     respond(['data:[DONE]'])
@@ -46,7 +112,7 @@ describe('Chat stream termination', () => {
   })
 
   it('preserves partial content while visibly marking an unexpected EOF', async () => {
-    respond([frame('content_delta', {delta: '已收到的正文'})])
+    respond(['data:' + JSON.stringify({event:'content_delta', sequence:1, data:{delta:'已收到的正文'}}) + '\n\n'])
     const store = useChatStore()
     await store.sendMessageStream('介绍活动', 'default', settings)
     const reply = store.messages.at(-1)!
@@ -62,6 +128,16 @@ describe('Chat stream termination', () => {
     await store.sendMessageStream('你好', 'default', settings)
     expect(store.messages.at(-1)?.thinkingState).toBe('error')
     expect(store.messages.at(-1)?.streamError).toContain('AI_STREAM_FAILED')
+  })
+
+  it('preserves partial output and shows the model idle timeout clearly', async () => {
+    respond([frame('content_delta', { delta: '已生成的内容' }),
+      frame('error', { code: 'AI_MODEL_IDLE_TIMEOUT', retryable: false })])
+    const store = useChatStore()
+    await store.sendMessageStream('继续写文件', 'default', settings)
+    expect(store.messages.at(-1)).toMatchObject({ content: '已生成的内容',
+      streamError: '模型输出长时间停顿，本次回复已中断', thinkingState: 'error', streamActivity: 'complete' })
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('consumes the last frame without a newline and completes normally', async () => {
@@ -82,9 +158,9 @@ describe('Chat stream termination', () => {
   it('stops a pending read without replacing partial text', async () => {
     let reading!: () => void
     const pendingRead = new Promise<void>(resolve => { reading = resolve })
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url, init) => {
+    vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockImplementation(async (_url, init) => {
       let first = true
-      return {ok:true, headers:new Headers(), body:{getReader:() => ({read:() => {
+      return {ok:true, headers:new Headers(), body:{getReader:() => ({cancel:async () => {}, releaseLock:() => {}, read:() => {
         if (first) {
           first = false
           return Promise.resolve({done:false,value:new TextEncoder().encode(frame('content_delta', {delta:'部分正文'}))})
@@ -92,7 +168,7 @@ describe('Chat stream termination', () => {
         reading()
         return new Promise((_resolve,reject) => init.signal.addEventListener('abort', () => reject(new DOMException('Stopped','AbortError'))))
       }})}}
-    }))
+    })))
     const store = useChatStore()
     const running = store.sendMessageStream('介绍活动', 'default', settings)
     await pendingRead
@@ -111,5 +187,22 @@ describe('Chat stream termination', () => {
     const store = useChatStore()
     await store.loadHistory('ctx-history')
     expect(store.messages.at(-1)).toMatchObject({content:'部分正文',thinkingState:'error',streamActivity:'complete',streamError:'模型连接中断，请重试'})
+  })
+
+  it('remembers a stop clicked before acknowledgement and cancels the accepted execution', async () => {
+    let acknowledge!: (response: Response) => void
+    const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => {acknowledge = resolve}))
+      .mockResolvedValueOnce(Response.json({cancelled: true}))
+    vi.stubGlobal('fetch', fetch)
+    const store = useChatStore()
+    const running = store.sendMessageStream('once', 'default', settings)
+    await store.cancelMessageStream()
+    expect(store.messages.at(-1)?.streamPhase).toBe('正在停止生成')
+    acknowledge(Response.json({chatExecutionId: 'accepted', contextId: 'context'}))
+    await running
+    expect(fetch.mock.calls[1][0]).toContain('/accepted/cancel')
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(store.messages.at(-1)?.chatExecutionState).toBe('cancelled')
+    expect(store.isStreaming).toBe(false)
   })
 })

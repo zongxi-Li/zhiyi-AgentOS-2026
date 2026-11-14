@@ -178,7 +178,7 @@ const traceFamilies: Record<string, string> = {
   review_decided: 'subjectType decision operationId reviewer comment deferredMemoryDiscarded runId stepId expectedRunUpdatedAt expectedStepStatus',
   runtime_patch_applied: 'patchType previousAgentId agentId reason', graph_patch_applied: 'baseGraphVersion graphVersion newRunId',
 };
-const plannerTraceKeys = 'planningProgress category stage kind attempt retryCount taskCount dependencyCount nodeCount edgeCount constraintCount requiredCapabilityCount expectedArtifactCount profileId runId mode timeoutSeconds code message selectedVariant selectionSeed algorithmVersion presetVersion fallbackReason candidateCount selectedVariantId selectedCapabilities selectionReasons stochasticFallback taskPlanVersion taskNodeCount notes scanned protected deleted';
+const plannerTraceKeys = 'planningProgress category stage kind attempt retryCount taskCount dependencyCount nodeCount edgeCount constraintCount requiredCapabilityCount expectedArtifactCount profileId runId mode timeoutSeconds errorCode code message selectedVariant selectionSeed algorithmVersion presetVersion fallbackReason candidateCount selectedVariantId selectedCapabilities selectionReasons stochasticFallback taskPlanVersion taskNodeCount notes scanned protected deleted';
 traceFamilies.task_status_changed = plannerTraceKeys;
 traceFamilies.stochastic_planning_fallback = plannerTraceKeys;
 

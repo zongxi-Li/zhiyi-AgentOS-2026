@@ -116,6 +116,7 @@
                   id: msg.id,
                   role: msg.role,
                   content: msg.content || '',
+                  transcript: msg.transcript,
                   createdAt: msg.createdAt || (msg.timestamp ? new Date(msg.timestamp) : new Date()),
                   confidence: msg.confidence,
                   fileUrl: msg.fileUrl,
@@ -127,6 +128,9 @@
                   streamError: msg.streamError,
                   streamActivity: msg.streamActivity,
                   streamPhase: msg.streamPhase,
+                  phaseStartedAt: msg.phaseStartedAt,
+                  lastProviderActivityAt: msg.lastProviderActivityAt,
+                  lastHeartbeatAt: msg.lastHeartbeatAt,
                   thinkingDurationMs: msg.thinkingDurationMs,
                   reasoningContent: msg.reasoningContent,
                   reasoningTruncated: msg.reasoningTruncated,
@@ -346,7 +350,7 @@
                   <template #content>
                     <div class="context-usage-tip">
                       <div>{{ contextUsage.label }}</div>
-                      <div>{{ contextUsage.estimated ? '≈ ' : '' }}{{ contextUsage.percent }}%</div>
+                      <div>{{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : '用量待统计' }}</div>
                       <div>{{ contextUsage.usedLabel }} / {{ contextUsage.windowLabel }} Token</div>
                       <div v-if="contextUsage.estimated">新消息会在此基础上追加。</div>
                     </div>
@@ -357,7 +361,7 @@
                     type="button"
                     :title="contextUsage.label"
                   >
-                    {{ contextUsage.estimated ? '≈ ' : '' }}{{ contextUsage.percent }}%
+                    {{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : contextUsage.windowLabel }}
                   </button>
                 </el-tooltip>
               </div>
@@ -442,9 +446,11 @@
           </nav>
 
             <div v-show="chatInfoTab === 'info'" class="chat-info-card" role="tabpanel" aria-label="会话信息">
+              <span class="chat-info-card__eyebrow">当前对话</span>
               <strong class="chat-info-card__title" :title="conversationInfo.title">{{ conversationInfo.title }}</strong>
 
-              <dl class="chat-info-card__metrics">
+              <div class="chat-info-card__metrics">
+              <dl class="chat-info-card__overview">
                 <div class="chat-info-card__row">
                   <dt>模型</dt>
                   <dd :title="conversationInfo.model">{{ conversationInfo.model }}</dd>
@@ -453,16 +459,39 @@
                   <dt>消息</dt>
                   <dd>{{ conversationInfo.messageLabel }}</dd>
                 </div>
-                <div v-if="contextUsage.visible" class="chat-info-card__row">
-                  <dt>{{ contextUsage.label }}</dt>
-                  <dd :title="`${contextUsage.label} ${contextUsage.usedLabel}，窗口 ${contextUsage.windowLabel}`">
-                    {{ contextUsage.estimated ? '≈ ' : '' }}{{ contextUsage.percent }}% · {{ contextUsage.usedLabel }} / {{ contextUsage.windowLabel }}
-                  </dd>
+              </dl>
+
+              <section v-if="contextUsage.visible" class="chat-info-usage__context" aria-label="上下文用量">
+                <div class="chat-info-usage__heading"><span>{{ contextUsage.label }}</span><span class="chat-info-usage__tag">{{ contextUsage.estimated ? '估算' : '容量' }}</span></div>
+                <div class="chat-info-usage__reading">
+                  <strong>{{ contextUsage.hasUsage ? `${contextUsage.estimated ? '≈ ' : ''}${contextUsage.percent}%` : '待统计' }}</strong>
+                  <span>{{ contextUsage.usedLabel }} / {{ contextUsage.windowLabel }} Token</span>
                 </div>
-                <div class="chat-info-card__row">
-                  <dt>累计 Token</dt>
-                  <dd>{{ conversationInfo.tokensLabel }}</dd>
+                <div v-if="contextUsage.hasUsage" class="chat-info-usage__track" :class="contextUsage.level" role="progressbar"
+                  :aria-label="contextUsage.label" :aria-valuenow="contextUsage.percent" :aria-valuemin="0" :aria-valuemax="100">
+                  <span :style="{ width: `${contextUsage.percent}%` }"></span>
                 </div>
+              </section>
+
+              <div class="chat-info-usage__grid">
+                <section class="chat-info-usage__stat" aria-label="累计 Token">
+                  <span>累计 Token</span><strong>{{ conversationInfo.tokensLabel }}</strong><small>对话内已记录的总用量</small>
+                </section>
+                <section class="chat-info-usage__stat" aria-label="缓存命中率">
+                  <span>{{ cacheMetric.priorRound ? '上轮缓存命中率' : '缓存命中率' }}</span><strong :class="{ 'is-unavailable': !cacheMetric.available }">{{ cacheMetric.label }}</strong><small>{{ cacheMetric.scope }}</small>
+                </section>
+              </div>
+              <p class="chat-info-usage__note" role="status">{{ cacheMetric.detail }}</p>
+              <p v-if="requestSizeLabel" class="chat-info-usage__note">最近请求体 {{ requestSizeLabel }} · 含历史及工具信息，不代表 Token 数</p>
+              <details v-if="responseTimingRows.length" class="chat-info-usage__timings">
+                <summary>响应耗时</summary>
+                <dl class="chat-info-card__overview">
+                  <div v-for="row in responseTimingRows" :key="row.label" class="chat-info-card__row"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
+                </dl>
+                <p class="chat-info-usage__note">供应商耗时对应最近一次模型请求；首字节从该请求发出计时，首段内容从本轮 AI 服务准备开始计时，包含前面的等待，不能相加。</p>
+              </details>
+
+              <dl class="chat-info-card__timestamps">
                 <div v-if="conversationInfo.createdAtLabel" class="chat-info-card__row">
                   <dt>开始</dt>
                   <dd>{{ conversationInfo.createdAtLabel }}</dd>
@@ -472,6 +501,7 @@
                   <dd>{{ conversationInfo.updatedAtLabel }}</dd>
                 </div>
               </dl>
+              </div>
 
               <template v-if="conversationInfo.sources.length">
                 <div class="chat-info-card__rule" role="separator"></div>
@@ -562,6 +592,7 @@ import type { WorkflowProgress } from '@/services/api/workflow'
 import { workflowApi } from '@/services/api/workflow'
 import { conversationApi, type Conversation } from '@/services/api/conversation'
 import { useChatStore, type ChatWorkflowBinding, type Message } from '@/stores/chat'
+import { conversationCacheMetric } from '@/features/chat/cacheMetrics'
 import { useRunDelivery } from '@/composables/useRunDelivery'
 import { useChatWorkflowPresentation } from '@/composables/useChatWorkflowPresentation'
 import { useWorkflowProgress } from '@/composables/useWorkflowProgress'
@@ -1271,18 +1302,23 @@ const formatContextTokens = (value: number): string => {
 }
 
 const contextUsage = computed(() => {
-  const estimated = typeof chatStore.nextContextTokens === 'number'
-  const used = estimated ? chatStore.nextContextTokens : chatStore.contextUsedTokens
-  const label = estimated ? '下次上下文估算' : '上次调用用量'
+  const nextEstimated = typeof chatStore.nextContextTokens === 'number'
+  const estimated = nextEstimated
+  const used = nextEstimated ? chatStore.nextContextTokens
+    : chatStore.contextMeasurement === 'protocol-utf8-upper-bound' ? null : chatStore.contextUsedTokens
+  const label = nextEstimated ? '下次上下文估算（保守上界）' : chatStore.isStreaming ? '上下文占用（最近统计）' : '上下文窗口'
   const windowTokens = chatStore.contextWindowTokens
   if (typeof used !== 'number' || typeof windowTokens !== 'number' || windowTokens <= 0) {
-    return { visible: false, percent: 0, level: 'normal', usedLabel: '', windowLabel: '', estimated, label }
+    const knownWindow = typeof windowTokens === 'number' && windowTokens > 0
+    return { visible: knownWindow, hasUsage: false, percent: 0, level: 'normal', usedLabel: '待统计',
+      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label }
   }
   const ratio = Math.min(1, used / windowTokens)
   const percent = Math.round(ratio * 100)
   const level = ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warning' : 'normal'
   return {
     visible: true,
+    hasUsage: true,
     estimated,
     label,
     percent,
@@ -1295,6 +1331,24 @@ const contextUsage = computed(() => {
 const latestAssistantMessage = computed(() => [...chatStore.messages]
   .reverse()
   .find(message => message.role === 'assistant'))
+const requestSizeLabel = computed(() => {
+  const message = latestAssistantMessage.value
+  const bytes = message?.requestBodyBytes ?? (message?.contextMeasurement === 'protocol-utf8-upper-bound' ? message.contextInputTokens : undefined)
+  return typeof bytes === 'number' ? `${(bytes / 1024).toFixed(1)} KiB` : ''
+})
+const responseTimingRows = computed(() => {
+  const message = latestAssistantMessage.value
+  const timings = message?.responseTimings || {}
+  const labels = {gatewayPrepareMs:'网关准备',contextPreparationMs:'本地上下文准备',providerHeadersMs:'供应商响应头（最近请求）',
+    providerFirstByteMs:'供应商首字节（最近请求）',firstReasoningMs:'首段进展（整轮）',firstContentMs:'首段正文（整轮）'} as const
+  const rows: Array<{label:string;value:string}> = Object.entries(labels).flatMap(([key,label]) => {
+    const ms = timings[key as keyof typeof labels]
+    return typeof ms === 'number' ? [{label,value:ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} 秒`}] : []
+  })
+  if (typeof message?.latencyMs === 'number') rows.push({label:'本轮服务端总耗时',value:`${(message.latencyMs / 1000).toFixed(1)} 秒`})
+  return rows
+})
+const cacheMetric = computed(() => conversationCacheMetric(chatStore.messages, chatStore.isStreaming))
 
 // —— 命令/文件执行与审批（自主对话区迁入信息栏）：按消息顺序聚合全对话工作项 ——
 const conversationWorkItems = computed(() => chatStore.messages
@@ -1378,7 +1432,7 @@ const conversationInfo = computed(() => {
   const tokensTotal = chatStore.messages.reduce((sum, message) => {
     if (typeof message.tokensUsed === 'number') return sum + message.tokensUsed
     if (typeof message.inputTokens === 'number' || typeof message.outputTokens === 'number') {
-      return sum + (message.inputTokens || 0) + (message.outputTokens || 0) + (message.reasoningTokens || 0)
+      return sum + (message.inputTokens || 0) + (message.outputTokens || 0)
     }
     return sum
   }, 0)
@@ -3527,20 +3581,137 @@ const handleHeroLogoPointerUp = () => {
 }
 
 .chat-info-card__title {
-  overflow: hidden;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  margin-top: -8px;
 }
+
+.chat-info-card__eyebrow { color: var(--text-secondary); font-size: 10px; letter-spacing: .12em; }
 
 .chat-info-card__metrics {
   margin: 0;
-  /* 宽信息卡下指标自动换列，窄卡退化为单列 */
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 10px 22px;
+  gap: 16px;
+}
+
+.chat-info-card__overview, .chat-info-card__timestamps { margin: 0; display: grid; gap: 10px; }
+.chat-info-card__timestamps { padding-top: 16px; border-top: 1px solid var(--border-light); }
+
+/* 上下文用量卡：微着色面板 + 渐变进度条（估算/容量徽标同色系） */
+.chat-info-usage__context {
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--primary-color) 8%, transparent), transparent 58%),
+    var(--bg-input);
+}
+.chat-info-usage__heading, .chat-info-usage__reading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-info-usage__heading { color: var(--text-secondary); font-size: 11px; }
+.chat-info-usage__tag {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary-fade);
+  color: var(--primary-color);
+  font-size: 10px;
+}
+.chat-info-usage__reading { margin: 10px 0 12px; flex-wrap: wrap; align-items: baseline; }
+.chat-info-usage__reading strong { font-size: 26px; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.chat-info-usage__reading > span { font-size: 11px; color: var(--text-secondary); }
+.chat-info-usage__track {
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--border-light) 52%, transparent);
+}
+.chat-info-usage__track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary-color) 68%, transparent), var(--primary-color));
+  box-shadow: 0 0 9px color-mix(in srgb, var(--primary-color) 40%, transparent);
+  transition: width 420ms var(--ease-out, ease-out);
+}
+.chat-info-usage__track.warning > span {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--warning) 68%, transparent), var(--warning));
+  box-shadow: 0 0 9px color-mix(in srgb, var(--warning) 40%, transparent);
+}
+.chat-info-usage__track.danger > span {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--danger, #dc6464) 68%, transparent), var(--danger, #dc6464));
+  box-shadow: 0 0 9px color-mix(in srgb, var(--danger, #dc6464) 40%, transparent);
+}
+
+/* 统计瓦片：与上下文卡同构的描边面板 */
+.chat-info-usage__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.chat-info-usage__stat {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
+  border-radius: 12px;
+  background: var(--bg-input);
+}
+.chat-info-usage__stat > span { font-size: 11px; color: var(--text-secondary); }
+.chat-info-usage__stat > strong { font-size: clamp(18px, 1.8vw, 26px); letter-spacing: -.03em; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.chat-info-usage__stat > strong.is-unavailable { font-size: 18px; color: var(--text-secondary); letter-spacing: 0; }
+.chat-info-usage__stat > small, .chat-info-usage__note { font-size: 10px; color: var(--text-secondary); line-height: 1.6; }
+.chat-info-usage__note { margin: -8px 0 0; overflow-wrap: anywhere; }
+
+/* 响应耗时：折叠卡 + 行虚线分隔 + 旋转箭头 */
+.chat-info-usage__timings {
+  margin: 2px 0;
+  padding: 0 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-light) 82%, transparent);
+  border-radius: 12px;
+  background: var(--bg-input);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.chat-info-usage__timings summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  margin: 0 -12px;
+  padding: 0 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: background 140ms var(--ease-out, ease-out);
+}
+.chat-info-usage__timings summary::-webkit-details-marker { display: none; }
+.chat-info-usage__timings summary:hover { background: color-mix(in srgb, var(--border-light) 26%, transparent); }
+.chat-info-usage__timings summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 160ms var(--ease-out, ease-out);
+}
+.chat-info-usage__timings[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.chat-info-usage__timings[open] > summary::after { transform: rotate(225deg); }
+.chat-info-usage__timings .chat-info-card__overview { gap: 0; }
+.chat-info-usage__timings .chat-info-card__row {
+  padding: 7px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border-light) 45%, transparent);
+}
+.chat-info-usage__timings .chat-info-card__row:last-child { border-bottom: 0; }
+.chat-info-usage__timings dd { font-variant-numeric: tabular-nums; }
+.chat-info-usage__timings > .chat-info-usage__note {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--border-light) 45%, transparent);
 }
 
 .chat-info-card__row {

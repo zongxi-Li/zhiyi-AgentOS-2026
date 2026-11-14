@@ -10,6 +10,15 @@ const identity = { actorId: '11111111-1111-4111-8111-111111111111', tenantId: nu
 const token = 'gateway-test-service-authentication-token';
 
 describe('Python gateway transport contracts', () => {
+  it('keeps a planner failure code in the public trace without exposing model text', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/trace', { runId: 'run', events: [{
+      eventId: 'planning-failed', runId: 'run', eventType: 'task_status_changed',
+      payload: { planningProgress: true, category: 'planner', kind: 'failed', stage: 'repair',
+        errorCode: 'TASK_PLAN_CONTRACT_FAILED', reasoning_content: 'PRIVATE', prompt: 'PRIVATE' },
+    }] }) as { events: { payload: Record<string, unknown> }[] };
+    expect(result.events[0]!.payload).toMatchObject({ kind: 'failed', stage: 'repair', errorCode: 'TASK_PLAN_CONTRACT_FAILED' });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
   let server: Server;
   let baseUrl: string;
   beforeAll(async () => {

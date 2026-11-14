@@ -1847,7 +1847,8 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.sidebar-account-menu > button:hover { background: var(--bg-input); }
+.sidebar-account-menu > button:hover,
+.sidebar-account-menu > button:focus-visible { background: var(--bg-panel); }
 .sidebar-account-menu > button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
 
 /* Main Content Styles */

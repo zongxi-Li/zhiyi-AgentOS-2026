@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile, unlink, readdir, lstat } from 'node:fs/prom
 import { resolve, sep, extname } from 'node:path';
 import multipart from '@fastify/multipart';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { PythonGateway } from './gateway.js';
+import { clearChatSession } from './chatSession.js';
 import { type Database, type ConversationRow, type MessageRow, conversationWire, messageWire,
   ownedConversation, transaction, one, notFound, invalid, uuidValue, textValue, objectValue, workspaceMode, HttpError } from './db.js';
 
@@ -36,7 +38,7 @@ function roleValues(body: unknown) {
     jsonValue(data.dialogueStyle), jsonValue(data.personality), jsonValue(data.avatarConfig)];
 }
 
-export async function registerPlatform(app: FastifyInstance, db: Database, config: PlatformConfig = {}) {
+export async function registerPlatform(app: FastifyInstance, db: Database, config: PlatformConfig = {}, gateway?: PythonGateway) {
   await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 10 } });
   const uploadRoot = resolve(config.uploadDir ?? process.env.ZHIYI_UPLOAD_DIR ?? 'uploads');
   const localFile = (value: string) => {
@@ -127,7 +129,8 @@ export async function registerPlatform(app: FastifyInstance, db: Database, confi
   app.delete('/api/conversations/all', async (request, reply) => {
     const query = request.query as { workspaceMode?: string }; const mode = query.workspaceMode === undefined ? null : workspaceMode(query.workspaceMode);
     await transaction(db, async client => {
-      const rows = await client.query<{ id: string }>('SELECT id FROM conversations WHERE user_id=$1 AND ($2::text IS NULL OR workspace_mode=$2) FOR UPDATE', [actor(request), mode]);
+      const rows = await client.query<{ id: string; context_id: string }>('SELECT id,context_id FROM conversations WHERE user_id=$1 AND ($2::text IS NULL OR workspace_mode=$2) FOR UPDATE', [actor(request), mode]);
+      if (gateway) for (const row of rows.rows) await clearChatSession(gateway, request, row.context_id);
       const ids = rows.rows.map(row => row.id);
       if (ids.length) {
         await client.query('DELETE FROM messages WHERE conversation_id=ANY($1::uuid[])', [ids]);
@@ -139,6 +142,7 @@ export async function registerPlatform(app: FastifyInstance, db: Database, confi
   app.delete<{ Params: { id: string } }>('/api/conversations/:id', async (request, reply) => {
     await transaction(db, async client => {
       const row = await ownedConversation(client, request.params.id, actor(request), true);
+      if (gateway) await clearChatSession(gateway, request, row.context_id);
       await client.query('DELETE FROM messages WHERE conversation_id=$1', [row.id]);
       await client.query('DELETE FROM conversations WHERE id=$1 AND user_id=$2', [row.id, actor(request)]);
     });

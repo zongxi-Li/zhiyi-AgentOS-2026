@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 
 declare module 'fastify' {
-  interface FastifyInstance { waitForIdle(): Promise<void> }
+  interface FastifyInstance { waitForIdle(): Promise<void>; beginActivity(): () => void }
 }
 
 /** Track handler completion, including hijacked SSE cleanup after disconnect.
@@ -19,6 +19,11 @@ export function trackRequestCompletion(app: FastifyInstance): void {
     });
   };
   app.decorate('waitForIdle', () => new Promise<void>(resolve => { waiting.add(resolve); flush(); }));
+  app.decorate('beginActivity', () => {
+    active++;
+    let released = false;
+    return () => { if (!released) { released = true; active--; flush(); } };
+  });
   app.addHook('onRoute', options => {
     const handler = options.handler;
     options.handler = async function (request, reply) {

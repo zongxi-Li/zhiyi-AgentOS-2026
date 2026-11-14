@@ -22,6 +22,58 @@ const mountAssistant = (content: string) => shallowMount(MessageBubble, {
 })
 
 describe('MessageBubble Markdown rendering', () => {
+  it('renders a stream failure even when only reasoning blocks were received', () => {
+    const wrapper = shallowMount(MessageBubble, {props: {message: {
+      id: 'failed-reasoning', role: 'assistant', content: '模型连接中断', streamError: '模型连接中断',
+      transcript: [{id:'reasoning', kind:'reasoning', text:'合成进展', state:'interrupted'}],
+    }}, global: {stubs: {'el-icon':true, 'el-tooltip':true, 'el-progress':true, ImageViewer:true}}})
+    expect(wrapper.get('.stream-error').text()).toBe('模型连接中断')
+  })
+
+  it('passes ordered blocks and their own tool details without aggregating the sequence', () => {
+    const wrapper = shallowMount(MessageBubble, {props: {message: {
+      id: 'ordered', role: 'assistant', content: 'beforeafter', transcript: [
+        {id:'a',kind:'text',text:'before',state:'completed'},
+        {id:'tool:x',kind:'tool',callId:'x',toolName:'read_file',state:'completed'},
+        {id:'b',kind:'text',text:'after',state:'completed'},
+      ], executionSummary:[{stage:'tool:read_file:x',status:'completed',description:'read'}],
+    }}, global: {stubs: {'el-icon':true, 'el-tooltip':true, 'el-progress':true, ImageViewer:true}}})
+    const blocks = wrapper.findAllComponents({name:'ChatTranscriptBlock'})
+    expect(blocks.map(block=>block.props('block').id)).toEqual(['a','tool:x','b'])
+    expect(blocks[1].props('item').stage).toBe('tool:read_file:x')
+    expect(blocks[0].props('item')).toBeUndefined()
+  })
+
+  it('follows the newest reasoning delta while retaining the full expanded text', async () => {
+    const initial = 'Earlier analysis. '.repeat(30)
+    const message = { id: 'live-tail', role: 'assistant', content: '',
+      createdAt: new Date(), thinkingState: 'thinking', reasoningContent: initial }
+    const wrapper = shallowMount(MessageBubble, { props: { message }, global: {
+      stubs: { 'el-icon': true, 'el-tooltip': { template: '<span><slot /></span>' }, 'el-progress': true, ImageViewer: true }
+    } })
+    const preview = wrapper.get('.thinking-status__preview-text')
+    Object.defineProperty(preview.element, 'scrollWidth', { value: 640, configurable: true })
+    const latest = `${initial}现在检查车轮转动与道路动画，修复最新问题 🚲`
+    await wrapper.setProps({ message: { ...message, reasoningContent: latest } })
+    expect(preview.text()).toContain('现在检查车轮转动与道路动画，修复最新问题 🚲')
+    expect(preview.text().endsWith('🚲')).toBe(true)
+    expect(Array.from(preview.text()).length).toBeLessThanOrEqual(181)
+    expect(preview.element.scrollLeft).toBe(640)
+    await wrapper.get('.thinking-status__preview').trigger('click')
+    expect(wrapper.get('.reasoning-content').text()).toBe(latest)
+    const expanded = wrapper.get('.reasoning-content')
+    Object.defineProperty(expanded.element, 'scrollHeight', { value: 900 })
+    Object.defineProperty(expanded.element, 'clientHeight', { value: 100 })
+    await wrapper.setProps({ message: { ...message, reasoningContent: `${latest} 下一步检查灯光` } })
+    expect(expanded.element.scrollTop).toBe(900)
+    await expanded.trigger('wheel')
+    expanded.element.scrollTop = 0
+    await expanded.trigger('scroll')
+    await wrapper.setProps({ message: { ...message, reasoningContent: `${latest} 下一步检查灯光和材质` } })
+    expect(expanded.element.scrollTop).toBe(0)
+    wrapper.unmount()
+  })
+
   it('renders Markdown tables in assistant replies', () => {
     const wrapper = mountAssistant([
       '| 风险编号 | 风险标题 | 修改建议 |',
@@ -54,6 +106,7 @@ describe('MessageBubble Markdown rendering', () => {
           thinkingDurationMs: 10_000,
           streamActivity: 'waiting',
           streamPhase: '等待模型继续'
+          ,phaseStartedAt: 1000, lastHeartbeatAt: 19000, lastProviderActivityAt: 16000
         }
       },
       global: { stubs: { 'el-icon': true, 'el-tooltip': { template: '<span><slot /></span>' }, 'el-progress': true, ImageViewer: true } }
@@ -63,7 +116,8 @@ describe('MessageBubble Markdown rendering', () => {
     expect(status.exists()).toBe(true)
     expect(status.text()).toContain('执行脉络')
     expect(status.text()).toContain('等待模型继续')
-    expect(wrapper.find('.thinking-status__phase').text()).toBe('已思考（用时 10 秒）')
+    expect(status.text()).toContain('18 秒')
+    expect(wrapper.find('.thinking-status__phase').text()).toBe('等待模型继续')
     expect(status.element.compareDocumentPosition(wrapper.find('.message-actions').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 

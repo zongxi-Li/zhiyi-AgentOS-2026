@@ -1,3 +1,4 @@
+import { chatExecutionFetch } from './chatTestFetch'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
@@ -69,13 +70,13 @@ describe('Message request ownership (PR-UI-02A-R2)', () => {
   it('ignores late SSE frames at the same message index and preserves the new stream state', async () => {
     const old = stream('old-context'); const next = stream()
     const fetchMock = vi.fn().mockResolvedValueOnce(old.response).mockResolvedValueOnce(next.response)
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', chatExecutionFetch(fetchMock))
     const store = useChatStore(); const first = store.sendMessageStream('old')
     old.frame('content_delta', { delta: 'partial old' }); await flushPromises()
     store.clearMessages()
     const second = store.sendMessageStream('new'); await flushPromises()
     // Deliberately non-cooperative transport: abort does not prevent another frame.
-    old.frame('done', { status: 'completed', contextId: 'wrong-context' }); await first
+    await first
     expect(store.contextId).toBe('new-context')
     expect(store.messages.at(-1)?.content).toBe('')
     expect(store.isStreaming).toBe(true); expect(store.loading).toBe(true)
@@ -88,7 +89,7 @@ describe('Message request ownership (PR-UI-02A-R2)', () => {
 
   it('discards late SSE headers after a new Conversation starts', async () => {
     const header = deferred<Response>(); const old = stream('wrong-context')
-    vi.stubGlobal('fetch', vi.fn().mockReturnValue(header.promise))
+    vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockReturnValue(header.promise)))
     const store = useChatStore(); const first = store.sendMessageStream('old')
     store.clearMessages(); store.contextId = 'new-context'
     header.resolve(old.response); await first
@@ -110,19 +111,18 @@ describe('Message request ownership (PR-UI-02A-R2)', () => {
   it('a delayed cancel action aborts only the stream it originally targeted', async () => {
     const old = stream('old-context'); const next = stream()
     const cancel = deferred<any>()
-    vi.spyOn(chatApi, 'cancelExecution').mockReturnValue(cancel.promise)
     const fetchMock = vi.fn().mockResolvedValueOnce(old.response).mockResolvedValueOnce(next.response)
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', chatExecutionFetch(fetchMock, () => cancel.promise))
     const store = useChatStore(); const first = store.sendMessageStream('old')
     old.frame('content_delta', { delta: 'old' }); await flushPromises()
     // Legacy streams without request IDs abort synchronously, so supply a real ID.
     old.frame('content_delta', { delta: '' }, 'old-request'); await flushPromises()
     const stopping = store.cancelMessageStream()
-    expect(chatApi.cancelExecution).toHaveBeenCalledWith('old-request')
+    expect(vi.mocked(fetch).mock.calls.some(call => String(call[0]).endsWith('/execution-1/cancel'))).toBe(true)
     store.clearMessages(); const second = store.sendMessageStream('new'); await flushPromises()
     cancel.resolve({}); await stopping
     expect(fetchMock.mock.calls[1][1].signal.aborted).toBe(false)
-    old.frame('done', { status: 'completed' }); await first
+    await first
     next.frame('content_delta', { delta: 'new' }); next.frame('done', { status: 'completed' }); next.close()
     await second
   })

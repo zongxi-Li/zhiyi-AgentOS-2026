@@ -34,3 +34,15 @@ it('waits for handler cleanup after an SSE client disconnects', async () => {
     expect(idle).toBe(true);
   } finally { cleanup(); await app.close(); }
 });
+
+it('keeps a detached chat execution alive until its own cleanup finishes', async () => {
+  const app = Fastify(); trackRequestCompletion(app);
+  const release = app.beginActivity();
+  let idle = false;
+  const drained = app.waitForIdle().then(() => {idle = true;});
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(idle).toBe(false);
+  release(); release(); // Repeated finalization cannot make the count negative.
+  await drained; expect(idle).toBe(true);
+  await app.close();
+});

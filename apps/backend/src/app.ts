@@ -117,7 +117,7 @@ export async function createApp(config: Config) {
       return { status: 'UP' };
     } catch { return reply.code(503).send({ status: 'DOWN', reason: 'DATABASE_NOT_READY' }); }
   });
-  await registerPlatform(app, db, config);
+  await registerPlatform(app, db, config, gateway);
   await registerChat(app, db, gateway, config);
   registerGateway(app, gateway);
   app.addHook('preClose', async () => gateway.close());

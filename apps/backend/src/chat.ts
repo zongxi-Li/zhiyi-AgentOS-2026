@@ -1,17 +1,23 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { once } from 'node:events';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { type Database, type MessageRow, type ConversationRow, type Connection, transaction, one,
   ownedConversation, saveMessage, messageWire, objectValue, textValue, uuidValue, workspaceMode, HttpError, invalid } from './db.js';
 import { actor } from './platform.js';
+import { clearChatSession } from './chatSession.js';
 import { GatewayError, type PythonGateway } from './gateway.js';
+import { StreamCapture } from './chatCapture.js';
+export { StreamCapture } from './chatCapture.js';
+import { ChatExecutions } from './chatExecutions.js';
 
-interface PreparedChat {
+export interface PreparedChat {
   conversationId: string; contextId: string; actorId: string; body: Record<string, unknown>;
+  assistantId?: string; chatExecutionId?: string; resumed?: boolean;
+  gatewayPrepareMs?: number;
 }
 export interface ChatConfig { streamIdleTimeoutMs?: number; streamMaxDurationMs?: number }
 
-export async function prepareChat(db: Database, actorId: string, input: unknown): Promise<PreparedChat> {
+export async function prepareChat(db: Database, actorId: string, input: unknown, persistent = false): Promise<PreparedChat> {
   const data = objectValue(input);
   const text = textValue(data.text ?? data.message, 1000000, true)!;
   const contextId = textValue(data.context_id ?? data.contextId, 100);
@@ -19,6 +25,8 @@ export async function prepareChat(db: Database, actorId: string, input: unknown)
   const roleId = uuidValue(data.role_id ?? data.roleId, true);
   const fileUrl = textValue(data.file_url ?? data.fileUrl, 255);
   const body: Record<string, unknown> = { text };
+  const clientRequestId = persistent ? uuidValue(data.clientRequestId) : null;
+  const fingerprint = createHash('sha256').update(JSON.stringify(data)).digest('hex');
   for (const [snake, camel] of [['model', 'model'], ['base_url', 'baseUrl'], ['api_key', 'apiKey'],
     ['thinking_mode', 'thinkingMode'], ['reasoning_effort', 'reasoningEffort'], ['tool_mode', 'toolMode'], ['approval_mode', 'approvalMode']]) {
     const value = data[snake] ?? data[camel];
@@ -26,6 +34,7 @@ export async function prepareChat(db: Database, actorId: string, input: unknown)
   }
   if (roleId) body.role_id = roleId;
   if (data.context !== undefined && data.context !== null) {
+    body.context_projection = true;
     if (!Array.isArray(data.context) || data.context.length > 10000) invalid('对话上下文格式无效');
     body.context = data.context.map(value => {
       const item = objectValue(value);
@@ -35,6 +44,17 @@ export async function prepareChat(db: Database, actorId: string, input: unknown)
     });
   }
   return transaction(db, async client => {
+    if (persistent) {
+      // 同一命令重连只返回已有执行，不重复插入用户消息，也不重跑工具。
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${actorId}:chat:${clientRequestId}`]);
+      const existing = (await client.query<MessageRow & { context_id: string }>(`SELECT m.*,c.context_id FROM messages m
+        JOIN conversations c ON c.id=m.conversation_id WHERE c.user_id=$1 AND m.metadata->>'clientRequestId'=$2`, [actorId, clientRequestId])).rows[0];
+      if (existing) {
+        if (existing.metadata?.clientRequestFingerprint !== fingerprint) throw new HttpError(409, 'CHAT_COMMAND_CONFLICT');
+        return { conversationId: existing.conversation_id, contextId: existing.context_id, actorId, body: {},
+          assistantId: existing.id, chatExecutionId: String(existing.metadata?.chatExecutionId), resumed: true };
+      }
+    }
     if (roleId) await one(client, "SELECT id FROM roles WHERE id=$1 AND (user_id=$2 OR role_type='BUILTIN')", [roleId, actorId]);
     // Existing context IDs are authority-bearing references, never hints to
     // silently fall back to a newly-created conversation owned by this caller.
@@ -47,13 +67,29 @@ export async function prepareChat(db: Database, actorId: string, input: unknown)
         VALUES($1,$2,$3,$4,$5) RETURNING *`, [actorId, roleId, 'ctx_' + randomUUID(), text.length > 50 ? text.slice(0, 50) + '...' : text, mode]);
     }
     if (body.context === undefined) {
-      const history = await client.query<MessageRow>('SELECT * FROM messages WHERE conversation_id=$1 ORDER BY created_at,id', [conversation.id]);
-      body.context = history.rows.filter(item => item.content.trim() && !unfinished(item)).map(item => ({
-        role: item.role.toLowerCase(), content: item.content, ...(item.file_url ? { file_url: item.file_url } : {}) }));
+      const history = await client.query<MessageRow>(`SELECT role,content,file_url,
+        jsonb_build_object('executionSummary',metadata->'executionSummary') AS metadata
+        FROM messages WHERE conversation_id=$1 ORDER BY created_at,id`, [conversation.id]);
+      body.context = bootstrapHistory(history.rows);
     }
-    await saveMessage(client, conversation.id, actorId, 'USER', text, null, fileUrl);
+    if (persistent && (await client.query(`SELECT id FROM messages WHERE conversation_id=$1
+      AND metadata->>'chatExecutionState'='running' LIMIT 1`, [conversation.id])).rowCount) {
+      throw new HttpError(409, 'CHAT_SESSION_BUSY', '这个对话仍在回复，请先停止生成再继续');
+    }
+    const userMessage = await saveMessage(client, conversation.id, actorId, 'USER', text, null, fileUrl);
     body.context_id = conversation.context_id;
-    return { conversationId: conversation.id, contextId: conversation.context_id, actorId, body };
+    if (!persistent) return { conversationId: conversation.id, contextId: conversation.context_id, actorId, body };
+    const chatExecutionId = randomUUID();
+    const assistant = await saveMessage(client, conversation.id, actorId, 'ASSISTANT', '', {
+      chatExecutionId, chatExecutionState: 'running', chatExecutionCursor: 0, clientRequestId,
+      clientRequestFingerprint: fingerprint, transcript: [],
+      executionSummary: [{ stage: 'chat_stream', status: 'running', description: '等待模型响应' }],
+    });
+    // PostgreSQL now() is constant within this transaction; UUID order is not turn order.
+    await client.query(`UPDATE messages SET created_at=GREATEST(clock_timestamp(),
+      (SELECT created_at FROM messages WHERE id=$2)+interval '1 microsecond') WHERE id=$1`, [assistant.id, userMessage.id]);
+    return { conversationId: conversation.id, contextId: conversation.context_id, actorId, body,
+      assistantId: assistant.id, chatExecutionId };
   });
 }
 function unfinished(message: MessageRow) {
@@ -62,98 +98,18 @@ function unfinished(message: MessageRow) {
     item && typeof item === 'object' && item.stage === 'chat_stream' && item.status !== 'completed');
 }
 
-export class StreamCapture {
-  content = ''; reasoning = ''; completed = false; cancelled = false;
-  failure: string | null = null; requestId = 'unknown'; sequence = 0;
-  private buffer = ''; private readonly decoder = new TextDecoder();
-  private reasoningStarted = false; private reasoningCompleted = false; private reasoningTruncated = false;
-  private readonly usage: Record<string, unknown> = {};
-  private readonly tools = new Map<string, Record<string, unknown>>();
-  private readonly sources = new Map<string, Record<string, unknown>>();
-
-  accept(chunk: Uint8Array) { this.acceptText(this.decoder.decode(chunk, { stream: true })); }
-  finish() { this.acceptText(this.decoder.decode()); }
-  private acceptText(text: string) {
-    this.buffer += text;
-    let separator: RegExpExecArray | null;
-    while ((separator = /\r?\n\r?\n/.exec(this.buffer))) {
-      const event = this.buffer.slice(0, separator.index);
-      this.buffer = this.buffer.slice(separator.index + separator[0].length);
-      this.acceptEvent(event);
-    }
-    if (this.buffer.length > 2 * 1024 * 1024) this.buffer = '';
-  }
-  private acceptEvent(frame: string) {
-    const lines = frame.split(/\r?\n/); const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-    if (!data) return;
-    try {
-      const envelope = JSON.parse(data) as Record<string, unknown>;
-      const kind = String(envelope.event ?? lines.find(line => line.startsWith('event:'))?.slice(6).trim());
-      const payload = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data) ? envelope.data as Record<string, unknown> : {};
-      if (typeof envelope.requestId === 'string') this.requestId = envelope.requestId;
-      if (typeof envelope.sequence === 'number') this.sequence = Math.max(this.sequence, envelope.sequence);
-      const copy = (...keys: string[]) => { for (const key of keys) if (payload[key] !== undefined && payload[key] !== null) this.usage[key] = payload[key]; };
-      if (kind === 'reasoning_start') { this.reasoningStarted = true; copy('requestedThinkingMode', 'effectiveThinkingMode', 'effectiveReasoningEffort'); }
-      if (kind === 'reasoning_delta' && typeof payload.delta === 'string') {
-        this.reasoningStarted = true;
-        const remaining = Math.max(0, 200000 - this.reasoning.length);
-        this.reasoning += payload.delta.slice(0, remaining); this.reasoningTruncated ||= payload.delta.length > remaining;
-      }
-      if (kind === 'reasoning_end') { this.reasoningCompleted = true; copy('reasoningPhaseMs'); }
-      if (kind === 'content_delta' && typeof payload.delta === 'string') this.content += payload.delta;
-      if (kind === 'usage') copy('inputTokens', 'input_tokens', 'reasoningTokens', 'reasoning_tokens', 'outputTokens', 'output_tokens',
-        'totalTokens', 'total_tokens', 'latencyMs', 'effectiveModel', 'requestedModel', 'requestedThinkingMode', 'effectiveThinkingMode', 'effectiveReasoningEffort', 'resolutionReasons', 'contextFixedTokens', 'contextTokenMethod');
-      if (kind === 'tool_result' || kind === 'tool_error') { this.addTool(payload); this.addSources(payload.sources); }
-      if (kind === 'done') {
-        this.completed = !this.failure && payload.status === 'completed';
-        if (!this.completed && !this.failure) { this.cancelled = payload.status === 'cancelled'; this.failure = this.cancelled ? '已停止生成' : '回复生成未完成，请重试'; }
-        this.addSources(payload.sources);
-        if (Array.isArray(payload.toolExecutions)) for (const value of payload.toolExecutions) {
-          if (value && typeof value === 'object') this.addTool(value as Record<string, unknown>);
-        }
-        copy('toolsUsed');
-      }
-      if (kind === 'error') { this.completed = false; this.failure = typeof payload.message === 'string' ? payload.message : '回复生成失败，请重试'; }
-    } catch { /* Invalid provider frames still reach the browser, but never enter history. */ }
-  }
-  private addTool(data: Record<string, unknown>) {
-    const key = String(data.callId ?? data.toolName ?? this.tools.size);
-    this.tools.set(key, Object.fromEntries(Object.entries(data).filter(([field]) => ['callId', 'toolName', 'status', 'durationMs',
-      'inputSummary', 'outputSummary', 'sourceRefs', 'errorCode', 'terminal', 'activity'].includes(field))));
-  }
-  private addSources(data: unknown) {
-    if (!Array.isArray(data)) return;
-    for (const value of data) {
-      if (!value || typeof value !== 'object') continue;
-      const source = value as Record<string, unknown>; const key = String(source.citationId ?? source.url ?? source.title ?? '');
-      if (key) this.sources.set(key, Object.fromEntries(Object.entries(source).filter(([field]) => ['citationId', 'title', 'filename', 'url', 'snippet', 'provider', 'retrievedAt'].includes(field))));
-    }
-  }
-  cancel() { if (!this.completed && !this.failure) { this.cancelled = true; this.failure = '已停止生成'; } }
-  metadata(model?: unknown): Record<string, unknown> {
-    const data = { ...this.usage };
-    for (const name of ['input', 'reasoning', 'output', 'total']) {
-      if (data[`${name}_tokens`] !== undefined && data[`${name}Tokens`] === undefined) data[`${name}Tokens`] = data[`${name}_tokens`];
-      delete data[`${name}_tokens`];
-    }
-    const status = this.completed ? 'completed' : this.cancelled ? 'cancelled' : 'failed';
-    const summary: Record<string, unknown>[] = [{ stage: 'chat_stream', status,
-      description: this.completed ? '回复已完成' : this.failure ?? '回复连接中断，请重试' }];
-    for (const item of this.tools.values()) summary.push({ stage: `tool:${item.toolName ?? 'unknown'}:${item.callId ?? item.toolName}`,
-      status: item.status ?? 'completed', description: `${item.toolName ?? '工具'} 调用${item.status === 'failed' ? '失败' : '完成'}`,
-      ...(item.durationMs !== undefined ? { durationMs: item.durationMs } : {}),
-      ...(item.terminal ? { terminal: item.terminal } : {}), ...(item.activity ? { activity: item.activity } : {}) });
-    if (this.reasoningStarted) summary.push({ stage: 'reasoning', status: this.reasoningCompleted ? 'completed' : 'interrupted',
-      description: this.reasoningCompleted ? '模型完成思考阶段' : '模型思考阶段未完整结束' });
-    if (this.content) summary.push({ stage: 'answer_generation', status: this.completed ? 'completed' : 'interrupted',
-      description: this.completed ? '模型完成最终回答生成' : '最终回答生成未完整结束' });
-    return { ...data, thinkingEnabled: this.reasoningStarted, fallbackUsed: false, executionSummary: summary,
-      ...(data.effectiveModel === undefined ? { model_info: typeof model === 'string' ? model : '' } : {}),
-      ...(this.reasoning ? { reasoningContent: this.reasoning } : {}), ...(this.reasoningTruncated ? { reasoningTruncated: true } : {}),
-      ...(this.tools.size ? { toolExecutions: [...this.tools.values()], toolsUsed: [...new Set([...this.tools.values()].map(item => item.toolName))] } : {}),
-      ...(this.sources.size ? { sources: [...this.sources.values()] } : {}) };
-  }
+export function bootstrapHistory(messages: MessageRow[]) {
+  return messages.flatMap(item => {
+    const recorded = Array.isArray(item.metadata?.executionSummary) ? item.metadata.executionSummary : [];
+    const tools = recorded.filter((row: any) => row?.status === 'completed' && String(row.stage).startsWith('tool:'))
+      .map((row: any) => ({ stage: row.stage, status: row.status, description: row.description, activity: row.activity }));
+    if (!item.content.trim() && !tools.length) return [];
+    const content = (unfinished(item) ? '[历史回复已中断，以下文字不代表任务完成]\n' : '') + item.content
+      + (tools.length ? '\n[迁移时可确认的工具摘要，非原始工具协议消息]\n' + JSON.stringify(tools) : '');
+    return [{ role: item.role.toLowerCase(), content, ...(item.file_url ? { file_url: item.file_url } : {}) }];
+  });
 }
+
 
 function abortForReply(reply: FastifyReply) {
   const controller = new AbortController();
@@ -176,6 +132,47 @@ async function persistCapture(db: Database, prepared: PreparedChat, capture: Str
 }
 
 export async function registerChat(app: FastifyInstance, db: Database, gateway: PythonGateway, config: ChatConfig = {}) {
+  const executions = new ChatExecutions(db, gateway, config, () => app.beginActivity?.() ?? (() => undefined));
+  // Liveness must remain available without a database. Recover before the first
+  // persistent operation, sharing the same barrier across concurrent requests.
+  let recovery: Promise<unknown> | undefined;
+  const ready = async () => {
+    try { await (recovery ??= executions.recoverInterrupted()); }
+    catch { recovery = undefined; throw new HttpError(503, 'CHAT_RECOVERY_UNAVAILABLE'); }
+  };
+  app.addHook('preClose', async () => executions.close());
+  app.post('/api/chat/executions', async request => {
+    const startedAt = performance.now();
+    await ready();
+    const prepared = await prepareChat(db, actor(request), request.body, true);
+    prepared.gatewayPrepareMs = Math.round(performance.now() - startedAt);
+    executions.start(prepared, request.localIdentity!);
+    return { chatExecutionId: prepared.chatExecutionId, contextId: prepared.contextId, messageId: prepared.assistantId };
+  });
+  app.get<{ Params: { id: string }; Querystring: { after?: string } }>('/api/chat/executions/:id/events', async (request, reply) => {
+    await ready();
+    const id = uuidValue(request.params.id)!;
+    const row = await executions.owned(id, actor(request));
+    const after = Number(request.query.after ?? 0);
+    if (!Number.isSafeInteger(after) || after < 0) invalid('事件游标无效');
+    reply.hijack();
+    for (const [key, value] of Object.entries(reply.getHeaders())) if (value !== undefined) reply.raw.setHeader(key, value);
+    reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no', 'X-Context-Id': row.context_id });
+    const abort = abortForReply(reply);
+    try {
+      for await (const event of executions.follow(id, row, after, abort.controller.signal)) {
+        if (!reply.raw.write(event)) await once(reply.raw, 'drain', { signal: abort.controller.signal });
+      }
+    } catch (error) { if (!abort.controller.signal.aborted) throw error; }
+    finally { abort.dispose(); if (!reply.raw.writableEnded) reply.raw.end(); }
+  });
+  app.post<{ Params: { id: string } }>('/api/chat/executions/:id/cancel', async request => {
+    await ready();
+    const id = uuidValue(request.params.id)!;
+    await executions.owned(id, actor(request));
+    return { chatExecutionId: id, cancelled: await executions.cancel(id) };
+  });
   const sync = async (request: FastifyRequest, reply: FastifyReply) => {
     const prepared = await prepareChat(db, actor(request), request.body); const abort = abortForReply(reply);
     let persisted = false;
@@ -284,6 +281,8 @@ export async function registerChat(app: FastifyInstance, db: Database, gateway: 
     return (await db.query<MessageRow>('SELECT * FROM messages WHERE conversation_id=$1 ORDER BY created_at,id', [conversation.id])).rows.map(messageWire);
   });
   app.delete<{ Params: { context: string } }>('/api/chat/history/:context', async (request, reply) => {
+    const existing = await ownedConversation(db, request.params.context, actor(request));
+    await clearChatSession(gateway, request, existing.context_id);
     await transaction(db, async client => {
       const conversation = await ownedConversation(client, request.params.context, actor(request), true);
       await client.query('DELETE FROM messages WHERE conversation_id=$1', [conversation.id]);

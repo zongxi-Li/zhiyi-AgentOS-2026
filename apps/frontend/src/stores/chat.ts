@@ -2,7 +2,8 @@ import { localFetch } from '@/platform/api'
 import type { ChatApprovalMode } from '@/config/chatApproval'
 import { defineStore } from 'pinia'
 import { computed, onScopeDispose, ref } from 'vue'
-import { chatStreamErrorMessage, parseChatStreamFrame, type ChatStreamEvent } from '@/utils/sse'
+import { chatStreamErrorMessage, type ChatStreamEvent } from '@/utils/sse'
+import { startChatExecution, followChatExecution } from '@/features/chat/executionStream'
 import { apiUrl } from '@/platform'
 import type { AsyncWorkflowStartResponse } from '@/services/api/workflow'
 import type { ConversationLaunchContext } from '@/features/mission/request'
@@ -16,6 +17,7 @@ import { useWorkflowRunsStore } from '@/stores/workflowRuns'
 import { conversationApi } from '@/services/api/conversation'
 import { getConversationWorkspace, setConversationWorkspace, type ConversationWorkspaceMode } from '@/utils/conversationWorkspace'
 import { conversationBindings, mergeDraftBindings, isActiveRunStatus } from '@/features/workspace/session'
+import { applyTranscript, restoreTranscript, createStreamBatcher, mergeResponseTimings, type TranscriptBlock, type ResponseTimings } from '../../../backend/src/shared/chat-stream/index.mjs'
 
 export interface TerminalExecution {
   command: string
@@ -78,6 +80,9 @@ export interface Message {
   id: number | string
   role: 'user' | 'assistant'
   content: string
+  transcript?: TranscriptBlock[]
+  chatExecutionId?: string
+  chatExecutionState?: string
   fileUrl?: string
   createdAt?: Date
   timestamp?: number
@@ -89,11 +94,24 @@ export interface Message {
   reasoningPath?: any[]
   modelInfo?: string
   contextFixedTokens?: number
+  contextWindowTokens?: number
+  cachedTokens?: number
+  cacheUsageAvailable?: boolean
+  protocolSession?: boolean
+  lastInputTokens?: number
+  lastOutputTokens?: number
+  contextInputTokens?: number
+  requestBodyBytes?: number
+  responseTimings?: ResponseTimings
+  contextMeasurement?: string
   contextTokenMethod?: string
   thinkingState?: 'thinking' | 'complete' | 'error'
   streamError?: string
   streamActivity?: 'receiving' | 'waiting' | 'complete'
   streamPhase?: string
+  phaseStartedAt?: number
+  lastProviderActivityAt?: number
+  lastHeartbeatAt?: number
   thinkingDurationMs?: number
   reasoningContent?: string
   reasoningTruncated?: boolean
@@ -185,6 +203,7 @@ export const useChatStore = defineStore('chat', () => {
   const workflowRunsStore = useWorkflowRunsStore()
   let activeStreamController: AbortController | null = null
   let activeRequestId: string | null = null
+  let stopBeforeAcknowledgement: (() => void) | null = null
   const contextId = ref<string | null>(null)
   const currentRoleId = ref<string | null>(null)
   const historyError = ref<string | null>(null)
@@ -197,6 +216,7 @@ export const useChatStore = defineStore('chat', () => {
     activeStreamController?.abort()
     activeStreamController = null
     activeRequestId = null
+    stopBeforeAcknowledgement = null
     isStreaming.value = false
     isCompacting.value = false
     compactionStatus.value = null
@@ -206,6 +226,7 @@ export const useChatStore = defineStore('chat', () => {
   // The next input estimate below measures the actual text-history projection.
   const contextUsedTokens = ref<number | null>(null)
   const contextWindowTokens = ref<number | null>(null)
+  const contextMeasurement = ref('usage')
   const contextModel = ref<string | null>(null)
   const contextModels = ref<Record<string, number>>({})
   const contextEstimateBasis = ref<{
@@ -215,7 +236,8 @@ export const useChatStore = defineStore('chat', () => {
   window.addEventListener(MODEL_SETTINGS_EVENT, invalidateContextEstimate)
   onScopeDispose(() => window.removeEventListener(MODEL_SETTINGS_EVENT, invalidateContextEstimate))
 
-  const applyContextUsage = (used: number | null, model?: string | null, windowTokens?: number | null) => {
+  const applyContextUsage = (used: number | null, model?: string | null, windowTokens?: number | null, measurement = 'usage') => {
+    contextMeasurement.value = measurement
     if (model) contextModel.value = model
     if (typeof windowTokens === 'number' && windowTokens > 0) {
       contextWindowTokens.value = windowTokens
@@ -232,7 +254,7 @@ export const useChatStore = defineStore('chat', () => {
       const response = await localFetch(apiUrl('/ai/chat/models'), {
       })
       if (!response.ok) return
-      const data = await response.json() as { context_windows?: Record<string, unknown> }
+      const data = await response.json() as { context_windows?: Record<string, unknown>; default_model?: string }
       const windows = data?.context_windows && typeof data.context_windows === 'object'
         ? Object.fromEntries(
             Object.entries(data.context_windows)
@@ -241,6 +263,10 @@ export const useChatStore = defineStore('chat', () => {
         : {}
       if (!Object.keys(windows).length) return
       contextModels.value = { ...contextModels.value, ...windows } as Record<string, number>
+      if (!contextModel.value) {
+        const selected = loadModelSettings().selectedModel
+        contextModel.value = selected && selected !== '系统默认' ? selected : data.default_model || null
+      }
       if (!contextWindowTokens.value && contextModel.value && windows[contextModel.value]) {
         contextWindowTokens.value = windows[contextModel.value] as number
       }
@@ -513,9 +539,10 @@ export const useChatStore = defineStore('chat', () => {
     text: string,
     agentMode: 'default' = 'default',
     runtimeSettings: ModelSettings = loadModelSettings(),
-    workspaceMode: 'agent' | 'chat' = 'chat'
+    workspaceMode: 'agent' | 'chat' = 'chat',
+    resumeMessage?: Message
   ) => {
-    if ((!text.trim()) || loading.value) return
+    if (!resumeMessage && ((!text.trim()) || loading.value)) return
     if (historyError.value) throw new Error(historyError.value)
 
     const generation = ++messageGeneration
@@ -523,7 +550,7 @@ export const useChatStore = defineStore('chat', () => {
     const modelRequestSettings = toModelRequestSettings(runtimeSettings)
     const compacted = workspaceMode === 'chat' ? currentProjectedInput(runtimeSettings) : undefined
 
-    pushUserMessage(text)
+    if (!resumeMessage) pushUserMessage(text)
     loading.value = true
     isStreaming.value = true
 
@@ -537,20 +564,26 @@ export const useChatStore = defineStore('chat', () => {
       requestedThinkingMode: runtimeSettings.thinkingMode,
       reasoningContent: '',
       streamActivity: 'receiving',
-      streamPhase: '解析任务意图',
+      streamPhase: '等待模型响应',
+      phaseStartedAt: Date.now(),
       agentMode
     }
-    messages.value.push(streamMsg)
-    const streamMessage = messages.value[messages.value.length - 1]
+    if (!resumeMessage) messages.value.push(streamMsg)
+    const streamMessage = resumeMessage || messages.value[messages.value.length - 1]
+    streamMessage.streamError = undefined
+    streamMessage.streamActivity = 'waiting'
+    const clientRequestId = crypto.randomUUID()
     const ownedMessage = () => isCurrent() ? streamMessage : undefined
-    const thinkingStartedAt = performance.now()
+    let thinkingStartedAt = performance.now()
     let terminal: 'done' | 'error' | 'cancelled' | null = null
     const finishThinking = (state: 'complete' | 'error', durationMs?: number) => {
       const message = ownedMessage()
       if (!message) return
       if (!message.thinkingState && message.requestedThinkingMode === 'disabled') return
+      if (durationMs !== undefined || message.thinkingState === 'thinking' || message.thinkingDurationMs === undefined) {
+        message.thinkingDurationMs = Math.max(0, durationMs ?? (performance.now() - thinkingStartedAt))
+      }
       message.thinkingState = state
-      message.thinkingDurationMs = Math.max(0, durationMs ?? (performance.now() - thinkingStartedAt))
     }
     const appendStreamContent = (delta: string) => {
       const message = ownedMessage()
@@ -571,20 +604,25 @@ export const useChatStore = defineStore('chat', () => {
       message.streamActivity = 'complete'
       message.streamPhase = state === 'cancelled' ? '已停止生成' : '请求未完成'
       message.streamError = description
+      message.chatExecutionState = state === 'cancelled' ? 'cancelled' : 'failed'
       if (!message.content) message.content = description
     }
     const applyStreamEvent = (event: ChatStreamEvent) => {
-      if (terminal === 'error' || terminal === 'cancelled') return
+      if (terminal) return
       const message = ownedMessage()
       if (!message) return
+      message.transcript ||= []
+      applyTranscript(message.transcript, event)
       const data = event.data || {}
-      if (event.event !== 'heartbeat' && event.event !== 'done' && event.event !== 'error') {
+      if (data.responseTimings) message.responseTimings = mergeResponseTimings({...message.responseTimings}, data.responseTimings)
+      if (event.event !== 'heartbeat' && event.event !== 'model_activity' && event.event !== 'tool_result' && event.event !== 'done' && event.event !== 'error') {
         message.streamActivity = 'receiving'
       }
       if (event.requestId && event.requestId !== 'unknown' && event.requestId !== 'legacy') {
         activeRequestId = event.requestId
       }
       const upsertToolSummary = (status: string, payload: Record<string, any> = data) => {
+        if (payload.activity?.status === 'running') status = 'running'
         const approval = payload.approval && typeof payload.approval === 'object'
           ? payload.approval as ChatApproval
           : undefined
@@ -600,6 +638,7 @@ export const useChatStore = defineStore('chat', () => {
         const summaries = message.executionSummary || []
         const index = summaries.findIndex(item => item.stage === stage)
         const existing = index >= 0 ? summaries[index] : undefined
+        if (existing && ['completed', 'failed', 'cancelled'].includes(existing.status) && status === 'running') return
         const terminal = payload.terminal && typeof payload.terminal === 'object'
           ? payload.terminal as TerminalExecution
           : existing?.terminal
@@ -645,14 +684,80 @@ export const useChatStore = defineStore('chat', () => {
         }
         message.sources = [...existing]
       }
+      const setPhase = (phase: string) => {
+        if (message.streamPhase !== phase) message.phaseStartedAt = Date.now()
+        message.streamPhase = phase
+      }
       switch (event.event) {
+        case 'snapshot': {
+          const saved = data.message
+          if (!saved || typeof saved !== 'object') break
+          const metadata = saved.metadata || {}
+          message.content = saved.content || ''
+          message.transcript = restoreTranscript(metadata.transcript)
+          message.executionSummary = metadata.executionSummary || []
+          message.reasoningContent = metadata.reasoningContent
+          message.sources = metadata.sources
+          message.thinkingDurationMs = metadata.reasoningPhaseMs
+          message.responseTimings = mergeResponseTimings({}, metadata.responseTimings)
+          message.requestBodyBytes = metadata.requestBodyBytes ?? (metadata.contextMeasurement === 'protocol-utf8-upper-bound' ? metadata.contextInputTokens : undefined)
+          message.chatExecutionId = data.chatExecutionId
+          message.chatExecutionState = metadata.chatExecutionState
+          message.streamActivity = metadata.chatExecutionState === 'running' ? 'waiting' : 'complete'
+          message.streamPhase = metadata.streamPhase || '等待模型响应'
+          for (const key of ['inputTokens', 'reasoningTokens', 'outputTokens', 'latencyMs', 'contextFixedTokens',
+            'contextWindowTokens', 'contextInputTokens', 'contextMeasurement', 'contextTokenMethod', 'requestedThinkingMode',
+            'effectiveThinkingMode', 'effectiveReasoningEffort', 'reasoningTruncated', 'cacheUsageAvailable', 'protocolSession'] as const) {
+            if (metadata[key] !== undefined) (message as any)[key] = metadata[key]
+          }
+          message.tokensUsed = metadata.totalTokens
+          message.modelInfo = metadata.effectiveModel || message.modelInfo
+          message.cachedTokens = metadata.cached_tokens
+          message.lastInputTokens = metadata.last_input_tokens
+          message.lastOutputTokens = metadata.last_output_tokens
+          const usedInput = message.lastInputTokens ?? message.inputTokens
+          if (typeof usedInput === 'number') applyContextUsage(usedInput + (message.lastOutputTokens ?? message.outputTokens ?? 0),
+            message.modelInfo || null, message.contextWindowTokens)
+          if (message.protocolSession) invalidateContextEstimate()
+          if (typeof data.contextId === 'string') contextId.value = data.contextId
+          break
+        }
         case 'heartbeat':
-          message.streamActivity = 'waiting'
-          message.streamPhase = '等待模型继续'
+          message.lastHeartbeatAt = Date.now()
+          break
+        case 'model_activity':
+          message.lastProviderActivityAt = Date.now()
+          break
+        case 'model_context':
+          message.contextInputTokens = data.contextInputTokens
+          message.requestBodyBytes = data.requestBodyBytes ?? (data.contextMeasurement === 'protocol-utf8-upper-bound' ? data.contextInputTokens : undefined)
+          message.contextMeasurement = data.contextMeasurement
+          message.contextWindowTokens = data.contextWindowTokens
+          invalidateContextEstimate()
+          // Wire bytes include JSON/schema overhead; they are not token usage.
+          applyContextUsage(contextUsedTokens.value, data.effectiveModel, data.contextWindowTokens)
+          break
+        case 'model_phase':
+          if (data.contextWindowTokens > 0) message.contextWindowTokens = data.contextWindowTokens
+          if (data.phase === 'waiting') applyContextUsage(contextModel.value && data.effectiveModel !== contextModel.value
+            ? null : contextUsedTokens.value, data.effectiveModel, data.contextWindowTokens)
+          if (data.phase === 'waiting') {
+            message.lastProviderActivityAt = undefined
+            message.streamActivity = 'waiting'
+            setPhase(data.retryAttempt > 0 ? `正在重试模型，等待响应（${data.retryAttempt}/1）`
+              : data.turn > 1 ? '操作已完成，等待模型处理结果' : '等待模型响应')
+          } else if (data.phase === 'tool_arguments') {
+            message.streamActivity = 'receiving'
+            setPhase('正在准备工具调用')
+          } else if (data.phase === 'retrying') {
+            message.streamActivity = 'waiting'
+            setPhase(`模型连接中断，正在重试当前请求（${data.retryAttempt}/1）`)
+          }
           break
         case 'reasoning_start':
+          thinkingStartedAt = performance.now()
           message.streamActivity = 'receiving'
-          message.streamPhase = '解析任务意图'
+          setPhase('正在思考')
           message.thinkingState = 'thinking'
           message.requestedThinkingMode = data.requestedThinkingMode || message.requestedThinkingMode
           message.effectiveThinkingMode = data.effectiveThinkingMode
@@ -660,62 +765,71 @@ export const useChatStore = defineStore('chat', () => {
           break
         case 'reasoning_delta':
           message.streamActivity = 'receiving'
+          setPhase('正在思考')
+          message.thinkingState = 'thinking'
           if (typeof data.delta === 'string') appendReasoningContent(data.delta)
           break
         case 'reasoning_end':
-          message.streamPhase = '构建工作上下文'
           finishThinking('complete', typeof data.reasoningPhaseMs === 'number' ? data.reasoningPhaseMs : undefined)
           break
         case 'content_delta':
           message.streamActivity = 'receiving'
-          message.streamPhase = '组织最终回复'
+          setPhase('正在生成回复')
           if (typeof data.delta === 'string') appendStreamContent(data.delta)
           break
         case 'tool_start':
           message.streamActivity = 'receiving'
-          message.streamPhase = phaseForTool(String(data.toolName || ''))
+          setPhase(phaseForTool(String(data.toolName || '')))
           upsertToolSummary('running')
           break
         case 'tool_result':
-          message.streamActivity = 'receiving'
-          message.streamPhase = '整理工具结果'
+          if (message.streamActivity !== 'waiting') {
+            message.streamActivity = 'receiving'
+            setPhase('工具已完成')
+          }
           upsertToolSummary('completed', data)
           mergeSources(data.sources)
           break
         case 'tool_error':
-          message.streamPhase = '处理工具异常'
+          setPhase('处理工具异常')
           upsertToolSummary('failed', data)
           break
         case 'approval_required':
-          message.streamPhase = '等待操作确认'
+          setPhase('等待你的确认')
           upsertToolSummary('approval_required', data)
           break
         case 'approval_resolved':
-          message.streamPhase = '确认已通过，继续执行'
+          setPhase('确认已通过，继续执行')
           upsertToolSummary('approval_resolved', data)
           break
         case 'execution_started':
-          message.streamPhase = '执行受控命令'
+          setPhase('执行受控命令')
           upsertToolSummary('running', data)
           break
         case 'stdout_delta':
         case 'stderr_delta':
-          message.streamPhase = '读取命令输出'
+          setPhase('读取命令输出')
           upsertToolSummary('running', data)
           break
         case 'execution_completed':
-          message.streamPhase = '整理执行结果'
+          setPhase('整理执行结果')
           upsertToolSummary('completed', data)
           break
         case 'execution_failed':
-          message.streamPhase = '处理执行异常'
+          setPhase('处理执行异常')
           upsertToolSummary('failed', data)
           break
         case 'execution_cancelled':
-          message.streamPhase = '执行已取消'
+          setPhase('执行已取消')
           upsertToolSummary('cancelled', data)
           break
         case 'usage':
+          message.cachedTokens = data.cached_tokens
+          message.cacheUsageAvailable = data.cacheUsageAvailable
+          message.protocolSession = data.protocolSession
+          message.lastInputTokens = data.last_input_tokens
+          message.lastOutputTokens = data.last_output_tokens
+          message.contextWindowTokens = data.contextWindowTokens
           message.inputTokens = data.input_tokens ?? data.inputTokens
           message.reasoningTokens = data.reasoning_tokens ?? data.reasoningTokens
           message.outputTokens = data.output_tokens ?? data.outputTokens
@@ -724,13 +838,14 @@ export const useChatStore = defineStore('chat', () => {
           message.modelInfo = data.effectiveModel || message.modelInfo
           message.contextFixedTokens = data.contextFixedTokens
           message.contextTokenMethod = data.contextTokenMethod
-          setContextEstimate(data.contextFixedTokens, data.contextTokenMethod, runtimeSettings)
+          if (data.protocolSession) invalidateContextEstimate()
+          else setContextEstimate(data.contextFixedTokens, data.contextTokenMethod, runtimeSettings)
           message.requestedThinkingMode = data.requestedThinkingMode || message.requestedThinkingMode
           message.effectiveThinkingMode = data.effectiveThinkingMode || message.effectiveThinkingMode
           message.effectiveReasoningEffort = data.effectiveReasoningEffort || message.effectiveReasoningEffort
           {
-            const usedInput = message.inputTokens
-            const usedOutput = message.outputTokens
+            const usedInput = message.lastInputTokens ?? message.inputTokens
+            const usedOutput = message.lastOutputTokens ?? message.outputTokens
             const contextUsed = typeof usedInput === 'number'
               ? usedInput + (typeof usedOutput === 'number' ? usedOutput : 0)
               : (typeof message.tokensUsed === 'number' ? message.tokensUsed : null)
@@ -748,6 +863,7 @@ export const useChatStore = defineStore('chat', () => {
             break
           }
           terminal = 'done'
+          message.chatExecutionState = 'completed'
           message.streamActivity = 'complete'
           message.streamPhase = '已完成'
           if (typeof data.contextId === 'string' && data.contextId) contextId.value = data.contextId
@@ -765,79 +881,64 @@ export const useChatStore = defineStore('chat', () => {
           finishThinking(message.content ? 'complete' : 'error')
           break
         case 'error':
-          failStream(chatStreamErrorMessage(data.code, data.message))
+          message.executionSummary = message.executionSummary?.map(item => ['running', 'approval_required'].includes(item.status)
+            ? {...item, status: 'interrupted', ...(item.approval?.status === 'pending'
+              ? {approval: {...item.approval, status: 'expired'}} : {})} : item)
+          failStream(chatStreamErrorMessage(data.code, data.message),
+            data.code === 'CHAT_CANCELLED' || data.status === 'cancelled' ? 'cancelled' : 'error')
           break
       }
     }
 
     const streamController = new AbortController()
+    let batcher: ReturnType<typeof createStreamBatcher<ChatStreamEvent>> | undefined
     activeStreamController = streamController
     activeRequestId = null
+    let stopRequested = false
+    stopBeforeAcknowledgement = () => {
+      stopRequested = true
+      const message = ownedMessage()
+      if (message) message.streamPhase = '正在停止生成'
+    }
     try {
-      const resp = await localFetch(apiUrl('/ai/chat/text/stream'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: streamController.signal,
-        body: JSON.stringify({
-          text,
-          role_id: currentRoleId.value || undefined,
-          model: runtimeSettings.provider === 'system' && runtimeSettings.selectedModel === '系统默认'
-            ? undefined
-            : runtimeSettings.selectedModel,
+      let execution = resumeMessage?.chatExecutionId ? { chatExecutionId: resumeMessage.chatExecutionId, contextId: contextId.value } : null
+      if (!execution) {
+        execution = await startChatExecution({
+          clientRequestId, text, role_id: currentRoleId.value || undefined,
+          model: runtimeSettings.provider === 'system' && runtimeSettings.selectedModel === '系统默认' ? undefined : runtimeSettings.selectedModel,
           base_url: runtimeSettings.provider === 'system' ? undefined : runtimeSettings.baseUrl,
           api_key: runtimeSettings.provider === 'system' ? undefined : runtimeSettings.apiKey,
-          thinking_mode: runtimeSettings.thinkingMode,
-          reasoning_effort: modelRequestSettings.reasoningEffort,
-          tool_mode: 'auto',
-          approval_mode: approvalMode.value,
-          context_id: contextId.value || undefined,
-          context: compacted,
+          thinking_mode: runtimeSettings.thinkingMode, reasoning_effort: modelRequestSettings.reasoningEffort,
+          tool_mode: 'auto', approval_mode: approvalMode.value,
+          context_id: contextId.value || undefined, context: compacted,
           workspace_mode: contextId.value ? conversationWorkspaceMode.value || workspaceMode : workspaceMode
-        })
-      })
-
-      if (!isCurrent()) {
-        await resp.body?.cancel().catch(() => {})
-        return
+        }, streamController.signal)
       }
-      const streamContextId = resp.headers.get('X-Chat-Context-Id')
-      if (streamContextId) contextId.value = streamContextId
-      if (!resp.ok) {
-        failStream(resp.status === 401 ? '本机服务认证失败，请检查运行配置'
-          : `回复请求失败（HTTP ${resp.status}），请重试`)
-        return
-      }
-
-      const reader = resp.body?.getReader()
-      if (!reader) {
-        failStream('流式读取失败，请重试')
-        return
-      }
-      const decoder = new TextDecoder()
-      let buffer = ''
-      const consumeFrame = (frame: string) => {
-        const event = parseChatStreamFrame(frame)
-        if (event) applyStreamEvent(event)
-      }
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (!isCurrent()) {
-          await reader.cancel().catch(() => {})
+      if (!isCurrent()) return
+      stopBeforeAcknowledgement = null
+      streamMessage.chatExecutionId = execution.chatExecutionId
+      streamMessage.chatExecutionState = 'running'
+      contextId.value = execution.contextId
+      if (stopRequested) {
+        const stopped = await localFetch(apiUrl(`/api/chat/executions/${encodeURIComponent(execution.chatExecutionId)}/cancel`), {method: 'POST'})
+        if (!stopped.ok) throw new Error('停止请求尚未确认，请重新打开会话核对执行状态')
+        if ((await stopped.json()).cancelled) {
+          failStream('已停止生成', 'cancelled')
           return
         }
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const frames = buffer.split(/\r?\n\r?\n/)
-        buffer = frames.pop() || ''
-        for (const frame of frames) consumeFrame(frame)
       }
-      buffer += decoder.decode()
-      if (buffer.trim()) consumeFrame(buffer)
+      batcher = createStreamBatcher(applyStreamEvent)
+      for await (const event of followChatExecution(execution.chatExecutionId, streamController.signal, () => {
+        batcher?.flush()
+        const message = ownedMessage()
+        if (message) { message.streamActivity = 'waiting'; message.streamPhase = '连接已断开，正在恢复进度' }
+      })) {
+        if (!isCurrent()) return
+        batcher.accept(event)
+      }
+      batcher.flush()
       if (terminal === 'done') {
-        if (!streamMsg.content) {
+        if (!streamMessage.content) {
           failStream('AI 返回了空响应，请重试')
         } else {
           finishThinking('complete')
@@ -847,12 +948,15 @@ export const useChatStore = defineStore('chat', () => {
         failStream('流式响应意外结束，请重试')
       }
     } catch (e) {
+      batcher?.flush()
       if ((e as Error).name === 'AbortError') {
         failStream('已停止生成', 'cancelled')
       } else {
         failStream('流式请求失败: ' + (e as Error).message)
       }
     } finally {
+      batcher?.flush()
+      batcher?.dispose()
       const message = ownedMessage()
       if (message) message.streamActivity = 'complete'
       if (message?.thinkingState === 'thinking') {
@@ -861,6 +965,7 @@ export const useChatStore = defineStore('chat', () => {
       if (isCurrent()) {
         if (activeStreamController === streamController) activeStreamController = null
         activeRequestId = null
+        stopBeforeAcknowledgement = null
         isStreaming.value = false
         loading.value = false
       }
@@ -868,9 +973,20 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const cancelMessageStream = async () => {
+    if (stopBeforeAcknowledgement) {stopBeforeAcknowledgement(); return}
     const requestId = activeRequestId
     const controller = activeStreamController
-    if (requestId) {
+    const execution = [...messages.value].reverse().find(message => message.chatExecutionId && message.streamActivity !== 'complete')
+    if (execution?.chatExecutionId) {
+      try {
+        const response = await localFetch(apiUrl(`/api/chat/executions/${encodeURIComponent(execution.chatExecutionId)}/cancel`), { method: 'POST' })
+        if (!response.ok) throw new Error('cancel not confirmed')
+        if (!(await response.json()).cancelled) return
+      } catch {
+        execution.streamError = '停止请求尚未确认，服务可能仍在执行，请重试停止或重新打开会话核对'
+        return
+      }
+    } else if (requestId) {
       try {
         await chatApi.cancelExecution(requestId)
       } catch {
@@ -1011,12 +1127,26 @@ export const useChatStore = defineStore('chat', () => {
         id: msg.id || Date.now() + Math.random(),
         role: msg.role?.toLowerCase() === 'user' ? 'user' : 'assistant',
         content: msg.content || '',
+        transcript: restoreTranscript(msg.metadata?.transcript),
+        chatExecutionId: msg.metadata?.chatExecutionId,
+        chatExecutionState: msg.metadata?.chatExecutionState,
         createdAt: msg.createdAt ? new Date(msg.createdAt) : new Date(),
         fileUrl: msg.fileUrl,
         confidence: msg.metadata?.confidence,
+        sources: msg.metadata?.sources,
         tokensUsed: msg.metadata?.totalTokens ?? msg.metadata?.tokens_used,
         modelInfo: msg.metadata?.effectiveModel ?? msg.metadata?.model_info,
         contextFixedTokens: msg.metadata?.contextFixedTokens,
+        contextWindowTokens: msg.metadata?.contextWindowTokens,
+        cachedTokens: msg.metadata?.cached_tokens,
+        cacheUsageAvailable: msg.metadata?.cacheUsageAvailable,
+        protocolSession: msg.metadata?.protocolSession,
+        lastInputTokens: msg.metadata?.last_input_tokens,
+        lastOutputTokens: msg.metadata?.last_output_tokens,
+        contextInputTokens: msg.metadata?.contextInputTokens,
+        requestBodyBytes: msg.metadata?.requestBodyBytes ?? (msg.metadata?.contextMeasurement === 'protocol-utf8-upper-bound' ? msg.metadata?.contextInputTokens : undefined),
+        responseTimings: mergeResponseTimings({}, msg.metadata?.responseTimings),
+        contextMeasurement: msg.metadata?.contextMeasurement,
         contextTokenMethod: msg.metadata?.contextTokenMethod,
         requestedThinkingMode: msg.metadata?.requestedThinkingMode,
         effectiveThinkingMode: msg.metadata?.effectiveThinkingMode,
@@ -1040,6 +1170,7 @@ export const useChatStore = defineStore('chat', () => {
 
       contextId.value = targetContextId
 
+
       const lastWithUsage = [...messages.value]
         .reverse()
         .find(msg => msg.role === 'assistant' && (
@@ -1048,17 +1179,25 @@ export const useChatStore = defineStore('chat', () => {
           typeof msg.tokensUsed === 'number'
         ))
       if (lastWithUsage) {
-        const used = typeof lastWithUsage.inputTokens === 'number'
-          ? lastWithUsage.inputTokens + (typeof lastWithUsage.outputTokens === 'number' ? lastWithUsage.outputTokens : 0)
+        const used = typeof (lastWithUsage.lastInputTokens ?? lastWithUsage.inputTokens) === 'number'
+          ? (lastWithUsage.lastInputTokens ?? lastWithUsage.inputTokens)! + (lastWithUsage.lastOutputTokens ?? lastWithUsage.outputTokens ?? 0)
           : (lastWithUsage.tokensUsed ?? null)
-        applyContextUsage(used, lastWithUsage.modelInfo || null)
+        applyContextUsage(used, lastWithUsage.modelInfo || null, lastWithUsage.contextWindowTokens)
         const settings = loadModelSettings()
         if (!settings.selectedModel || settings.selectedModel === '系统默认'
           || settings.selectedModel === lastWithUsage.modelInfo) {
-          setContextEstimate(lastWithUsage.contextFixedTokens, lastWithUsage.contextTokenMethod, settings)
+          if (lastWithUsage.protocolSession) invalidateContextEstimate()
+          else setContextEstimate(lastWithUsage.contextFixedTokens, lastWithUsage.contextTokenMethod, settings)
         } else invalidateContextEstimate()
       } else {
         contextUsedTokens.value = null
+        invalidateContextEstimate()
+      }
+      const lastContext = [...messages.value].reverse().find(message => typeof message.contextInputTokens === 'number')
+      const latestReply = [...messages.value].reverse().find(message => message.role === 'assistant')
+      if (lastContext && lastContext === latestReply && typeof lastContext.inputTokens !== 'number'
+        && lastContext.contextMeasurement !== 'protocol-utf8-upper-bound') {
+        applyContextUsage(lastContext.contextInputTokens!, lastContext.modelInfo, lastContext.contextWindowTokens, lastContext.contextMeasurement)
         invalidateContextEstimate()
       }
     } catch (error: any) {
@@ -1070,6 +1209,8 @@ export const useChatStore = defineStore('chat', () => {
       if (generation === historyGeneration && contextId.value === targetContextId) {
         isLoadingConversation.value = false
         loading.value = false
+        const runningReply = messages.value.find(message => message.chatExecutionId && message.chatExecutionState === 'running')
+        if (runningReply && !historyError.value) void sendMessageStream('', 'default', loadModelSettings(), conversationWorkspaceMode.value || 'chat', runningReply)
       }
     }
   }
@@ -1142,6 +1283,7 @@ export const useChatStore = defineStore('chat', () => {
     contextUsedTokens,
     nextContextTokens,
     contextWindowTokens,
+    contextMeasurement,
     contextModel,
     contextModels,
     fetchContextWindows,

@@ -37,6 +37,12 @@
           :class="{ 'is-thinking': headerThinkingActive }"
           aria-label="AI 思考状态"
         >
+          <button v-if="!hasTranscript && toolWorkItems.length" type="button" class="thinking-work__toggle"
+            :aria-expanded="detailsOpen && summaryOpen" @click="detailsOpen = true; summaryOpen = !summaryOpen">
+            <el-icon><Document /></el-icon>
+            <span>{{ toolWorkLabel }}</span>
+            <el-icon class="thinking-status__chevron" :class="{ open: detailsOpen && summaryOpen }"><ArrowDown /></el-icon>
+          </button>
           <button
             v-if="canExpandDetails"
             type="button"
@@ -72,8 +78,7 @@
             class="thinking-status__preview"
             @click="detailsOpen = true"
           >
-            <span class="thinking-status__preview-label">思考</span>
-            <span class="thinking-status__preview-text">{{ reasoningPreview }}</span>
+            <span ref="reasoningPreviewElement" class="thinking-status__preview-text">{{ reasoningPreview }}</span>
           </button>
 
           <Transition name="thinking-details">
@@ -85,7 +90,7 @@
                 </span>
               </div>
 
-              <div v-if="message.reasoningContent" class="thinking-section">
+              <div v-if="!hasTranscript && message.reasoningContent" class="thinking-section">
                 <div class="thinking-section__head">
                   <span>思考过程</span>
                   <button
@@ -98,11 +103,14 @@
                   </button>
                   <span v-else class="thinking-section__hint">模型原始推理</span>
                 </div>
-                <pre class="reasoning-content" :class="{ 'is-expanded': reasoningExpanded }">{{ message.reasoningContent }}</pre>
+                <pre ref="reasoningContentElement" class="reasoning-content" :class="{ 'is-expanded': reasoningExpanded }"
+                  @wheel="reasoningScrollIntent = true" @touchstart="reasoningScrollIntent = true"
+                  @pointerdown="reasoningScrollIntent = true" @keydown="reasoningScrollIntent = true"
+                  @scroll="handleReasoningScroll">{{ message.reasoningContent }}</pre>
                 <p v-if="message.reasoningTruncated" class="thinking-section__note">思考正文超过保存上限，已截断。</p>
               </div>
 
-              <div v-else-if="message.thinkingState" class="thinking-empty">
+              <div v-else-if="!hasTranscript && message.thinkingState" class="thinking-empty">
                 本次回复没有返回可展示的思考正文。
               </div>
 
@@ -155,7 +163,7 @@
                 </div>
               </div>
 
-              <div v-if="message.executionSummary && message.executionSummary.length > 0" class="thinking-section">
+              <div v-if="!hasTranscript && message.executionSummary && message.executionSummary.length > 0" class="thinking-section">
                 <button
                   type="button"
                   class="thinking-section__toggle"
@@ -192,13 +200,13 @@
           </Transition>
         </section>
 
-        <p v-if="message.streamError && message.streamError !== message.content" class="stream-error" role="status">{{ message.streamError }}</p>
+        <p v-if="message.streamError && (hasTranscript || message.streamError !== message.content)" class="stream-error" role="status">{{ message.streamError }}</p>
 
-        <!-- 命令/文件执行与审批已迁移到右侧「对话信息」栏（ConversationWorkFeed），主对话区只保留思考与输出。 -->
-
-        <!-- 文本内容 -->
+        <template v-if="hasTranscript">
+          <ChatTranscriptBlock v-for="block in message.transcript" :key="block.id" :block="block" :item="transcriptItems.get(`tool:${block.toolName}:${block.callId}`)" />
+        </template>
         <div
-          v-if="message.content"
+          v-else-if="message.content"
           class="message-text markdown-body"
           v-html="renderedMessageHtml"
         />
@@ -219,6 +227,7 @@
                 {{ continuationLabel }}
               </span>
             </Transition>
+            <small v-if="continuationDetail" class="continuation-status__detail">{{ continuationDetail }}</small>
           </div>
         </Transition>
       </div>
@@ -252,13 +261,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ArrowDown, Cpu, Document, Link, CopyDocument, ChatLineSquare, Delete, Microphone, Download, FullScreen } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImageViewer from '@/components/common/ImageViewer.vue'
 import { apiUrl, localFetch } from '@/platform/api'
 import { renderMarkdown } from '@/utils/markdown'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import ChatTranscriptBlock from './ChatTranscriptBlock.vue'
+import type { TranscriptBlock } from '../../../backend/src/shared/chat-stream/index.mjs'
 
 interface Source {
   title?: string
@@ -331,6 +342,7 @@ interface Props {
     id: number | string
     role: 'user' | 'assistant'
     content: string
+    transcript?: TranscriptBlock[]
     createdAt: Date
     confidence?: number
     fileUrl?: string
@@ -342,6 +354,9 @@ interface Props {
     streamError?: string
     streamActivity?: 'receiving' | 'waiting' | 'complete'
     streamPhase?: string
+    phaseStartedAt?: number
+    lastProviderActivityAt?: number
+    lastHeartbeatAt?: number
     thinkingDurationMs?: number
     reasoningContent?: string
     reasoningTruncated?: boolean
@@ -354,6 +369,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const hasTranscript = computed(() => props.message.role === 'assistant' && Boolean(props.message.transcript?.length))
 const fileSource = computed(() => {
   const source = props.message.fileUrl || ''
   return source.startsWith('/api/') ? apiUrl(source) : source
@@ -374,6 +390,21 @@ const emit = defineEmits(['copy', 'quote', 'delete', 'tts', 'export'])
 const detailsOpen = ref(false)
 const summaryOpen = ref(false)
 const reasoningExpanded = ref(false)
+const reasoningPreviewElement = ref<HTMLElement | null>(null)
+const reasoningContentElement = ref<HTMLElement | null>(null)
+let followReasoningTail = true
+let reasoningScrollIntent = false
+function handleReasoningScroll() {
+  const element = reasoningContentElement.value
+  if (!element) return
+  const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight < 20
+  if (atEnd || reasoningScrollIntent) followReasoningTail = atEnd
+}
+watch([() => props.message.reasoningContent, reasoningContentElement], ([, element], [, previous]) => {
+  if (element !== previous) { followReasoningTail = true; reasoningScrollIntent = false }
+  const live = props.message.thinkingState === 'thinking' || ['receiving', 'waiting'].includes(props.message.streamActivity || '')
+  if (element && live && followReasoningTail) element.scrollTop = element.scrollHeight
+}, { flush: 'post' })
 const imageViewerVisible = ref(false)
 const detailsId = computed(() => `thinking-details-${String(props.message.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`)
 
@@ -414,6 +445,7 @@ const isSafeUrl = (url: string) => /^(https?:\/\/|mailto:|\/)/i.test(url)
 const renderedMessageHtml = computed(() => {
   const content = props.message.content || ''
   if (!content) return ''
+  if (hasTranscript.value) return ''
   if (props.message.role === 'assistant') return renderMarkdown(content)
   return escapeHtml(content).replace(/\n/g, '<br />')
 })
@@ -467,10 +499,18 @@ const thinkingMetaChips = computed(() => {
 })
 
 const reasoningPreview = computed(() => {
-  const text = (props.message.reasoningContent || '').replace(/\s+/g, ' ').trim()
+  if (hasTranscript.value) return ''
+  const text = (props.message.reasoningContent || '').slice(-720).replace(/\s+/g, ' ').trim()
   if (!text) return ''
-  return text.length > 120 ? `${text.slice(0, 120)}…` : text
+  const characters = Array.from(text)
+  return characters.length > 180 ? `…${characters.slice(-180).join('')}` : text
 })
+
+// Follow actual streamed text, including when the preview is mounted again
+// after closing the full details. CSS must not ellipsize away the newest end.
+watch([reasoningPreview, reasoningPreviewElement], ([, element]) => {
+  if (element) element.scrollLeft = element.scrollWidth
+}, { flush: 'post' })
 
 const reasoningIsLong = computed(() => (props.message.reasoningContent || '').trim().length > 600)
 
@@ -482,6 +522,15 @@ const collapsedHint = computed(() => {
 
 const executionTotalDuration = computed(() => (props.message.executionSummary || [])
   .reduce((total, item) => total + (item.durationMs || 0), 0))
+const toolWorkItems = computed(() => (props.message.executionSummary || []).filter(item => item.stage.startsWith('tool:')))
+const transcriptItems = computed(() => new Map(toolWorkItems.value.map(item => [item.stage, item])))
+const toolWorkLabel = computed(() => {
+  const items = toolWorkItems.value
+  const completed = items.filter(item => item.status === 'completed').length
+  const failed = items.filter(item => item.status === 'failed').length
+  if (completed === items.length) return `已完成 ${completed} 项操作`
+  return `${items.length} 项工具操作${failed ? ` · ${failed} 项失败` : ` · 已完成 ${completed} 项`}`
+})
 
 const thinkingDurationSeconds = computed(() => {
   if (props.message.thinkingDurationMs === undefined) return null
@@ -496,6 +545,7 @@ const headerThinkingActive = computed(() => {
 
 const thinkingLabel = computed(() => {
   if (props.message.streamError) return props.message.streamError === '已停止生成' ? '已停止生成' : '回复已中断'
+  if (props.message.streamPhase && ['receiving', 'waiting'].includes(props.message.streamActivity || '')) return props.message.streamPhase
   const seconds = thinkingDurationSeconds.value
   const duration = seconds === null ? '' : `（用时 ${seconds} 秒）`
   if (props.message.thinkingState === 'complete') return `已思考${duration}`
@@ -517,6 +567,17 @@ const showContinuationStatus = computed(() => {
 const continuationLabel = computed(() => {
   if (props.message.streamPhase) return props.message.streamPhase
   return props.message.streamActivity === 'waiting' ? '等待模型继续' : '继续推进任务'
+})
+const continuationDetail = computed(() => {
+  const message = props.message
+  if (!message.phaseStartedAt) return ''
+  const now = Math.max(message.lastHeartbeatAt || 0, message.lastProviderActivityAt || 0, message.phaseStartedAt)
+  const elapsed = Math.max(0, Math.floor((now - message.phaseStartedAt) / 1000))
+  if (!['等待模型响应', '等待模型继续响应', '操作已完成，等待模型处理结果', '正在思考', '正在生成回复', '正在准备工具调用'].includes(message.streamPhase || '')) return `${elapsed} 秒`
+  const activity = message.lastProviderActivityAt
+    ? `${Math.max(0, Math.floor((now - message.lastProviderActivityAt) / 1000))} 秒前收到模型数据`
+    : '本阶段尚无模型数据'
+  return `${elapsed} 秒 · ${activity}`
 })
 
 const getConfidenceColor = (confidence: number) => {
@@ -655,6 +716,7 @@ const formatTime = (date: Date) => {
 
 .continuation-status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 24px;
@@ -702,6 +764,7 @@ const formatTime = (date: Date) => {
 .continuation-status__label {
   color: var(--text-secondary);
 }
+.continuation-status__detail { flex-basis: 100%; padding-left: 22px; color: var(--text-disabled); font-size: 11px; }
 
 .continuation-status-enter-active,
 .continuation-status-leave-active {
@@ -882,14 +945,14 @@ const formatTime = (date: Date) => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--border-light) 72%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-card) 76%, transparent);
-  color: var(--text-primary);
+  padding: 3px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.4;
 }
 
@@ -900,9 +963,7 @@ const formatTime = (date: Date) => {
 }
 
 .thinking-status__trigger:hover {
-  color: var(--primary-color);
-  border-color: color-mix(in srgb, var(--primary-color) 28%, var(--border-light));
-  background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-card));
+  color: var(--text-primary);
 }
 
 .thinking-status__trigger:focus-visible {
@@ -918,12 +979,10 @@ const formatTime = (date: Date) => {
 
 .thinking-status__phase {
   display: inline-block;
-  min-width: 7em;
 }
 
 .thinking-status__hint {
   padding-left: 7px;
-  border-left: 1px solid color-mix(in srgb, var(--border-light) 80%, transparent);
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 400;
@@ -948,7 +1007,7 @@ const formatTime = (date: Date) => {
 
 .thinking-status__icon {
   flex: 0 0 auto;
-  color: var(--primary-color);
+  color: var(--text-secondary);
   font-size: 16px;
 }
 
@@ -988,11 +1047,9 @@ const formatTime = (date: Date) => {
 .thinking-status__details {
   width: min(100%, 760px);
   margin: 10px 0 2px;
-  padding: 14px;
-  border: 1px solid var(--border-light);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-card) 90%, transparent);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  padding: 0 0 0 18px;
+  border-left: 1px solid var(--border-light);
+  background: transparent;
   color: var(--text-secondary);
   max-height: min(68vh, 720px);
   overflow: auto;
@@ -1011,10 +1068,7 @@ const formatTime = (date: Date) => {
   align-items: center;
   gap: 5px;
   min-height: 24px;
-  padding: 2px 9px;
-  border: 1px solid color-mix(in srgb, var(--border-light) 76%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  padding: 2px 8px 2px 0;
   font-size: 11px;
 }
 
@@ -1062,9 +1116,11 @@ const formatTime = (date: Date) => {
   align-items: baseline;
   gap: 8px;
   max-width: min(100%, 760px);
-  margin: 6px 0 0 7px;
-  padding: 0;
+  width: calc(100% - 12px);
+  margin: 4px 0 0 12px;
+  padding: 0 0 0 16px;
   border: 0;
+  border-left: 1px solid var(--border-light);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -1083,9 +1139,10 @@ const formatTime = (date: Date) => {
 }
 
 .thinking-status__preview-text {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
   font-size: 12px;
   line-height: 1.5;
@@ -1218,15 +1275,30 @@ const formatTime = (date: Date) => {
   white-space: pre-wrap;
   overflow-wrap: break-word;
   tab-size: 2;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11.5px;
+  font-family: inherit;
+  font-size: 13px;
   line-height: 1.65;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-light) 80%, transparent);
-  border-radius: 10px;
-  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
+
+.thinking-work__toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 8px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.thinking-work__toggle:hover { color: var(--text-primary); }
+.thinking-work__toggle:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
 
 .reasoning-content.is-expanded {
   max-height: none;

@@ -70,7 +70,11 @@ export async function* readSseFrames(body: ReadableStream<Uint8Array>, options: 
 }
 
 export type ChatStreamEventType =
+  | 'snapshot'
   | 'heartbeat'
+  | 'model_phase'
+  | 'model_activity'
+  | 'model_context'
   | 'reasoning_start'
   | 'reasoning_delta'
   | 'reasoning_end'
@@ -134,8 +138,8 @@ export function parseChatStreamData(data: string): ChatStreamEvent | null {
 }
 
 /** Keep the SSE event field: gateway terminal events have no JSON envelope. */
-export function parseChatStreamFrame(frame: string): ChatStreamEvent | null {
-  const parsedFrame = parseSseFrame(frame)
+export function parseChatStreamFrame(frame: string | SseFrame): ChatStreamEvent | null {
+  const parsedFrame = typeof frame === 'string' ? parseSseFrame(frame) : frame
   if (!parsedFrame) return null
   const { event: eventName, data: payload } = parsedFrame
   if (eventName === 'error') {
@@ -158,6 +162,9 @@ const STREAM_ERROR_MESSAGES: Record<string, string> = {
   AI_STREAM_INTERRUPTED: '模型连接中断，请重试',
   AI_TURN_LIMIT_EXCEEDED: '本次回复达到工具轮数上限，请重试',
   AI_UPSTREAM_TIMEOUT: '模型响应超时，请重试',
+  AI_MODEL_FIRST_RESPONSE_TIMEOUT: '等待模型开始响应超时，请重试',
+  AI_MODEL_IDLE_TIMEOUT: '模型输出长时间停顿，本次回复已中断',
+  AI_MODEL_TOTAL_TIMEOUT: '本次模型请求已达到时间上限',
   AI_UPSTREAM_UNREACHABLE: '无法连接模型服务，请检查网络或代理后重试',
   AI_UPSTREAM_REJECTED: '模型服务拒绝了本次请求，请重试',
   AI_CONTEXT_OVERFLOW: '上下文超出模型窗口，请缩短对话后重试'

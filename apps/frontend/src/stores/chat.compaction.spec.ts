@@ -1,3 +1,4 @@
+import { chatExecutionFetch } from './chatTestFetch'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useChatStore } from './chat'
@@ -20,9 +21,9 @@ const ready = () => {
     { id: '2', role: 'assistant', content: 'agreed' }]
   return store
 }
-const respond = () => vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(
+const respond = () => vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockImplementation(async () => new Response(
   'event:content_delta\ndata:{"event":"content_delta","data":{"delta":"next answer"}}\n\n'
-  + 'event:done\ndata:{"event":"done","data":{"status":"completed","contextId":"ctx-a"}}\n\n')))
+  + 'event:done\ndata:{"event":"done","data":{"status":"completed","contextId":"ctx-a"}}\n\n'))))
 
 describe('manual OScode context compaction', () => {
   beforeEach(() => { localStorage.clear(); setActivePinia(createPinia()) })
@@ -42,7 +43,7 @@ describe('manual OScode context compaction', () => {
     expect(first.context).toEqual(result.messages)
     expect(first.text).toBe('next request')
     await store.sendMessageStream('third request', 'default', settings)
-    const next = JSON.parse(vi.mocked(fetch).mock.calls[1][1]!.body as string)
+    const next = JSON.parse(vi.mocked(fetch).mock.calls[2][1]!.body as string)
     expect(next.context).toEqual([...result.messages, { role: 'user', content: 'next request' },
       { role: 'assistant', content: 'next answer' }])
   })
@@ -98,7 +99,7 @@ describe('manual OScode context compaction', () => {
         contextFixedTokens: 100, contextTokenMethod: 'utf8-upper-bound' } },
       { event: 'done', data: { status: 'completed', contextId: 'ctx-a' } }
     ].map(value => `data:${JSON.stringify(value)}\n\n`).join('')
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(sse)))
+    vi.stubGlobal('fetch', chatExecutionFetch(vi.fn().mockResolvedValue(new Response(sse))))
     await store.sendMessageStream('next request', 'default', settings)
     expect(store.contextUsedTokens).toBe(91000)
     expect(store.nextContextTokens).toBe(estimateContextInput([...result.messages,
@@ -106,8 +107,8 @@ describe('manual OScode context compaction', () => {
     expect(store.nextContextTokens).toBeLessThan(1000)
     // A service started before the metadata change still supplies Provider
     // usage only; the validated manual allowance remains usable.
-    vi.mocked(fetch).mockResolvedValue(new Response(sse.replace(
-      ',"contextFixedTokens":100,"contextTokenMethod":"utf8-upper-bound"', '')))
+    vi.stubGlobal('fetch', chatExecutionFetch(() => new Response(sse.replace(
+      ',"contextFixedTokens":100,"contextTokenMethod":"utf8-upper-bound"', ''))))
     await store.sendMessageStream('third request', 'default', settings)
     expect(store.nextContextTokens).toBe(estimateContextInput([...result.messages,
       { role: 'user', content: 'next request' }, { role: 'assistant', content: 'next answer' },

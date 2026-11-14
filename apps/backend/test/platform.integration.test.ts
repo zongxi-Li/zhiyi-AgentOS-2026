@@ -11,6 +11,8 @@ import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { createDatabase, saveMessage, transaction, type Database } from '../src/db.js';
 import { registerPlatform } from '../src/platform.js';
 import { prepareChat, registerChat, StreamCapture } from '../src/chat.js';
+import { ChatExecutions } from '../src/chatExecutions.js';
+import { randomUUID } from 'node:crypto';
 import { PythonGateway } from '../src/gateway.js';
 import { fixture, legacyUserId, otherUserId } from './fixtures.js';
 import { createApp } from '../src/app.js';
@@ -24,6 +26,7 @@ const postgres = join(binaryDir, process.platform === 'win32' ? 'postgres.exe' :
 describe.skipIf(!existsSync(postgres))('isolated PostgreSQL business integration', () => {
   let directory: string; let processHandle: ChildProcess | undefined; let db: Database; let databaseUrl: string; let archive: string;
   let app: FastifyInstance; let owner = legacyUserId; let roleId: string; let contextId: string; let conversationId: string;
+  const clearedSessions: string[] = [];
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'zhiyi-platform-pg-test-'));
     const data = join(directory, 'pgdata');
@@ -51,7 +54,9 @@ describe.skipIf(!existsSync(postgres))('isolated PostgreSQL business integration
     await db.query('INSERT INTO users(id,username) VALUES($1,$2),($3,$4)', [legacyUserId, 'isolated-local-user', otherUserId, 'isolated-other-user']);
     app = Fastify({ logger: false }); app.decorateRequest('localIdentity', null);
     app.addHook('onRequest', async request => { request.localIdentity = { actorId: owner, tenantId: null }; });
-    await registerPlatform(app, db, { uploadDir: join(directory, 'uploads') });
+    await registerPlatform(app, db, { uploadDir: join(directory, 'uploads') }, {
+      request: async (path: string) => { clearedSessions.push(path); return new Response(null, { status: 204 }); },
+    } as unknown as PythonGateway);
     await registerChat(app, db, new PythonGateway({ internalServiceToken: 'isolated-test-internal-service-token-12345' }));
     await app.ready();
   }, 30000);
@@ -151,6 +156,32 @@ describe.skipIf(!existsSync(postgres))('isolated PostgreSQL business integration
     const results = await app.inject('/api/search/messages?keyword=' + encodeURIComponent('同一条'));
     expect(results.json()).toHaveLength(2);
   });
+  it('deduplicates a persistent command and preserves confirmed tools across restart interruption', async () => {
+    const command = {text: 'isolated persistent execution', clientRequestId: randomUUID(), workspace_mode: 'chat'};
+    const [first, duplicate] = await Promise.all([prepareChat(db, legacyUserId, command, true), prepareChat(db, legacyUserId, command, true)]);
+    expect(first.chatExecutionId).toBe(duplicate.chatExecutionId);
+    expect(first.assistantId).toBe(duplicate.assistantId);
+    expect((await db.query('SELECT id FROM messages WHERE conversation_id=$1', [first.conversationId])).rowCount).toBe(2);
+    await expect(prepareChat(db, legacyUserId, {...command, text: 'changed'}, true)).rejects.toMatchObject({code: 'CHAT_COMMAND_CONFLICT'});
+    await expect(prepareChat(db, legacyUserId, {...command, clientRequestId: randomUUID(), context_id: first.contextId}, true))
+      .rejects.toMatchObject({code: 'CHAT_SESSION_BUSY'});
+    const executions = new ChatExecutions(db, {} as PythonGateway, {});
+    await expect(executions.owned(first.chatExecutionId!, otherUserId)).rejects.toMatchObject({statusCode: 404});
+    await db.query(`UPDATE messages SET metadata=metadata||$2::jsonb WHERE id=$1`, [first.assistantId, JSON.stringify({
+      executionSummary: [{stage: 'chat_stream', status: 'running'}, {stage: 'tool:write_file:once', status: 'completed'}],
+      transcript: [{id: 'part', kind: 'text', text: 'partial', state: 'streaming'}, {id: 'tool:once', kind: 'tool', callId: 'once', state: 'completed'}],
+    })]);
+    await executions.recoverInterrupted();
+    const saved = await executions.owned(first.chatExecutionId!, legacyUserId);
+    expect(saved.metadata).toMatchObject({chatExecutionState: 'interrupted',
+      executionSummary: [{stage: 'chat_stream', status: 'failed'}, {stage: 'tool:write_file:once', status: 'completed'}],
+      transcript: [{state: 'interrupted'}, {state: 'completed'}]});
+    const publicMessage = (await app.inject(`/api/chat/history/${first.contextId}`)).json()[1];
+    expect(publicMessage.metadata).not.toHaveProperty('clientRequestFingerprint');
+    expect(publicMessage.metadata).not.toHaveProperty('clientRequestId');
+    await db.query('DELETE FROM conversations WHERE id=$1', [first.conversationId]);
+    await expect(executions.owned(first.chatExecutionId!, legacyUserId)).rejects.toMatchObject({statusCode: 404});
+  });
   it('enforces owner filtering for history, role modification, search and deletion', async () => {
     owner = otherUserId;
     try {
@@ -163,12 +194,14 @@ describe.skipIf(!existsSync(postgres))('isolated PostgreSQL business integration
       expect((await app.inject('/api/search/all-messages?keyword=' + encodeURIComponent('回复'))).json()).toEqual([]);
     } finally { owner = legacyUserId; }
     expect((await db.query('SELECT count(*) FROM messages WHERE conversation_id=$1', [conversationId])).rows[0].count).toBe('4');
+    expect(clearedSessions).toEqual([]);
   });
   it('keeps workspace modes separate and atomically deletes owned conversation history', async () => {
     await expect(prepareChat(db, legacyUserId, { text: 'wrong mode', contextId, workspaceMode: 'agent' })).rejects.toMatchObject({ statusCode: 409 });
     expect((await app.inject('/api/conversations?workspaceMode=agent')).json()).toEqual([]);
     expect((await app.inject(`/api/conversations/${conversationId}/detail`)).json()).toMatchObject({ preview: '同一条消息', conversation: { title: '已重命名' } });
     expect((await app.inject({ method: 'DELETE', url: `/api/conversations/${conversationId}` })).statusCode).toBe(204);
+    expect(clearedSessions).toEqual([`/ai/chat/sessions/${contextId}`]);
     expect((await db.query('SELECT count(*) FROM messages WHERE conversation_id=$1', [conversationId])).rows[0].count).toBe('0');
     expect((await app.inject(`/api/chat/history/${contextId}`)).statusCode).toBe(404);
   });

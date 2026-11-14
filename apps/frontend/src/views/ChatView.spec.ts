@@ -59,6 +59,7 @@ function createChatStoreMock() {
     conversationWorkspaceMode: null as 'agent' | 'chat' | null,
     migrateDraftBindings: vi.fn(),
     contextUsedTokens: null as number | null,
+    contextMeasurement: 'usage',
     nextContextTokens: null as number | null,
     contextWindowTokens: null as number | null,
     contextModel: null as string | null,
@@ -476,7 +477,7 @@ describe('ChatView ACG progress integration', () => {
       expect(metrics).toContain('deepseek-flash')
       expect(metrics).toContain('2 条 · 1 轮')
       expect(metrics).toContain('460')
-      expect(metrics).toContain('上次调用用量')
+        expect(metrics).toContain('上下文窗口')
       expect(wrapper.get('.chat-info-card__sources').text()).toContain('产品白皮书')
 
       // 停靠宽度可调整并持久化：键盘 ±8 步进写回 localStorage 与行内样式
@@ -564,7 +565,47 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage('?workspace=chat')
     const metrics = wrapper.get('.chat-info-card__metrics').text()
     expect(metrics).toContain('下次上下文估算')
-    expect(metrics).toContain('≈ 1% · 11k / 1m')
+    expect(metrics).toContain('≈ 1%')
+    expect(metrics).toContain('11k / 1m Token')
+    wrapper.unmount()
+  })
+
+  it('shows a completed cache hit rate while a later response streams', async () => {
+    chatStoreMock.isStreaming = true
+    chatStoreMock.messages = [
+      { id: 1, role: 'assistant', content: 'done', inputTokens: 1000, cachedTokens: 800, cacheUsageAvailable: true },
+      { id: 2, role: 'user', content: 'continue' }, { id: 3, role: 'assistant', content: '' },
+    ]
+    const { wrapper } = await mountPage('?workspace=chat')
+    expect(wrapper.get('[aria-label="缓存命中率"]').text()).toContain('80.0%')
+    expect(wrapper.get('[aria-label="缓存命中率"]').text()).toContain('上轮缓存命中率')
+    expect(wrapper.get('.chat-info-usage__note').text()).toContain('800 / 1,000 输入 Token')
+    wrapper.unmount()
+  })
+
+  it('does not divide serialized request bytes by a token window', async () => {
+    chatStoreMock.contextUsedTokens = 836280
+    chatStoreMock.contextMeasurement = 'protocol-utf8-upper-bound'
+    chatStoreMock.contextWindowTokens = 1048576
+    chatStoreMock.messages = [{id:'old',role:'assistant',content:'answer',contextMeasurement:'protocol-utf8-upper-bound',contextInputTokens:836280}]
+    const {wrapper} = await mountPage('?workspace=chat')
+    expect(wrapper.get('[aria-label="上下文用量"]').text()).not.toContain('80%')
+    expect(wrapper.text()).toContain('816.7 KiB')
+    wrapper.unmount()
+  })
+
+  it('shows response stages with explicit request and turn timing scopes', async () => {
+    chatStoreMock.messages = [{ id: 'timed', role: 'assistant', content: 'answer', latencyMs: 57000,
+      responseTimings: { gatewayPrepareMs: 12, contextPreparationMs: 40, providerHeadersMs: 17000,
+        providerFirstByteMs: 17100, firstReasoningMs: 17200, firstContentMs: 24000 } }]
+    const { wrapper } = await mountPage('?workspace=chat')
+    const timing = wrapper.get('.chat-info-usage__timings')
+    expect(timing.text()).toContain('响应耗时')
+    expect(timing.text()).toContain('网关准备12 ms')
+    expect(timing.text()).toContain('供应商首字节（最近请求）17.1 秒')
+    expect(timing.text()).toContain('首段正文（整轮）24.0 秒')
+    expect(timing.text()).toContain('本轮服务端总耗时57.0 秒')
+    expect(timing.text()).toContain('不能相加')
     wrapper.unmount()
   })
 

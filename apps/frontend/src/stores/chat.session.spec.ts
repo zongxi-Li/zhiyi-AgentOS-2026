@@ -1,3 +1,4 @@
+import { chatExecutionFetch } from './chatTestFetch'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { chatApi } from '@/services/api/chat'
@@ -104,9 +105,9 @@ describe('Conversation history continuity', () => {
     await store.sendMessage('file', '/file', undefined, 'chat')
     expect(chatApi.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'ctx-agent', workspaceMode: 'agent', roleId: 'role' }))
     const fetchMock = vi.fn().mockResolvedValue(new Response('data:[DONE]\n\n'))
-    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('fetch', chatExecutionFetch(fetchMock))
     await store.sendMessageStream('continue', 'default', undefined, 'chat')
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ context_id: 'ctx-agent', role_id: 'role', workspace_mode: 'agent' })
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toMatchObject({ context_id: 'ctx-agent', role_id: 'role', workspace_mode: 'agent' })
   })
   it('invalidates a pending history response when a new draft starts', async () => {
     const history = deferred<any[]>(); vi.mocked(chatApi.getHistory).mockReturnValue(history.promise)
