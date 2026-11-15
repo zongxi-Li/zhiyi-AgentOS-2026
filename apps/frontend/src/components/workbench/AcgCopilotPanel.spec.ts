@@ -10,7 +10,7 @@ import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
 import { renderMarkdown } from '@/utils/markdown'
 
-vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn(), submitFormalControl: vi.fn() } }))
+vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), getAgentPool: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn(), submitFormalControl: vi.fn() } }))
 vi.mock('@/services/api/agentos/client', () => ({ agentosRequest: { get: vi.fn(async () => ({ data: { items: [] } })), post: vi.fn() } }))
 vi.mock('@/workbench/runtime/runtimeEvents', () => ({ acquireRunRuntimeStore: vi.fn(() => null), releaseRunRuntimeStore: vi.fn() }))
 vi.mock('@/utils/markdown', async importOriginal => {
@@ -337,7 +337,7 @@ describe('task Copilot', () => {
     await w.get('[aria-label="选择权限"]').trigger('click')
     await w.get('.permission-menu button:first-of-type').trigger('click'); await flushPromises()
     expect(controls.props()).toMatchObject({ readonly: false, executionReadonly: true })
-    await w.get('.copilot-tabs button:last-child').trigger('click')
+    await w.findAll('.copilot-tabs button')[1].trigger('click')
     expect(controls.exists()).toBe(true)
     expect(w.get('.conversation').isVisible()).toBe(false)
   })
@@ -572,7 +572,7 @@ describe('task Copilot', () => {
   })
   it('renders only recorded trace events and opens their details', async () => {
     const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [{ eventId: 'e-1', eventType: 'tool_called', observation: 'read_document', timestamp: '2026-10-05T12:00:00Z', stepId: 'step-2', durationMs: 12, payload: { callId: 'call-1' } }] } as any })
-    await w.get('.copilot-tabs button:last-child').trigger('click')
+    await w.findAll('.copilot-tabs button')[1].trigger('click')
     expect(w.text()).toContain('read_document')
     expect(w.text()).toContain('step-2')
     expect(w.get('pre').text()).toContain('call-1')

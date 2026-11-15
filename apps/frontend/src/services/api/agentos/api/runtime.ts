@@ -1,9 +1,13 @@
 import { agentosRequest } from '../client'
-import type { IdentityProjectionHealth, ModelCallUsage, ResourceCredentialMetadata, ResourceHealthEvent, ResourceRegistrationRequest, ResourceUsageRecord, RunContextPacksResponse, RunExecutionTree, RunProvenanceProjection, RunResourceUsage, RuntimeResourceItem } from '../types'
+import type { AgentPoolSnapshot, IdentityProjectionHealth, ModelCallUsage, ResourceCredentialMetadata, ResourceHealthEvent, ResourceRegistrationRequest, ResourceUsageRecord, RunContextPacksResponse, RunExecutionTree, RunProvenanceProjection, RunResourceUsage, RuntimeResourceItem } from '../types'
 import { runPath } from '../paths'
 import type { NodeCatalogItem, NodeRegistrationRequest, ResourceRegistrationResult } from '../types'
 
 export const createRuntimeApi = () => ({
+  async getAgentPool(options: { signal?: AbortSignal } = {}): Promise<AgentPoolSnapshot> {
+    const response = await agentosRequest.get<AgentPoolSnapshot>('/agents/pool', { signal: options.signal, timeout: 15000 })
+    return response.data
+  },
   async getRunResourceUsage(runId: string, options: { signal?: AbortSignal } = {}): Promise<RunResourceUsage> {
     const response = await agentosRequest.get<RunResourceUsage>(`${runPath(runId)}/resource-usage`, { signal: options.signal })
     return response.data

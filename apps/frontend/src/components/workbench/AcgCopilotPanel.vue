@@ -4,6 +4,7 @@
     <nav class="copilot-tabs" aria-label="助手视图">
       <button :class="{ active: tab === 'chat' }" @click="tab = 'chat'">对话 <i v-if="state?.question || state?.review" class="attention-dot"></i></button>
       <button :class="{ active: tab === 'trace' }" @click="tab = 'trace'">轨迹 <small v-if="trajectory.length">{{ trajectory.length }}</small></button>
+      <button :class="{ active: tab === 'pool' }" @click="tab = 'pool'">执行池</button>
     </nav>
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
@@ -86,6 +87,8 @@
       <small class="trace-footnote">点击展开详情，查看所属步骤、调用链和运行结果。</small>
     </div>
 
+    <AgentPoolPanel v-if="tab === 'pool'" @select-run="emit('select-run', $event)" />
+
     <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
     <div v-if="historical || readonly || !allows('canCollaborate')" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
@@ -142,6 +145,7 @@ import FormalExecutionControls from '@/components/workspace/FormalExecutionContr
 import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
 import CopilotRunTimeline from './CopilotRunTimeline.vue'
 import ChatTranscriptBlock from '@/components/ChatTranscriptBlock.vue'
+import AgentPoolPanel from './AgentPoolPanel.vue'
 import { createStreamBatcher, type TranscriptBlock } from '../../../../backend/src/shared/chat-stream/index.mjs'
 import { useBrand } from '@/features/brand/useBrand'
 
@@ -171,7 +175,7 @@ const state = ref<CopilotState | null>(null)
 const hasPendingToolApproval = ref(false)
 const hasTimelineContent = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
-const tab = ref<'chat' | 'trace'>('chat')
+const tab = ref<'chat' | 'trace' | 'pool'>('chat')
 const draft = ref(''), error = ref(''), traceSearch = ref('')
 const reviewComment = ref(''), reviewReceipt = ref('')
 let reviewRequest: { subject: string; revision: string; decision: string; comment: string; id: string } | undefined
@@ -457,6 +461,7 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopSc
 .review-actions button { padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--wb-accent-soft); color: var(--wb-accent); cursor: pointer; }
 .review-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); }
+.agent-pool ~ .composer, .agent-pool ~ .composer-caption, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
 button { font:inherit; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.4; }
 button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); outline-offset:2px; }
