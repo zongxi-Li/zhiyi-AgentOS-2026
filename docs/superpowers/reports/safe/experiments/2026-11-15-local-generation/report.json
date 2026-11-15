@@ -1,0 +1,89 @@
+{
+  "status": "passed",
+  "created_at": "2026-11-15T03:54:56.568619+00:00",
+  "schema_version": "safe-local-benchmark-v1",
+  "manifest_digest": "154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f",
+  "samples": 20,
+  "repeats": 3,
+  "max_new_tokens": 32,
+  "threads": 4,
+  "warmup_runs_per_method": 2,
+  "warmup_max_tokens": 4,
+  "seed": 20261115,
+  "device": "cpu",
+  "dtype": "float32",
+  "attention": "eager",
+  "batch_size": 1,
+  "actual_network": false,
+  "authenticated": false,
+  "dp": false,
+  "compression": false,
+  "method_order": "seeded-random-within-each-pair",
+  "sample_order": "seeded-shuffle-per-repeat",
+  "latency_scope": "steady-state; loading excluded; e2e includes local decode and KV cleanup",
+  "tpot_definition": "(last_token_received-first_token_received)/(generated_tokens-1)",
+  "instrumentation": "timers plus one extra request JSON serialization for exact byte counting",
+  "full_baseline": "manual HF DynamicCache + torch argmax; no Python full-vocabulary validation",
+  "wire_scope": "step JSON UTF-8 body only; excludes HTTP/TLS/session/response bytes",
+  "python": "3.10.11",
+  "torch": "2.11.0+cpu",
+  "transformers": "4.46.3",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+  "cpu_logical": 24,
+  "cpu_physical": 24,
+  "interop_threads": 1,
+  "runtime_commit": "3ce76588be0202599bf43a8a521ade17de4518c1",
+  "benchmark_script_sha256": "18effc2bdf30bca3e0d8f4d8536d74b1d6ad7c1326bf9d408fbc6d80699a496c",
+  "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+  "model_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "cut_layer": 2,
+  "total_layers": 24,
+  "hidden_size": 896,
+  "eos_token_ids": [
+    151643,
+    151645
+  ],
+  "source_weights_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+  "paired_runs": 60,
+  "matched_tokens": 1146,
+  "exact_sequence_matches": 60,
+  "summary": {
+    "full": {
+      "ttft_ms": {
+        "median": 118.1262,
+        "mean": 118.200405
+      },
+      "tpot_ms": {
+        "median": 44.3083629032258,
+        "mean": 44.74358873080054
+      },
+      "e2e_ms": {
+        "median": 814.9085,
+        "mean": 925.7533083333334
+      }
+    },
+    "split": {
+      "ttft_ms": {
+        "median": 144.0402,
+        "mean": 146.27625333333333
+      },
+      "tpot_ms": {
+        "median": 61.81929335664336,
+        "mean": 62.55557524466698
+      },
+      "e2e_ms": {
+        "median": 1138.4095,
+        "mean": 1275.5940383333334
+      }
+    }
+  },
+  "kv_empty_after_each_pair": true,
+  "split_eos_runs": 45,
+  "split_length_runs": 15,
+  "experiment_seconds_including_loading": 142.64181059999999,
+  "data_sha256": {
+    "runs.csv": "3ab08d51f58f8ebc0961ff36fe8d4248bb7e9c8f02f1fb7015ae46a92cc52cee",
+    "steps.csv": "3f753cd4fc0e80ecc0c4373138751ccafe8beaea15a7b4c9c992f43224b13bd6"
+  }
+}

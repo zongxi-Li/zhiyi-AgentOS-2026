@@ -1,16 +1,41 @@
-"""会话创建、步骤事务、回执查询、取消与过期清理。
+"""会话创建、步骤事务、回执查询、关闭与过期清理用例。"""
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
+from __future__ import annotations
 
-TODO(P3-1)：由认证 owner 创建不可猜测 session ID，绑定 manifest 和会话总 deadline。
-TODO(P3-2)：单调时钟执行 idle=60秒、absolute=300秒；查询/重试不无限续期。
-TODO(P3-3)：定义锁内的幂等占位、执行中标记、回执提交和终态发布顺序。
-TODO(P3-4)：取消仅发出意图；等待 runner 停止或隔离后再释放 KV，不能假设网络断连等于停止。
-TODO(P3-5)：回执查询验证 owner/session/request；不同请求摘要使用同一 request ID 明确冲突。
+from safe.contracts.session import SessionView, StepReceipt, StepRequest
+from safe.ports.session_store import ContextStepRunner, SessionStore, StepRunner
 
-验收：进程重启旧 ID 无效；终态不可复活；每份 KV 仅释放一次。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
-"""
 
-__all__: list[str] = []
+class SessionService:
+    """应用层门面；认证 owner 由上层传入，本类不解析 HTTP 或 token。"""
+
+    def __init__(self, store: SessionStore) -> None:
+        self._store = store
+
+    def create(self, owner_id: str, manifest_digest: str, *, session_id: str | None = None) -> SessionView:
+        return self._store.create(owner_id, manifest_digest, session_id=session_id)
+
+    def view(self, owner_id: str, session_id: str) -> SessionView:
+        return self._store.view(owner_id, session_id)
+
+    def receipt(self, owner_id: str, session_id: str, request_id: str) -> StepReceipt | None:
+        return self._store.receipt(owner_id, session_id, request_id)
+
+    def execute(self, owner_id: str, request: StepRequest, runner: StepRunner) -> StepReceipt:
+        return self._store.execute(owner_id, request, runner)
+
+    def execute_with_context(self, owner_id: str, request: StepRequest, runner: ContextStepRunner) -> StepReceipt:
+        """可信上下文只能由存储在会话锁内构造，不能从请求复制。"""
+        return self._store.execute_with_context(owner_id, request, runner)
+
+    def close(self, owner_id: str, session_id: str) -> SessionView:
+        return self._store.close(owner_id, session_id)
+
+    def fail(self, owner_id: str, session_id: str) -> SessionView:
+        return self._store.fail(owner_id, session_id)
+
+    def cleanup_expired(self) -> int:
+        return self._store.cleanup_expired()
+
+
+__all__ = ["SessionService"]

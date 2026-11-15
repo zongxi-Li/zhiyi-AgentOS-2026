@@ -1,16 +1,314 @@
-"""进程内短时会话存储；尚未实现并发事务。
+"""进程内短时会话存储。
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
+实现边界：这是 P3 的单进程基线，不持久化、不恢复 KV，也不提供网络认证。
+每个会话使用独立的可重入锁；执行回调在锁内运行，保证同一 request_id 只会
+执行一次。生产装配仍需把 runner、认证、资源上限和生命周期清理器注入更高层。
 
-TODO(P3-1)：实现 SessionStore，每个会话独立锁并限制总数、内存、待处理请求数和回执数。
-TODO(P3-2)：存储owner/manifest/next_step/phase/TTL/KV句柄及幂等回执，不存原始prompt。
-TODO(P3-3)：原子占用request ID，不能在锁外检查后并行前向；摘要冲突直接拒绝。
-TODO(P3-4)：清理器通过显式生命周期启动；固定绝对TTL，关闭等待正在执行的计算。
-TODO(P3-5)：进程重启不恢复KV；session ID包含新进程隔离域或不可猜测随机身份。
-
-验收：双线程同step只执行一次；跨owner、过期、OOM与取消竞态可重复验证。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
+TODO(P3-1)：增加会话总数、并发执行数和激活内存配额；已有每会话32步/160位置上限。
+已实现：回执发布失败或同步执行取消进入FAILED；绝对TTL在前向返回后复核；
+执行中同线程查询不释放KV；释放失败可重试且不阻断其他会话的清理。
+已实现：execute_with_context在会话锁内提供存储推进的位置和KV，供ContinuationService续算。
+TODO(P3-2)：在认证传输层装配同一个suffix runner；GPU任务须由runner等待或隔离。
+TODO(P3-3)：按容量测量决定是否将长时间runner改为占位/执行/提交事务；保留同一请求只推进一次。
+TODO(P3-4)：增加显式后台清理生命周期和重启隔离域；当前进程重启即全部失效。
 """
 
-__all__: list[str] = []
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import hashlib
+import math
+import re
+import secrets
+import threading
+import time
+
+from pydantic import ValidationError
+
+from safe.contracts.errors import ErrorCode, SafeError
+from safe.contracts.session import ActivationContext, SessionStatus, SessionView, StepReceipt, StepRequest
+from safe.domain.activation_policy import checked_raw_bytes
+from safe.domain.session_state import require_next_step, transition
+from safe.ports.clock import Clock
+from safe.ports.model_runner import KVHandle, ModelRunner
+from safe.ports.session_store import ContextStepRunner, StepRunner
+
+class _SystemClock:
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    def utc_timestamp(self) -> float:
+        return time.time()
+
+
+@dataclass(frozen=True)
+class _StoredReceipt:
+    fingerprint: str
+    receipt: StepReceipt
+
+
+@dataclass
+class _SessionRecord:
+    owner_id: str
+    session_id: str
+    manifest_digest: str
+    status: SessionStatus
+    next_step: int
+    created_at: float
+    last_activity: float
+    absolute_deadline: float
+    position_offset: int = 0
+    kv_handle: KVHandle | None = field(default=None, repr=False)
+    kv_released: bool = False
+    executing: bool = False
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    receipts: dict[str, _StoredReceipt] = field(default_factory=dict, repr=False)
+
+
+class MemorySessionStore:
+    """带 owner 隔离、TTL、严格 step 和回执幂等的进程内会话实现。"""
+
+    def __init__(
+        self,
+        *,
+        clock: Clock | None = None,
+        idle_ttl: float = 60.0,
+        absolute_ttl: float = 300.0,
+        runner: ModelRunner | None = None,
+    ) -> None:
+        if type(idle_ttl) is not float or not math.isfinite(idle_ttl) or idle_ttl <= 0:
+            raise ValueError("idle_ttl必须是正浮点数")
+        if type(absolute_ttl) is not float or not math.isfinite(absolute_ttl) or absolute_ttl <= 0:
+            raise ValueError("absolute_ttl必须是正浮点数")
+        if idle_ttl > absolute_ttl:
+            raise ValueError("idle_ttl不能大于absolute_ttl")
+        self._clock = clock or _SystemClock()
+        self._idle_ttl = idle_ttl
+        self._absolute_ttl = absolute_ttl
+        self._runner = runner
+        self._sessions: dict[str, _SessionRecord] = {}
+        self._sessions_lock = threading.RLock()
+
+    def create(self, owner_id: str, manifest_digest: str, *, session_id: str | None = None) -> SessionView:
+        self._require_identity(owner_id)
+        self._require_digest(manifest_digest)
+        identifier = session_id or f"session-{secrets.token_urlsafe(18)}"
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", identifier):
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        with self._sessions_lock:
+            if identifier in self._sessions:
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            # 先创建KV，再发布可见会话；创建失败不会留下半初始化状态。
+            handle = self._runner.create_kv(identifier) if self._runner else None
+            now = self._clock.monotonic()
+            record = _SessionRecord(
+                owner_id=owner_id,
+                session_id=identifier,
+                manifest_digest=manifest_digest,
+                status=SessionStatus.CREATED,
+                next_step=0,
+                created_at=now,
+                last_activity=now,
+                absolute_deadline=now + self._absolute_ttl,
+                kv_handle=handle,
+            )
+            self._sessions[identifier] = record
+        return self._view(record)
+
+    def view(self, owner_id: str, session_id: str) -> SessionView:
+        record = self._owned(owner_id, session_id)
+        with record.lock:
+            self._expire_locked(record)
+            return self._view(record)
+
+    def receipt(self, owner_id: str, session_id: str, request_id: str) -> StepReceipt | None:
+        record = self._owned(owner_id, session_id)
+        with record.lock:
+            self._expire_locked(record)
+            stored = record.receipts.get(request_id)
+            return stored.receipt if stored else None
+
+    def execute(self, owner_id: str, request: StepRequest, runner: StepRunner) -> StepReceipt:
+        """原子执行一步；runner返回``(token_id, finished)``，异常使会话永久失败。"""
+        return self.execute_with_context(owner_id, request, lambda value, context, handle: runner(value))
+
+    def execute_with_context(self, owner_id: str, request: StepRequest, runner: ContextStepRunner) -> StepReceipt:
+        """把受信位置和KV交给进程内回调；不会向请求方暴露句柄。"""
+        try:
+            request = StepRequest.model_validate(request.model_dump())
+        except (AttributeError, ValidationError):
+            raise SafeError(ErrorCode.ACTIVATION_INVALID) from None
+        record = self._owned(owner_id, request.session_id)
+        fingerprint = self._fingerprint(request)
+        with record.lock:
+            if record.executing:
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            self._expire_locked(record)
+            previous = record.receipts.get(request.request_id)
+            if previous is not None:
+                if previous.fingerprint != fingerprint:
+                    raise SafeError(ErrorCode.IDEMPOTENCY_CONFLICT)
+                return previous.receipt
+            if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            if request.manifest_digest != record.manifest_digest:
+                raise SafeError(ErrorCode.MANIFEST_INCOMPATIBLE)
+            require_next_step(expected=record.next_step, received=request.step)
+            expected_phase = "prefill" if request.step == 0 else "decode"
+            if request.phase != expected_phase:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+            if request.position_offset != record.position_offset or record.next_step >= 32:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+            checked_raw_bytes(request.activation.shape)
+            if request.phase == "decode" and request.activation.shape[1] != 1:
+                raise SafeError(ErrorCode.ACTIVATION_INVALID)
+            next_position = record.position_offset + request.activation.shape[1]
+            if next_position > 160:
+                raise SafeError(ErrorCode.ACTIVATION_INVALID)
+            context = ActivationContext(
+                session_id=record.session_id, manifest_digest=record.manifest_digest,
+                next_step=record.next_step, phase=expected_phase, position_offset=record.position_offset,
+            )
+            if record.status is SessionStatus.CREATED:
+                record.status = transition(record.status, SessionStatus.ACTIVE)
+            record.executing = True
+            try:
+                outcome = runner(request, context, record.kv_handle)
+                token_id, finished = outcome
+                if type(token_id) is not int or token_id < 0 or type(finished) is not bool:
+                    raise ValueError("runner回执格式非法")
+                finished = finished or record.next_step == 31 or next_position == 160
+                receipt = StepReceipt(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    step=request.step,
+                    token_id=token_id,
+                    finished=finished,
+                )
+                completed_at = self._clock.monotonic()
+                if completed_at >= record.absolute_deadline:
+                    # 计算已结束才允许释放；绝对寿命不能被一次长前向延长。
+                    record.status = SessionStatus.EXPIRED
+                    raise SafeError(ErrorCode.SESSION_INVALID)
+                # 回执发布也属于模型事务；写入失败后绝不能再次推进同一KV。
+                record.receipts[request.request_id] = _StoredReceipt(fingerprint, receipt)
+            except BaseException:
+                # CancelledError/KeyboardInterrupt同样可能发生在KV已推进之后。
+                # 同步回调返回或抛错意味着执行权已交还；不能将此视为强制停止GPU。
+                if record.status is not SessionStatus.EXPIRED:
+                    record.status = SessionStatus.FAILED
+                record.receipts.pop(request.request_id, None)
+                try:
+                    self._release_locked(record)
+                except Exception:
+                    # 保留原始计算/提交异常；未释放的句柄留给显式清理重试。
+                    pass
+                raise
+            finally:
+                record.executing = False
+            record.next_step += 1
+            record.position_offset = next_position
+            record.last_activity = completed_at
+            if finished:
+                record.status = transition(record.status, SessionStatus.CLOSED)
+                self._release_locked(record)
+            return receipt
+
+    def close(self, owner_id: str, session_id: str) -> SessionView:
+        record = self._owned(owner_id, session_id)
+        with record.lock:
+            if record.executing:
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            self._expire_locked(record)
+            if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            record.status = transition(record.status, SessionStatus.CLOSED)
+            self._release_locked(record)
+            return self._view(record)
+
+    def fail(self, owner_id: str, session_id: str) -> SessionView:
+        record = self._owned(owner_id, session_id)
+        with record.lock:
+            if record.executing:
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            self._expire_locked(record)
+            if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
+                raise SafeError(ErrorCode.SESSION_INVALID)
+            record.status = transition(record.status, SessionStatus.FAILED)
+            self._release_locked(record)
+            return self._view(record)
+
+    def cleanup_expired(self) -> int:
+        count = 0
+        first_error: Exception | None = None
+        with self._sessions_lock:
+            records = tuple(self._sessions.values())
+        for record in records:
+            with record.lock:
+                try:
+                    before = record.status
+                    self._expire_locked(record)
+                    count += int(before is not SessionStatus.EXPIRED and record.status is SessionStatus.EXPIRED)
+                    if record.status in (SessionStatus.CLOSED, SessionStatus.FAILED, SessionStatus.EXPIRED):
+                        self._release_locked(record)
+                except Exception as exc:
+                    # 一个角色的释放失败不能阻止本轮清理其他会话。
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None:
+            raise first_error
+        return count
+
+    def _owned(self, owner_id: str, session_id: str) -> _SessionRecord:
+        self._require_identity(owner_id)
+        if not isinstance(session_id, str) or not session_id:
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        with self._sessions_lock:
+            record = self._sessions.get(session_id)
+        if record is None or record.owner_id != owner_id:
+            raise SafeError(ErrorCode.SESSION_INVALID)
+        return record
+
+    def _expire_locked(self, record: _SessionRecord) -> None:
+        if record.executing:
+            return  # 同线程回调查询不允许释放在用KV；绝对TTL在前向返回后核验。
+        if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
+            return
+        now = self._clock.monotonic()
+        if now >= record.absolute_deadline or now - record.last_activity >= self._idle_ttl:
+            record.status = transition(record.status, SessionStatus.EXPIRED)
+            self._release_locked(record)
+
+    def _release_locked(self, record: _SessionRecord) -> None:
+        if record.kv_handle is None or record.kv_released or self._runner is None:
+            return
+        # ModelRunner.release_kv 合同要求失败后可安全重试，不得复用句柄。
+        self._runner.release_kv(record.kv_handle)
+        record.kv_released = True
+
+    @staticmethod
+    def _view(record: _SessionRecord) -> SessionView:
+        return SessionView(
+            session_id=record.session_id,
+            manifest_digest=record.manifest_digest,
+            status=record.status,
+            next_step=record.next_step,
+        )
+
+    @staticmethod
+    def _fingerprint(request: StepRequest) -> str:
+        payload = request.model_dump_json().encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _require_identity(value: str) -> None:
+        if not isinstance(value, str) or not value or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value):
+            raise SafeError(ErrorCode.SESSION_INVALID)
+
+    @staticmethod
+    def _require_digest(value: str) -> None:
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise SafeError(ErrorCode.MANIFEST_INCOMPATIBLE)
+
+
+__all__ = ["MemorySessionStore", "StepRunner"]

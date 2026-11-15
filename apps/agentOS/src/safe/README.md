@@ -2,21 +2,38 @@
 
 `apps/agentOS/src/safe` 是端侧/云侧模型协作模块。它承载拆分推理的合同、模型前后段执行、激活值传输、隐私策略和会话生命周期。AgentOS 和应用层通过公开入口接入，不直接访问模型、数据库和网络实现。
 
-本 README 是模块目录与依赖边界的设计基线，更新于 2026-11-13。目标是让后续工作在既定分层中扩展；新模型、编码格式和存储实现通过新增适配器接入。文件位置和公开 API 应保持稳定，模型算法、协议版本及隐私参数仍须依据实验修订，不能把目录稳定等同于技术方案永不变化。
+本 README 是模块目录与依赖边界的设计基线，更新于 2026-11-15。目标是让后续工作在既定分层中扩展；新模型、编码格式和存储实现通过新增适配器接入。文件位置和公开 API 应保持稳定，模型算法、协议版本及隐私参数仍须依据实验修订，不能把目录稳定等同于技术方案永不变化。
+
+2026-11-14阶段更新：已完成 `ManifestService` 的canonical身份核验、`ActivationService` 的受信会话/manifest/phase/位置/shape校验，以及 P3 单进程会话事务基线。`ActivationContext` 必须来自受信会话，摘要来自批准配置；`SessionService` + `MemorySessionStore` 已覆盖 owner 隔离、严格 step、60秒空闲 TTL、300秒绝对 TTL、请求幂等、终态和 runner 异常失败。会话存储可注入 `ModelRunner`，分配不透明 KV 句柄并在关闭/失败/过期时释放；释放失败会保持终态并允许清理重试。此时尚未接通真实 KV 前向；后续进展见下文，仍不能直接发布为云端服务。后续按完整功能分阶段提交，保留各次验收证据。
+
+同日真实模型进展：已实现离线Qwen2角色导出、独立CPU FP32/eager prefix/suffix prefill，并完成20×16步无KV基线和KV缓存对照；KV评估20条中英文合成输入×16步共320个logits，greedy `320/320` 一致，最大绝对误差为0。基线和KV验证记录分别见[真实模型报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md)和[KV续算报告](../../../../docs/superpowers/reports/safe/2026-11-14-qwen-kv.md)。KV runner 与完整模型的 `DynamicCache` oracle 使用 `atol=1e-5, rtol=1e-4`，并单独记录与无KV全序列重算的数值差异。网络、认证和DP仍未接通，`SplitInferenceService` 和隐私发布服务仍明确不可用。下方“骨架当前状态”表保留创建日记录，新增能力以本节带日期报告为准。
 
 ## 当前状态
 
-截至 2026-11-13，已按下文架构创建全部模块文件、显式包入口和中文 TODO。本目录是**可导入、部分基础行为已测试的开发骨架**，尚未完成拆分推理运行时。
+2026-11-15验证与加固：新增回执提交失败、同步取消、执行超出绝对TTL、清理失败隔离和执行中重入保护。Qwen两角色在层前向、有限值检查或返回值转换失败时使对应KV句柄失效，避免复用部分推进的状态。联合回归78项、数据流脚本18项通过；真实模型20×32缓存oracle对照640次logits误差为0、greedy全部一致。最新命令、结果与能力边界见[本轮报告](../../../../docs/superpowers/reports/safe/2026-11-15-session-failure.md)。下表含早期骨架状态，具体已实现能力以带日期的验证记录为准。
+
+2026-11-15后段用例：`ContinuationService` 已连接可信会话位置/KV、激活校验、suffix prefill/decode、greedy/EOS和幂等token回执。每会话最多32次输出、最多160位置，EOS或输出上限关闭会话并释放后段KV；错误后的部分推进状态不允许重用。联合回归112项和数据转换18项通过；真实权重验证结果、复现命令和装配示例见[后段闭环报告](../../../../docs/superpowers/reports/safe/2026-11-15-continuation.md)。
+
+2026-11-15本机用例：已实现注入式 `SplitInferenceService`、批准制品离线 `HuggingFaceTokenizer` 和显式研究装配 `InProcessTransport`。本机负责固定模板/128 token限额、前段KV、输出32 token上限与整段文本解码；超时只查询已提交回执，不盲目重发。默认无配置仍拒绝执行，单实例只允许一个活动生成；同步调用间支持协作取消。完整EOS集合读取自已校验的generation配置，不启用其中的随机采样配置。联合回归139项通过，详见[本机用例报告](../../../../docs/superpowers/reports/safe/2026-11-15-local-generation.md)。
+
+目前已有进程内本机/后段生成用例，认证网络服务、产品接口、DP发布与持久预算仍待实现。下表按当前代码状态维护，历史阶段报告单独保留。
+
+同日本机对照实验：Qwen2.5-0.5B、K=2/24、CPU FP32，20条合成输入×3轮，60组生成共1,146个token与完整模型全部一致。本机拆分路径的配对首token/TPOT耗时比中位数为1.24×/1.40×；当前参考实现尚无加速。已输出3组中文300 DPI PNG和矢量PDF，包含延迟分布、组件耗时和激活上传量；配置、原始CSV、统计口径和能力边界见[实验报告与图像](../../../../docs/superpowers/reports/safe/experiments/2026-11-15-local-generation/README.md)。
 
 | 内容 | 当前状态 | 说明 |
 | --- | --- | --- |
-| `encryptionservice.py` | 已存在，属于迁入中的遗留服务 | 提供对称加密、简化同态加密占位和参数扰动；不能据此宣称激活值 DP 或完整端云隐私保证。 |
+| 旧 `encryptionservice.py` | 已删除 | 新拆分推理路径不依赖旧参数扰动或同态加密占位。 |
 | `../contracts/model_partition.py` | 已有合同 | 校验层区间连续、层放置和相邻张量边界；当前仍在核心 `contracts` 路径。 |
 | `../components/model_partition/service.py` | 仅有验证/拒绝 | `execute()` 当前明确抛出 `MODEL_PARTITION_UNAVAILABLE`，没有真实模型执行。 |
 | 七个公开门面、`contracts/`、`ports/` | 已创建轻量入口、初版严格合同和部分 Protocol | 合同只定义一次；执行/事务接口及 wire schema 仍待 P1/P2 实验冻结。 |
 | FP32 codec、形状边界、会话迁移/step/幂等规则、全局 L2 裁剪 | 已实现并有基础测试 | 仅独立基础能力；裁剪不构成 DP，摘要不构成认证。 |
-| 推理服务、隐私发布服务 | 已创建明确拒绝的入口 | 分别抛出 `MODEL_PARTITION_UNAVAILABLE` / `PRIVACY_UNAVAILABLE`；不返回模拟结果。 |
-| 模型、制品、会话/预算存储、认证/HTTP、装配和接入 | 已创建逐文件中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
+| `ContinuationService`、`GreedySampler` | 已接通进程内后段用例 | 仅收激活，返回单token；无状态greedy支持可信EOS集合、有限logits和词表校验，并列取最小索引。 |
+| `SplitInferenceService` | 显式注入后可用，无配置拒绝 | 本机非流式生成、回执身份校验、未知结果拒绝重发、取消与双端清理；尚未开放产品/网络入口。 |
+| `HuggingFaceTokenizer`、`InProcessTransport` | 已有离线适配器与进程内JSON装配 | 完整EOS集合、固定模板；后段装配始终使用同一个suffix实例；循环传输不等于跨网络认证。 |
+| 隐私发布服务 | 仍明确拒绝执行 | 抛出 `PRIVACY_UNAVAILABLE`，裁剪与哈希不能替代激活DP。 |
+| P3 `SessionService` + `MemorySessionStore` | 已连接真实suffix用例并有并发/TTL/幂等/KV生命周期测试 | 位置在会话锁内从存储构造，回执提交后才推进；短时状态不持久化，不保存原始prompt，不等于跨网络会话服务。 |
+| Qwen2 prefix/suffix KV decode与角色制品 | 已实现离线导出、校验、双角色DynamicCache和数值对照 | KV不跨激活边界传输；CPU FP32/eager，尚无跨网络续算或吞吐验收。 |
+| 预算存储、认证/HTTP、装配和接入 | 中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
 
 现有联邦学习和差分隐私代码属于旧的参数聚合域。它们没有接入拆分推理的激活传输链路，不能复用为安全证明、隐私预算记账或 DP-SGD 实现。
 
@@ -57,7 +74,6 @@ safe/
 ├── privacy_ledger.py            # 预算预留/消费/查询公开入口
 ├── session.py                   # 会话生命周期与步骤回执公开入口
 ├── transport.py                 # 远端能力发现、传输和查询公开入口
-├── encryptionservice.py         # 现有遗留入口，迁移后仅转发兼容 API
 │
 ├── contracts/                   # 纯数据与协议，无 IO 和重依赖
 │   ├── base.py                  # 严格不可变合同基类、摘要与标识约束
@@ -161,7 +177,7 @@ safe/
 | `safe.manifest` | `SplitModelManifest`、制品核验服务 | 数据在 `contracts.manifest`，兼容规则在 `domain.compatibility` |
 | `safe.privacy` | `PrivacyProfile`、`PrivacyReceipt`、出站发布服务 | 规则在 `domain.privacy_policy`，发布用例在 `application.privacy` |
 | `safe.privacy_ledger` | 预算预留、已发布消费、余额查询服务 | 规则在 `domain.budget`，用例在 `application.privacy_ledger`，持久化在 `sqlite_budget` |
-| `safe.session` | 会话视图、状态、步骤回执与管理服务 | 状态机在 `domain.session_state`，存储/锁经 port 注入 |
+| `safe.session` | 会话视图、状态、步骤回执与 `SessionService` | 状态机在 `domain.session_state`，存储/锁经 port 注入 |
 | `safe.transport` | 远端 transport 协议、能力/回执 DTO 和稳定错误 | HTTP 实现在 `infrastructure.transport.http_client`；门面不创建客户端 |
 
 表中的服务名称是后续 API 基线；当前门面只导出已经定义的合同、部分端口及明确拒绝的推理/发布服务，不提前导出其余未实现服务。端口目前也只冻结已列出的方法，不代表事务或模型执行签名已完整。`manifest` 的定义只有一份：`inference.py` 从 `contracts.manifest` 重导出，相同类型不能在两个门面分别定义。
@@ -170,7 +186,7 @@ safe/
 
 TODO 编号与配套方案一致：P0 可行性与版本冻结 → P1 合同/协议/认证 → P2 前后段 prefill → P3 逐 token 会话 → P4 隐私/账本/反演评估 → P5 产品接入 → P6 性能/交付。`B1` 表示方向 B 的独立后续设计。文件内编号是该阶段的本文件子任务，不是新的全局阶段。
 
-每个运行骨架写明职责、步骤、失败处理和验收条件；`__all__ = []` 表示当前没有运行 API。依赖声明和错误拒绝入口不是已实现的模型能力。先完成合同/codec 和模型数值对照，再接入会话/网络及隐私链路，不按目录字母顺序实现。
+每个运行骨架写明职责、步骤、失败处理和验收条件；尚未实现的模块使用空导出列表明确拒绝运行。P3 已通过 `ContinuationService` 连接后段事务，并由注入式 `SplitInferenceService` 编排本机生成；认证云端接口仍未接通，进程内闭环不代表网络或隐私能力完成。
 
 当前基础用法（在 `apps/agentOS` 目录、`src` 位于 `PYTHONPATH` 时）：
 
@@ -250,7 +266,7 @@ flowchart TD
 - 配置、manifest、wire protocol、privacy profile 和预算 schema 分别有版本，不能用单一“模块版本”代替兼容检查。
 - 数据目录由 `bootstrap.settings` 注入，默认位于应用数据根的 `safe/`：`artifacts/`、`privacy/budget.sqlite3`；临时会话只在内存。代码目录不存权重、数据库、激活或真实密钥。
 - 新模型新增 `infrastructure/models/<architecture>.py`，新编码新增 `infrastructure/codecs/<format>.py`，新存储新增 `infrastructure/storage/<backend>.py`；由 manifest/capability 白名单明确启用，不按请求动态 import。
-- DP 库是 `infrastructure/privacy` 的可选依赖；Torch/Transformers 是模型后端的可选依赖。已创建 `apps/agentOS/requirements.safe.in`，当前仅固定测试过的轻量合同依赖。`apps/agentOS/requirements.safe.lock` 须在 P0 平台/后端版本确定后实际解析生成并验证全新安装，本轮不创建虚假锁文件。依赖文件不放在 `src/safe` 内。
+- DP库仍为待选的可选依赖；Torch/Transformers是模型角色的可选依赖。`apps/agentOS/requirements.safe.in` 已固定CPU参考依赖，`requirements.safe.lock` 已从实际wheel生成SHA256平台锁并在全新环境验证。仅支持本轮验收的Windows x64/Python3.10；新平台/后端须单独锁定。轻量门面导入仍不要求模型依赖，文件放在应用根而非 `src/safe` 内。
 - CLI 由 `bootstrap.cli` 显式注入制品/推理用例；`interfaces.cli` 只解析参数、调用注入用例和输出报告，不绕过 application 直接操作模型或数据库。配置拒绝任意网络下载地址与可执行模型代码。
 - 批处理、动态切分、跨设备调度、联合训练和权重聚合需要独立能力协议；不能通过任意 `metadata` 或额外 JSON 字段绕开协议演进。
 
@@ -280,7 +296,7 @@ docs/superpowers/reports/safe/           # 阶段报告、测试环境和无用�
 2. 已有 `contracts/model_partition.py` 与 `components/model_partition/service.py` 暂不移动，也不在两个目录复制相同类。`integration/agentos.py` 将其计划转换为 `safe.contracts.manifest` 的分区描述；跨层身份/协议校验由 safe 完成，外部资源放置仍由资源器授权。
 3. 主用例实现统一放进 `safe.application`，模型、HTTP、DP 与存储实现放进 `safe.infrastructure`。原方案中的 `apps/agent/app/split_inference/` 不再作为第二套实现目录。
 4. `apps/agent/app/api/split_inference.py` 只薄封装 `safe.interfaces.local_api`，应用启动点注入本机身份和服务；独立云端由 `safe.bootstrap.cloud` 装配 `safe.interfaces.cloud_api`，不导入整个 Agent 应用。
-5. 现有 `encryptionservice.py` 的迁移独立验收。先保留调用行为和已知局限；将旧实现归入 `infrastructure/legacy/encryption.py` 后根入口仅兼容转发，不能因整理目录改变生产密码学行为。新推理路径禁止依赖旧 fallback。
+5. 旧 `encryptionservice.py` 已删除；保留历史报告中的迁移背景，新推理路径禁止依赖旧fallback。未来任何DP能力都需独立机制、预算和攻击评估验收。
 6. 旧文档中的 `split_inference.py`、扁平实现清单和 `apps/agent/app/split_inference/` 路径以本 README 为准；配套 TODO 方案同步引用本结构，后续不维护两份目录事实。
 
 ### 架构验收条件
@@ -323,7 +339,7 @@ docs/superpowers/reports/safe/           # 阶段报告、测试环境和无用�
 | [`components/model_partition/service.py`](../components/model_partition/service.py) | “未配置执行器就明确拒绝”的失败语义 | 不是拆分推理执行器。 |
 | [`adapters/resource_model_execution.py`](../adapters/resource_model_execution.py) | 已登记 Runtime 的 endpoint 归一化、签名请求和无敏感观测 | 它面向 OpenAI-compatible 文本接口，不能接收 hidden states。 |
 | [`contracts/resource/resource_signing.py`](../contracts/resource/resource_signing.py) | HMAC canonical request 原语 | 仍需为公网会话增加 TLS、时间窗、nonce、撤销和 owner 绑定。 |
-| [`../safe/encryptionservice.py`](encryptionservice.py) | 现有加密/参数扰动迁移位置 | 简化 fallback、固定密钥材料和未经记账的噪声不能作为生产安全方案。 |
+| 旧 `safe/encryptionservice.py`（已删除） | 历史加密/参数扰动入口 | 仅作历史背景；未经记账的噪声不能作为激活DP方案。 |
 | [`docs/superpowers/specs/2026-09-04-edge-cloud-resource-runtime-design.md`](../../../../docs/superpowers/specs/2026-09-04-edge-cloud-resource-runtime-design.md) | 资源和模型分区的历史边界 | 文档确认当前分区执行仍未实现。 |
 
 ## 外部论文与文献
@@ -368,7 +384,7 @@ docs/superpowers/reports/safe/           # 阶段报告、测试环境和无用�
 
 本轮获取并保存了 Transformers `v4.46.3` 的 Qwen2 前向/LM head 短摘录、diffprivlib `0.6.6` 的高斯校准/采样短摘录，以及各自的 Apache-2.0 / MIT 许可证。源码 tag、URL、完整源文件 SHA256、摘录行号和中文复用说明见[资料索引](../../../../docs/superpowers/reports/safe/references/README.md)。研究资料不随包导入，也不是已经接通的模型/DP 实现。
 
-FP32 codec、纯规则和裁剪是本项目独立实现；Qwen runner 和高斯发布器仍为 TODO。不能把“参考过论文”写成“已经复现”，不能把依赖库的保证扩展为本模块完整协议的保证。
+FP32 codec、纯规则和裁剪是本项目独立实现；Qwen runner已实现并有数值对照，高斯发布器仍为TODO。不能把“参考过论文”写成“已经复现”，不能把依赖库的保证扩展为本模块完整协议的保证。
 
 运行本轮验证：
 
@@ -377,7 +393,7 @@ cd E:\Project\Kinlin_AI\apps\agentOS
 python -B -m pytest tests/safe tests/components/test_model_partition.py -q -p no:cacheprovider
 ```
 
-验证覆盖严格合同、FP32 字节/完整性、有限值与形状限额、裁剪、终态/step/幂等、未实现能力的明确拒绝、分层依赖及独立进程轻量导入。真实模型、跨网认证会话、持久账本和隐私质量评估仍待实施。
+验证覆盖严格合同、FP32字节/完整性、有限值与形状限额、裁剪、会话/后段/采样事务、终态/step/幂等、未实现能力的明确拒绝、分层依赖及独立进程轻量导入。模型测试用小型合成权重；真实预训练权重的显式评估另见 `evals/safe/exam/`。跨网认证会话、持久账本和隐私质量评估仍待实施。
 
 完整实施顺序和验收命令见 [2026-11-12 拆分推理 TODO 方案](../../../../docs/superpowers/plans/2026-11-12-split-inference-todo.md)。
 

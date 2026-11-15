@@ -1,0 +1,105 @@
+{
+  "status": "passed",
+  "font": "Microsoft YaHei",
+  "matplotlib": "3.10.7",
+  "report_sha256": "e340687b90bc6fdd775d69b202b19e31e684fe2da94aa7ae600506aa05de9d64",
+  "plotting_script_sha256": "37237ca2a8196cec618b335ff08e4abf9c415dfaf1b3c6b5517a38e5aacf912a",
+  "n_prompts": 20,
+  "repeats": 3,
+  "matched_tokens": 1146,
+  "latency_unit": "one point = one prompt averaged over repeats",
+  "descriptive_intervals": "IQR; no confidence interval",
+  "component_scope": "forward start to token receipt; excludes tokenizer/session-create/final cleanup",
+  "traffic_scope": "step JSON UTF-8 body only; excludes HTTP/TLS/session/response bytes",
+  "case_aggregated_latency": {
+    "full": {
+      "ttft_ms": {
+        "q25": 114.87384166666666,
+        "median": 118.69365,
+        "q75": 121.68724166666667
+      },
+      "tpot_ms": {
+        "q25": 44.07274596153846,
+        "median": 44.715058243727604,
+        "q75": 45.21866344086021
+      },
+      "e2e_ms": {
+        "q25": 540.5647,
+        "median": 813.5629833333334,
+        "q75": 1316.3101833333333
+      }
+    },
+    "split": {
+      "ttft_ms": {
+        "q25": 141.24282499999998,
+        "median": 145.59733333333332,
+        "q75": 149.26175
+      },
+      "tpot_ms": {
+        "q25": 61.68280908333333,
+        "median": 62.43477909090909,
+        "q75": 63.038939087301586
+      },
+      "e2e_ms": {
+        "q25": 748.7082583333333,
+        "median": 1112.1308500000002,
+        "q75": 1816.3913333333333
+      }
+    }
+  },
+  "figures": [
+    {
+      "name": "fig_latency",
+      "caption_zh": "配对延迟。先对每条输入的重复测量取均值，再绘制跨输入分布；灰线连接同一输入。"
+    },
+    {
+      "name": "fig_time_breakdown",
+      "caption_zh": "组件平均时间。从前段执行开始到token回执返回；完整模型基线只含前向与argmax。"
+    },
+    {
+      "name": "fig_activation_traffic",
+      "caption_zh": "激活上传量。原始张量与真实JSON字节数分别计量；累计曲线到EOS或输出上限结束。"
+    }
+  ],
+  "paired_latency_ratio_median": {
+    "ttft_ms": 1.2432168641023722,
+    "tpot_ms": 1.3972069407564753,
+    "e2e_ms": 1.3769169013137237
+  },
+  "component_means_ms": {
+    "prefill": {
+      "full_model_ms": 117.76086499999998,
+      "prefix_ms": 10.440523333333333,
+      "client_codec_ms": 3.3029683333333333,
+      "suffix_ms": 115.16640166666667,
+      "sampling_ms": 12.900176666666669,
+      "protocol_other_ms": 3.9076349999999986
+    },
+    "decode": {
+      "full_model_ms": 44.571117127071815,
+      "prefix_ms": 3.6674226519337014,
+      "client_codec_ms": 0.14323729281767955,
+      "suffix_ms": 44.82336712707182,
+      "sampling_ms": 12.740652394106814,
+      "protocol_other_ms": 0.9676744935543281
+    }
+  },
+  "upload_bytes_median": {
+    "prefill": {
+      "activation_raw_bytes": 129024.0,
+      "request_json_bytes": 172475.0
+    },
+    "decode": {
+      "activation_raw_bytes": 3584.0,
+      "request_json_bytes": 5220.0
+    }
+  },
+  "file_sha256": {
+    "fig_activation_traffic.pdf": "0778c3a918e965872a6c015c5c441ef100c87bd4b853d7cfd4a6ab885dff81fa",
+    "fig_activation_traffic.png": "e828759d024c92293cfd5d6720328f1712ca7621bf9e032d2659198ef40373ef",
+    "fig_latency.pdf": "714d7bb640a57c53eaf422fefc3eb8f38362b559c504ca89a8160aa33e535ba9",
+    "fig_latency.png": "168cb6dee4492e5a186acb812b2e307761ea4567872c93b71274c83efbbd8fad",
+    "fig_time_breakdown.pdf": "ddecfb0a1d55480b8066a114832417ed1bf9a6881cd70f95842926da9dfb5471",
+    "fig_time_breakdown.png": "139a0bd30571d206d75457e23d994d4204a01d9add565b442077d2e8643ce196"
+  }
+}

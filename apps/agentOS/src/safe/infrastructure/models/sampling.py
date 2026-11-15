@@ -1,15 +1,33 @@
-"""suffix 端采样实现归属；首版仅 greedy。
+"""无随机状态的greedy采样：并列最大值取最小token索引。
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
-
-TODO(P3-1)：greedy 使用固定 logits 语义，核验词表范围、NaN/Inf 和 EOS token 集。
-TODO(P3-2)：后续随机采样使用每会话独立 RNG，seed/状态不跨用户共享。
-TODO(P3-3)：重复请求返回已存token；不能因网络重试再采样或推进 RNG。
-TODO(P3-4)：冻结 ties、temperature、top-k/top-p 的协议版本后再扩展合同。
-
-验收：相同回执的token恒定；最大输出32且总context≤160；无效logits导致失败。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
+词表大小和EOS集合由可信模型配置注入，不能从请求体覆盖。
+TODO(P3)：批准generation配置的加载由装配层实现；本组件不读取文件或下载模型。
+TODO(P6)：随机采样须另行冻结RNG/temperature/top-k/top-p规则，不改变当前greedy语义。
 """
 
-__all__: list[str] = []
+import math
+
+from safe.contracts.errors import ErrorCode, SafeError
+
+
+class GreedySampler:
+    def __init__(self, *, vocab_size: int, eos_token_ids: frozenset[int] = frozenset()):
+        if type(vocab_size) is not int or vocab_size <= 0:
+            raise ValueError("词表大小必须是正整数")
+        if not isinstance(eos_token_ids, frozenset) or any(
+            type(token) is not int or not 0 <= token < vocab_size for token in eos_token_ids
+        ):
+            raise ValueError("EOS必须是词表内整数的不可变集合")
+        self._vocab_size = vocab_size
+        self._eos_token_ids = eos_token_ids
+
+    def sample(self, logits: tuple[float, ...]) -> tuple[int, bool]:
+        if not isinstance(logits, tuple) or len(logits) != self._vocab_size or any(
+            type(value) is not float or not math.isfinite(value) for value in logits
+        ):
+            raise SafeError(ErrorCode.MODEL_OUTPUT_INVALID)
+        token = max(range(self._vocab_size), key=logits.__getitem__)
+        return token, token in self._eos_token_ids
+
+
+__all__ = ["GreedySampler"]

@@ -1,0 +1,4 @@
+# 实验数据按原始字节校验SHA256；禁止Git跨平台换行转换破坏证据。
+# 原始Windows CRLF属于文件格式；仍检查真实行尾空格和其他默认空白错误。
+*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol
+*.json -text whitespace=trailing-space,space-before-tab,cr-at-eol

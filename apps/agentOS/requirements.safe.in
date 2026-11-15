@@ -1,9 +1,15 @@
-# safe轻量合同/骨架依赖；本轮在Python3.10、Pydantic2.12.5验证。
-# 本清单不是已完成模型/DP运行时的依赖锁；不会安装Torch/Transformers等重依赖。
+# -*- coding: utf-8 -*-
+# safe CPU参考环境：Windows x64 / CPython3.10，2026-11-14已实际创建独立venv。
+# Torch CPU从官方wheel源获取；不要装进默认Agent运行环境。
+--extra-index-url https://download.pytorch.org/whl/cpu
 pydantic==2.12.5
+torch==2.11.0+cpu
+transformers==4.46.3
+safetensors==0.4.5
+psutil==6.1.1
+# 当前阶段的离线回归测试工具。
+pytest==8.3.5
 
-# TODO(P0)：选择Python/平台/CPU参考矩阵，固定Torch/Transformers/Safetensors版本。
 # TODO(P1/P5)：HTTP角色启用前固定FastAPI/HTTPX及传递依赖。
 # TODO(P4)：正式选择机制/会计实现后固定可选DP依赖；不得启用旧fallback。
-# TODO(P0)：在隔离环境用pip-tools/uv生成带哈希requirements.safe.lock，并验证全新安装。
-# 当前不创建伪造或空的.lock；研究摘录的tag不等于运行时锁定版本。
+# 平台锁由实际下载wheel逐个SHA256生成；其他平台必须重新解析并独立验收。

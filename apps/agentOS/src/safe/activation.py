@@ -4,6 +4,8 @@ TODO(P0)：新增实现完成验收后再扩展 __all__；导入不得创建外�
 """
 
 from safe.contracts.activation import ActivationEnvelope
+from safe.contracts.session import ActivationContext
+from safe.application.activation import ActivationService
 from safe.ports.activation_codec import ActivationCodec
 
-__all__ = ['ActivationEnvelope', 'ActivationCodec']
+__all__ = ['ActivationEnvelope', 'ActivationCodec', 'ActivationContext', 'ActivationService']

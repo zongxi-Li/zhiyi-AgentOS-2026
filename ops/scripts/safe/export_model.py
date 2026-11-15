@@ -1,10 +1,13 @@
-"""显式离线导出角色制品工具预留，当前没有可执行运行能力。
+"""显式离线角色导出入口；真实实现与装配统一归safe，不维护第二套模型代码。"""
 
-TODO：调用safe.bootstrap.cli装配导出用例，不直接import模型或复制导出逻辑。
-TODO：校验批准源目录、固定revision、许可证和目标空目录；不自动下载。
-TODO：验证重载与哈希后原子发布；失败清理临时文件。
-验收：没有模型/端口时不生成成功结果，不触发下载、连接或写入。
-"""
+from pathlib import Path
+import sys
 
 if __name__ == "__main__":
-    raise SystemExit("工具尚未实现，请先完成 safe README 对应阶段；未执行任何任务。")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "apps/agentOS/src"))
+    from safe.bootstrap.cli import main
+
+    raise SystemExit(main())
