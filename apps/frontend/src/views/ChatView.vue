@@ -178,6 +178,20 @@
         </div>
 
         <div ref="composerRef" class="composer" :style="{ bottom: composerDockOffset }">
+          <Transition name="scroll-bottom-pop">
+            <button
+              v-if="showScrollToBottom"
+              class="scroll-to-bottom"
+              data-testid="chat-scroll-to-bottom"
+              type="button"
+              aria-label="回到底部"
+              :title="pendingMessageCount > 0 ? `回到底部（${pendingMessageCount} 条新消息）` : '回到底部'"
+              @click="handleScrollToBottom"
+            >
+              <el-icon aria-hidden="true"><ArrowDown /></el-icon>
+              <span v-if="pendingMessageCount > 0" class="scroll-to-bottom__badge" aria-hidden="true">{{ pendingMessageCount }}</span>
+            </button>
+          </Transition>
           <div v-if="isSubmittingWorkflow || activeWorkflowRunId" class="chat-workflow-progress">
             <WorkflowProgressBar
               :progress="lifecycle.progress"
@@ -472,7 +486,7 @@
                   :aria-label="contextUsage.label" :aria-valuenow="contextUsage.percent" :aria-valuemin="0" :aria-valuemax="100">
                   <span :style="{ width: `${contextUsage.percent}%` }"></span>
                 </div>
-                <p v-if="contextUsage.historicalNote || contextUsage.confirmedNote" class="chat-info-usage__measurement-note">{{ contextUsage.historicalNote || contextUsage.confirmedNote }}</p>
+                <p v-if="contextUsage.historicalNote" class="chat-info-usage__measurement-note">{{ contextUsage.historicalNote }}</p>
               </section>
 
               <div class="chat-info-usage__grid">
@@ -484,7 +498,6 @@
                 </section>
               </div>
               <p class="chat-info-usage__note" role="status">{{ cacheMetric.detail }}</p>
-              <p v-if="requestSizeLabel" class="chat-info-usage__note">最近请求体 {{ requestSizeLabel }} · 含历史及工具信息，不代表 Token 数</p>
               <section v-if="workingSetUsage" class="chat-info-usage__context" aria-label="工作上下文预算">
                 <div class="chat-info-usage__heading"><span>最近请求工作集</span><span class="chat-info-usage__tag">{{ workingSetUsage.method }}</span></div>
                 <div class="chat-info-usage__reading"><strong>{{ workingSetUsage.used }}</strong><span>/ {{ workingSetUsage.trigger }} 软触发预算</span></div>
@@ -569,6 +582,7 @@ import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  ArrowDown,
   ArrowDownBold,
   ArrowUp,
   Clock,
@@ -1326,8 +1340,6 @@ const contextUsage = computed(() => {
   const historicalNote = !state && measured && replies[0] !== measured
     ? `上次已测 ${formatContextTokens((measured.lastInputTokens ?? measured.inputTokens)! + (measured.lastOutputTokens ?? measured.outputTokens ?? 0))} Token（历史值）。最近一轮未返回用量，当前占用未知。` : ''
   const nextEstimated = !state && typeof chatStore.nextContextTokens === 'number'
-  const confirmedNote = state && state.measurement !== 'provider' && typeof state.confirmedTokens === 'number'
-    ? `最近实测 ${formatContextTokens(state.confirmedTokens)} Token；${state.usedTokens === null ? '当前用量尚未确认。' : '当前显示实测基线加新增内容的估算上界。'}` : ''
   const estimated = state?.measurement === 'upper-bound' || nextEstimated
   const used = state ? state.usedTokens : nextEstimated ? chatStore.nextContextTokens
     : historicalNote || chatStore.contextMeasurement === 'protocol-utf8-upper-bound' ? null : chatStore.contextUsedTokens
@@ -1338,7 +1350,7 @@ const contextUsage = computed(() => {
   if (typeof used !== 'number' || typeof windowTokens !== 'number' || windowTokens <= 0) {
     const knownWindow = typeof windowTokens === 'number' && windowTokens > 0
     return { visible: knownWindow, hasUsage: false, percent: 0, level: 'normal', usedLabel: '待统计',
-      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label, historicalNote, confirmedNote }
+      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label, historicalNote }
   }
   const ratio = Math.min(1, used / windowTokens)
   const percent = Math.round(ratio * 100)
@@ -1349,7 +1361,6 @@ const contextUsage = computed(() => {
     estimated,
     label,
     historicalNote: nextEstimated ? '' : historicalNote,
-    confirmedNote,
     percent,
     level,
     usedLabel: formatContextTokens(used),
@@ -1372,11 +1383,6 @@ const workingSetUsage = computed(() => {
       : context.tokenMethod?.includes('utf8-upper-bound') ? 'UTF-8 保守上界' : 'Tokenizer 估算',
     over: actual ? usedTokens > triggerTokens : context.softOverBudget, failed: context.failed,
     ratio: triggerTokens > 0 ? Math.round((usedTokens / triggerTokens) * 100) : 0}
-})
-const requestSizeLabel = computed(() => {
-  const message = latestAssistantMessage.value
-  const bytes = message?.requestBodyBytes ?? (message?.contextMeasurement === 'protocol-utf8-upper-bound' ? message.contextInputTokens : undefined)
-  return typeof bytes === 'number' ? `${(bytes / 1024).toFixed(1)} KiB` : ''
 })
 const responseTimingRows = computed(() => {
   const message = latestAssistantMessage.value
@@ -3914,6 +3920,66 @@ const handleHeroLogoPointerUp = () => {
   padding: 8px 14px 12px;
   background: transparent;
   will-change: transform;
+}
+
+/* 回到底部按钮：锚在 composer 顶边上方右侧，composer 高度变化时自动跟随。 */
+.scroll-to-bottom {
+  position: absolute;
+  top: -48px;
+  right: 26px;
+  z-index: 6;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  backdrop-filter: blur(10px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out), background-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+
+.scroll-to-bottom:hover {
+  color: var(--primary-color);
+  border-color: color-mix(in srgb, var(--primary-color) 44%, var(--border-light));
+  transform: translateY(2px);
+}
+
+.scroll-to-bottom .el-icon {
+  font-size: 17px;
+}
+
+.scroll-to-bottom__badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 18px;
+  text-align: center;
+}
+
+.scroll-bottom-pop-enter-active,
+.scroll-bottom-pop-leave-active {
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out);
+}
+
+.scroll-bottom-pop-enter-from,
+.scroll-bottom-pop-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(.92);
 }
 
 .chat-workflow-progress,

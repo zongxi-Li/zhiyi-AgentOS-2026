@@ -62,7 +62,11 @@ describe('Copilot task timeline', () => {
     const traces: RuntimeTraceObservation[] = [
       { kind: 'stage_completed', stage: 'decompose' },
       { kind: 'stage_completed', stage: 'repair' },
-      { kind: 'failed', stage: 'repair', errorCode: 'TASK_PLAN_CONTRACT_FAILED', reasoning_content: 'PRIVATE' },
+      { kind: 'failed', stage: 'repair', errorCode: 'TASK_PLAN_CONTRACT_FAILED', reasoning_content: 'PRIVATE',
+        validationFailures: [
+          { stage: 'decompose', code: 'business_objective_required', fieldPath: ['tasks', 0, 'objective'], message: 'PRIVATE' },
+          { stage: 'repair', code: 'acceptance_criteria_required', fieldPath: ['tasks', 0, 'acceptanceCriteria'] },
+        ] },
     ].map((payload, index) => ({ eventId: `record-${index}`, runId: 'run', stepId: null, eventType: 'task_status_changed',
       observation: null, timestamp: null, durationMs: null, status: null, source: 'trace', payload: { planningProgress: true, ...payload } }))
     const other = { ...traces[0], eventId: 'other', runId: 'other-run', payload: { planningProgress: true, kind: 'plan_parsed', taskCount: 999 } }
@@ -74,6 +78,8 @@ describe('Copilot task timeline', () => {
       '本次规划未完成，暂时无法进入执行。',
     ])
     expect(w.text()).toContain('TASK_PLAN_CONTRACT_FAILED')
+    expect(w.get('.run-timeline__failure').text()).toContain('首次生成：tasks[0].objective · 缺少明确的任务目标')
+    expect(w.get('.run-timeline__failure').text()).toContain('修正后：tasks[0].acceptanceCriteria · 验收条件为空')
     expect(w.text()).not.toContain('PRIVATE')
     expect(w.text()).not.toContain('999')
     expect(acquireRunRuntimeStore).toHaveBeenCalledWith('run')

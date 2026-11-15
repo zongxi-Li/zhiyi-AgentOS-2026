@@ -559,6 +559,37 @@ describe('ChatView ACG progress integration', () => {
     wrapper.unmount()
   })
 
+  it('shows the scroll-to-bottom button when scrolled away and jumps to the latest message on click', async () => {
+    chatStoreMock.messages = [{ id: 'm-1', role: 'assistant', content: '第一条回复' }]
+    const { wrapper } = await mountPage('?workspace=chat&contextId=conversation_1')
+    const feed = wrapper.get('.messages')
+    const element = feed.element as HTMLElement
+    const defineMetric = (key: string, value: number) => Object.defineProperty(element, key, { configurable: true, value })
+    defineMetric('scrollHeight', 3000)
+    defineMetric('clientHeight', 600)
+
+    // 初始贴底：按钮不出现
+    defineMetric('scrollTop', 2000)
+    await feed.trigger('scroll')
+    expect(wrapper.find('[data-testid="chat-scroll-to-bottom"]').exists()).toBe(false)
+
+    // 主动上滚脱离底部：按钮出现，期间到达的新消息计入未读徽标
+    defineMetric('scrollTop', 1500)
+    await feed.trigger('scroll')
+    expect(wrapper.find('[data-testid="chat-scroll-to-bottom"]').exists()).toBe(true)
+
+    chatStoreMock.messages.push({ id: 'm-2', role: 'assistant', content: '第二条回复' })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="chat-scroll-to-bottom"]').text()).toContain('1')
+
+    // 点击回底：平滑滚动到最新消息
+    await wrapper.get('[data-testid="chat-scroll-to-bottom"]').trigger('click')
+    await new Promise(resolve => requestAnimationFrame(() => resolve(null)))
+    await flushPromises()
+    expect(element.scrollTo).toHaveBeenLastCalledWith({ top: 3000, behavior: 'smooth' })
+    wrapper.unmount()
+  })
+
   it('shows the next input estimate separately from accumulated tool-loop usage', async () => {
     chatStoreMock.contextUsedTokens = 93146
     chatStoreMock.nextContextTokens = 11381
@@ -591,7 +622,6 @@ describe('ChatView ACG progress integration', () => {
     chatStoreMock.messages = [{id:'old',role:'assistant',content:'answer',contextMeasurement:'protocol-utf8-upper-bound',contextInputTokens:836280}]
     const {wrapper} = await mountPage('?workspace=chat')
     expect(wrapper.get('[aria-label="上下文用量"]').text()).not.toContain('80%')
-    expect(wrapper.text()).toContain('816.7 KiB')
     wrapper.unmount()
   })
   it('renders the server watermark without inferring it from the latest failed message', async () => {

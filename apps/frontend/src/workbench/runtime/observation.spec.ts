@@ -444,6 +444,31 @@ describe('projectModelOutput', () => {
     expect(items[items.length - 1].status).toBe('success')
   })
 
+  it('explains initial and repaired validation failures using only recorded rules and paths', () => {
+    const items = projectModelOutput([traceEvent('failed', {
+      planningProgress: true, category: 'planner', kind: 'failed', stage: 'repair',
+      errorCode: 'TASK_PLAN_CONTRACT_FAILED',
+      validationFailures: [
+        { stage: 'decompose', code: 'business_objective_required', fieldPath: ['tasks', 0, 'objective'], message: 'PRIVATE_BODY' },
+        { stage: 'repair', code: 'acceptance_criteria_required', fieldPath: ['tasks', 0, 'acceptanceCriteria'] },
+      ],
+      reasoning_content: 'PRIVATE_REASONING'
+    })])
+    expect(items[0].detail).toBe('错误码 TASK_PLAN_CONTRACT_FAILED；首次生成：tasks[0].objective · 缺少明确的任务目标；修正后：tasks[0].acceptanceCriteria · 验收条件为空')
+    expect(JSON.stringify(items)).not.toContain('PRIVATE')
+  })
+
+  it('distinguishes the second and third correction from transport attempts', () => {
+    const items = projectModelOutput([traceEvent('failed', {
+      planningProgress: true, kind: 'failed', errorCode: 'TASK_PLAN_CONTRACT_FAILED',
+      validationFailures: [2, 3].map(round => ({ stage: 'repair', callKey: `repair:${round}`,
+        code: 'acceptance_criteria_required', fieldPath: ['tasks', 0, 'acceptanceCriteria'] }))
+    })])
+    expect(items[0].detail).toContain('第2次修正后：tasks[0].acceptanceCriteria · 验收条件为空')
+    expect(items[0].detail).toContain('第3次修正后：tasks[0].acceptanceCriteria · 验收条件为空')
+    expect(items[0].attempt).toBe(1)
+  })
+
   it('never invents numbers when counts are missing and ignores foreign events', () => {
     const items = projectModelOutput([
       traceEvent('plain', { eventType: 'other', observation: 'not a planning event' }),

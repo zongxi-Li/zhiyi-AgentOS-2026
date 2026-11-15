@@ -475,13 +475,36 @@ const modelOutputStatusState = (kind: string): ModelOutputItem['status'] => (
         : 'success'
 )
 
+// Read structured diagnostics only; exception bodies are never display text.
+const validationFailureDetails = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return []
+  const rules: Record<string, string> = {
+    tasks_required: '缺少任务步骤', task_object_required: '任务必须是对象',
+    business_objective_required: '缺少明确的任务目标', acceptance_criteria_required: '验收条件为空',
+    unknown_capability: '能力不在可用目录中', unique_task_key: '任务标识为空或重复',
+    task_key_required: '缺少任务标识', frozen_task_count: '改变了已确定的任务数量',
+    initial_dag_required: '初始规划不支持循环控制', registered_material_required: '引用了未注册的输入材料',
+    source_coverage_required: '未完整覆盖任务约束或交付要求', unclassified_validation_error: '校验未通过',
+    source_assignments_required: '缺少来源引用分配', source_assignment_object_required: '来源引用分配必须是对象',
+    source_assignment_invalid: '来源引用或目标任务不存在', source_assignment_coverage: '来源引用分配有遗漏或重复',
+    constraint_array_required: '任务约束必须是数组', constraint_item_invalid: '任务约束格式无效',
+    topology_patch_invalid: '依赖关系补丁格式或引用无效', relation_object_required: '依赖关系结果必须是对象',
+  }
+  return value.slice(0, 32).map(asRecord).map(failure => {
+    const code = stringOrNull(failure.code)
+    if (!code) return ''
+    const repairRound = stringOrNull(failure.callKey)?.match(/:(\d+)$/)?.[1]
+    const stage = failure.stage === 'decompose' ? '首次生成' : failure.stage === 'repair' ? repairRound ? `第${repairRound}次修正后` : '修正后' : stringOrNull(failure.callKey) || stringOrNull(failure.stage) || '规划'
+    const path = Array.isArray(failure.fieldPath) ? failure.fieldPath.slice(0, 12)
+      .filter((part: unknown) => typeof part === 'string' || typeof part === 'number')
+      .map((part: string | number, index: number) => typeof part === 'number' ? `[${part}]` : `${index ? '.' : ''}${part}`).join('') : ''
+    return `${stage}：${path || '计划整体'} · ${rules[code] || code}`
+  }).filter(Boolean)
+}
+
 /**
- * Project planner Trace events into Model Output items.
- *
- * Every title must be traceable to one Runtime Event: kind-driven facts first
- * (new category="planner" payloads), engineering-stage wording as the legacy
- * fallback. A retried stage replaces its still-running start instead of
- * stacking a duplicate row; no timer or stage guesswork ever runs here.
+ * Project recorded planner facts into Model Output items. Retried starts replace
+ * their running predecessor; no timer or stage guesswork runs here.
  */
 export const projectModelOutput = (traces: RuntimeTraceObservation[]): ModelOutputItem[] => {
   const items: ModelOutputItem[] = []
@@ -502,7 +525,7 @@ export const projectModelOutput = (traces: RuntimeTraceObservation[]): ModelOutp
       stage,
       status: modelOutputStatusState(kind),
       title: modelOutputTitle(kind, stage, payload),
-      detail: errorCode ? `错误码 ${errorCode}` : null,
+      detail: [errorCode ? `错误码 ${errorCode}` : '', ...validationFailureDetails(payload.validationFailures)].filter(Boolean).join('；') || null,
       attempt: scalarCount(payload.attempt) ?? 1,
       retryCount: scalarCount(payload.retryCount) ?? 0,
       metrics: {
