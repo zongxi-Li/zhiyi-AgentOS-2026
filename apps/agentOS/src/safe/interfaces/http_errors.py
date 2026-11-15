@@ -1,15 +1,20 @@
-"""唯一的错误码到HTTP状态映射归属；尚未冻结映射。
+"""HTTP 只返回稳定码，不回显输入、凭据、内部异常或 traceback。"""
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
+from safe.contracts.errors import ErrorCode
 
-TODO(P1-1)：固定400格式、401认证、403权限、409状态/幂等、413载荷、429配额、503不可用。
-TODO(P1-2)：区分请求格式错误和不可用能力；错误体只包含稳定码与批准关联ID。
-TODO(P1-3)：未知异常对外使用固定内部错误，不输出traceback或原始Pydantic输入值。
-TODO(P1-4)：错误响应不泄露其他owner的session是否存在，不建议危险的自动重试。
-
-验收：所有ErrorCode有唯一映射，敏感标记不出现在错误body或日志。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
-"""
-
-__all__: list[str] = []
+HTTP_STATUS = {
+    ErrorCode.MODEL_PARTITION_UNAVAILABLE: 503,
+    ErrorCode.MODEL_OUTPUT_INVALID: 503,
+    ErrorCode.INFERENCE_INVALID: 400,
+    ErrorCode.ACTIVATION_INVALID: 400,
+    ErrorCode.MANIFEST_INCOMPATIBLE: 409,
+    ErrorCode.STEP_OUT_OF_ORDER: 409,
+    ErrorCode.SESSION_INVALID: 404,
+    ErrorCode.IDEMPOTENCY_CONFLICT: 409,
+    ErrorCode.PRIVACY_UNAVAILABLE: 503,
+    ErrorCode.BUDGET_EXHAUSTED: 429,
+    ErrorCode.AUTHENTICATION_FAILED: 401,
+    ErrorCode.TRANSPORT_UNAVAILABLE: 503,
+    ErrorCode.REQUEST_INVALID: 400,
+    ErrorCode.PAYLOAD_TOO_LARGE: 413,
+}

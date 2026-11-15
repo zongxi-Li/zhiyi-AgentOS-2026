@@ -22,6 +22,11 @@ class SessionStatus(str, Enum):
     EXPIRED = "expired"
 
 
+class CreateSessionRequest(SafeContract):
+    """只选择批准制品；owner、凭据和模型路径不允许由正文指定。"""
+    manifest_digest: Digest
+
+
 class SessionView(SafeContract):
     session_id: Identifier
     manifest_digest: Digest

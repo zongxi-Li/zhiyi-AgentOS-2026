@@ -4,13 +4,15 @@
 每个会话使用独立的可重入锁；执行回调在锁内运行，保证同一 request_id 只会
 执行一次。生产装配仍需把 runner、认证、资源上限和生命周期清理器注入更高层。
 
-TODO(P3-1)：增加会话总数、并发执行数和激活内存配额；已有每会话32步/160位置上限。
+已实现：会话总记录/owner活跃会话限额；绝对TTL后显式purge回收记录容量。
+TODO(P3-1)：按模型实测增加激活内存配额；HTTP装配限制并发，每会话32步/160位置。
 已实现：回执发布失败或同步执行取消进入FAILED；绝对TTL在前向返回后复核；
 执行中同线程查询不释放KV；释放失败可重试且不阻断其他会话的清理。
 已实现：execute_with_context在会话锁内提供存储推进的位置和KV，供ContinuationService续算。
-TODO(P3-2)：在认证传输层装配同一个suffix runner；GPU任务须由runner等待或隔离。
+已实现：认证HTTP工厂在会话存储与续算用例中装配同一个suffix runner。
+TODO(P3-2)：GPU任务须由runner等待或隔离，不能将HTTP取消视为强制停止计算。
 TODO(P3-3)：按容量测量决定是否将长时间runner改为占位/执行/提交事务；保留同一请求只推进一次。
-TODO(P3-4)：增加显式后台清理生命周期和重启隔离域；当前进程重启即全部失效。
+已实现：HTTP工厂周期清理/停机close_all；重启即全部会话失效，不恢复KV。
 """
 
 from __future__ import annotations
@@ -75,6 +77,8 @@ class MemorySessionStore:
         idle_ttl: float = 60.0,
         absolute_ttl: float = 300.0,
         runner: ModelRunner | None = None,
+        max_sessions: int = 1024,
+        max_active_per_owner: int = 128,
     ) -> None:
         if type(idle_ttl) is not float or not math.isfinite(idle_ttl) or idle_ttl <= 0:
             raise ValueError("idle_ttl必须是正浮点数")
@@ -82,10 +86,14 @@ class MemorySessionStore:
             raise ValueError("absolute_ttl必须是正浮点数")
         if idle_ttl > absolute_ttl:
             raise ValueError("idle_ttl不能大于absolute_ttl")
+        if any(type(value) is not int or value < 1 for value in (max_sessions, max_active_per_owner)):
+            raise ValueError("会话容量必须为正整数")
         self._clock = clock or _SystemClock()
         self._idle_ttl = idle_ttl
         self._absolute_ttl = absolute_ttl
         self._runner = runner
+        self._max_sessions = max_sessions
+        self._max_active_per_owner = max_active_per_owner
         self._sessions: dict[str, _SessionRecord] = {}
         self._sessions_lock = threading.RLock()
 
@@ -98,6 +106,11 @@ class MemorySessionStore:
         with self._sessions_lock:
             if identifier in self._sessions:
                 raise SafeError(ErrorCode.SESSION_INVALID)
+            # 终态也占用总记录容量，以保留幂等回执；超过保留期后显式 purge。
+            active = sum(record.owner_id == owner_id and record.status in (SessionStatus.CREATED, SessionStatus.ACTIVE)
+                         for record in self._sessions.values())
+            if len(self._sessions) >= self._max_sessions or active >= self._max_active_per_owner:
+                raise SafeError(ErrorCode.TRANSPORT_UNAVAILABLE)
             # 先创建KV，再发布可见会话；创建失败不会留下半初始化状态。
             handle = self._runner.create_kv(identifier) if self._runner else None
             now = self._clock.monotonic()
@@ -258,6 +271,44 @@ class MemorySessionStore:
         if first_error is not None:
             raise first_error
         return count
+
+    def purge_expired(self) -> int:
+        """释放到期 KV 后清理超过绝对寿命的终态记录；保留期内不驱逐回执。"""
+        self.cleanup_expired()
+        removed = 0
+        with self._sessions_lock:
+            for key, record in tuple(self._sessions.items()):
+                # 非阻塞取得记录锁，避免全局锁与正在执行的回调形成锁顺序环。
+                if not record.lock.acquire(blocking=False):
+                    continue
+                try:
+                    if (not record.executing and self._clock.monotonic() >= record.absolute_deadline
+                            and record.status in (SessionStatus.CLOSED, SessionStatus.FAILED, SessionStatus.EXPIRED)
+                            and (record.kv_handle is None or record.kv_released)):
+                        del self._sessions[key]
+                        removed += 1
+                finally:
+                    record.lock.release()
+        return removed
+
+    def close_all(self) -> None:
+        """停止接单后调用；等待同步执行结束，再尽力回收每个会话的 KV。"""
+        with self._sessions_lock:
+            records = tuple(self._sessions.values())
+        first_error = None
+        for record in records:
+            with record.lock:
+                try:
+                    # RLock 允许同线程 runner 回调重入；不得将重入视为执行已结束。
+                    if record.executing:
+                        raise SafeError(ErrorCode.SESSION_INVALID)
+                    if record.status in (SessionStatus.CREATED, SessionStatus.ACTIVE):
+                        record.status = transition(record.status, SessionStatus.CLOSED)
+                    self._release_locked(record)
+                except Exception as exc:
+                    first_error = first_error or exc
+        if first_error is not None:
+            raise first_error
 
     def _owned(self, owner_id: str, session_id: str) -> _SessionRecord:
         self._require_identity(owner_id)

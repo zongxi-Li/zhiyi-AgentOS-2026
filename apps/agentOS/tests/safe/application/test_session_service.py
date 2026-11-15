@@ -73,6 +73,53 @@ def service(clock: ManualClock | None = None, runner: FakeRunner | None = None) 
     return SessionService(store)
 
 
+def test_reentrant_shutdown_does_not_release_executing_kv():
+    runner = FakeRunner()
+    store = MemorySessionStore(runner=runner)
+    store.create("owner-1", "a" * 64, session_id="session-1")
+    store.create("owner-2", "a" * 64, session_id="other")
+
+    def forward(value):
+        with pytest.raises(SafeError, match="SESSION_INVALID"):
+            store.close_all()
+        assert runner.released == [KVHandle("kv-other")]
+        return 9, False
+
+    assert store.execute("owner-1", request(), forward).token_id == 9
+    assert store.view("owner-1", "session-1").status is SessionStatus.ACTIVE
+    store.close_all()
+    assert runner.released == [KVHandle("kv-other"), KVHandle("kv-session-1")]
+
+
+def test_bounded_store_refuses_new_kv_and_reclaims_only_after_absolute_retention():
+    clock, runner = ManualClock(), FakeRunner()
+    store = MemorySessionStore(clock=clock, runner=runner, max_sessions=2, max_active_per_owner=1)
+    first = store.create("owner-1", "a" * 64, session_id="first")
+    with pytest.raises(SafeError, match="TRANSPORT_UNAVAILABLE"):
+        store.create("owner-1", "a" * 64, session_id="blocked")
+    assert runner.created == ["first"]
+    store.close("owner-1", first.session_id)
+    store.create("owner-1", "a" * 64, session_id="second")
+    with pytest.raises(SafeError, match="TRANSPORT_UNAVAILABLE"):
+        store.create("owner-2", "a" * 64, session_id="third")
+    assert store.purge_expired() == 0
+    assert store.view("owner-1", first.session_id).status is SessionStatus.CLOSED
+    clock.advance(300.0)
+    assert store.purge_expired() == 2
+    with pytest.raises(SafeError, match="SESSION_INVALID"):
+        store.view("owner-1", first.session_id)
+    store.create("owner-2", "a" * 64, session_id="third")
+    store.close_all()
+    assert len(runner.created) == len(runner.released) == 3
+
+
+@pytest.mark.parametrize("options", [{"max_sessions": 0}, {"max_sessions": True},
+                                      {"max_active_per_owner": 0}, {"max_active_per_owner": True}])
+def test_invalid_session_capacity_is_refused(options):
+    with pytest.raises(ValueError):
+        MemorySessionStore(**options)
+
+
 def test_create_binds_owner_and_manifest_without_raw_prompt() -> None:
     safe = service()
     view = safe.create("owner-1", "a" * 64, session_id="session-1")
