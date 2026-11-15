@@ -46,7 +46,7 @@ from .algorithms import (
 )
 from contracts.artifacts import canonicalize_final_synthesis_nodes
 from .topology import EdgeOrigin, validate_task_plan_for_execution
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 
 
 CapabilityProfile = Literal["auto", "standard", "full"]

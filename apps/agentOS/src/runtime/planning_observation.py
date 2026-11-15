@@ -9,7 +9,7 @@ from contracts.resource import ExecutionRequirement
 from contracts.workflow import StepStatus, TraceEventType
 from contracts.task_acceptance import frozen_task_acceptance
 from runtime.ports import CollaboratorAccess
-from contracts.mission_semantic import run_intent_basis
+from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
 
 
 class RuntimePlanningObservationBuilder(CollaboratorAccess):

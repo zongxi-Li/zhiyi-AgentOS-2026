@@ -11,7 +11,7 @@ from time import monotonic
 from contracts.htn import (HTNCondition, HTNExpansionProposal, HTNMethod,
                            HTNMethodCandidate, HTNMethodCatalogProjection, HTNMethodSelection,
                            HTNSubtask)
-from contracts.mission_semantic import MissionIntentBasis
+from apps.agentOS.src.components.mission.mission_semantic import MissionIntentBasis
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.runtime_planning import RuntimePlanningObservation
 from .topology import EdgeOrigin, validate_task_plan_for_execution

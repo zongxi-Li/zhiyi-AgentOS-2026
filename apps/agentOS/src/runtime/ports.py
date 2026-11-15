@@ -21,7 +21,7 @@ from components.auditor.decision_store import DecisionStore
 from components.auditor.governance.trace import TraceStore
 from components.communicator import SQLiteReliableCommunicationStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
-from components.content import ContentManifestStore
+from apps.agentOS.src.components.environment.content import ContentManifestStore
 from components.executor import ExecutionValueStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.resource.application.resource_plane import ResourcePlane

@@ -11,7 +11,7 @@ from components.planner.planning_commit import PlanningCommitService
 from components.planner.service import apply_task_plan_patch
 from components.planner.task_decomposer import TaskDecompositionError, planning_validation_failures
 from components.planner.topology import EdgeOrigin, TopologyCompileError, validate_task_plan_for_execution
-from contracts.mission_semantic import run_intent_basis
+from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
 from contracts.planning import TaskPlan, TaskPlanPatch
 from contracts import stable_checksum
 from contracts.compiled_acg import load_compiled_acg_package

@@ -18,10 +18,10 @@ from service.agents import AgentRegistry
 from support.acg.schema import RuntimeBlueprintSpec
 from support.async_tasks import run_blocking
 from components.auditor.governance.evaluation import WorkflowEvaluator
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from components.auditor.governance.review import ReviewManager
-from components.mission_manager.state_machine import StateMachine
-from components.mission_manager.service import MissionManager
+from components.mission.state_machine import StateMachine
+from components.mission.service import MissionManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
 from components.communicator import SQLiteReliableCommunicationStore
@@ -43,7 +43,7 @@ from contracts.evolution import (
     TrajectoryEvaluation,
 )
 from components.memory.store import SQLiteMemoryStore
-from components.content import ContentManifestStore, SQLiteContentManifestStore
+from apps.agentOS.src.components.environment.content import ContentManifestStore, SQLiteContentManifestStore
 from contracts.acg_lifecycle import AcgIdentityLifecyclePort
 from contracts.planning import (
     TaskImplementationBinding,
@@ -113,9 +113,9 @@ from adapters.model.native import register_native_runtime
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.workflow_store import WorkflowStore
-from contracts.mission_semantic import SemanticPrincipal, run_intent_basis
-from components.mission_manager.semantic_service import MissionSemanticService
-from components.mission_manager.semantic_resolver import MissionSemanticResolver
+from apps.agentOS.src.components.mission.mission_semantic import SemanticPrincipal, run_intent_basis
+from components.mission.semantic_service import MissionSemanticService
+from components.mission.semantic_resolver import MissionSemanticResolver
 from runtime.planner_input_adapter import planner_input
 
 
@@ -715,7 +715,7 @@ class ExecutionRuntime(CollaboratorAccess):
                     for k in ("acgBlueprint", "taskPlan", "taskBindings")):
                 raise ValueError("explicit semantic plans require an unchanged trusted parent package")
         if mission_revision_decision is not None:
-            from contracts.mission_revision import MissionRevisionConflict
+            from apps.agentOS.src.components.mission.mission_revision import MissionRevisionConflict
             if (basis is None or basis.source_type != "SEMANTIC" or
                     basis.source_revision != mission_revision_decision["targetRevision"]):
                 raise MissionRevisionConflict("REVISION_CONFLICT")

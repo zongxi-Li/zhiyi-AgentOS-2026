@@ -21,7 +21,7 @@ from typing import Any
 
 from contracts.identity import new_attempt_id, new_step_execution_id
 from components.executor import ACGExecutionState, ACGGraphCompiler
-from components.mission_manager.state_machine import StateMachine
+from components.mission.state_machine import StateMachine
 
 
 class ResourceNotFoundError(KeyError):

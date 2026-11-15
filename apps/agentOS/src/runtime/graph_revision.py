@@ -2,7 +2,7 @@
 from contracts import stable_checksum
 from types import SimpleNamespace
 from contracts.graph_revision import PlanningSourceProvenance, SafeCutProof, GraphRevisionProposal
-from contracts.mission_semantic import run_intent_basis
+from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
 from contracts.planning import TaskPlan, TaskPlanPatch, TaskImplementationBinding
 from contracts.planning_commit import PlanningCommitRequest, PlanningCommitRejection, PlanningCommitRejectionCode as Code
 from contracts.recovery import SemanticPatchRequest

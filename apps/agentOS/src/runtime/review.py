@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from components.executor import ACGExecutionState, ACGNodeRunner
 from components.memory import MemoryService, StructuredMemoryEvent
-from components.mission_manager.state_machine import StateMachine
+from components.mission.state_machine import StateMachine
 from contracts.execution import WorkflowProgressPhase
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import (

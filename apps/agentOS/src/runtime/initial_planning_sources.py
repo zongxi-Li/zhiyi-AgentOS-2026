@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from contracts.initial_planning import InitialCompilationPolicy, InitialPlanningSourceProvenance
-from contracts.mission_semantic import run_intent_basis
+from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
 from components.planner.topology import TOPOLOGY_COMPILER_VERSION
 from components.executor.compiler import ACGGraphCompiler
 

@@ -5,7 +5,7 @@ from pydantic import Field, JsonValue, model_validator
 
 from contracts.graph_revision import Digest, GraphContract, Ref
 from contracts.identity import MissionId
-from contracts.mission_semantic import MissionIntentBasis
+from apps.agentOS.src.components.mission.mission_semantic import MissionIntentBasis
 from contracts.planning import TaskPlan
 from contracts.workflow import RunExecutionScope, WorkflowDefinition
 from support.acg.capabilities import CapabilityCatalog, PlanningCapabilityDescriptor

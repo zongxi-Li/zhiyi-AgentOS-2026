@@ -17,7 +17,7 @@ from pydantic import Field
 from contracts.content import ContentKind
 from contracts.artifacts import FINAL_SYNTHESIS_LOGICAL_ROLE, is_run_deliverable_identity
 from contracts.planning import SemanticTaskRelationType
-from contracts.mission_semantic import MissionIntentBasis, MissionSemanticView
+from apps.agentOS.src.components.mission.mission_semantic import MissionIntentBasis, MissionSemanticView
 from domain.identity_graph import RunArtifactDisposition
 from domain.models import (
     AcgBlueprint,

@@ -178,7 +178,7 @@ class SemanticRevisionService(CollaboratorAccess):
         )
         outcome_blueprint = semantic_result.blueprint
         next_plan = semantic_result.next_plan
-        from contracts.mission_semantic import run_intent_basis
+        from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
         basis = run_intent_basis(run)
         if basis is not None:
             next_plan = next_plan.model_copy(deep=True,

@@ -1,7 +1,7 @@
 """Translate a frozen Mission basis into the existing Planner input contract."""
 
 from copy import deepcopy
-from contracts.mission_semantic import MissionIntentBasis
+from apps.agentOS.src.components.mission.mission_semantic import MissionIntentBasis
 
 
 _SEMANTIC_KEYS = frozenset({"objective", "userIntent", "taskGoal", "intent", "title", "goal", "constraints"})

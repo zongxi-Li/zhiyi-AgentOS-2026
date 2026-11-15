@@ -35,7 +35,7 @@ from components.executor import (
 )
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
-from components.mission_manager.state_machine import StateMachine
+from components.mission.state_machine import StateMachine
 from contracts.resource import ExecutionBinding, ExecutionRequirement, ModelDemand, ModelQuotaPolicy
 from contracts.execution import WorkflowProgressPhase
 from contracts.workflow import (
@@ -1691,7 +1691,7 @@ class ACGExecutionService(CollaboratorAccess):
         task = self._load_mission(run.mission_id)
         raw_constraints = task.input.get("constraints")
         constraints = raw_constraints if isinstance(raw_constraints, list) else []
-        from contracts.mission_semantic import run_intent_basis
+        from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
         basis = run_intent_basis(run)
         if basis is not None:
             constraints = [c.text for c in basis.constraints]

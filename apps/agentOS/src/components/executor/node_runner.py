@@ -21,7 +21,7 @@ from components.communicator.contracts import ContextPack, estimate_tokens, inpu
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService, StructuredMemoryEventBuilder
-from components.content import ContentManifestStore, ContentWorksetSession
+from apps.agentOS.src.components.environment.content import ContentManifestStore, ContentWorksetSession
 from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
 from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.communication import validate_contract_payload
@@ -82,7 +82,7 @@ class ACGNodeRunner:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
         self.task = task
         self.run = run
-        from contracts.mission_semantic import run_intent_basis
+        from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
         self.mission_intent_basis = run_intent_basis(run)
         if self.mission_intent_basis is not None:
             from runtime.planner_input_adapter import planner_input

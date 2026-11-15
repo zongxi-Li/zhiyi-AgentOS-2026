@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from contracts.mission_semantic import MissionIntentBasis
+from apps.agentOS.src.components.mission.mission_semantic import MissionIntentBasis
 
 from .prompt_context import project_inline_content, project_prompt_context
 

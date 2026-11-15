@@ -13,7 +13,7 @@ from contracts.resource import ExecutionBinding as RuntimeExecutionBinding
 from contracts.graph_handoff import (GraphHandoffRecord, GraphHandoffReceipt,
     GraphVersionIdentityLink, StagedGraphCheckpoint)
 from contracts.graph_revision import Ref, GraphRevisionProposal
-from contracts.mission_semantic import run_intent_basis
+from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
 from contracts.planning import TaskPlan
 from contracts.workflow import RuntimeRunRecord, GraphRef, TraceEventType
 from components.executor import ACGExecutionState, ACGGraphCompiler
