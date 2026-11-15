@@ -176,6 +176,8 @@ def test_read_only_copilot_is_persistent_idempotent_and_uses_bounded_history(tmp
         asyncio.run(service.message(run.run_id, request))
     assert asyncio.run(service.message(run.run_id, request))["operationId"] == "chat-5"
     assert len(model.requests) == 6 and len(model.requests[-1]["recentConversation"]) == 4
+    assert model.requests[-1]["state"]["initialPlan"] == service.view(run.run_id)["initialPlan"]
+    assert model.requests[-1]["state"]["review"] == service.view(run.run_id)["review"]
     assert runtime.get_status(run.run_id).runtime_revision == revision and agent.calls == ["A", "B"]
     with pytest.raises(ReviewConflictError):
         asyncio.run(service.message(run.run_id, CopilotMessageRequest(content="不同内容", operationId="chat-5")))
