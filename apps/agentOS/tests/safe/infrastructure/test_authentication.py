@@ -175,6 +175,47 @@ def test_future_timestamp_nonce_survives_its_full_validity_and_inclusive_boundar
     rejected(auth, headers=headers)
 
 
+def test_utc_rollback_cannot_replay_a_nonce_that_was_already_cleaned_up():
+    now = [1000]
+    auth = authenticator(clock=lambda: now[0])
+    original = signed(timestamp=1000)
+    auth.authenticate(method="POST", path=PATH, headers=original, body=BODY)
+    now[0] = 1061
+    auth.authenticate(method="POST", path=PATH, headers=signed(timestamp=1061, nonce="b" * 32), body=BODY)
+    now[0] = 1030
+    rejected(auth, headers=original)
+    rejected(auth, headers=signed(timestamp=1030, nonce="c" * 32))
+    now[0] = 1061
+    auth.authenticate(method="POST", path=PATH, headers=signed(timestamp=1061, nonce="c" * 32), body=BODY)
+
+
+def test_nonce_clock_rollback_preserves_live_capacity_until_recovery():
+    now = [1000]
+    store = authentication.InMemoryNonceStore(clock=lambda: now[0], max_entries=1)
+    assert store.consume("cred:one", "a" * 32, 1060)
+    now[0] = 1061
+    assert store.consume("cred:one", "b" * 32, 1121)
+    now[0] = 1030
+    assert not store.consume("cred:one", "a" * 32, 1060)
+    now[0] = 1061
+    assert not store.consume("cred:one", "c" * 32, 1121)
+    now[0] = 1121
+    assert not store.consume("cred:one", "c" * 32, 1121)
+    now[0] = 1121.01
+    assert store.consume("cred:one", "c" * 32, 1122)
+
+
+@pytest.mark.parametrize("invalid_expiry", [float("nan"), 999, 1300])
+def test_invalid_expiry_does_not_advance_nonce_clock_high_watermark(invalid_expiry):
+    now = [1000]
+    store = authentication.InMemoryNonceStore(clock=lambda: now[0])
+    assert store.consume("cred:one", "a" * 32, 1060)
+    now[0] = 1100
+    assert not store.consume("cred:one", "b" * 32, invalid_expiry)
+    now[0] = 1030
+    assert store.consume("cred:one", "c" * 32, 1090)
+
+
 def test_concurrent_replay_has_exactly_one_success():
     auth = authenticator()
     def attempt(_):

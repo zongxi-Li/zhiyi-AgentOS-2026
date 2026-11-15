@@ -28,7 +28,12 @@ def _finite_time(value: float) -> bool:
 
 
 class InMemoryNonceStore:
-    """进程内防重放；多进程部署须替换为共享、原子且有界的存储实现。"""
+    """进程内防重放；多进程部署须替换为共享、原子且有界的存储实现。
+
+    在锁内记录有效消费尝试的 UTC 高水位；回拨时拒绝消费，直到时钟恢复。
+    只有格式及期限有效的消费尝试才推进高水位，重复或容量拒绝也保留观测。
+    外部无效过期时间不改变高水位，也不触发过期清理。
+    """
 
     def __init__(
         self, *, clock: Callable[[], float] = time.time,
@@ -41,6 +46,7 @@ class InMemoryNonceStore:
         self._max_per_credential = max_per_credential
         self._entries: dict[tuple[str, str], float] = {}
         self._counts: Counter[str] = Counter()
+        self._clock_high_watermark: float | None = None
         self._lock = threading.Lock()
 
     def consume(self, credential_id: str, nonce: str, expires_at: float) -> bool:
@@ -54,6 +60,9 @@ class InMemoryNonceStore:
                 return False
             if not now <= expires_at <= now + 2 * WINDOW_SECONDS:
                 return False
+            if self._clock_high_watermark is not None and now < self._clock_high_watermark:
+                return False
+            self._clock_high_watermark = now
             for key, expiry in list(self._entries.items()):
                 # 验签时间窗含边界，因此只有严格早于当前时间才可删除。
                 if expiry < now:
