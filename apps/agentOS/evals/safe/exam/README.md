@@ -38,4 +38,12 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 
 此模式从已验证的角色tokenizer读取EOS；遇EOS提前结束，或达到 `--steps` 输出上限关闭会话。`steps_per_case`是上限，实际比较次数取各case的 `checked_steps` 之和；它不同于默认固定步数实验。评估并未装配完整generation配置的多EOS策略，正式装配须批准并传入完整EOS集合。报告不存储完整logits、激活、KV或输入文本。
 
-后续仍需跨进程、认证HTTP、本机生成/EOS文本解码、取消协商和生产装配评估；不能将本实验通过等同于P2/P3全部完成。
+此后本机非流式生成与EOS文本解码已接通，见下节；仍需跨进程、认证HTTP、取消协商和生产装配评估，不能将进程内实验通过等同于P2/P3全部完成。
+
+## 本机生成配对实验与图像
+
+`benchmark_local_generation.py` 已接入真实本机用例和完整EOS集合，对完整模型与进程内拆分生成进行20条输入×3轮配对实验。先预热，再按固定seed随机化输入和方法顺序；逐token序列、文本和停止原因一致才通过。模型加载不计入稳态延迟，记录首token、排除首步的TPOT、端到端时间、组件耗时与激活字节。它使用同机JSON循环，不含真实网络或DP。
+
+`gen_fig_local_generation.py` 读取通过且哈希匹配的CSV，输出中文300 DPI PNG和矢量PDF：配对延迟、步骤耗时构成、激活上传量。先将重复测量汇总到输入级，再画跨输入分布；IQR不作为置信区间。脚本拒绝覆盖旧目录，不绘制失败或未配对结果。
+
+本次1,146个token全部匹配，图像、原始数据、依赖锁及完整命令见[实验报告](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-local-generation/README.md)。绘图依赖为独立可选环境，不修改默认Agent依赖。
