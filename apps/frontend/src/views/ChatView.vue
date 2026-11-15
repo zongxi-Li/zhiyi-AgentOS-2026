@@ -472,7 +472,7 @@
                   :aria-label="contextUsage.label" :aria-valuenow="contextUsage.percent" :aria-valuemin="0" :aria-valuemax="100">
                   <span :style="{ width: `${contextUsage.percent}%` }"></span>
                 </div>
-                <p v-if="contextUsage.historicalNote" class="chat-info-usage__measurement-note">{{ contextUsage.historicalNote }}</p>
+                <p v-if="contextUsage.historicalNote || contextUsage.confirmedNote" class="chat-info-usage__measurement-note">{{ contextUsage.historicalNote || contextUsage.confirmedNote }}</p>
               </section>
 
               <div class="chat-info-usage__grid">
@@ -1326,6 +1326,8 @@ const contextUsage = computed(() => {
   const historicalNote = !state && measured && replies[0] !== measured
     ? `上次已测 ${formatContextTokens((measured.lastInputTokens ?? measured.inputTokens)! + (measured.lastOutputTokens ?? measured.outputTokens ?? 0))} Token（历史值）。最近一轮未返回用量，当前占用未知。` : ''
   const nextEstimated = !state && typeof chatStore.nextContextTokens === 'number'
+  const confirmedNote = state && state.measurement !== 'provider' && typeof state.confirmedTokens === 'number'
+    ? `最近实测 ${formatContextTokens(state.confirmedTokens)} Token；${state.usedTokens === null ? '当前用量尚未确认。' : '当前显示实测基线加新增内容的估算上界。'}` : ''
   const estimated = state?.measurement === 'upper-bound' || nextEstimated
   const used = state ? state.usedTokens : nextEstimated ? chatStore.nextContextTokens
     : historicalNote || chatStore.contextMeasurement === 'protocol-utf8-upper-bound' ? null : chatStore.contextUsedTokens
@@ -1336,7 +1338,7 @@ const contextUsage = computed(() => {
   if (typeof used !== 'number' || typeof windowTokens !== 'number' || windowTokens <= 0) {
     const knownWindow = typeof windowTokens === 'number' && windowTokens > 0
     return { visible: knownWindow, hasUsage: false, percent: 0, level: 'normal', usedLabel: '待统计',
-      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label, historicalNote }
+      windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label, historicalNote, confirmedNote }
   }
   const ratio = Math.min(1, used / windowTokens)
   const percent = Math.round(ratio * 100)
@@ -1347,6 +1349,7 @@ const contextUsage = computed(() => {
     estimated,
     label,
     historicalNote: nextEstimated ? '' : historicalNote,
+    confirmedNote,
     percent,
     level,
     usedLabel: formatContextTokens(used),

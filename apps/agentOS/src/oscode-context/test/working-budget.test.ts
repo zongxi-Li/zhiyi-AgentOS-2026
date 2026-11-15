@@ -4,7 +4,7 @@ import { ContextCompactionEngine, checksum } from '../src/engine.ts'
 import { DEFAULTS, SUMMARY_FIELDS } from '../src/contracts.ts'
 import type { Message, ProjectionRequest } from '../src/contracts.ts'
 import { TokenMeter } from '../src/token-meter.ts'
-import { balancedCuts, selectCycleRange } from '../src/history-segmenter.ts'
+import { balancedCuts, selectCycleRanges } from '../src/history-segmenter.ts'
 import { pruneResults } from '../src/tool-result-pruner.ts'
 
 const config = {...DEFAULTS, recentToolGroups: 5, recentTailTokens: 14000, maxSummaryCalls: 2, summaryMaxTokens: 4096}
@@ -45,8 +45,9 @@ test('100 tools within one user turn shrink at safe reasoning/call/result bounda
   assert.ok(Number(result.metrics.outputTokens)<=40960)
   assert.equal(result.metrics.hardInputLimit,933440)
   assert.deepEqual(messages,original); balancedCuts(result.messages)
-  const range=selectCycleRange(messages,new TokenMeter(),14000,5)!
-  assert.equal(messages[range[1]].type,'reasoning')
+  const ranges=selectCycleRanges(messages,new TokenMeter(),14000,5)
+  assert.ok(ranges.length > 0)
+  for (const [,end] of ranges) assert.equal(messages[end].type,'reasoning')
 })
 
 for (const protectedOutput of [

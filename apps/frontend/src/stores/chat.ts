@@ -143,6 +143,32 @@ export interface Message {
   implementationId?: string
 }
 
+/** Shared persisted fields; callers retain their own stream state and usage authority. */
+function restoreMessageMetadata(metadata: Record<string, any> = {}): Partial<Message> {
+  const restored: Partial<Message> = {
+    transcript: restoreTranscript(metadata.transcript),
+    sources: metadata.sources,
+    cachedTokens: metadata.cached_tokens,
+    lastInputTokens: metadata.last_input_tokens,
+    lastOutputTokens: metadata.last_output_tokens,
+    requestBodyBytes: metadata.requestBodyBytes ?? (metadata.contextMeasurement === 'protocol-utf8-upper-bound' ? metadata.contextInputTokens : undefined),
+    responseTimings: mergeResponseTimings({}, metadata.responseTimings),
+    workingContext: workingContext(metadata.workingContext),
+    projectionVersion: metadata.projectionVersion,
+    archivedItems: metadata.archivedItems,
+    providerRequest: metadata.providerRequest,
+    attemptId: metadata.attemptId,
+    thinkingDurationMs: metadata.reasoningPhaseMs,
+    reasoningContent: metadata.reasoningContent
+  }
+  for (const key of ['inputTokens', 'reasoningTokens', 'outputTokens', 'latencyMs', 'contextFixedTokens',
+    'contextWindowTokens', 'contextInputTokens', 'contextMeasurement', 'contextTokenMethod', 'requestedThinkingMode',
+    'effectiveThinkingMode', 'effectiveReasoningEffort', 'reasoningTruncated', 'cacheUsageAvailable', 'protocolSession'] as const) {
+    if (metadata[key] !== undefined) (restored as Record<string, unknown>)[key] = metadata[key]
+  }
+  return restored
+}
+
 export interface ChatWorkflowBinding {
   conversationId: string
   conversationAliases?: string[]
@@ -198,11 +224,6 @@ export const useChatStore = defineStore('chat', () => {
   const isCompacting = ref(false)
   // Codex-style timeline entry: icon + headline with an optional muted detail line.
   const compactionStatus = ref<CompactionStatus | null>(null)
-  const compactionNotice = computed(() => {
-    const status = compactionStatus.value
-    if (!status) return ''
-    return status.detail ? `${status.title}：${status.detail}` : status.title
-  })
   // Page-lifetime projections only; raw messages and stored history stay intact.
   const workflowBindings = ref<Record<string, ChatWorkflowBinding[]>>(loadWorkflowBindings())
   const workflowRunsStore = useWorkflowRunsStore()
@@ -727,33 +748,15 @@ export const useChatStore = defineStore('chat', () => {
           if (!saved || typeof saved !== 'object') break
           const metadata = saved.metadata || {}
           message.content = saved.content || ''
-          message.transcript = restoreTranscript(metadata.transcript)
+          Object.assign(message, restoreMessageMetadata(metadata))
           message.executionSummary = metadata.executionSummary || []
-          message.reasoningContent = metadata.reasoningContent
-          message.sources = metadata.sources
-          message.thinkingDurationMs = metadata.reasoningPhaseMs
-          message.responseTimings = mergeResponseTimings({}, metadata.responseTimings)
-          message.workingContext = workingContext(metadata.workingContext)
           if (applyContextSnapshot(metadata.contextUsage)) message.contextUsage = contextUsageState.value!
-          message.requestBodyBytes = metadata.requestBodyBytes ?? (metadata.contextMeasurement === 'protocol-utf8-upper-bound' ? metadata.contextInputTokens : undefined)
           message.chatExecutionId = data.chatExecutionId
           message.chatExecutionState = metadata.chatExecutionState
           message.streamActivity = metadata.chatExecutionState === 'running' ? 'waiting' : 'complete'
           message.streamPhase = metadata.streamPhase || '等待模型响应'
-          for (const key of ['inputTokens', 'reasoningTokens', 'outputTokens', 'latencyMs', 'contextFixedTokens',
-            'contextWindowTokens', 'contextInputTokens', 'contextMeasurement', 'contextTokenMethod', 'requestedThinkingMode',
-            'effectiveThinkingMode', 'effectiveReasoningEffort', 'reasoningTruncated', 'cacheUsageAvailable', 'protocolSession'] as const) {
-            if (metadata[key] !== undefined) (message as any)[key] = metadata[key]
-          }
-          message.projectionVersion = metadata.projectionVersion
-          message.archivedItems = metadata.archivedItems
-          message.providerRequest = metadata.providerRequest
-          message.attemptId = metadata.attemptId
           message.tokensUsed = metadata.totalTokens
           message.modelInfo = metadata.effectiveModel || message.modelInfo
-          message.cachedTokens = metadata.cached_tokens
-          message.lastInputTokens = metadata.last_input_tokens
-          message.lastOutputTokens = metadata.last_output_tokens
           const usedInput = message.lastInputTokens ?? message.inputTokens
           if (!contextUsageState.value) applyContextUsage(typeof usedInput === 'number' ? usedInput + (message.lastOutputTokens ?? message.outputTokens ?? 0) : null,
             message.modelInfo || null, message.contextWindowTokens)
@@ -1191,43 +1194,15 @@ export const useChatStore = defineStore('chat', () => {
         id: msg.id || Date.now() + Math.random(),
         role: msg.role?.toLowerCase() === 'user' ? 'user' : 'assistant',
         content: msg.content || '',
-        transcript: restoreTranscript(msg.metadata?.transcript),
+        ...restoreMessageMetadata(msg.metadata || {}),
         chatExecutionId: msg.metadata?.chatExecutionId,
         chatExecutionState: msg.metadata?.chatExecutionState,
         createdAt: msg.createdAt ? new Date(msg.createdAt) : new Date(),
         fileUrl: msg.fileUrl,
         confidence: msg.metadata?.confidence,
-        sources: msg.metadata?.sources,
         tokensUsed: msg.metadata?.totalTokens ?? msg.metadata?.tokens_used,
         modelInfo: msg.metadata?.effectiveModel ?? msg.metadata?.model_info,
-        contextFixedTokens: msg.metadata?.contextFixedTokens,
-        contextWindowTokens: msg.metadata?.contextWindowTokens,
-        cachedTokens: msg.metadata?.cached_tokens,
-        cacheUsageAvailable: msg.metadata?.cacheUsageAvailable,
-        protocolSession: msg.metadata?.protocolSession,
-        lastInputTokens: msg.metadata?.last_input_tokens,
-        lastOutputTokens: msg.metadata?.last_output_tokens,
-        contextInputTokens: msg.metadata?.contextInputTokens,
-        requestBodyBytes: msg.metadata?.requestBodyBytes ?? (msg.metadata?.contextMeasurement === 'protocol-utf8-upper-bound' ? msg.metadata?.contextInputTokens : undefined),
-        responseTimings: mergeResponseTimings({}, msg.metadata?.responseTimings),
-        workingContext: workingContext(msg.metadata?.workingContext),
         contextUsage: contextUsage(msg.metadata?.contextUsage),
-        projectionVersion: msg.metadata?.projectionVersion,
-        archivedItems: msg.metadata?.archivedItems,
-        providerRequest: msg.metadata?.providerRequest,
-        attemptId: msg.metadata?.attemptId,
-        contextMeasurement: msg.metadata?.contextMeasurement,
-        contextTokenMethod: msg.metadata?.contextTokenMethod,
-        requestedThinkingMode: msg.metadata?.requestedThinkingMode,
-        effectiveThinkingMode: msg.metadata?.effectiveThinkingMode,
-        effectiveReasoningEffort: msg.metadata?.effectiveReasoningEffort,
-        thinkingDurationMs: msg.metadata?.reasoningPhaseMs,
-        reasoningContent: msg.metadata?.reasoningContent,
-        reasoningTruncated: msg.metadata?.reasoningTruncated,
-        inputTokens: msg.metadata?.inputTokens,
-        reasoningTokens: msg.metadata?.reasoningTokens,
-        outputTokens: msg.metadata?.outputTokens,
-        latencyMs: msg.metadata?.latencyMs,
         executionSummary: msg.metadata?.executionSummary,
         streamError: msg.metadata?.executionSummary?.find((stage: ExecutionSummaryItem) =>
           stage.stage === 'chat_stream' && stage.status !== 'completed')?.description,
@@ -1357,7 +1332,6 @@ export const useChatStore = defineStore('chat', () => {
   return {
     isCompacting,
     compactionStatus,
-    compactionNotice,
     compactContext,
     approvalMode,
     messages,

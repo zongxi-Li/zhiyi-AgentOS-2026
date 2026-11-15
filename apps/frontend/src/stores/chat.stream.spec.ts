@@ -233,6 +233,50 @@ describe('Chat stream termination', () => {
     expect(store.messages.at(-1)).toMatchObject({content:'部分正文',thinkingState:'error',streamActivity:'complete',streamError:'模型连接中断，请重试'})
   })
 
+  it.each([
+    { requestBodyBytes: 8192, contextMeasurement: 'request-bytes', contextInputTokens: 1024 },
+    { contextMeasurement: 'protocol-utf8-upper-bound', contextInputTokens: 8192 }
+  ])('restores the same persisted telemetry from history and stream snapshots: %j', async (size) => {
+    const metadata = { ...size, effectiveModel: 'deepseek-flash', protocolSession: true,
+      inputTokens: 3000, outputTokens: 40, last_input_tokens: 2000, last_output_tokens: 20,
+      cached_tokens: 1000, cacheUsageAvailable: true, contextWindowTokens: 1000000,
+      responseTimings: { contextPreparationMs: 15, firstReasoningMs: 1200 },
+      workingContext: { status: 'unchanged', inputTokens: 2000, outputTokens: 2000 },
+      projectionVersion: 2, archivedItems: 30, providerRequest: 3, attemptId: 'attempt',
+      reasoningContent: 'saved progress', reasoningTruncated: true, reasoningPhaseMs: 500,
+      requestedThinkingMode: 'standard', effectiveThinkingMode: 'standard', effectiveReasoningEffort: 'max' }
+    const saved = { id: 'saved', role: 'ASSISTANT', content: 'answer', metadata }
+    vi.spyOn(conversationApi, 'getConversation').mockResolvedValue({ contextId: 'ctx-restore' } as any)
+    vi.spyOn(chatApi, 'getHistory').mockResolvedValue([saved])
+    const store = useChatStore()
+    await store.loadHistory('ctx-restore')
+    const expected = { requestBodyBytes: 8192, inputTokens: 3000, lastInputTokens: 2000,
+      lastOutputTokens: 20, cachedTokens: 1000, cacheUsageAvailable: true,
+      responseTimings: metadata.responseTimings, workingContext: metadata.workingContext,
+      projectionVersion: 2, archivedItems: 30, providerRequest: 3, attemptId: 'attempt',
+      reasoningContent: 'saved progress', reasoningTruncated: true, thinkingDurationMs: 500,
+      effectiveReasoningEffort: 'max' }
+    expect(store.messages[0]).toMatchObject(expected)
+    store.clearMessages()
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    vi.stubGlobal('fetch', chatExecutionFetch(() => new Response(new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value
+        controller.enqueue(new TextEncoder().encode(frame('snapshot', {
+          message: saved, contextId: 'ctx-restore', chatExecutionId: 'execution'
+        })))
+      }
+    }))))
+    const running = store.sendMessageStream('continue', 'default', settings)
+    try {
+      await vi.waitFor(() => expect(store.messages.at(-1)).toMatchObject(expected))
+    } finally {
+      controller.enqueue(new TextEncoder().encode(frame('done', { status: 'completed' })))
+      controller.close()
+      await running
+    }
+  })
+
   it('remembers a stop clicked before acknowledgement and cancels the accepted execution', async () => {
     let acknowledge!: (response: Response) => void
     const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => {acknowledge = resolve}))

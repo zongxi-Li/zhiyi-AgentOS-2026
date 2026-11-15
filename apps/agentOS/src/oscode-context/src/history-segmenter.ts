@@ -54,10 +54,6 @@ export function protectedItem(item: Message): boolean {
 }
 
 /** Token-tail retention rounded to complete cycles, including a single long user turn. */
-export function selectCycleRange(messages: Message[], meter: TokenMeter, retainTokens: number, recentGroups: number): [number, number] | undefined {
-  return selectCycleRanges(messages, meter, retainTokens, recentGroups).sort((a,b) =>
-    JSON.stringify(messages.slice(b[0],b[1])).length - JSON.stringify(messages.slice(a[0],a[1])).length)[0]
-}
 export function selectCycleRanges(messages: Message[], meter: TokenMeter, retainTokens: number, recentGroups: number): [number, number][] {
   const cuts = balancedCuts(messages)
   let keep = messages.length, tokens = 0, groups = 0
@@ -87,10 +83,6 @@ export function selectRange(messages: Message[], meter: TokenMeter, retainTurns:
 /** Explicit compaction may replace completed turns, including the latest one.
  * A trailing user request/tool cycle still belongs to the active turn.
  */
-export function selectCompletedRange(messages: Message[]): [number, number] | undefined {
-  return selectCompletedRanges(messages).sort((a,b) =>
-    JSON.stringify(messages.slice(b[0],b[1])).length - JSON.stringify(messages.slice(a[0],a[1])).length)[0]
-}
 export function selectCompletedRanges(messages: Message[]): [number, number][] {
   const cuts = balancedCuts(messages), last = messages.at(-1)
   const completed = last?.role === 'assistant' && (last.type || 'message') === 'message'

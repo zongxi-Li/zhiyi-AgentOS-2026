@@ -34,11 +34,8 @@ def chain(rows, initial='0' * 64):
 class JournalView:
     messages: list
     origins: list
-    cursor: int
-    source_hash: str
     version: int
     epoch: int
-    raw_count: int
     prefix_cursor: int
     prefix_hash: str
     rows: list
@@ -134,9 +131,8 @@ class ProjectionStore:
             context_usage = anchor.get('watermark') or metadata.get('contextUsage')
             if isinstance(context_usage, dict):
                 metadata['contextUsage'] = {**context_usage, 'projectionVersion': state['projection_version'] if valid else 0}
-            return JournalView(messages, origins, rows[-1][0] if rows else cursor, chain(rows, prefix_hash),
-                               state['projection_version'], state['history_epoch'],
-                               (state['covered_count'] if valid else 0) + len(rows), cursor, prefix_hash, rows,
+            return JournalView(messages, origins, state['projection_version'], state['history_epoch'],
+                               cursor, prefix_hash, rows,
                                {**metadata, 'projectionVersion': state['projection_version'] if valid else 0,
                                 'archivedItems': state['covered_count'] if valid else 0,
                                 'journalReadItems': len(rows), '_usageAnchor': anchor})

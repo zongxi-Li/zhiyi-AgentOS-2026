@@ -91,11 +91,10 @@ class TypeScriptInputFilter:
             confirmed = used
         return {'usedTokens': used, 'maxTokens': self.budget['contextWindow'],
                 'measurement': measurement, 'source': source,
+                **({'projectionVersion': self.session.last_view.version} if self.session and self.session.last_view else {}),
                 **({'confirmedTokens': confirmed} if confirmed is not None else {})}
 
     def measure_input(self, data):
-        measured = _upper_bound(data.input, data.instructions or '', self.tools)
-        method = 'utf8-upper-bound'
         anchor = self.anchor or (self.session.last_view.metadata.get('_usageAnchor')
                                  if self.session and self.session.last_view else None)
         if anchor and anchor.get('fixedHash') == self.fixed_hash(data.instructions):
@@ -111,7 +110,8 @@ class TypeScriptInputFilter:
                 measured = base + _upper_bound(data.input[covered:], '', []) - 64
                 method = 'single-request-usage+utf8-delta-upper-bound'
                 self.anchor = anchor
-        return measured, method
+                return measured, method
+        return _upper_bound(data.input, data.instructions or '', self.tools), 'utf8-upper-bound'
 
     async def record_response(self, response):
         if not self._response_measured:
@@ -163,8 +163,8 @@ class TypeScriptInputFilter:
         # First migration and hard overflow remain explicitly cancellable preparation.
         warm = self.session and self.session.last_view and self.session.last_view.metadata.get('projectionVersion')
         hard = self.budget['contextWindow'] - self.budget['outputReserve'] - self.budget['safetyMargin']
-        measured, _ = self.measure_input(data)
-        result = await self.project(data, local_only=bool(warm and measured <= hard))
+        measurement = self.measure_input(data)
+        result = await self.project(data, local_only=bool(warm and measurement[0] <= hard), _measurement=measurement)
         self.sent_basis = {'count': len(result.input), 'prefixHash': hashlib.sha256(_wire(result.input).encode()).hexdigest(),
                            'fixedHash': self.fixed_hash(result.instructions)}
         self._response_measured = False
@@ -174,13 +174,13 @@ class TypeScriptInputFilter:
                 self.session.pending_projection = (source, result.input, self.last_metrics or {})
         return result
 
-    async def project(self, data, *, force=False, local_only=False):
+    async def project(self, data, *, force=False, local_only=False, _measurement=None):
         from agents.run import ModelInputData
         # Cheap UTF-8 upper bound admits short input without spawning a process,
         # loading tokenizers or making any auxiliary Provider call.
         limit = self.budget["contextWindow"] - self.budget["outputReserve"] - self.budget["safetyMargin"]
         started = time.perf_counter()
-        measured, method = self.measure_input(data)
+        measured, method = _measurement or self.measure_input(data)
         self.context_usage = self._usage(measured if method.startswith('single-request') else None,
                                         'upper-bound' if method.startswith('single-request') else 'unknown', 'prepared')
         self.report('context_measured', contextUsage=self.context_usage)

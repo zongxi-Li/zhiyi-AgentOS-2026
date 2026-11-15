@@ -211,6 +211,51 @@ async def test_compact_boundary_replaces_the_previous_provider_watermark(journal
         assert state['projectionVersion']==1
 
 
+async def test_actual_sdk_tool_loop_uses_the_same_watermark_after_a_later_request_fails(journal, monkeypatch):
+    import httpx
+    from agents import function_tool
+    from app.tools.runtime import AgentsToolRuntime
+    from test_oscode_tool_continuation import install_client, frame
+    requests=[]
+    @function_tool
+    async def observe_state() -> str:
+        """Return a small deterministic observation."""
+        return 'observed'
+    def usage(prompt,completion):
+        return ('data: '+json.dumps({'id':'r','object':'chat.completion.chunk','created':0,'model':'glm-5.3-flash',
+            'choices':[],'usage':{'prompt_tokens':prompt,'completion_tokens':completion,'total_tokens':prompt+completion}})+'\n\n').encode()
+    async def handler(request):
+        requests.append(request)
+        if len(requests)>2:
+            raise httpx.ReadError('offline later request failure')
+        if len(requests)==1:
+            body=frame({'role':'assistant','tool_calls':[{'index':0,'id':'tool','type':'function',
+                'function':{'name':'observe_state','arguments':'{}'}}]},'tool_calls')+usage(100,10)
+        else:
+            body=frame({'role':'assistant','content':'done'},'stop')+usage(250,12)
+        return httpx.Response(200,headers={'content-type':'text/event-stream'},content=body+b'data: [DONE]\n\n')
+    install_client(monkeypatch,handler)
+    runtime=AgentsToolRuntime(allowed_tools=set())
+    build=runtime._build_agent
+    def tools(*args,**kwargs):
+        agent,client,metadata=build(*args,**kwargs)
+        agent.tools=[observe_state]
+        return agent,client,metadata
+    monkeypatch.setattr(runtime,'_build_agent',tools)
+    options={'model':'glm-5.3-flash','base_url':'https://open.bigmodel.cn/api/coding/paas/v4',
+        'api_key':'offline','session_id':'ctx-live'}
+    events=[event async for event in runtime.stream('inspect',request_id='first',**options)]
+    prepared=[e.data['contextUsage'] for e in events if e.event.value=='model_phase'
+        and e.data.get('phase')=='context_measured']
+    assert prepared[-1]['measurement']=='upper-bound'
+    assert 110 <= prepared[-1]['usedTokens'] < 1000
+    state=await chat_session.read_context_usage('ctx-live',options['model'],options['base_url'],None)
+    assert state['usedTokens']==262
+    with pytest.raises(Exception):
+        _=[event async for event in runtime.stream('follow up',request_id='failed',**options)]
+    assert (await chat_session.read_context_usage('ctx-live',options['model'],options['base_url'],None))['usedTokens']==262
+
+
 async def test_corrupt_projection_recovers_from_original_journal(journal):
     raw=source()
     async with session(raw) as target:

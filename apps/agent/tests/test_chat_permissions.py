@@ -320,9 +320,13 @@ def test_runtime_stream_emits_approval_events_while_original_tool_waits(monkeypa
             return _Result(context)
 
         def fake_build_agent_sync(*args, **kwargs):
-            return SimpleNamespace(model=None), _Client(), {"effectiveModel": "test-model"}
+            return SimpleNamespace(model=None, model_settings=SimpleNamespace(max_tokens=100),
+                tools=[], instructions='test'), _Client(), {"effectiveModel": "test-model"}
 
         monkeypatch.setattr(runtime, "_build_agent", fake_build_agent_sync)
+        monkeypatch.setattr(runtime_module.settings, 'OSCODE_CONTEXT_COMPACTION_MODELS', {
+            'https://example.test/v1::test-model': {'context_window': 10000, 'output_reserve': 100}
+        })
         monkeypatch.setattr(runtime_module.Runner, "run_streamed", fake_run_streamed)
         monkeypatch.setattr(
             runtime_module,

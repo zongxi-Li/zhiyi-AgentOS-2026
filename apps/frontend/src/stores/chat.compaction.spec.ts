@@ -36,7 +36,7 @@ describe('manual OScode context compaction', () => {
     expect(JSON.stringify(store.messages)).toBe(original)
     expect(compact.mock.calls[0][0]).toMatchObject({ context_id: 'ctx-a', context: [
       { role: 'user', content: 'preserve REST' }, { role: 'assistant', content: 'agreed' }] })
-    expect(store.compactionNotice).toContain('12,000 → 400')
+    expect(store.compactionStatus).toMatchObject({ kind: 'success', detail: expect.stringContaining('12,000 → 400') })
     await store.sendMessageStream('next request', 'default', settings)
     const first = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)
     expect(first.context).toBeUndefined()
@@ -44,7 +44,7 @@ describe('manual OScode context compaction', () => {
     await store.sendMessageStream('third request', 'default', settings)
     const next = JSON.parse(vi.mocked(fetch).mock.calls[2][1]!.body as string)
     expect(next.context).toBeUndefined()
-    expect(store.compactionNotice).toContain('后端已保存版本 1')
+    expect(store.compactionStatus?.detail).toContain('后端已保存版本 1')
   })
 
   it('never promotes edited display history into a model projection', async () => {
@@ -63,7 +63,7 @@ describe('manual OScode context compaction', () => {
     store.clearMessages(); store.contextId = 'ctx-b'
     store.messages = [{ id: 'b', role: 'user', content: 'other conversation' }]
     resolve(result); await pending
-    expect(store.contextId).toBe('ctx-b'); expect(store.compactionNotice).toBe('')
+    expect(store.contextId).toBe('ctx-b'); expect(store.compactionStatus).toBeNull()
     expect(store.contextUsedTokens).toBeNull(); expect(store.isCompacting).toBe(false)
   })
 
@@ -71,7 +71,7 @@ describe('manual OScode context compaction', () => {
     vi.spyOn(chatApi, 'compactContext').mockResolvedValue({ ...result, status: 'failed_passthrough' }); respond()
     const store = ready(), original = JSON.stringify(store.messages)
     await store.compactContext(settings)
-    expect(store.compactionNotice).toContain('未通过压缩校验')
+    expect(store.compactionStatus).toMatchObject({ kind: 'warning', title: expect.stringContaining('未通过压缩校验') })
     expect(JSON.stringify(store.messages)).toBe(original)
     await store.sendMessageStream('continue', 'default', settings)
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).context).toBeUndefined()
@@ -111,7 +111,7 @@ describe('manual OScode context compaction', () => {
       metrics: { reasonCode: 'INSUFFICIENT_SAVINGS' } })
     const store = ready()
     await store.compactContext(settings)
-    expect(store.compactionNotice).toContain('无需压缩')
+    expect(store.compactionStatus).toMatchObject({ kind: 'info', title: '无需压缩' })
     expect(store.nextContextTokens).toBeNull()
     respond()
     await store.sendMessageStream('continue', 'default', settings)
@@ -123,11 +123,11 @@ describe('manual OScode context compaction', () => {
       status: 'failed_passthrough', metrics: { failureCode: 'SUMMARY_PROVIDER_FAILED' } })
     const store = ready()
     await store.compactContext(settings)
-    expect(store.compactionNotice).toContain('摘要模型调用失败')
+    expect(store.compactionStatus?.title).toContain('摘要模型调用失败')
     compact.mockResolvedValue({ ...result, status: 'failed_passthrough',
       metrics: { failureCode: 'SUMMARY_INVALID_SCHEMA' } })
     await store.compactContext(settings)
-    expect(store.compactionNotice).toContain('有效的结构化摘要')
+    expect(store.compactionStatus?.title).toContain('有效的结构化摘要')
   })
 
   it('preserves a useful server error in the compaction notice', async () => {
@@ -136,7 +136,7 @@ describe('manual OScode context compaction', () => {
     } } })
     const store = ready()
     await expect(store.compactContext(settings)).rejects.toBeDefined()
-    expect(store.compactionNotice).toContain('模型窗口配置及 Node')
+    expect(store.compactionStatus).toMatchObject({ kind: 'warning', detail: expect.stringContaining('模型窗口配置及 Node') })
     expect(store.loading).toBe(false)
   })
 })
