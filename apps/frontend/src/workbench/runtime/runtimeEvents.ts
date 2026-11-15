@@ -3,6 +3,7 @@ import { reactive } from 'vue'
 import { apiUrl } from '@/platform'
 import { readSseFrames } from '@/utils/sse'
 import { planningContent, streamingContent } from './streamingContent'
+import { createStreamBatcher } from '../../../../backend/src/shared/chat-stream/index.mjs'
 
 export interface RuntimeEvent {
   eventId: string
@@ -139,7 +140,9 @@ export class RunRuntimeStore {
   readonly outputHistory = reactive<RuntimePublicOutput[]>([])
   readonly activity = reactive({ events: [] as RuntimeEvent[], approvalRevision: 0 })
   private pending = new Map<string, string>()
-  private frame = 0
+  private pendingPlanning: string | null = null
+  private retiredAttempts = new Map<string, Set<string>>()
+  private batcher = createStreamBatcher(() => this.flushPending())
 
   constructor(runId: string) { this.runId = runId }
 
@@ -160,8 +163,31 @@ export class RunRuntimeStore {
   }
 
   apply(event: RuntimeEvent) {
+    if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) return
+    if (event.runId === this.runId && event.eventType === 'runtime.display.snapshot') {
+      const snapshot = event.payload
+      if (snapshot?.schemaVersion !== 1 || !Array.isArray(snapshot.events)) return
+      this.batcher.flush()
+      this.pending.clear()
+      this.pendingPlanning = null
+      this.retiredAttempts.clear()
+      for (const id of Object.keys(this.nodes)) delete this.nodes[id]
+      Object.assign(this.planning, createPlanningState())
+      this.outputHistory.splice(0)
+      this.activity.events.splice(0)
+      this.terminal = false
+      this.lastSequence = -1
+      for (const item of snapshot.events) {
+        if (item?.eventType !== 'runtime.display.snapshot' && item?.sequence <= event.sequence) this.apply(item)
+      }
+      this.batcher.flush()
+      this.lastSequence = event.sequence
+      return
+    }
     if (event.runId !== this.runId || event.sequence <= this.lastSequence) return
+    if (this.terminal) return
     this.lastSequence = event.sequence
+    if (!['model.output.delta', 'planner.model.output.delta'].includes(event.eventType)) this.batcher.flush()
     if (['tool.approval_required', 'tool.approval_resolved', 'tool.execution_started', 'tool.execution_completed',
       'node.started', 'node.completed', 'node.failed'].includes(event.eventType)) {
       if (!this.activity.events.some(item => item.eventId === event.eventId)) {
@@ -174,7 +200,7 @@ export class RunRuntimeStore {
       this.applyPlanner(event)
       return
     }
-    if (event.eventType === 'run.completed' || event.eventType === 'run.failed' || event.eventType === 'run.cancelled') {
+    if (['run.completed', 'run.failed', 'run.cancelled', 'run.superseded'].includes(event.eventType)) {
       this.terminal = true
       return
     }
@@ -184,9 +210,15 @@ export class RunRuntimeStore {
     const p = event.payload || {}
     if (typeof p.nodeTitle === 'string') n.title = p.nodeTitle
     const attempt = event.attemptId || n.currentAttemptId
+    if (attempt && this.retiredAttempts.get(id)?.has(attempt)) return
     const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
     if (attempt && n.currentAttemptId !== attempt) {
       this.archiveNode(id)
+      if (n.currentAttemptId) {
+        const retired = this.retiredAttempts.get(id) || new Set<string>()
+        retired.add(n.currentAttemptId)
+        this.retiredAttempts.set(id, retired)
+      }
       n.currentAttemptId = attempt
       n.status = 'WAITING'
       n.phase = 'WAITING'
@@ -194,6 +226,9 @@ export class RunRuntimeStore {
       n.chunkCount = 0
       n.outputId = null
       n.modelStartedAt = null
+      n.firstTokenAt = null
+      n.lastActivityAt = null
+      n.completedAt = null
       this.pending.delete(id)
     }
     if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
@@ -223,9 +258,9 @@ export class RunRuntimeStore {
       n.lastActivityAt = timestampOrNow(event)
       n.chunkCount++
       const base = this.pending.get(id) ?? n.outputBuffer
-      const next = base + String(p.delta || '')
+      const next = typeof p.publicText === 'string' ? JSON.stringify({ content: p.publicText }) : base + String(p.delta || '')
       this.pending.set(id, next.slice(0, 65536))
-      this.schedule()
+      this.schedule(`node:${id}`, String(p.delta || ''), attempt || undefined)
     } else if (event.eventType === 'model.completed') {
       if (this.pending.has(id)) n.outputBuffer = this.pending.get(id)!
       this.pending.delete(id)
@@ -312,8 +347,10 @@ export class RunRuntimeStore {
       state.stage = String(p.stage || '') || state.stage
       state.callKey = String(p.callKey || '') || state.callKey
       state.chunkCount += 1
-      const next = state.outputBuffer + String(p.delta || '')
-      state.outputBuffer = next.length > 65536 ? next.slice(-65536) : next
+      const next = typeof p.publicText === 'string' ? JSON.stringify({ content: p.publicText })
+        : (this.pendingPlanning ?? state.outputBuffer) + String(p.delta || '')
+      this.pendingPlanning = next.length > 65536 ? next.slice(-65536) : next
+      this.schedule('planner', String(p.delta || ''), `${state.callKey}:${state.retryIndex}`)
     } else if (event.eventType === 'planner.draft.updated') {
       const nodes = Array.isArray(p.nodes) ? p.nodes : []
       const edges = Array.isArray(p.edges) ? p.edges : []
@@ -380,17 +417,22 @@ export class RunRuntimeStore {
       text: planningContent(state.outputBuffer), failed: state.status === 'FAILED' })
   }
 
-  private schedule() {
-    if (this.frame) return
-    this.frame = 1
-    const raf = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: FrameRequestCallback) => window.setTimeout(cb, 20) as any
-    raf(() => {
-      for (const [id, value] of this.pending) this.node(id).outputBuffer = value
-      this.pending.clear()
-      this.frame = 0
-    })
+  private flushPending() {
+    for (const [id, value] of this.pending) this.node(id).outputBuffer = value
+    this.pending.clear()
+    if (this.pendingPlanning !== null) this.planning.outputBuffer = this.pendingPlanning
+    this.pendingPlanning = null
+  }
+
+  private schedule(partId: string, delta: string, attemptId?: string) {
+    // The shared timer/size limits work in hidden views too. Metadata remains
+    // immediate; only text is combined, with controls flushed before folding.
+    this.batcher.accept({ event: 'content_delta', requestId: this.runId, data: { partId, attemptId, delta } })
+  }
+
+  dispose() {
+    this.batcher.flush()
+    this.batcher.dispose()
   }
 }
 
@@ -434,7 +476,7 @@ export class RuntimeEventClient {
         signal: controller.signal
       })
       if (generation !== this.generation || controller.signal.aborted) return
-      if (response.status === 401 || response.status === 403) {
+      if ([401, 403, 404, 410].includes(response.status)) {
         this.disconnect() // Configuration failures require an explicit reconnect.
         return
       }
@@ -504,6 +546,7 @@ export const releaseRunRuntimeStore = (runId: string | null, store?: RuntimeEven
   item.refs = Math.max(0, item.refs - 1)
   if (item.refs === 0) {
     item.client.disconnect()
+    item.store.dispose()
     shared.delete(runId)
   }
 }

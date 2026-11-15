@@ -8,6 +8,33 @@ const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a
 })
 
 describe('RunRuntimeStore streaming projection', () => {
+  it('rebaselines after a restart and continues cumulative public text without duplication', () => {
+    const store = new RunRuntimeStore('run')
+    store.apply(event(99, 'model.output.delta', 'obsolete', 'old', 'stale'))
+    const first = { ...event(2, 'model.output.delta'), payload: { publicText: '已输出' } }
+    store.apply({ ...event(5, 'runtime.display.snapshot'), payload: {
+      schemaVersion: 1, sequence: 5, events: [event(1, 'model.started'), first]
+    } })
+    expect(store.nodes.obsolete).toBeUndefined()
+    expect(store.nodes.A.outputBuffer).toBe(JSON.stringify({ content: '已输出' }))
+    store.apply({ ...event(6, 'model.output.delta'), payload: { publicText: '已输出，新片段' } })
+    store.apply(event(7, 'node.completed'))
+    expect(store.nodes.A.outputBuffer).toBe(JSON.stringify({ content: '已输出，新片段' }))
+    expect(store.lastSequence).toBe(7)
+    store.dispose()
+  })
+
+  it('rejects retired attempts and late frames after Run completion', () => {
+    const store = new RunRuntimeStore('run')
+    store.apply(event(1, 'model.started'))
+    store.apply(event(2, 'model.started', 'A', 'a2'))
+    store.apply(event(3, 'model.output.delta', 'A', 'a1', 'late'))
+    expect(store.nodes.A.currentAttemptId).toBe('a2')
+    store.apply(event(4, 'run.completed'))
+    store.apply(event(5, 'model.started', 'A', 'a3'))
+    expect(store.nodes.A.currentAttemptId).toBe('a2')
+    store.dispose()
+  })
   it('flushes the final chunk before completion and resets each tool model turn', () => {
     const callbacks: FrameRequestCallback[] = []
     const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { callbacks.push(cb); return callbacks.length })
@@ -118,21 +145,19 @@ describe('RunRuntimeStore streaming projection', () => {
     } finally { client.disconnect(); vi.useRealTimers(); vi.unstubAllGlobals() }
   })
   it('accumulates deltas and deduplicates sequence', async () => {
-    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => { cb(0); return 1 })
+    vi.useFakeTimers()
     const store = new RunRuntimeStore('run')
     store.apply(event(1, 'node.started')); store.apply(event(2, 'model.first_token'))
     store.apply(event(3, 'model.output.delta', 'A', 'a1', 'A'))
     store.apply(event(3, 'model.output.delta', 'A', 'a1', 'A'))
     store.apply(event(4, 'model.output.delta', 'A', 'a1', 'B'))
+    await vi.advanceTimersByTimeAsync(16)
     expect(store.nodes.A.outputBuffer).toBe('AB'); expect(store.nodes.A.phase).toBe('STREAMING')
-    raf.mockRestore()
+    store.dispose(); vi.useRealTimers()
   })
-  it('accumulates multiple node deltas queued in the same animation frame', () => {
-    const callbacks: FrameRequestCallback[] = []
-    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(cb => {
-      callbacks.push(cb)
-      return callbacks.length
-    })
+  it('combines multiple node deltas without waiting for an animation frame', async () => {
+    vi.useFakeTimers()
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
     const store = new RunRuntimeStore('run')
 
     try {
@@ -140,12 +165,31 @@ describe('RunRuntimeStore streaming projection', () => {
       store.apply(event(2, 'model.output.delta', 'A', 'a1', 'B'))
       expect(store.nodes.A.outputBuffer).toBe('')
 
-      callbacks[0]?.(0)
+      await vi.advanceTimersByTimeAsync(16)
 
       expect(store.nodes.A.outputBuffer).toBe('AB')
+      expect(raf).not.toHaveBeenCalled()
     } finally {
+      store.dispose(); vi.useRealTimers()
       raf.mockRestore()
     }
+  })
+  it('batches planner text and flushes it before failures and terminal Run events', async () => {
+    vi.useFakeTimers()
+    const store = new RunRuntimeStore('run')
+    try {
+      store.apply(event(1, 'planner.model.started', '', ''))
+      for (let i = 0; i < 100; i++) store.apply(event(i + 2, 'planner.model.output.delta', '', '', 'x'))
+      expect(store.planning.outputBuffer).toBe('')
+      store.apply(event(102, 'planner.failed', '', ''))
+      expect(store.planning.outputBuffer).toBe('x'.repeat(100))
+      expect(store.planning.status).toBe('FAILED')
+      store.apply(event(103, 'model.output.delta', 'A', 'a1', 'last'))
+      store.apply(event(104, 'run.failed'))
+      expect(store.nodes.A.outputBuffer).toBe('last')
+      expect(store.terminal).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { store.dispose(); vi.useRealTimers() }
   })
   it('isolates nodes and attempts', async () => {
     const store = new RunRuntimeStore('run')

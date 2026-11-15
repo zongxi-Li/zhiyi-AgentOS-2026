@@ -35,7 +35,7 @@ from runtime.app_setup import ApplicationSetup
 from runtime.live_events import RuntimeEventBroker
 from service.agents import AgentRegistry
 from adapters.model.native import NativeGeneralAgent
-from support.stores.memory_workflow_store import MemoryWorkflowStore
+from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
 def _without_public_provenance(value):
@@ -58,6 +58,8 @@ def _without_public_provenance(value):
             assert item in {None, 'disabled', 'off', 'minimal', 'low', 'medium', 'standard', 'high', 'deep', 'xhigh', 'max', 'ultra'}
         elif key in {'reasoning_tokens', 'reasoningTokens'}:
             assert isinstance(item, int) and item >= 0
+        elif key == 'promptCaching':
+            assert item is None or type(item) is bool
         else:
             result[key] = _without_public_provenance(item)
     return result
@@ -247,7 +249,7 @@ def _runtime(tmp_path, model_registry: ModelCompatibilityRegistry) -> ExecutionR
     return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
-        workflow_store=MemoryWorkflowStore(),
+        workflow_store=SQLiteWorkflowStore(tmp_path / 'native-workflows.db'),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "native-http-checkpoints.sqlite3"),
         execution_value_store=InMemoryExecutionValueStore(),
         model_registry=model_registry,
@@ -270,7 +272,7 @@ def _planner_runtime(tmp_path, model_registry: ModelCompatibilityRegistry) -> Ex
     return ExecutionRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
-        workflow_store=MemoryWorkflowStore(),
+        workflow_store=SQLiteWorkflowStore(tmp_path / 'planner-workflows.db'),
         checkpoint_store=ACGCheckpointStore(db_path=tmp_path / "planner-http-checkpoints.sqlite3"),
         execution_value_store=InMemoryExecutionValueStore(),
         model_registry=model_registry,
@@ -392,12 +394,13 @@ async def _test_native_http_provider_to_fastapi_sse_streams_before_node_completi
     assert event_types.index("model.output.delta") < event_types.index("node.completed")
     assert event_types[-1] == "run.completed"
     assert saw_delta_before_completion
-    deltas = [
-        payload.get("payload", {}).get("delta", "")
+    public_text = [
+        payload.get("payload", {}).get("publicText", "")
         for payload in payloads
         if payload.get("eventType") == "model.output.delta"
     ]
-    assert deltas and "task_summary" in "".join(deltas)
+    assert public_text and "streamed native task" in public_text[-1]
+    assert event_types[0] == 'runtime.display.snapshot'
     assert all("prompt" not in json.dumps(_without_public_provenance(payload), ensure_ascii=False).lower() for payload in payloads)
     _assert_no_request_bodies(payloads)
     assert run.run_id not in broker._queues

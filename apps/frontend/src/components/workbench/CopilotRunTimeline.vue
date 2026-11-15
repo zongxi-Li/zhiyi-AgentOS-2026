@@ -91,20 +91,24 @@ watch(() => props.runId, () => { historyExpanded.value = true })
 let attachedRunId: string | null = null
 let suspended = false
 let clock: ReturnType<typeof setInterval> | undefined
-function disconnect(clear = true) {
+function disconnect() {
   if (runtime.value && attachedRunId) releaseRunRuntimeStore(attachedRunId, runtime.value)
-  if (clear) runtime.value = null
+  runtime.value = null
   attachedRunId = null
   if (clock) clearInterval(clock)
   clock = undefined
 }
 function connect() {
-  if (!active.value && attachedRunId === props.runId) { disconnect(false); return }
-  disconnect()
-  if (suspended || !props.runId || !active.value) return
-  attachedRunId = props.runId
-  runtime.value = acquireRunRuntimeStore(props.runId)
-  clock = setInterval(() => { now.value = Date.now() }, 1000)
+  if (suspended || !props.runId) { disconnect(); return }
+  if (attachedRunId !== props.runId || !runtime.value) {
+    disconnect()
+    attachedRunId = props.runId
+    // Terminal Runs fetch their durable display baseline once; their SSE
+    // endpoint then closes. They need no ticking clock or polling loop.
+    runtime.value = acquireRunRuntimeStore(props.runId)
+  }
+  if (clock) clearInterval(clock)
+  clock = active.value ? setInterval(() => { now.value = Date.now() }, 1000) : undefined
 }
 watch(() => [props.runId, active.value], connect, { immediate: true })
 onDeactivated(() => { suspended = true; disconnect() })

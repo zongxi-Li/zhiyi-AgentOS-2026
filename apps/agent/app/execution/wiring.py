@@ -684,6 +684,8 @@ def _assemble_default_runtime(
 
 def _runtime_close_sequence(runtime: ExecutionRuntime) -> tuple[Any, ...]:
     """Every resource owned by a composed Runtime, in close order."""
+    from runtime.live_events import runtime_event_broker
+    runtime_event_broker.flush()
     resource_plane = getattr(runtime, "resource_plane", None)
     resources = (
         *reversed(getattr(runtime, "_assembly_owned_resources", ())),

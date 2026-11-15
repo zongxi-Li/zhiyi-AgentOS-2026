@@ -63,6 +63,25 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         finally:
             conn.close()
 
+    def get_runtime_display(self, run_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload FROM run_runtime_display WHERE run_id=?", (run_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_runtime_display(self, run_id: str, snapshot: dict) -> None:
+        """A display checkpoint, separate from Run CAS and Mission invalidation.
+
+        INSERT SELECT prevents a late observer/publisher from recreating deleted
+        Run data. Sequence CAS prevents a delayed flush overwriting newer text.
+        """
+        with self._connect(notify_workspace=False) as conn:
+            conn.execute("""INSERT INTO run_runtime_display(run_id, sequence, payload)
+                SELECT run_id, ?, ? FROM runs WHERE run_id=?
+                ON CONFLICT(run_id) DO UPDATE SET sequence=excluded.sequence, payload=excluded.payload
+                WHERE excluded.sequence > run_runtime_display.sequence""",
+                (snapshot["sequence"], json.dumps(snapshot, ensure_ascii=False), run_id))
+
+
     def _require_semantic_schema(self) -> None:
         if not self._mission_semantics_enabled:
             raise RuntimeError("Mission semantics require explicit schema upgrade opt-in")
@@ -1048,6 +1067,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
             conn.execute("DELETE FROM run_copilot_exchanges WHERE run_id = ?", (run_id,))
             conn.execute("DELETE FROM run_planning_inputs WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM run_runtime_display WHERE run_id = ?", (run_id,))
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mission_revision_decisions'").fetchone():
                 conn.execute("DELETE FROM mission_revision_decisions WHERE run_id = ?", (run_id,))
             mission_deleted = False
@@ -1117,6 +1137,8 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS run_runtime_display (
+                run_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, payload TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS task_copilot_permissions (
                 mission_id TEXT PRIMARY KEY, permission TEXT NOT NULL
                 CHECK(permission IN ('read_only', 'task_collaboration')))""")
@@ -1328,9 +1350,13 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             cursor = conn.execute(sql, params)
             return cursor.fetchall()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=max(self.busy_timeout_ms, 1) / 1000, factory=WorkspaceConnection)
-        conn.execute(f"PRAGMA busy_timeout={max(self.busy_timeout_ms, 1)}")
+    def _connect(self, *, notify_workspace: bool = True) -> sqlite3.Connection:
+        # Display checkpoints are best effort and cannot hold a model stream
+        # behind a long business transaction. Business-store deadlines stay intact.
+        busy_timeout = max(1, self.busy_timeout_ms if notify_workspace else min(self.busy_timeout_ms, 250))
+        conn = sqlite3.connect(self.db_path, timeout=busy_timeout / 1000,
+            factory=WorkspaceConnection if notify_workspace else sqlite3.Connection)
+        conn.execute(f"PRAGMA busy_timeout={busy_timeout}")
         conn.execute("PRAGMA synchronous=FULL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn

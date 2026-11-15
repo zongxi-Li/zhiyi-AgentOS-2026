@@ -47,6 +47,8 @@ from contracts.planning import PlannedTask
 from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import (
     MissionRecordState,
+    RuntimeMissionRecord,
+    RuntimeRunRecord,
     StepStatus,
     TraceEventType,
     WorkflowDefinition,
@@ -378,7 +380,7 @@ def test_v2_terminal_run_events_finish_without_waiting_for_a_live_publisher(tmp_
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
     with TestClient(app) as client:
         for status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED):
-            _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+            _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow", defer_acg_planning=True)
             run.status = status
             runtime.workflow_store.save_run(run)
             response = client.get(f"/agentos/v2/runs/{run.run_id}/events")
@@ -387,10 +389,46 @@ def test_v2_terminal_run_events_finish_without_waiting_for_a_live_publisher(tmp_
             assert f'"status": "{status.value}"' in response.text
 
 
+def test_v2_runtime_events_restore_public_snapshot_and_close_when_completion_races_subscribe(tmp_path, monkeypatch):
+    from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+    runtime = _runtime(tmp_path)
+    runtime.workflow_store = SQLiteWorkflowStore(tmp_path / 'display-runs.db')
+    # MissionManager retains its injected store, so seed the read-only endpoint's
+    # Run directly; this test must never start or replay a command.
+    mission = RuntimeMissionRecord(missionId='mission_display', title='Public snapshot')
+    runtime.workflow_store.save_mission(mission)
+    run = RuntimeRunRecord(runId='run_display', missionId=mission.mission_id, workflowId='api-workflow',
+        domain='general', runtimeEngine='acg', executionState={'planningDeferred': True})
+    runtime.workflow_store.save_run(run)
+
+    class RacingBroker(RuntimeEventBroker):
+        async def subscribe(self, run_id):
+            current = runtime.workflow_store.get_run(run_id)
+            current.status = WorkflowStatus.COMPLETED
+            runtime.workflow_store.save_run(current)
+            async for event in super().subscribe(run_id):
+                yield event
+
+    broker = RacingBroker(store=runtime.workflow_store)
+    for kind, payload in [('model.started', {}), ('model.output.delta', {'delta': '{"content":"recovered","reasoning_content":"PRIVATE"}'}), ('model.completed', {})]:
+        broker.publish_from_thread(run.run_id, RuntimeEvent(eventType=kind, runId=run.run_id,
+            nodeId='node', attemptId='attempt', sequence=0, payload=payload))
+    monkeypatch.setattr(agentos_v2, 'runtime_event_broker', broker)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    with TestClient(app) as client:
+        response = client.get(f'/agentos/v2/runs/{run.run_id}/events')
+    assert response.status_code == 200
+    assert response.text.startswith('event: runtime.display.snapshot\n')
+    assert 'recovered' in response.text and 'PRIVATE' not in response.text
+    assert response.text.count('event: run.completed\n') == 1
+    assert not broker._queues
+
+
 def test_v2_runtime_events_endpoint_streams_http_before_publisher_finishes(tmp_path, monkeypatch) -> None:
     runtime = _runtime(tmp_path)
     task = runtime.create_mission("Runtime event HTTP stream", workflow_id="api-workflow")
-    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow")
+    _, run = runtime.prepare_run(task.mission_id, workflow_id="api-workflow", defer_acg_planning=True)
     broker = RuntimeEventBroker()
     monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
     app = FastAPI()

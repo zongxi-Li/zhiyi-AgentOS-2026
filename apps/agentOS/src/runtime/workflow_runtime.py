@@ -1020,6 +1020,8 @@ class ExecutionRuntime(CollaboratorAccess):
         """执行已持久化运行并保持终态不回退；插件范围失效时安全标记失败后继续抛错。"""
 
         run = self.workflow_store.get_run(run_id)
+        from runtime.live_events import runtime_event_broker
+        runtime_event_broker.bind_run(run_id, self.workflow_store)
         if self._normalize_runtime_engine(run.runtime_engine) == "acg":
             if run.execution_state.get("planningCommitRequired") and self.planning_commit_authority is None:
                 return run
@@ -1139,6 +1141,8 @@ class ExecutionRuntime(CollaboratorAccess):
             return run
         if run.execution_state.get("planningCommitRequired") and self.planning_commit_authority is None:
             return run
+        from runtime.live_events import runtime_event_broker
+        runtime_event_broker.bind_run(run.run_id, self.workflow_store)
         self._claim_acg_execution(run)
         while True:
             executed_run_id = run.run_id
@@ -1523,7 +1527,7 @@ class ExecutionRuntime(CollaboratorAccess):
         if planner_event_type not in {
             "planner.started", "planner.stage.started", "planner.stage.retry",
             "planner.model.started", "planner.model.first_token",
-            "planner.model.activity", "planner.model.output.delta", "planner.model.completed",
+            "planner.model.activity", "planner.model.output.delta", "planner.model.completed", "planner.model.failed",
             "planner.draft.updated",
             "planner.stage.completed", "planner.profile.resolved",
             "planner.plan.parsed", "planner.graph.compiled", "planner.completed",
@@ -1547,6 +1551,7 @@ class ExecutionRuntime(CollaboratorAccess):
             self._raise_if_run_cancelled(run.run_id)
             from contracts.runtime_events import RuntimeEvent
             from runtime.live_events import runtime_event_broker
+            runtime_event_broker.bind_run(run.run_id, self.workflow_store)
             runtime_event_broker.publish_from_thread(
                 run.run_id,
                 RuntimeEvent(
@@ -1993,8 +1998,8 @@ class ExecutionRuntime(CollaboratorAccess):
         with self._run_cancel_guard:
             self._run_cancel_events.pop(run_id, None)
 
-    @staticmethod
     def _publish_run_terminal_event(
+        self,
         run: RuntimeRunRecord,
         event_type: str,
         payload: dict[str, Any] | None = None,
@@ -2002,6 +2007,7 @@ class ExecutionRuntime(CollaboratorAccess):
         """Publish only safe run lifecycle scalars to the existing live broker."""
         from contracts.runtime_events import RuntimeEvent
         from runtime.live_events import runtime_event_broker
+        runtime_event_broker.bind_run(run.run_id, self.workflow_store)
 
         runtime_event_broker.publish_from_thread(
             run.run_id,

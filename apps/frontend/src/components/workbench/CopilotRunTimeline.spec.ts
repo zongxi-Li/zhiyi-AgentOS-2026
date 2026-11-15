@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { h, reactive } from 'vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CopilotRunTimeline from './CopilotRunTimeline.vue'
 import { acquireRunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import type { CopilotInitialPlan } from '@/services/api/agentos/api/copilot'
@@ -9,11 +9,30 @@ import type { RuntimeTraceObservation } from '@/workbench/runtime/observation'
 
 vi.mock('@/workbench/runtime/runtimeEvents', async original => ({ ...await original<typeof import('@/workbench/runtime/runtimeEvents')>(), acquireRunRuntimeStore: vi.fn(), releaseRunRuntimeStore: vi.fn() }))
 const wrappers: ReturnType<typeof mount>[] = []
-afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.clearAllMocks() })
+beforeEach(() => { vi.mocked(acquireRunRuntimeStore).mockImplementation(runId => runId ? new RunRuntimeStore(runId) : null) })
+afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.clearAllMocks(); vi.useRealTimers() })
 const plan: CopilotInitialPlan = { planVersion: 1, commitId: 'commit', commitmentRevision: 1,
   objective: '分析恢复策略', constraints: ['只做分析，不修改代码'], expectedArtifacts: ['报告'],
   tasks: [{ key: 'T1', title: '核对事实', objective: '确认输入', rationale: '为下游建立共同事实依据', acceptanceCriteria: ['标明来源'], sourceRefs: [] }] }
 describe('Copilot task timeline', () => {
+  it('loads public text on a terminal Run without starting a ticking clock', async () => {
+    vi.useFakeTimers()
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'completed' } }); wrappers.push(w)
+    store.apply({ eventId: 'baseline', eventType: 'runtime.display.snapshot', runId: 'run', sequence: 4,
+      payload: { schemaVersion: 1, events: [
+        { eventId: 'start', eventType: 'model.started', runId: 'run', nodeId: 'node', attemptId: 'a', sequence: 1 },
+        { eventId: 'text', eventType: 'model.output.delta', runId: 'run', nodeId: 'node', attemptId: 'a', sequence: 2, payload: { publicText: '断线前已经公开的说明' } },
+        { eventId: 'end', eventType: 'node.completed', runId: 'run', nodeId: 'node', attemptId: 'a', sequence: 3 },
+        { eventId: 'terminal', eventType: 'run.completed', runId: 'run', sequence: 4 },
+      ] } })
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('断线前已经公开的说明')
+    expect(acquireRunRuntimeStore).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+    store.dispose()
+  })
   it('shows public planning rationale while the model is active but has not returned any text', async () => {
     const store = new RunRuntimeStore('run')
     vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
@@ -57,10 +76,11 @@ describe('Copilot task timeline', () => {
     expect(w.text()).toContain('TASK_PLAN_CONTRACT_FAILED')
     expect(w.text()).not.toContain('PRIVATE')
     expect(w.text()).not.toContain('999')
-    expect(acquireRunRuntimeStore).not.toHaveBeenCalled()
+    expect(acquireRunRuntimeStore).toHaveBeenCalledWith('run')
     expect(w.emitted('content')?.at(-1)).toEqual([true])
   })
   it('shows public planning text and rationale while the run-scoped model is still streaming', async () => {
+    vi.useFakeTimers()
     const store = new RunRuntimeStore('run')
     vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
     const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'planning' } }); wrappers.push(w)
@@ -70,6 +90,7 @@ describe('Copilot task timeline', () => {
     apply('planner.stage.started', { stage: 'intent_profile', callKey: 'intent_profile' })
     apply('planner.model.output.delta', { stage: 'intent_profile', callKey: 'intent_profile',
       delta: '{"reasoning_content":"PRIVATE","primaryGoal":"设计实验室管理平台","keyConstraints":["覆盖三个校区"]}' })
+    await vi.advanceTimersByTimeAsync(16)
     await w.vm.$nextTick()
     expect(w.get('.run-timeline__planning-text').text()).toContain('设计实验室管理平台')
     expect(w.text()).toContain('理解目标与约束')
@@ -78,6 +99,7 @@ describe('Copilot task timeline', () => {
     apply('planner.stage.started', { stage: 'decompose', callKey: 'decompose' })
     apply('planner.model.output.delta', { stage: 'decompose', callKey: 'decompose',
       delta: '{"tasks":[{"key":"internal-key","title":"核对需求","objective":"明确跨校区的数据边界","decompositionRationale":"先统一数据口径，再设计权限' })
+    await vi.advanceTimersByTimeAsync(16)
     await w.vm.$nextTick()
     expect(w.get('.run-timeline__planning-text').text()).toContain('先统一数据口径，再设计权限')
     expect(w.text()).toContain('拆分任务与规划依据')
@@ -136,7 +158,7 @@ describe('Copilot task timeline', () => {
     expect(w.text()).toContain('只做分析，不修改代码')
     expect(w.get('.run-timeline__tool summary').text()).toContain('查看目录')
     expect(w.text()).toContain('receipt')
-    expect(acquireRunRuntimeStore).not.toHaveBeenCalled()
+    expect(acquireRunRuntimeStore).toHaveBeenCalledWith('run')
   })
   it('retains each public work explanation between actual tool calls in the same step', async () => {
     const store = new RunRuntimeStore('run')

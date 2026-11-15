@@ -95,11 +95,11 @@ def test_critical_overflow_is_explicit_instead_of_dropping_lifecycle_events():
     stream = broker.subscribe("critical-run")
     first_pending = asyncio.create_task(stream.__anext__())
     await asyncio.sleep(0)
-    await broker.publish("critical-run", ev(1, "node.started"))
+    await broker.publish("critical-run", ev(1, "node.started").model_copy(update={"run_id": "critical-run"}))
     assert (await first_pending).event_type == "node.started"
-    await broker.publish("critical-run", ev(2, "node.completed"))
-    await broker.publish("critical-run", ev(3, "node.failed"))
-    await broker.publish("critical-run", ev(4, "model.completed"))
+    await broker.publish("critical-run", ev(2, "node.completed").model_copy(update={"run_id": "critical-run"}))
+    await broker.publish("critical-run", ev(3, "node.failed").model_copy(update={"run_id": "critical-run"}))
+    await broker.publish("critical-run", ev(4, "model.completed").model_copy(update={"run_id": "critical-run"}))
     with pytest.raises(RuntimeEventOverflow):
       await stream.__anext__()
 

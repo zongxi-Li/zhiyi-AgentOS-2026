@@ -1,4 +1,4 @@
-"""Transient runtime events emitted while an ACG model call is running."""
+"""Runtime progress envelopes; selected public display facts have a bounded checkpoint."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class RuntimeEvent(BaseModel):
-    """Small, non-persistent envelope shared by ACG, model and SSE projections."""
+    """Small envelope shared by ACG, model and SSE display projections."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 

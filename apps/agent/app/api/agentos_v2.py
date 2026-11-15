@@ -3403,23 +3403,39 @@ def create_router(
         run = load_run(run_id)
 
         async def body():
+            runtime_event_broker.bind_run(run_id, runtime.workflow_store)
+            def encode(event):
+                payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
+                return f"event: {event.event_type}\ndata: {payload}\n\n"
             terminal_event = {
                 "completed": "run.completed",
                 "failed": "run.failed",
                 "cancelled": "run.cancelled",
+                "superseded": "run.superseded",
             }.get(run.status.value)
             if terminal_event:
+                baseline = runtime_event_broker.snapshot(run_id)
+                if baseline is not None:
+                    yield encode(baseline)
                 event = RuntimeEvent(
-                    eventType=terminal_event, runId=run_id, sequence=0,
+                    eventType=terminal_event, runId=run_id, sequence=baseline.sequence + 1 if baseline else 0,
                     payload={"status": run.status.value},
                 )
-                payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
-                yield f"event: {event.event_type}\ndata: {payload}\n\n"
+                yield encode(event)
                 return
             try:
                 async for event in runtime_event_broker.subscribe(run_id):
-                    payload = json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False)
-                    yield f"event: {event.event_type}\ndata: {payload}\n\n"
+                    yield encode(event)
+                    if event.event_type == "runtime.display.snapshot":
+                        # Register first, then reconcile durable status: completion
+                        # between authorization and subscription cannot leave an
+                        # observer waiting forever, including after a restart.
+                        current = runtime.workflow_store.get_run(run_id)
+                        terminal = {"completed", "failed", "cancelled", "superseded"}
+                        if current.status.value in terminal:
+                            yield encode(RuntimeEvent(eventType=f"run.{current.status.value}",
+                                runId=run_id, sequence=event.sequence + 1, payload={"status": current.status.value}))
+                            break
                     if event.event_type in {"run.completed", "run.failed", "run.cancelled"}:
                         break
             except RuntimeEventOverflow:
