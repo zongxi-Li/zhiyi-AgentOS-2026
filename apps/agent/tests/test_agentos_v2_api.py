@@ -1093,6 +1093,90 @@ async def test_marketplace_catalog_requires_backend_and_install_is_tenant_scoped
     assert installed.json()["status"] == "queued"
 
 
+async def test_agent_provisioning_shared_pool_requires_a_local_operator(tmp_path):
+    runtime = _runtime(tmp_path)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for role, tenant, expected in ((None, None, 401), ("viewer", None, 403),
+                                       ("operator", "tenant-a", 403), ("operator", None, 503)):
+            actor = TrustedUserContext(user_id="shared-operator", subject="shared-operator", role=role, tenant_id=tenant) if role else None
+            token = _trusted_user_context.set(actor)
+            try:
+                for method, path in (("GET", "templates"), ("GET", "instances"), ("POST", "instances")):
+                    kwargs = {"json": {"templateId": "approved", "idempotencyKey": "one"}} if method == "POST" else {}
+                    response = await client.request(method, f"/agentos/v2/agents/{path}", **kwargs)
+                    assert response.status_code == expected, response.text
+            finally:
+                _trusted_user_context.reset(token)
+
+
+async def test_agent_provisioning_api_and_marketplace_share_managed_lifecycle(tmp_path):
+    from components.marketplace.application.service import MarketplaceService
+    from components.marketplace.contracts import InstallationStatus
+    from components.marketplace.infrastructure import InMemoryCatalog, InMemoryInstallationJobs
+
+    runtime = _runtime(tmp_path)
+    jobs = InMemoryInstallationJobs()
+    job = InstallationJob.new("agent:job", "agent:approved", "local")
+    for state in (InstallationStatus.INSTALLING, InstallationStatus.REGISTERING, InstallationStatus.RUNNING):
+        job = job.advance(state, runtime_id="agent-executor:fixture")
+    jobs.create(job)
+    delegated = []
+
+    class Provisioner:
+        def templates(self):
+            return [{"templateId": "approved"}]
+
+        def instances(self):
+            return [{"jobId": job.job_id}]
+
+        def provision(self, *, template_id, idempotency_key, owner_scope):
+            assert owner_scope == "local"
+            if template_id != "approved":
+                raise KeyError(template_id)
+            if idempotency_key == "conflict":
+                raise ValueError("provisioning conflict")
+            return jobs.get(job.job_id)
+
+        def owns(self, current):
+            return current.catalog_id == "agent:approved"
+
+        def stop(self, job_id, *, owner_scope):
+            delegated.append(("stop", job_id, owner_scope))
+            return jobs.update(jobs.get(job_id).advance(InstallationStatus.STOPPED))
+
+        def uninstall(self, job_id, *, owner_scope):
+            delegated.append(("uninstall", job_id, owner_scope))
+            return jobs.update(jobs.get(job_id).advance(InstallationStatus.UNINSTALLING).advance(InstallationStatus.REMOVED))
+
+    runtime.agent_provisioner = Provisioner()
+    # A bare launcher cannot stop/remove anything: managed Agent jobs must be
+    # delegated before the legacy process or RuntimeProfile lifecycle is used.
+    runtime.marketplace_service = MarketplaceService(catalog=InMemoryCatalog([]), jobs=jobs,
+        package_root=tmp_path, launcher=object(), endpoint_probe=object(), plane=runtime.resource_plane,
+        agent_provisioner=runtime.agent_provisioner)
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    token = _trusted_user_context.set(TrustedUserContext(user_id="shared-operator", subject="shared-operator", role="operator", tenant_id=None))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.get("/agentos/v2/agents/templates")).json()["items"] == [{"templateId": "approved"}]
+            assert (await client.get("/agentos/v2/agents/instances")).json()["items"] == [{"jobId": job.job_id}]
+            path = "/agentos/v2/agents/instances"
+            assert (await client.post(path, json={"templateId": "approved", "idempotencyKey": "one", "profile": {}})).status_code == 422
+            assert (await client.post(path, json={"templateId": "unknown", "idempotencyKey": "one"})).status_code == 404
+            assert (await client.post(path, json={"templateId": "approved", "idempotencyKey": "conflict"})).status_code == 409
+            created = await client.post(path, json={"templateId": "approved", "idempotencyKey": "one"})
+            assert created.status_code == 201 and created.json()["jobId"] == job.job_id
+            base = f"/agentos/v2/marketplace/installations/{job.job_id}"
+            assert (await client.post(base + "/stop")).json()["status"] == "stopped"
+            assert (await client.delete(base)).json()["status"] == "removed"
+    finally:
+        _trusted_user_context.reset(token)
+    assert delegated == [("stop", job.job_id, "local"), ("uninstall", job.job_id, "local")]
+
+
 async def test_marketplace_real_tool_upload_execute_download_and_owner_isolation(tmp_path) -> None:
     from components.marketplace.builtins.catalog import build_builtin_catalog
     from components.marketplace.application.service import MarketplaceService

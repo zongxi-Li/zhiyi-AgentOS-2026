@@ -44,6 +44,7 @@ class MarketplaceService:
         launcher: LocalLauncher,
         endpoint_probe: LocalEndpointProbe,
         plane: ResourcePlane,
+        agent_provisioner: Any = None,
     ) -> None:
         self.catalog = catalog
         self.jobs = jobs
@@ -51,6 +52,7 @@ class MarketplaceService:
         self.launcher = launcher
         self.endpoint_probe = endpoint_probe
         self.plane = plane
+        self.agent_provisioner = agent_provisioner
         self._lifecycle_lock = RLock()
         self._stop_monitor = Event()
         self._monitor: Thread | None = None
@@ -261,6 +263,10 @@ class MarketplaceService:
     @_serialized_lifecycle
     def stop(self, job_id: str, *, owner_scope: str) -> InstallationJob:
         job = self.get_installation(job_id, owner_scope=owner_scope)
+        if self.agent_provisioner is not None and self.agent_provisioner.owns(job):
+            return self.agent_provisioner.stop(job_id, owner_scope=owner_scope)
+        if job.job_id.startswith("agent-provision:"):
+            raise ValueError("agent provisioning lifecycle unavailable")
         if job.status is not InstallationStatus.RUNNING or not job.runtime_id:
             raise ValueError("only running installations can be stopped")
         profile = self.plane.runtime(job.runtime_id)
@@ -272,6 +278,10 @@ class MarketplaceService:
     @_serialized_lifecycle
     def uninstall(self, job_id: str, *, owner_scope: str) -> InstallationJob:
         job = self.get_installation(job_id, owner_scope=owner_scope)
+        if self.agent_provisioner is not None and self.agent_provisioner.owns(job):
+            return self.agent_provisioner.uninstall(job_id, owner_scope=owner_scope)
+        if job.job_id.startswith("agent-provision:"):
+            raise ValueError("agent provisioning lifecycle unavailable")
         if job.status is InstallationStatus.RUNNING:
             job = self.stop(job_id, owner_scope=owner_scope)
         if job.status is not InstallationStatus.STOPPED or not job.runtime_id:

@@ -264,9 +264,46 @@ def configure_runtime(
 
 def sync_agent_registry_to_ledger(runtime: ExecutionRuntime) -> None:
     """Project callable application Agents into the embedded runtime resource."""
-    from components.resource.runtime.embedded_runtime import register_embedded_agents_runtime
+    from components.resource.runtime.embedded_runtime import refresh_embedded_agents_runtime
 
-    register_embedded_agents_runtime(runtime.resource_plane, runtime.agent_registry.all())
+    refresh_embedded_agents_runtime(runtime.resource_plane, runtime.agent_registry)
+
+
+def _configure_agent_provisioning(runtime: ExecutionRuntime, jobs) -> None:
+    """Approve constructors at startup; requests cannot provide code or profiles."""
+    from adapters.model.native import NativeGeneralAgent
+    from service.agents.provisioning import AgentProvisioner
+
+    constructors = {NativeGeneralAgent: NativeGeneralAgent}
+    # Pack loading already succeeded. Only this explicitly approved Pack
+    # constructor is exposed, with its original provenance frozen below.
+    if any(item.agent_name == "workspace_developer" for item in runtime.agent_registry.definitions()):
+        from packs.workspace import WorkspaceDeveloper
+        constructors[WorkspaceDeveloper] = WorkspaceDeveloper
+    runtime.agent_pool = runtime.runtime_binding_service.agent_pool
+    runtime.agent_pool.synchronize()
+    runtime.agent_provisioner = AgentProvisioner(
+        pool=runtime.agent_pool, jobs=jobs,
+        coordinator=runtime.resource_binder.coordinator,
+        refresh_runtime=runtime.runtime_binding_service.refresh_embedded_runtime,
+    )
+    for registration in runtime.agent_registry.registrations():
+        constructor = constructors.get(type(registration.implementation))
+        if constructor is None:
+            continue
+        provenance = {name: getattr(registration.definition, name) for name in (
+            "source", "plugin_id", "plugin_version", "contribution_id",
+        )}
+
+        def factory(constructor=constructor, provenance=provenance):
+            agent = constructor()
+            agent.profile = agent.profile.model_copy(update=provenance)
+            return agent
+
+        runtime.agent_provisioner.register_agent_template(
+            registration.ref.agent_id, seed=registration.implementation, factory=factory,
+        )
+    runtime.marketplace_service.agent_provisioner = runtime.agent_provisioner
 
 
 def build_model_setup(
@@ -346,7 +383,8 @@ def _sync_model_endpoints_from_registry(runtime: ExecutionRuntime) -> None:
 
     routes = [
         {"provider": route["provider"], "model": route["model"],
-         "version": runtime.model_registry.resolve(route["provider"], route["model"]).manifest.version}
+         "version": runtime.model_registry.resolve(route["provider"], route["model"]).manifest.version,
+         "quota": runtime.model_registry.resolve(route["provider"], route["model"]).manifest.metadata.get("quota")}
         for route in runtime.model_registry.list_models()
     ]
     plane = getattr(runtime, "resource_plane", None)
@@ -679,6 +717,7 @@ def _assemble_default_runtime(
         capability_catalog=runtime.capability_catalog,
     )
     sync_agent_registry_to_ledger(runtime)
+    _configure_agent_provisioning(runtime, marketplace_jobs)
     return configure_runtime(runtime, intent_llm=intent_llm, model_runtime=model_runtime)
 
 

@@ -90,6 +90,7 @@ def _environment(root: Path) -> dict[str, str]:
         "AGENTOS_AGENT_DB": str(root / "agents.sqlite3"),
         "AGENTOS_RESOURCE_HEALTH_DB": str(root / "resource_health.sqlite3"),
         "AGENTOS_EVOLUTION_DB": str(root / "evolution.sqlite3"),
+        "AGENTOS_MARKETPLACE_DB": str(root / "marketplace.sqlite3"),
     }
 
 
@@ -120,6 +121,20 @@ def test_application_builds_the_single_execution_runtime_with_authoritative_reso
         assert isinstance(runtime.resource_plane.audit_store, SQLiteResourceAuditStore)
         assert {item.catalog_id for item in runtime.marketplace_service.list_catalog()} >= {"tool.pdf-parser", "tool.file-converter"}
         assert runtime.marketplace_service._monitor.is_alive()
+        assert runtime.agent_provisioner.pool is runtime.runtime_binding_service.agent_pool
+        assert runtime.agent_provisioner.coordinator is runtime.resource_binder.coordinator
+        template_ids = {item["templateId"] for item in runtime.agent_provisioner.templates()}
+        assert {"native_general_agent", "workspace_developer"} <= template_ids
+        for template_id in ("native_general_agent", "workspace_developer"):
+            job = runtime.agent_provisioner.provision(template_id, "application-wiring")
+            assert job.status.value == "running", job.error_summary
+            registration = next(item for item in runtime.agent_registry.registrations()
+                                if item.ref.resource_id == job.runtime_id)
+            seed = runtime.agent_registry.resolve_by_id(template_id)
+            assert registration.definition == runtime.agent_registry.get_registration(
+                runtime.agent_registry.registration_for(seed)).definition
+            assert registration.implementation is not seed
+            assert runtime.marketplace_service.uninstall(job.job_id, owner_scope="local").status.value == "removed"
         assert isinstance(runtime.resource_plane.health_monitor.store, SQLiteResourceHealthStore)
         assert isinstance(runtime.evolution_service.store, SQLiteEvolutionStore)
         # hands 唯一后端：装配恒以 FormalWorkspaceTools 包装注入的工具运行时。

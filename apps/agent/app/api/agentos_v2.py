@@ -25,6 +25,7 @@ from app.execution.run_capabilities import assert_mutable_run, project_run_capab
 from app.api.agentos_c2 import create_c2_router, project_initial_control
 from app.security.internal_auth import current_trusted_user, current_semantic_principal
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RunRecordState, RuntimeRunRecord, StepStatus, WorkflowStatus
+from contracts.agents import AgentRegistrationRef
 from contracts.content import ContentKind
 from domain.models import MissionStatus, RunStatus
 from domain.repository import EntityNotFoundError
@@ -175,6 +176,13 @@ class MarketplaceInstallRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     catalog_id: str = Field(alias="catalogId", min_length=1, max_length=160)
+
+
+class AgentProvisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    template_id: str = Field(alias="templateId", min_length=1, max_length=160)
+    idempotency_key: str = Field(alias="idempotencyKey", min_length=1, max_length=200)
 
 
 class RemoteNodeObservationRequest(BaseModel):
@@ -1315,7 +1323,7 @@ def create_router(
         marketplace, owner_scope = require_marketplace()
         require_resource_operator(owner_scope)
         try:
-            job = marketplace.stop(job_id, owner_scope=owner_scope)
+            job = await asyncio.to_thread(marketplace.stop, job_id, owner_scope=owner_scope)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="installation not found") from exc
         except ValueError as exc:
@@ -1327,7 +1335,7 @@ def create_router(
         marketplace, owner_scope = require_marketplace()
         require_resource_operator(owner_scope)
         try:
-            job = marketplace.uninstall(job_id, owner_scope=owner_scope)
+            job = await asyncio.to_thread(marketplace.uninstall, job_id, owner_scope=owner_scope)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="installation not found") from exc
         except ValueError as exc:
@@ -1548,6 +1556,125 @@ def create_router(
                 "snapshotVersion": 1,
             })
         return {"items": items, "total": len(items)}
+
+    def require_agent_provisioner():
+        # These executors belong to the shared system pool, not the caller's
+        # tenant. Tenant-local operator permission cannot administer this pool.
+        require_resource_operator("local")
+        provisioner = getattr(runtime, "agent_provisioner", None)
+        if provisioner is None:
+            raise HTTPException(status_code=503, detail="agent provisioning unavailable")
+        return provisioner
+
+    @router.get("/agents/templates")
+    async def get_agent_templates():
+        provisioner = require_agent_provisioner()
+        try:
+            items = await asyncio.to_thread(provisioner.templates)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"items": items, "total": len(items)}
+
+    @router.get("/agents/instances")
+    async def get_agent_instances():
+        provisioner = require_agent_provisioner()
+        try:
+            items = await asyncio.to_thread(provisioner.instances)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"items": items, "total": len(items)}
+
+    @router.post("/agents/instances", status_code=status.HTTP_201_CREATED)
+    async def provision_agent_instance(request: AgentProvisionRequest):
+        provisioner = require_agent_provisioner()
+        try:
+            job = await asyncio.to_thread(provisioner.provision, template_id=request.template_id,
+                idempotency_key=request.idempotency_key, owner_scope="local")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="agent template not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return job.model_dump(by_alias=True, mode="json")
+
+    @router.get("/agents/pool")
+    async def get_agent_pool():
+        """Return the live local AgentPool plus currently executing Steps."""
+        actor = current_trusted_user()
+        if actor is None:
+            raise HTTPException(status_code=401, detail="trusted user context required")
+        pool = getattr(runtime, "agent_pool", None)
+        if pool is None:
+            provisioner = getattr(runtime, "agent_provisioner", None)
+            pool = getattr(provisioner, "pool", None)
+        if pool is None:
+            raise HTTPException(status_code=503, detail="agent pool unavailable")
+        coordinator = getattr(getattr(runtime, "resource_binder", None), "coordinator", None)
+        if coordinator is None:
+            raise HTTPException(status_code=503, detail="agent lease coordinator unavailable")
+        # Only the actor's own non-terminal Runs are eligible for the task
+        # projection. Shared local Agent facts are visible; task ownership is not.
+        workflow_store = runtime.workflow_store
+        run_items = workflow_store.list_runs(
+            statuses=(WorkflowStatus.PENDING, WorkflowStatus.PLANNING, WorkflowStatus.RUNNING,
+                      WorkflowStatus.WAITING_REVIEW, WorkflowStatus.RETRYING),
+            owner_user_id=actor.user_id,
+            owner_tenant_id=actor.tenant_id,
+            page=1,
+            page_size=200,
+        ).items
+        active_by_resource: dict[str, list[dict[str, Any]]] = {}
+        for run in run_items:
+            bindings = run.execution_state.get("executionBindings") if isinstance(run.execution_state, dict) else None
+            if not isinstance(bindings, dict):
+                continue
+            for step in run.steps:
+                if step.status is not StepStatus.RUNNING:
+                    continue
+                binding = bindings.get(step.step_id)
+                if not isinstance(binding, dict):
+                    continue
+                registration = binding.get("agentRegistration")
+                if not isinstance(registration, dict):
+                    continue
+                ref = AgentRegistrationRef.model_validate(registration)
+                active_by_resource.setdefault(ref.resource_id, []).append({
+                    "runId": run.run_id,
+                    "missionId": run.mission_id,
+                    "stepId": step.step_id,
+                    "stepName": step.name,
+                    "status": step.status.value,
+                    "startedAt": step.started_at.isoformat() if step.started_at else None,
+                })
+        items = []
+        for instance in pool.instances():
+            ref = instance.ref
+            items.append({
+                "registration": ref.model_dump(by_alias=True, mode="json"),
+                "resourceId": ref.resource_id,
+                "agentId": ref.agent_id,
+                "agentName": instance.definition.agent_name,
+                "domain": instance.definition.domain,
+                "capabilities": list(instance.definition.capabilities),
+                "definitionVersion": instance.definition.definition_version,
+                "host": {
+                    "runtimeId": instance.host.runtime_id,
+                    "displayName": instance.host.display_name,
+                    "environment": instance.host.placement.value,
+                    "runtimeKind": instance.host.kind.value,
+                    "enabled": instance.host.enabled,
+                },
+                "enabled": instance.resource.enabled,
+                "draining": instance.resource.draining,
+                "outcomeUnknown": bool(instance.resource.metadata.get("outcomeUnknown")),
+                "health": {
+                    "healthy": instance.health.healthy,
+                    "lastHeartbeat": instance.health.last_heartbeat.isoformat() if instance.health.last_heartbeat else None,
+                },
+                "capacity": instance.capacity,
+                "activeSlots": coordinator.active_slots(ref.resource_id),
+                "activeSteps": active_by_resource.get(ref.resource_id, []),
+            })
+        return {"observedAt": datetime.now(timezone.utc).isoformat(), "instances": items, "total": len(items)}
 
     @router.post("/resources/register", status_code=status.HTTP_201_CREATED)
     async def register_remote_resource(request: RemoteResourceRegistrationRequest):

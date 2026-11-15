@@ -32,6 +32,7 @@ _ALLOWED_TRANSITIONS = {
     InstallationStatus.RUNNING: {InstallationStatus.STOPPED, InstallationStatus.UNINSTALLING},
     InstallationStatus.STOPPED: {InstallationStatus.UNINSTALLING},
     InstallationStatus.UNINSTALLING: {InstallationStatus.REMOVED, InstallationStatus.FAILED},
+    InstallationStatus.FAILED: {InstallationStatus.UNINSTALLING},
 }
 
 
