@@ -4,10 +4,11 @@
 每个会话使用独立的可重入锁；执行回调在锁内运行，保证同一 request_id 只会
 执行一次。生产装配仍需把 runner、认证、资源上限和生命周期清理器注入更高层。
 
-TODO(P3-1)：增加会话总数、回执数、并发执行数和激活内存的有界配额。
+TODO(P3-1)：增加会话总数、并发执行数和激活内存配额；已有每会话32步/160位置上限。
 已实现：回执发布失败或同步执行取消进入FAILED；绝对TTL在前向返回后复核；
 执行中同线程查询不释放KV；释放失败可重试且不阻断其他会话的清理。
-TODO(P3-2)：在真正的远端suffix用例中接入本存储持有的KV句柄；GPU任务须由runner等待或隔离。
+已实现：execute_with_context在会话锁内提供存储推进的位置和KV，供ContinuationService续算。
+TODO(P3-2)：在认证传输层装配同一个suffix runner；GPU任务须由runner等待或隔离。
 TODO(P3-3)：按容量测量决定是否将长时间runner改为占位/执行/提交事务；保留同一请求只推进一次。
 TODO(P3-4)：增加显式后台清理生命周期和重启隔离域；当前进程重启即全部失效。
 """
@@ -22,12 +23,15 @@ import secrets
 import threading
 import time
 
+from pydantic import ValidationError
+
 from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.session import SessionStatus, SessionView, StepReceipt, StepRequest
+from safe.contracts.session import ActivationContext, SessionStatus, SessionView, StepReceipt, StepRequest
+from safe.domain.activation_policy import checked_raw_bytes
 from safe.domain.session_state import require_next_step, transition
 from safe.ports.clock import Clock
 from safe.ports.model_runner import KVHandle, ModelRunner
-from safe.ports.session_store import StepRunner
+from safe.ports.session_store import ContextStepRunner, StepRunner
 
 class _SystemClock:
     def monotonic(self) -> float:
@@ -53,6 +57,7 @@ class _SessionRecord:
     created_at: float
     last_activity: float
     absolute_deadline: float
+    position_offset: int = 0
     kv_handle: KVHandle | None = field(default=None, repr=False)
     kv_released: bool = False
     executing: bool = False
@@ -125,6 +130,14 @@ class MemorySessionStore:
 
     def execute(self, owner_id: str, request: StepRequest, runner: StepRunner) -> StepReceipt:
         """原子执行一步；runner返回``(token_id, finished)``，异常使会话永久失败。"""
+        return self.execute_with_context(owner_id, request, lambda value, context, handle: runner(value))
+
+    def execute_with_context(self, owner_id: str, request: StepRequest, runner: ContextStepRunner) -> StepReceipt:
+        """把受信位置和KV交给进程内回调；不会向请求方暴露句柄。"""
+        try:
+            request = StepRequest.model_validate(request.model_dump())
+        except (AttributeError, ValidationError):
+            raise SafeError(ErrorCode.ACTIVATION_INVALID) from None
         record = self._owned(owner_id, request.session_id)
         fingerprint = self._fingerprint(request)
         with record.lock:
@@ -144,14 +157,27 @@ class MemorySessionStore:
             expected_phase = "prefill" if request.step == 0 else "decode"
             if request.phase != expected_phase:
                 raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+            if request.position_offset != record.position_offset or record.next_step >= 32:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
+            checked_raw_bytes(request.activation.shape)
+            if request.phase == "decode" and request.activation.shape[1] != 1:
+                raise SafeError(ErrorCode.ACTIVATION_INVALID)
+            next_position = record.position_offset + request.activation.shape[1]
+            if next_position > 160:
+                raise SafeError(ErrorCode.ACTIVATION_INVALID)
+            context = ActivationContext(
+                session_id=record.session_id, manifest_digest=record.manifest_digest,
+                next_step=record.next_step, phase=expected_phase, position_offset=record.position_offset,
+            )
             if record.status is SessionStatus.CREATED:
                 record.status = transition(record.status, SessionStatus.ACTIVE)
             record.executing = True
             try:
-                outcome = runner(request)
+                outcome = runner(request, context, record.kv_handle)
                 token_id, finished = outcome
                 if type(token_id) is not int or token_id < 0 or type(finished) is not bool:
                     raise ValueError("runner回执格式非法")
+                finished = finished or record.next_step == 31 or next_position == 160
                 receipt = StepReceipt(
                     request_id=request.request_id,
                     session_id=request.session_id,
@@ -181,6 +207,7 @@ class MemorySessionStore:
             finally:
                 record.executing = False
             record.next_step += 1
+            record.position_offset = next_position
             record.last_activity = completed_at
             if finished:
                 record.status = transition(record.status, SessionStatus.CLOSED)

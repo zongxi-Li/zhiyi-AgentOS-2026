@@ -1,4 +1,4 @@
-"""显式核验Qwen2双角色KV逐token续算；不下载模型，不保存输入文本。"""
+"""显式核验Qwen2双角色KV续算；可启用会话/JSON/回执闭环，不下载模型。"""
 
 from __future__ import annotations
 
@@ -33,6 +33,8 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=20)
     parser.add_argument("--steps", type=int, default=32)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--continuation", action="store_true",
+                        help="经过JSON激活、会话事务和greedy/EOS回执，最长steps步")
     args = parser.parse_args()
     if not 1 <= args.samples <= len(PROMPTS) or not 1 <= args.steps <= 32:
         parser.error("samples须为1–20，steps须为1–32")
@@ -74,6 +76,7 @@ def main() -> int:
         atol=1e-5,
         rtol=1e-4,
         oracle_cache="DynamicCache",
+        execution="session-json-continuation" if args.continuation else "direct-runner",
         expected_cases=args.samples,
         steps_per_case=args.steps,
         cases=[],
@@ -96,6 +99,42 @@ def main() -> int:
             str(args.source.resolve()), local_files_only=True, trust_remote_code=False,
             torch_dtype=torch.float32, attn_implementation="eager",
         ).eval()
+        cloud = sessions = activation = sampler = None
+        if args.continuation:
+            from safe.application.activation import ActivationService
+            from safe.application.continuation import ContinuationService
+            from safe.application.session import SessionService
+            from safe.contracts.session import ActivationContext, SessionStatus, StepRequest
+            from safe.infrastructure.codecs.fp32 import FP32Codec
+            from safe.infrastructure.models.sampling import GreedySampler
+            from safe.infrastructure.storage.memory_sessions import MemorySessionStore
+
+            class ObservedSampler:
+                """仅评估使用：保留本步logits作oracle对照，不写入报告或wire回执。"""
+                def __init__(self):
+                    config = json.loads((store.directory / "config.json").read_text(encoding="utf-8"))
+                    eos = tokenizer.eos_token_id
+                    self.delegate = GreedySampler(vocab_size=config["vocab_size"],
+                        eos_token_ids=frozenset() if eos is None else frozenset({eos}))
+                    self.logits = None
+                    self.calls = 0
+
+                def sample(self, logits):
+                    result = self.delegate.sample(logits)
+                    self.logits = logits
+                    self.calls += 1
+                    return result
+
+            sampler = ObservedSampler()
+            sessions = SessionService(MemorySessionStore(runner=suffix))
+            cloud = ContinuationService(sessions=sessions, runner=suffix, codec=FP32Codec(),
+                sampler=sampler, manifest=manifest, approved_digest=args.manifest_digest,
+                max_new_tokens=args.steps)
+            activation = ActivationService(codec=FP32Codec(), manifest=manifest,
+                                           approved_digest=args.manifest_digest)
+            report["eos_policy"] = "verified-tokenizer-eos"
+            report["eos_token_id"] = tokenizer.eos_token_id
+            report["idempotent_retries_checked"] = 0
         report["model_revision"] = manifest.revision
         report["process_rss_before_models"] = process.memory_info().rss
         max_error = 0.0
@@ -104,9 +143,15 @@ def main() -> int:
         for index, prompt in enumerate(PROMPTS[:args.samples]):
             session_id = f"synthetic-kv-{index:02d}"
             prefix_handle = prefix.create_kv(session_id)
-            suffix_handle = suffix.create_kv(session_id)
+            suffix_handle = None
+            session_created = False
             case_started = time.perf_counter()
             try:
+                if cloud is None:
+                    suffix_handle = suffix.create_kv(session_id)
+                else:
+                    cloud.create("eval-owner", session_id=session_id)
+                    session_created = True
                 input_ids = list(tokenizer.apply_chat_template(
                     [{"role": "user", "content": prompt}], tokenize=True, add_generation_prompt=True
                 ))
@@ -116,9 +161,10 @@ def main() -> int:
                     hidden, shape = prefix.prefill(
                         tuple(input_ids), kv_handle=prefix_handle, session_id=session_id
                     )
-                    logits = torch.tensor(suffix.prefill(
-                        hidden, shape, kv_handle=suffix_handle, session_id=session_id
-                    ))
+                    if cloud is None:
+                        logits = torch.tensor(suffix.prefill(
+                            hidden, shape, kv_handle=suffix_handle, session_id=session_id
+                        ))
                     oracle_cache = DynamicCache()
                     oracle_output = oracle(
                         torch.tensor([input_ids]), past_key_values=oracle_cache,
@@ -126,7 +172,27 @@ def main() -> int:
                     )
                 case_error = 0.0
                 case_matches = 0
+                prompt_tokens = len(input_ids)
+                ended_on_eos = False
                 for step in range(args.steps):
+                    receipt = None
+                    if cloud is not None:
+                        context = ActivationContext(session_id=session_id,
+                            manifest_digest=args.manifest_digest, next_step=step,
+                            phase="prefill" if step == 0 else "decode",
+                            position_offset=0 if step == 0 else prompt_tokens + step - 1)
+                        request = activation.encode(hidden, shape, context=context,
+                                                    request_id=f"request-{index}-{step}")
+                        request = StepRequest.model_validate_json(request.model_dump_json().encode("utf-8"))
+                        calls_before = sampler.calls
+                        receipt = cloud.step("eval-owner", request)
+                        assert sampler.calls == calls_before + 1, "每个新请求必须只采样一次"
+                        logits = torch.tensor(sampler.logits)
+                        # 包括终态请求；重复请求不得再次执行或推进KV。
+                        assert cloud.step("eval-owner", request) == receipt
+                        assert sampler.calls == calls_before + 1, "幂等重试不应重复计算/采样"
+                        assert sessions.view("eval-owner", session_id).next_step == step + 1
+                        report["idempotent_retries_checked"] += 1
                     with torch.inference_mode():
                         expected = oracle_output.logits[0, -1]
                     try:
@@ -136,7 +202,7 @@ def main() -> int:
                     error = float((logits - expected).abs().max())
                     case_error = max(case_error, error)
                     max_error = max(max_error, error)
-                    token = int(logits.argmax())
+                    token = int(logits.argmax()) if receipt is None else receipt.token_id
                     matched = token == int(expected.argmax())
                     if not matched:
                         raise AssertionError(f"greedy token不一致：case={index} step={step}")
@@ -144,6 +210,11 @@ def main() -> int:
                     greedy_matches += 1
                     total_steps += 1
                     input_ids.append(token)
+                    if receipt is not None and receipt.finished:
+                        ended_on_eos = token == tokenizer.eos_token_id
+                        assert ended_on_eos or step + 1 == args.steps, "会话意外提前终止"
+                        assert sessions.view("eval-owner", session_id).status is SessionStatus.CLOSED
+                        break
                     if step + 1 < args.steps:
                         with torch.inference_mode():
                             oracle_output = oracle(
@@ -151,11 +222,13 @@ def main() -> int:
                                 use_cache=True, num_logits_to_keep=1,
                             )
                             hidden, shape = prefix.decode(prefix_handle, session_id, token)
-                            logits = torch.tensor(suffix.decode(suffix_handle, session_id, hidden, shape))
+                            if cloud is None:
+                                logits = torch.tensor(suffix.decode(suffix_handle, session_id, hidden, shape))
                 report["cases"].append(dict(
                     case_id=f"synthetic-{index:02d}",
-                    prompt_tokens=len(input_ids) - args.steps,
+                    prompt_tokens=prompt_tokens,
                     checked_steps=case_matches,
+                    ended_on_eos=ended_on_eos,
                     max_absolute_logit_error=case_error,
                     seconds=time.perf_counter() - case_started,
                 ))
@@ -165,7 +238,11 @@ def main() -> int:
                 )
             finally:
                 prefix.release_kv(prefix_handle)
-                suffix.release_kv(suffix_handle)
+                if suffix_handle is not None:
+                    suffix.release_kv(suffix_handle)
+                if session_created:
+                    if sessions.view("eval-owner", session_id).status in (SessionStatus.CREATED, SessionStatus.ACTIVE):
+                        sessions.close("eval-owner", session_id)
         report.update(
             status="passed",
             total_checked_steps=total_steps,

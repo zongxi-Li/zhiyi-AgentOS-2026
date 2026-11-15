@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from safe.contracts.session import SessionView, StepReceipt, StepRequest
-from safe.ports.session_store import SessionStore, StepRunner
+from safe.ports.session_store import ContextStepRunner, SessionStore, StepRunner
 
 
 class SessionService:
@@ -23,6 +23,10 @@ class SessionService:
 
     def execute(self, owner_id: str, request: StepRequest, runner: StepRunner) -> StepReceipt:
         return self._store.execute(owner_id, request, runner)
+
+    def execute_with_context(self, owner_id: str, request: StepRequest, runner: ContextStepRunner) -> StepReceipt:
+        """可信上下文只能由存储在会话锁内构造，不能从请求复制。"""
+        return self._store.execute_with_context(owner_id, request, runner)
 
     def close(self, owner_id: str, session_id: str) -> SessionView:
         return self._store.close(owner_id, session_id)

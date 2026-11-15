@@ -248,3 +248,52 @@ def test_partial_forward_failure_invalidates_only_affected_cache(exported, monke
         runner.prefill(flat, shape, kv_handle=other_handle, session_id="session-b")
     runner.close()
     prefix.close()
+
+
+def test_session_continuation_roundtrip_matches_real_qwen_layers(exported):
+    """合成权重使用真实Qwen层，贯通JSON激活、会话KV和greedy回执。"""
+    from safe.application.activation import ActivationService
+    from safe.application.continuation import ContinuationService
+    from safe.application.session import SessionService
+    from safe.contracts.session import ActivationContext, SessionStatus, StepRequest
+    from safe.infrastructure.codecs.fp32 import FP32Codec
+    from safe.infrastructure.models.sampling import GreedySampler
+    from safe.infrastructure.storage.memory_sessions import MemorySessionStore
+
+    oracle, _, root, digest = exported
+    prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
+    suffix = QwenSuffixRunner(root / "suffix", approved_digest=digest)
+    store = MemorySessionStore(runner=suffix)
+    sessions = SessionService(store)
+    cloud = ContinuationService(sessions=sessions, runner=suffix, codec=FP32Codec(),
+        sampler=GreedySampler(vocab_size=32), manifest=suffix.manifest,
+        approved_digest=digest, max_new_tokens=4)
+    activation = ActivationService(codec=FP32Codec(), manifest=prefix.manifest, approved_digest=digest)
+    session_id = cloud.create("owner-1").session_id
+    prefix_handle = prefix.create_kv(session_id)
+    ids = [1, 2, 3]
+    prompt_length = len(ids)
+    try:
+        flat, shape = prefix.prefill(tuple(ids), kv_handle=prefix_handle, session_id=session_id)
+        for step in range(4):
+            context = ActivationContext(session_id=session_id, manifest_digest=digest,
+                next_step=step, phase="prefill" if step == 0 else "decode",
+                position_offset=0 if step == 0 else prompt_length + step - 1)
+            request = activation.encode(flat, shape, context=context, request_id=f"request-{step}")
+            request = StepRequest.model_validate_json(request.model_dump_json().encode("utf-8"))
+            receipt = cloud.step("owner-1", request)
+            with torch.inference_mode():
+                expected = oracle(torch.tensor([ids]), use_cache=False).logits[0, -1]
+            assert receipt.token_id == int(expected.argmax())
+            assert cloud.step("owner-1", request) == receipt
+            assert sessions.view("owner-1", session_id).next_step == step + 1
+            assert receipt.finished is (step == 3)
+            ids.append(receipt.token_id)
+            if not receipt.finished:
+                flat, shape = prefix.decode(prefix_handle, session_id, receipt.token_id)
+        assert sessions.view("owner-1", session_id).status is SessionStatus.CLOSED
+        assert store._sessions[session_id].kv_released is True
+    finally:
+        prefix.release_kv(prefix_handle)
+        prefix.close()
+        suffix.close()

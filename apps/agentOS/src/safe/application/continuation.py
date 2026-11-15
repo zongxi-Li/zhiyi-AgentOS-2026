@@ -1,16 +1,58 @@
-"""云端 suffix 编排；只接收受认证且受 manifest 约束的激活。
+"""后段激活续算用例：会话事务、受信边界、suffix KV与采样回执。
 
-状态：职责与验收骨架，尚未实现此文件承担的运行能力。
-依赖：遵守 README 的分层表；外部业务对象仅 integration 可引用。
-
-TODO(P3-1)：注入 suffix runner、会话存储、时钟、审计；禁止 tokenizer 或原文处理入口。
-TODO(P3-2)：按会话互斥执行：认证授权→查幂等回执→核验 step/phase/shape→前向→采样→提交。
-TODO(P3-3)：prefill step=0；decode 每次只接受一个位置，保持 suffix KV 与 prefix 的位置一致。
-TODO(P3-4)：采样成功但回执提交失败时标记 FAILED；不得在已推进 KV 上再次执行。
-TODO(P3-5)：EOS、取消、deadline、TTL 和异常都交由生命周期释放或隔离 KV。
-
-验收：重复相同请求只执行一次；乱序、跨 owner、digest 错配均在前向前拒绝。
-阶段定义、实施顺序及参考资料见 README 与配套 TODO 方案。
+owner必须由上层认证后提供；本用例不实现认证、HTTP或本机原文处理。
+TODO(P2)：在专用认证路由内装配，并保证会话存储与本用例注入同一个suffix runner。
+TODO(P3)：本机生成用例接入远端回执查询、EOS解码和双端终态协商。
+TODO(P6)：增加容量配额和无内容审计；同步执行不构成异步GPU强制取消能力。
 """
 
-__all__: list[str] = []
+from safe.application.activation import ActivationService
+from safe.application.session import SessionService
+from safe.contracts.errors import ErrorCode, SafeError
+from safe.contracts.manifest import SplitModelManifest
+from safe.contracts.session import ActivationContext, SessionView, StepReceipt, StepRequest
+from safe.domain.compatibility import require_manifest_digest
+from safe.ports.activation_codec import ActivationCodec
+from safe.ports.model_runner import KVHandle, SuffixRunner, TokenSampler
+
+
+class ContinuationService:
+    """每次仅接受一步激活，不提供prompt/token IDs入口，也不返回完整词表。"""
+
+    def __init__(self, *, sessions: SessionService, runner: SuffixRunner, codec: ActivationCodec,
+                 sampler: TokenSampler, manifest: SplitModelManifest, approved_digest: str,
+                 max_new_tokens: int = 32):
+        if type(max_new_tokens) is not int or not 1 <= max_new_tokens <= 32:
+            raise ValueError("每次会话的输出上限必须位于1–32")
+        require_manifest_digest(manifest, approved_digest)
+        require_manifest_digest(runner.manifest, approved_digest)
+        self._sessions = sessions
+        self._runner = runner
+        self._sampler = sampler
+        self._digest = approved_digest
+        self._max_new_tokens = max_new_tokens
+        self._activation = ActivationService(codec=codec, manifest=manifest, approved_digest=approved_digest)
+
+    def create(self, owner_id: str, *, session_id: str | None = None) -> SessionView:
+        """只创建批准manifest的会话；模型路径和身份不允许请求方覆盖。"""
+        return self._sessions.create(owner_id, self._digest, session_id=session_id)
+
+    def step(self, owner_id: str, request: StepRequest) -> StepReceipt:
+        """先查已提交回执，再核验/执行；幂等重试不再次解码、计算或采样。"""
+        return self._sessions.execute_with_context(owner_id, request, self._forward)
+
+    def _forward(self, request: StepRequest, context: ActivationContext,
+                 handle: KVHandle | None) -> tuple[int, bool]:
+        if handle is None:
+            raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
+        activation = self._activation.decode(request, context=context)
+        if context.phase == "prefill":
+            logits = self._runner.prefill(activation, request.activation.shape,
+                kv_handle=handle, session_id=context.session_id)
+        else:
+            logits = self._runner.decode(handle, context.session_id, activation, request.activation.shape)
+        token_id, eos = self._sampler.sample(logits)
+        return token_id, eos or context.next_step + 1 >= self._max_new_tokens
+
+
+__all__ = ["ContinuationService"]

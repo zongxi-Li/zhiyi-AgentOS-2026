@@ -35,6 +35,7 @@ def request(request_id: str = "request-0", *, step: int = 0, phase: str = "prefi
         manifest_digest="a" * 64,
         step=step,
         phase=phase,
+        position_offset=step,
         activation=ActivationEnvelope(
             shape=(1, 1, 1),
             raw_bytes=4,
@@ -375,4 +376,55 @@ def test_completed_receipt_can_be_recovered_after_later_step_failure() -> None:
         safe.execute("owner-1", request("request-1", step=1, phase="decode"), broken)
     assert safe.receipt("owner-1", "session-1", "request-0") == first
     assert safe.execute("owner-1", request(), lambda _: pytest.fail("不得重复执行")) == first
+
+
+def test_context_executor_receives_stored_position_and_owned_kv() -> None:
+    runner = FakeRunner()
+    store = MemorySessionStore(runner=runner)
+    safe = SessionService(store)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    contexts = []
+
+    def forward(value, context, handle):
+        contexts.append((context, handle))
+        return 9, False
+
+    from safe.infrastructure.codecs.fp32 import FP32Codec
+
+    first = request().model_copy(update={"activation": FP32Codec().encode((1.0, 2.0, 3.0), (1, 3, 1))})
+    receipt = safe.execute_with_context("owner-1", first, forward)
+    assert safe.execute_with_context("owner-1", first, forward) == receipt
+    second = request("request-1", step=1, phase="decode").model_copy(update={"position_offset": 3})
+    safe.execute_with_context("owner-1", second, forward)
+    assert len(contexts) == 2
+    assert [(context.next_step, context.position_offset, context.phase) for context, _ in contexts] == [
+        (0, 0, "prefill"), (1, 3, "decode")
+    ]
+    assert all(handle == KVHandle("kv-session-1") for _, handle in contexts)
+
+
+def test_context_position_tampering_is_rejected_before_forward() -> None:
+    safe = service(runner=FakeRunner())
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    safe.execute_with_context("owner-1", request(), lambda *args: (9, False))
+    wrong = request("request-1", step=1, phase="decode").model_copy(update={"position_offset": 5})
+    with pytest.raises(SafeError) as error:
+        safe.execute_with_context("owner-1", wrong, lambda *args: pytest.fail("错误位置不得进入前向"))
+    assert error.value.code is ErrorCode.STEP_OUT_OF_ORDER
+    assert safe.view("owner-1", "session-1").next_step == 1
+
+
+def test_context_execution_closes_at_32_receipts_even_if_runner_never_finishes() -> None:
+    runner = FakeRunner()
+    safe = service(runner=runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    for step in range(32):
+        value = request(f"request-{step}", step=step, phase="prefill" if step == 0 else "decode")
+        value = value.model_copy(update={"position_offset": step})
+        receipt = safe.execute_with_context("owner-1", value, lambda *args: (9, False))
+        assert receipt.finished is (step == 31)
+    assert safe.view("owner-1", "session-1").status is SessionStatus.CLOSED
+    assert safe.view("owner-1", "session-1").next_step == 32
+    assert runner.released == [KVHandle("kv-session-1")]
+    assert safe.execute_with_context("owner-1", value, lambda *args: pytest.fail("不重新执行")) == receipt
 

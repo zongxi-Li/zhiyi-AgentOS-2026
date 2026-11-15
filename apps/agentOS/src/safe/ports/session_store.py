@@ -2,9 +2,11 @@
 
 from typing import Callable, Protocol
 
-from safe.contracts.session import SessionView, StepReceipt, StepRequest
+from safe.contracts.session import ActivationContext, SessionView, StepReceipt, StepRequest
+from safe.ports.model_runner import KVHandle
 
 StepRunner = Callable[[StepRequest], tuple[int, bool]]
+ContextStepRunner = Callable[[StepRequest, ActivationContext, KVHandle | None], tuple[int, bool]]
 
 
 class SessionStore(Protocol):
@@ -24,6 +26,13 @@ class SessionStore(Protocol):
         """原子检查、执行和提交一步；相同请求只执行一次。"""
         ...
 
+    def execute_with_context(self, owner_id: str, request: StepRequest, runner: ContextStepRunner) -> StepReceipt:
+        """锁内查幂等、核验步骤后，传入存储构造的可信位置和本会话KV句柄。
+
+        KV句柄只供进程内回调，不写入SessionView或任何网络合同。
+        """
+        ...
+
     def close(self, owner_id: str, session_id: str) -> SessionView:
         """关闭尚未终止的会话。"""
         ...
@@ -37,4 +46,4 @@ class SessionStore(Protocol):
         ...
 
 
-__all__ = ["SessionStore", "StepRunner"]
+__all__ = ["SessionStore", "StepRunner", "ContextStepRunner"]

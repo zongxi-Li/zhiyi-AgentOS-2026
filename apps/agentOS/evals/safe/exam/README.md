@@ -22,7 +22,7 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 
 固定来源和无KV结果见 `docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md`。
 
-`verify_qwen_kv.py` 已支持双角色独立KV逐token对照：使用完整Qwen2的 `DynamicCache` 作为oracle，固定合成输入、最多20条×32步，比较全词表logits和greedy。该脚本直接调用角色runner，不经过JSON/网络或会话服务；固定步数包含EOS之后的续算，不代表EOS停止和流式文本解码已验收。
+`verify_qwen_kv.py` 支持双角色独立KV逐token对照：使用完整Qwen2的 `DynamicCache` 作为oracle，固定合成输入、最多20条×32步，比较全词表logits和greedy。默认模式直接调用角色runner，不经过JSON或会话服务，固定步数包含EOS之后的续算。
 
 ```powershell
 apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verify_qwen_kv.py `
@@ -34,4 +34,8 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 
 运行前须核验制品和批准摘要，报告路径必须不存在。日志/报告只记录合成样本编号、长度、误差、匹配数与耗时，不记录prompt。KV和无KV全序列重算的矩阵形状不同，因此两种oracle结果分别保留，不能把某一路径的数值保证直接扩展为另一路径的保证。
 
-后续仍需跨进程、认证HTTP、EOS/输出上限、取消和实际会话装配评估；不能将本实验通过等同于P2/P3完成。
+新增 `--continuation` 模式：在上述命令末尾添加该选项，并使用一个新的报告路径。此模式通过真实 `ContinuationService` 执行JSON/UTF-8激活 → 会话绑定KV → suffix → greedy → token回执；每步重复发送相同请求，检查回执相等、采样次数和step不额外推进。后段只接收激活，完整模型oracle及tokenizer仅存在于评估脚本。
+
+此模式从已验证的角色tokenizer读取EOS；遇EOS提前结束，或达到 `--steps` 输出上限关闭会话。`steps_per_case`是上限，实际比较次数取各case的 `checked_steps` 之和；它不同于默认固定步数实验。评估并未装配完整generation配置的多EOS策略，正式装配须批准并传入完整EOS集合。报告不存储完整logits、激活、KV或输入文本。
+
+后续仍需跨进程、认证HTTP、本机生成/EOS文本解码、取消协商和生产装配评估；不能将本实验通过等同于P2/P3全部完成。
