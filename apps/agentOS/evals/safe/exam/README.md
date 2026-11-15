@@ -47,3 +47,5 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 `gen_fig_local_generation.py` 读取通过且哈希匹配的CSV，输出中文300 DPI PNG和矢量PDF：配对延迟、步骤耗时构成、激活上传量。先将重复测量汇总到输入级，再画跨输入分布；IQR不作为置信区间。脚本拒绝覆盖旧目录，不绘制失败或未配对结果。
 
 本次1,146个token全部匹配，图像、原始数据、依赖锁及完整命令见[实验报告](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-local-generation/README.md)。绘图依赖为独立可选环境，不修改默认Agent依赖。
+
+同日新增网络敏感性分析：`analyze_network_sensitivity.py` 复用已验证的60组计算路径，按显式256 B回执假设叠加RTT和带宽，输出360条情景记录；`gen_fig_network_sensitivity.py` 生成延迟对比和带宽×RTT热力图。两者校验数据哈希、配对与步骤完整性、情景覆盖、公式和汇总一致性，拒绝覆盖旧目录。它是串行通信分析模型，不是公网实测；完整公式、情景参数、脚本哈希和复现命令见[网络敏感性报告](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-network-sensitivity/README.md)。

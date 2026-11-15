@@ -20,6 +20,8 @@
 
 同日本机对照实验：Qwen2.5-0.5B、K=2/24、CPU FP32，20条合成输入×3轮，60组生成共1,146个token与完整模型全部一致。本机拆分路径的配对首token/TPOT耗时比中位数为1.24×/1.40×；当前参考实现尚无加速。已输出3组中文300 DPI PNG和矢量PDF，包含延迟分布、组件耗时和激活上传量；配置、原始CSV、统计口径和能力边界见[实验报告与图像](../../../../docs/superpowers/reports/safe/experiments/2026-11-15-local-generation/README.md)。
 
+网络扩展分析复用同一组实测计算路径，在 1000 Mbps/0.2 ms 到 5 Mbps/80 ms 的六个情景下叠加请求—回执通信，输出360条记录和带宽×RTT热力图；两端情景的端到端中位数分别约1.14秒和2.88秒。该结果使用256 B回执假设，属于通信敏感性模型，不是公网测量；公式、校验规则、图像与复现命令见[网络敏感性报告](../../../../docs/superpowers/reports/safe/experiments/2026-11-15-network-sensitivity/README.md)。
+
 | 内容 | 当前状态 | 说明 |
 | --- | --- | --- |
 | 旧 `encryptionservice.py` | 已删除 | 新拆分推理路径不依赖旧参数扰动或同态加密占位。 |

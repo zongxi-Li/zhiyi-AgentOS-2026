@@ -1,0 +1,397 @@
+{
+  "status": "passed",
+  "schema_version": "safe-network-sensitivity-v1",
+  "created_at": "2026-11-15T10:29:33.963447+00:00",
+  "analysis_type": "serial_network_overlay_model",
+  "measured_source": "docs/superpowers/reports/safe/experiments/2026-11-15-local-generation",
+  "source_report_sha256": "e340687b90bc6fdd775d69b202b19e31e684fe2da94aa7ae600506aa05de9d64",
+  "source_manifest_digest": "154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f",
+  "source_runtime_commit": "3ce76588be0202599bf43a8a521ade17de4518c1",
+  "analysis_script_sha256": "99eb4c72aae62e1c478a87d7f595ea930ea036bd710348c50f2f620e1b48a6ff",
+  "network_model_sha256": "b569a5ab94c7057138f0ab7ee689325f24ddb88673ddd6725eb421e746733ed4",
+  "source_configuration": {
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "cut_layer": 2,
+    "total_layers": 24,
+    "samples": 20,
+    "repeats": 3
+  },
+  "n_runs": 60,
+  "n_scenarios": 6,
+  "response_bytes_assumption": 256,
+  "response_bytes_measured": false,
+  "rtt_definition": "一次激活请求到token回执的往返时间；每个step串行叠加一次",
+  "bandwidth_definition": "请求方向和回执方向共享的额定吞吐；不含TLS/HTTP头和重传",
+  "overlap_assumption": "无网络与计算重叠；网络时间直接叠加已测step/e2e时间",
+  "scenarios": [
+    {
+      "name": "同机基线",
+      "bandwidth_mbps": 1000.0,
+      "rtt_ms": 0.2,
+      "response_bytes": 256
+    },
+    {
+      "name": "局域网",
+      "bandwidth_mbps": 1000.0,
+      "rtt_ms": 1.0,
+      "response_bytes": 256
+    },
+    {
+      "name": "云区互联",
+      "bandwidth_mbps": 100.0,
+      "rtt_ms": 10.0,
+      "response_bytes": 256
+    },
+    {
+      "name": "家庭宽带",
+      "bandwidth_mbps": 20.0,
+      "rtt_ms": 20.0,
+      "response_bytes": 256
+    },
+    {
+      "name": "4G移动网",
+      "bandwidth_mbps": 50.0,
+      "rtt_ms": 35.0,
+      "response_bytes": 256
+    },
+    {
+      "name": "受限移动网",
+      "bandwidth_mbps": 5.0,
+      "rtt_ms": 80.0,
+      "response_bytes": 256
+    }
+  ],
+  "summaries": [
+    {
+      "scenario": "同机基线",
+      "bandwidth_mbps": 1000.0,
+      "rtt_ms": 0.2,
+      "response_bytes": 256,
+      "n": 60,
+      "network_bytes": {
+        "q25": 222540.75,
+        "median": 264783.5,
+        "q75": 324361.25,
+        "mean": 274724.7
+      },
+      "network_transfer_ms": {
+        "q25": 3.9207660000000004,
+        "median": 5.418268,
+        "q75": 8.24489,
+        "mean": 6.017797600000001
+      },
+      "measured_e2e_ms": {
+        "q25": 749.590325,
+        "median": 1138.4095,
+        "q75": 1809.89565,
+        "mean": 1275.5940383333334
+      },
+      "modeled_e2e_ms": {
+        "q25": 753.5110910000001,
+        "median": 1143.827768,
+        "q75": 1818.169212,
+        "mean": 1281.6118359333334
+      },
+      "measured_ttft_ms": {
+        "q25": 139.59202499999998,
+        "median": 144.0402,
+        "q75": 150.94144999999997,
+        "mean": 146.27625333333333
+      },
+      "modeled_ttft_ms": {
+        "q25": 141.221681,
+        "median": 145.732312,
+        "q75": 152.548382,
+        "mean": 147.88105013333333
+      },
+      "measured_tpot_ms": {
+        "q25": 60.8277342032967,
+        "median": 61.81929335664336,
+        "q75": 63.94519032258064,
+        "mean": 62.55557524466698
+      },
+      "modeled_tpot_ms": {
+        "q25": 61.07154684065934,
+        "median": 62.0631046993007,
+        "q75": 64.189004,
+        "mean": 62.79938624522189
+      }
+    },
+    {
+      "scenario": "局域网",
+      "bandwidth_mbps": 1000.0,
+      "rtt_ms": 1.0,
+      "response_bytes": 256,
+      "n": 60,
+      "network_bytes": {
+        "q25": 222540.75,
+        "median": 264783.5,
+        "q75": 324361.25,
+        "mean": 274724.7
+      },
+      "network_transfer_ms": {
+        "q25": 12.520766,
+        "median": 18.618268,
+        "q75": 30.84489,
+        "mean": 21.2977976
+      },
+      "measured_e2e_ms": {
+        "q25": 749.590325,
+        "median": 1138.4095,
+        "q75": 1809.89565,
+        "mean": 1275.5940383333334
+      },
+      "modeled_e2e_ms": {
+        "q25": 762.111091,
+        "median": 1157.027768,
+        "q75": 1840.7692120000002,
+        "mean": 1296.8918359333334
+      },
+      "measured_ttft_ms": {
+        "q25": 139.59202499999998,
+        "median": 144.0402,
+        "q75": 150.94144999999997,
+        "mean": 146.27625333333333
+      },
+      "modeled_ttft_ms": {
+        "q25": 142.021681,
+        "median": 146.532312,
+        "q75": 153.348382,
+        "mean": 148.68105013333331
+      },
+      "measured_tpot_ms": {
+        "q25": 60.8277342032967,
+        "median": 61.81929335664336,
+        "q75": 63.94519032258064,
+        "mean": 62.55557524466698
+      },
+      "modeled_tpot_ms": {
+        "q25": 61.87154684065934,
+        "median": 62.8631046993007,
+        "q75": 64.989004,
+        "mean": 63.59938624522189
+      }
+    },
+    {
+      "scenario": "云区互联",
+      "bandwidth_mbps": 100.0,
+      "rtt_ms": 10.0,
+      "response_bytes": 256,
+      "n": 60,
+      "network_bytes": {
+        "q25": 222540.75,
+        "median": 264783.5,
+        "q75": 324361.25,
+        "mean": 274724.7
+      },
+      "network_transfer_ms": {
+        "q25": 125.20765999999999,
+        "median": 186.18268,
+        "q75": 308.4489,
+        "mean": 212.977976
+      },
+      "measured_e2e_ms": {
+        "q25": 749.590325,
+        "median": 1138.4095,
+        "q75": 1809.89565,
+        "mean": 1275.5940383333334
+      },
+      "modeled_e2e_ms": {
+        "q25": 874.797985,
+        "median": 1324.59218,
+        "q75": 2118.63127,
+        "mean": 1488.5720143333333
+      },
+      "measured_ttft_ms": {
+        "q25": 139.59202499999998,
+        "median": 144.0402,
+        "q75": 150.94144999999997,
+        "mean": 146.27625333333333
+      },
+      "modeled_ttft_ms": {
+        "q25": 163.580985,
+        "median": 167.99079,
+        "q75": 174.57599499999998,
+        "mean": 170.32422133333333
+      },
+      "measured_tpot_ms": {
+        "q25": 60.8277342032967,
+        "median": 61.81929335664336,
+        "q75": 63.94519032258064,
+        "mean": 62.55557524466698
+      },
+      "modeled_tpot_ms": {
+        "q25": 71.26586057692307,
+        "median": 72.2574067832168,
+        "q75": 74.3833270967742,
+        "mean": 72.99368525021606
+      }
+    },
+    {
+      "scenario": "家庭宽带",
+      "bandwidth_mbps": 20.0,
+      "rtt_ms": 20.0,
+      "response_bytes": 256,
+      "n": 60,
+      "network_bytes": {
+        "q25": 222540.75,
+        "median": 264783.5,
+        "q75": 324361.25,
+        "mean": 274724.7
+      },
+      "network_transfer_ms": {
+        "q25": 303.5383,
+        "median": 435.9134,
+        "q75": 694.7445,
+        "mean": 491.88988
+      },
+      "measured_e2e_ms": {
+        "q25": 749.590325,
+        "median": 1138.4095,
+        "q75": 1809.89565,
+        "mean": 1275.5940383333334
+      },
+      "modeled_e2e_ms": {
+        "q25": 1053.128625,
+        "median": 1574.3229000000001,
+        "q75": 2506.07375,
+        "mean": 1767.4839183333333
+      },
+      "measured_ttft_ms": {
+        "q25": 139.59202499999998,
+        "median": 144.0402,
+        "q75": 150.94144999999997,
+        "mean": 146.27625333333333
+      },
+      "modeled_ttft_ms": {
+        "q25": 228.814,
+        "median": 233.76319999999998,
+        "q75": 241.387575,
+        "mean": 236.51609333333334
+      },
+      "measured_tpot_ms": {
+        "q25": 60.8277342032967,
+        "median": 61.81929335664336,
+        "q75": 63.94519032258064,
+        "mean": 62.55557524466698
+      },
+      "modeled_tpot_ms": {
+        "q25": 83.01836607142857,
+        "median": 84.00986048951049,
+        "q75": 86.13587419354839,
+        "mean": 84.74612527241234
+      }
+    },
+    {
+      "scenario": "4G移动网",
+      "bandwidth_mbps": 50.0,
+      "rtt_ms": 35.0,
+      "response_bytes": 256,
+      "n": 60,
+      "network_bytes": {
+        "q25": 222540.75,
+        "median": 264783.5,
+        "q75": 324361.25,
+        "mean": 274724.7
+      },
+      "network_transfer_ms": {
+        "q25": 411.66532,
+        "median": 619.86536,
+        "q75": 1040.6478,
+        "mean": 712.455952
+      },
+      "measured_e2e_ms": {
+        "q25": 749.590325,
+        "median": 1138.4095,
+        "q75": 1809.89565,
+        "mean": 1275.5940383333334
+      },
+      "modeled_e2e_ms": {
+        "q25": 1161.255645,
+        "median": 1758.27486,
+        "q75": 2851.11689,
+        "mean": 1988.0499903333334
+      },
+      "measured_ttft_ms": {
+        "q25": 139.59202499999998,
+        "median": 144.0402,
+        "q75": 150.94144999999997,
+        "mean": 146.27625333333333
+      },
+      "modeled_ttft_ms": {
+        "q25": 202.61008999999999,
+        "median": 206.99436,
+        "q75": 213.299115,
+        "mean": 209.37218933333332
+      },
+      "measured_tpot_ms": {
+        "q25": 60.8277342032967,
+        "median": 61.81929335664336,
+        "q75": 63.94519032258064,
+        "mean": 62.55557524466698
+      },
+      "modeled_tpot_ms": {
+        "q25": 96.70398695054945,
+        "median": 97.6955202097902,
+        "q75": 99.82146387096773,
+        "mean": 98.43179525576512
+      }
+    },
+    {
+      "scenario": "受限移动网",
+      "bandwidth_mbps": 5.0,
+      "rtt_ms": 80.0,
+      "response_bytes": 256,
+      "n": 60,
+      "network_bytes": {
+        "q25": 222540.75,
+        "median": 264783.5,
+        "q75": 324361.25,
+        "mean": 274724.7
+      },
+      "network_transfer_ms": {
+        "q25": 1214.1532,
+        "median": 1743.6536,
+        "q75": 2778.978,
+        "mean": 1967.55952
+      },
+      "measured_e2e_ms": {
+        "q25": 749.590325,
+        "median": 1138.4095,
+        "q75": 1809.89565,
+        "mean": 1275.5940383333334
+      },
+      "modeled_e2e_ms": {
+        "q25": 1963.743525,
+        "median": 2882.0631,
+        "q75": 4594.60805,
+        "mean": 3243.1535583333334
+      },
+      "measured_ttft_ms": {
+        "q25": 139.59202499999998,
+        "median": 144.0402,
+        "q75": 150.94144999999997,
+        "mean": 146.27625333333333
+      },
+      "modeled_ttft_ms": {
+        "q25": 491.63435,
+        "median": 501.673,
+        "q75": 520.10705,
+        "mean": 507.23561333333333
+      },
+      "measured_tpot_ms": {
+        "q25": 60.8277342032967,
+        "median": 61.81929335664336,
+        "q75": 63.94519032258064,
+        "mean": 62.55557524466698
+      },
+      "modeled_tpot_ms": {
+        "q25": 149.59026167582417,
+        "median": 150.58156188811188,
+        "q75": 152.7079258064516,
+        "mean": 151.31777535564842
+      }
+    }
+  ],
+  "network_runs_sha256": "fe9228922e66575a9bed9c0696478945ba9b02922c45ab7f10134bfffc9c7362"
+}

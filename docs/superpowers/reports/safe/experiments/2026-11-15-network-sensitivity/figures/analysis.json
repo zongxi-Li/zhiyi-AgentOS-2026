@@ -1,0 +1,73 @@
+{
+  "status": "passed",
+  "font": "Microsoft YaHei",
+  "matplotlib": "3.10.7",
+  "source_report_sha256": "e340687b90bc6fdd775d69b202b19e31e684fe2da94aa7ae600506aa05de9d64",
+  "analysis_report_sha256": "037d9dc0259200cc86952b190dc2803fc4b36dd031288365113cbed629870d5e",
+  "plotting_script_sha256": "a0f39325e1faab513a076a92c1b6f30b93ad62f3d8257addc9b7d91b8f1af3b9",
+  "heatmap": {
+    "bandwidths_mbps": [
+      5,
+      20,
+      50,
+      100,
+      1000
+    ],
+    "rtts_ms": [
+      0.2,
+      1,
+      10,
+      35,
+      80
+    ],
+    "modeled_e2e_seconds": [
+      [
+        1.5653631000000001,
+        1.2476228999999999,
+        1.18407486,
+        1.1628921799999998,
+        1.1438277680000002
+      ],
+      [
+        1.5785630999999998,
+        1.2608229000000002,
+        1.19727486,
+        1.1760921800000002,
+        1.1570277679999998
+      ],
+      [
+        1.7270630999999999,
+        1.4093229,
+        1.34577486,
+        1.32459218,
+        1.305527768
+      ],
+      [
+        2.1395630999999997,
+        1.8218229000000001,
+        1.75827486,
+        1.73709218,
+        1.718027768
+      ],
+      [
+        2.8820631,
+        2.5643229,
+        2.5007748599999995,
+        2.4795921799999996,
+        2.460527768
+      ]
+    ]
+  },
+  "figures": [
+    "fig_network_latency",
+    "fig_network_heatmap"
+  ],
+  "model_type": "serial_network_overlay_model",
+  "response_bytes_assumption": 256,
+  "file_sha256": {
+    "fig_network_heatmap.pdf": "7b004bfdbf3b4c39296065d7627030e141ecfab48f20b455d1eb253ee3822084",
+    "fig_network_heatmap.png": "2b0523ee06e3b89efed327c1094e87ba155f37c8d4aea1e80f88f48e3496b3ec",
+    "fig_network_latency.pdf": "eabbdb99da3bbf615f00ee551ee5800885ac8f3f86b69174ffa2838bacddb03b",
+    "fig_network_latency.png": "fc528b71e3125e8b67d4f64b9eefccbb8ac1c93bba5d6e439a2fab818735fcea"
+  }
+}
