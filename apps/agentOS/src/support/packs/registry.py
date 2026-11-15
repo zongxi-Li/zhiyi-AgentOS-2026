@@ -171,14 +171,9 @@ def register_installed_packs(
         for agent in agent_registry.all():
             if id(agent) in before_agents:
                 continue
-            agent.profile = agent.profile.model_copy(
-                update={
-                    "source": "plugin",
-                    "plugin_id": manifest.pack_id,
-                    "plugin_version": manifest.version,
-                    "contribution_id": agent.profile.contribution_id
-                    or agent.profile.agent_name,
-                }
+            agent_registry.stamp_plugin(
+                agent, plugin_id=manifest.pack_id, plugin_version=manifest.version,
+                contribution_id=agent.profile.contribution_id or agent.profile.agent_name,
             )
         for workflow in workflow_registry.all():
             if workflow.workflow_id in before_workflows:

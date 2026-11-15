@@ -108,6 +108,27 @@ def test_runtime_store_contract_create_get_list_duplicate_and_cas(store) -> None
         store.update_profile(_profile("runtime:other"))
 
 
+@pytest.mark.parametrize("update", ["capacity", "profile"])
+@pytest.mark.parametrize("capacity", [1, 2, 6])
+def test_capacity_updates_preserve_occupied_slots_and_unrelated_observations(store, update, capacity):
+    profile = _profile(capacity=4)
+    snapshot = _snapshot(profile.runtime_id, seq=7, slots=2).model_copy(update={"utilization": 0.5})
+    before = store.register(profile, snapshot)
+    if update == "capacity":
+        store.update_capacity(profile.runtime_id, capacity, expected_capacity=4)
+    else:
+        store.update_profile(profile.model_copy(update={"capacity": capacity}), expected_profile=profile)
+
+    after = store.get_snapshot(profile.runtime_id)
+    assert store.get_profile(profile.runtime_id).capacity == capacity
+    assert after.version == before.version + 1
+    assert after.snapshot.available_slots == max(0, capacity - 2)
+    assert after.snapshot.utilization == pytest.approx(min(1.0, 2 / capacity))
+    assert after.snapshot.model_dump(exclude={"available_slots", "utilization"}) == snapshot.model_dump(
+        exclude={"available_slots", "utilization"}
+    )
+
+
 def test_sqlite_restart_keeps_profile_but_downgrades_snapshot_health(tmp_path: Path) -> None:
     db_path = tmp_path / "plane.sqlite3"
     store = SQLiteResourceStore(db_path)

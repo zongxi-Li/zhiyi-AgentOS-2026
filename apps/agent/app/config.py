@@ -90,8 +90,8 @@ class Settings(BaseSettings):
     OSCODE_CONTEXT_COMPACTION_MODELS: dict = {
         # Initial route-scoped latency trial, not a model-capacity override.
         "https://open.bigmodel.cn/api/coding/paas/v4::glm-5.3-flash": {
-            "enabled": True, "working_set_trigger_tokens": 65_536,
-            "working_set_target_tokens": 40_960, "recent_tool_groups": 5,
+            "enabled": True, "working_set_trigger_tokens": 524_288,
+            "working_set_target_tokens": 327_680, "recent_tool_groups": 5,
             "recent_tail_tokens": 14_000, "summary_max_tokens": 4096,
             "max_summary_calls": 2, "output_reserve": 65_536,
         }

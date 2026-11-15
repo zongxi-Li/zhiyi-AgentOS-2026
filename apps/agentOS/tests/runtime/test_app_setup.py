@@ -99,6 +99,25 @@ def test_application_setup_uses_injected_registry_across_lifecycle_restart() -> 
     asyncio.run(verify())
 
 
+def test_application_model_quota_is_validated_and_preserved_in_route_manifest():
+    from contracts.resource import ModelQuotaPolicy
+
+    values = _environment("http://127.0.0.1:1")
+    entries = json.loads(values["AGENTOS_MODELS"])
+    policy = ModelQuotaPolicy(scope="account:configured", maxConcurrency=2, requestsPerMinute=30, tokensPerMinute=10000)
+    entries[0]["quota"] = policy.model_dump(by_alias=True, mode="json")
+    values["AGENTOS_MODELS"] = json.dumps(entries)
+    setup = ApplicationSetup.from_environment(values)
+    definition = setup._setups[0]
+    setup.register_model(definition, api_key="")
+    assert definition.quota == policy
+    assert setup.model_registry.resolve("openai_compatible", "local-chat").manifest.metadata["quota"] == entries[0]["quota"]
+    entries[0]["quota"]["maxConcurrency"] = 0
+    values["AGENTOS_MODELS"] = json.dumps(entries)
+    with pytest.raises(ApplicationSetupError, match="invalid model quota"):
+        ApplicationSetup.from_environment(values)
+
+
 def test_application_setup_runs_real_stream_failover_and_key_rotation() -> None:
     """真实本地 HTTP 验证 registry 路由、429 切换、SSE 与密钥轮换。"""
     server = ThreadingHTTPServer(("127.0.0.1", 0), _CompatibleHandler)

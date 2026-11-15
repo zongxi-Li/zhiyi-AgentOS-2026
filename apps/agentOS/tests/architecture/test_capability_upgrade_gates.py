@@ -18,6 +18,122 @@ def _python_sources(root: Path):
     yield from sorted(root.rglob("*.py"))
 
 
+def _imported_modules(source: str) -> set[str]:
+    modules = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.add(node.module or "")
+            modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return modules
+
+
+def _assert_scheduler_boundary(root: Path) -> None:
+    sources = list(_python_sources(root))
+    assert sources, f"Scheduler source tree is missing: {root}"
+    forbidden = ("components.executor.graph", "components.executor.state_graph")
+    for path in sources:
+        imports = _imported_modules(path.read_text(encoding="utf-8"))
+        assert not any(name == item or name.startswith(item + ".")
+                       for name in imports for item in forbidden), path
+
+
+def _assert_no_resource_facades(root: Path) -> None:
+    forbidden = {"directory.py", "agent_directory.py", "agent_service.py",
+                 "agent_store.py", "node_service.py", "registry.py"}
+    assert not [path for path in _python_sources(root) if path.name in forbidden]
+
+
+def _assert_retired_runtime_has_no_implementation(root: Path) -> None:
+    pytest_cache_files = {".gitignore", "CACHEDIR.TAG", "README.md",
+                          "v/cache/nodeids", "v/cache/lastfailed", "v/cache/stepwise"}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if "__pycache__" in relative.parts and path.suffix == ".pyc":
+            continue
+        if relative.parts[0] == ".pytest_cache" and Path(*relative.parts[1:]).as_posix() in pytest_cache_files:
+            continue
+        raise AssertionError(f"Local Runtime 已退役，发现非缓存文件: {path}")
+
+
+def _assert_python_process_boundary(source: str, relative_path: str) -> None:
+    imports = _imported_modules(source)
+    assert "ProcessExecutionService" not in source, relative_path
+    if not any(name == "subprocess" or name.startswith("subprocess.") for name in imports):
+        return
+    # Installation control plane and its packaged fixed worker are reviewed
+    # exceptions; neither may become a general Agent/Step execution backend.
+    assert relative_path in {
+        "components/marketplace/infrastructure.py", "components/marketplace/builtins/server.py",
+    }, relative_path
+    tree = ast.parse(source)
+    allowed_calls = set()
+    packaged_worker = relative_path.endswith("builtins/server.py")
+    if packaged_worker:
+        authority_roots = ("runtime", "service.agents", "components.executor", "components.resource")
+        assert not any(name == root or name.startswith(root + ".")
+                       for name in imports for root in authority_roots)
+        serve = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "serve"]
+        assert len(serve) == 1
+        handlers = [node for node in serve[0].body if isinstance(node, ast.ClassDef) and node.name == "Handler"]
+        assert len(handlers) == 1
+        methods = [node for node in handlers[0].body if isinstance(node, ast.FunctionDef) and node.name == "do_POST"]
+        assert len(methods) == 1
+    else:
+        launchers = [node for node in tree.body
+                     if isinstance(node, ast.ClassDef) and node.name == "LocalPackageLauncher"]
+        assert len(launchers) == 1
+        methods = [node for node in launchers[0].body
+                   if isinstance(node, ast.FunctionDef) and node.name in {"start", "_start_builtin"}]
+    for method in methods:
+        allowed_calls.update(node for node in ast.walk(method) if isinstance(node, ast.Call))
+    # Keep one explicit module import; aliases/from-imports cannot evade the
+    # call-shape checks below inside the reviewed exception either.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(alias.name != "subprocess" or alias.asname is None for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.module != "subprocess"
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+             and node.func.value.id == "subprocess"]
+    assert len(calls) == (1 if packaged_worker else 2)
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    targets = {call.func for call in calls}
+    annotations = {node for assignment in ast.walk(tree) if isinstance(assignment, ast.AnnAssign)
+                   for node in ast.walk(assignment.annotation)}
+    constants = {"DEVNULL", "TimeoutExpired", "CREATE_NO_WINDOW"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "subprocess":
+            attribute = parents[node]
+            assert isinstance(attribute, ast.Attribute), "subprocess module cannot escape by alias/getattr"
+            assert (attribute in targets or attribute.attr in constants
+                    or (attribute in annotations and attribute.attr == "Popen")), "process launch API cannot escape"
+    for call in calls:
+        assert call in allowed_calls and call.func.attr == ("run" if packaged_worker else "Popen")
+        scope = parents[call]
+        while not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scope = parents[scope]
+        assert scope in methods, "launcher must stay directly in its reviewed method"
+        assert len(call.args) == 1, "launcher must pass exactly one argv argument"
+        assert not any(isinstance(arg, ast.Starred) for arg in call.args)
+        assert call.args and isinstance(call.args[0], ast.List), "launcher must pass an argv list"
+        shell = [kw.value for kw in call.keywords if kw.arg == "shell"]
+        assert len(shell) == 1 and isinstance(shell[0], ast.Constant) and shell[0].value is False
+        assert not any(kw.arg is None for kw in call.keywords), "launcher cannot expand unknown options"
+        if packaged_worker:
+            assert {kw.arg for kw in call.keywords} == {
+                "input", "capture_output", "text", "timeout", "shell", "encoding",
+            }
+            expected = ast.parse("[sys.executable, '-m', 'agentos_local_tools.worker']", mode="eval").body
+            assert ast.dump(call.args[0]) == ast.dump(expected)
+            timeout = [kw.value for kw in call.keywords if kw.arg == "timeout"]
+            assert len(timeout) == 1 and isinstance(timeout[0], ast.Constant) and timeout[0].value == 30
+
+
 def _defined_classes(root: Path) -> set[str]:
     names: set[str] = set()
     for path in _python_sources(root):
@@ -36,32 +152,16 @@ def test_workflow_runtime_and_acg_graph_remain_the_only_execution_truth() -> Non
 
 def test_scheduler_has_no_dag_readiness_dependency() -> None:
     """Scheduler may consume READY work but must not import or construct the DAG."""
-    scheduler_root = SRC / "components" / "scheduler"
-    forbidden_modules = {"components.executor.graph", "components.executor.state_graph"}
-    for path in _python_sources(scheduler_root):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        imports = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        }
-        imports.update(
-            node.module or ""
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-        )
-        assert imports.isdisjoint(forbidden_modules), path
+    _assert_scheduler_boundary(SRC / "components" / "resource" / "scheduler")
+    legacy_root = SRC / "components" / "scheduler"
+    if list(_python_sources(legacy_root)):
+        _assert_scheduler_boundary(legacy_root)
 
 
 def test_resource_plane_is_the_only_resource_state_authority() -> None:
     """资源平面只有一个状态权威；目录/独立注册表门面已随重构删除。"""
     resource_root = SRC / "components" / "resource"
-    remaining = {path.name for path in resource_root.glob("*.py")}
-    assert remaining.isdisjoint({
-        "directory.py", "agent_directory.py", "agent_service.py",
-        "agent_store.py", "node_service.py", "registry.py",
-    })
+    _assert_no_resource_facades(resource_root)
     from components.resource.application.resource_plane import ResourcePlane
 
     plane = ResourcePlane()
@@ -121,7 +221,7 @@ def test_native_process_execution_stays_in_the_hands_backend() -> None:
     但两条纪律不变：① 退役的 Python 宿主不能悄悄回来；② 原生执行只能待在 Hands 树内。
     """
     apps = SRC.parents[1]
-    assert not (apps / "local-runtime").exists(), "Local Runtime 已退役：原生执行宿主只允许 Hands"
+    _assert_retired_runtime_has_no_implementation(apps / "local-runtime")
 
     hands_root = SRC / "hands"
     supervisor_sources = [
@@ -152,22 +252,90 @@ def test_native_process_execution_stays_in_the_hands_backend() -> None:
 
 
 def test_agentos_does_not_host_native_process_execution() -> None:
-    """Native subprocess and Windows Job Object code stay in the Hands backend."""
+    """Task processes stay in Hands; Marketplace only starts validated package services."""
     for path in SRC.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        imports = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        }
-        imports.update(
-            node.module or ""
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-        )
-        assert "subprocess" not in imports, path
-        assert "ProcessExecutionService" not in path.read_text(encoding="utf-8"), path
+        _assert_python_process_boundary(path.read_text(encoding="utf-8"), path.relative_to(SRC).as_posix())
+
+
+def test_scheduler_gate_scans_the_current_tree_and_rejects_missing_sources(tmp_path):
+    with pytest.raises(AssertionError, match="source tree is missing"):
+        _assert_scheduler_boundary(tmp_path)
+    path = tmp_path / "nested" / "dispatch.py"
+    path.parent.mkdir()
+    path.write_text("from components.executor import graph as dag", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_scheduler_boundary(tmp_path)
+
+
+def test_resource_authority_gate_rejects_nested_facades(tmp_path):
+    nested = tmp_path / "application"
+    nested.mkdir()
+    (nested / "registry.py").write_text("", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_no_resource_facades(tmp_path)
+
+
+@pytest.mark.parametrize("filename", ["host.py", "pyproject.toml", "__pycache__/host.py"])
+def test_retired_runtime_gate_allows_caches_but_rejects_new_implementation(tmp_path, filename):
+    cache = tmp_path / "__pycache__"
+    cache.mkdir()
+    (cache / "host.cpython-313.pyc").write_bytes(b"cache")
+    pytest_cache = tmp_path / ".pytest_cache"
+    pytest_cache.mkdir()
+    (pytest_cache / "README.md").write_text("pytest cache", encoding="utf-8")
+    _assert_retired_runtime_has_no_implementation(tmp_path)
+    path = tmp_path / filename
+    path.write_text("restored implementation", encoding="utf-8")
+    with pytest.raises(AssertionError, match="非缓存文件"):
+        _assert_retired_runtime_has_no_implementation(tmp_path)
+
+
+@pytest.mark.parametrize("source", ["import subprocess as child", "from subprocess import Popen as launch"])
+def test_process_gate_rejects_aliased_imports_in_other_components(source):
+    with pytest.raises(AssertionError):
+        _assert_python_process_boundary(source, "components/executor/rogue.py")
+
+
+@pytest.mark.parametrize("mutation", ["shell", "argv", "extra_launcher", "alias", "stored_launcher", "getattr"])
+def test_marketplace_process_exception_remains_narrow(mutation):
+    path = SRC / "components" / "marketplace" / "infrastructure.py"
+    source = path.read_text(encoding="utf-8")
+    if mutation == "shell":
+        source = source.replace("shell=False", "shell=True", 1)
+    elif mutation == "argv":
+        source = source.replace("[str(executable), *arguments]", "str(executable)", 1)
+    elif mutation == "extra_launcher":
+        source += "\nsubprocess.Popen(['arbitrary'], shell=False)\n"
+    elif mutation == "alias":
+        source += "\nfrom subprocess import Popen as launch\n"
+    elif mutation == "stored_launcher":
+        source += "\nlaunch = subprocess.Popen\nlaunch(['arbitrary'], shell=False)\n"
+    else:
+        source += "\ngetattr(subprocess, 'Popen')(['arbitrary'], shell=False)\n"
+    with pytest.raises(AssertionError):
+        _assert_python_process_boundary(source, "components/marketplace/infrastructure.py")
+
+
+@pytest.mark.parametrize("mutation", ["module", "timeout", "shell", "authority", "executable", "positional", "member_import"])
+def test_packaged_worker_exception_remains_narrow(mutation):
+    relative_path = "components/marketplace/builtins/server.py"
+    source = (SRC / relative_path).read_text(encoding="utf-8")
+    if mutation == "module":
+        source = source.replace('"agentos_local_tools.worker"', '"arbitrary.worker"')
+    elif mutation == "timeout":
+        source = source.replace("timeout=30", "timeout=None")
+    elif mutation == "shell":
+        source = source.replace("shell=False", "shell=True")
+    elif mutation == "authority":
+        source += "\nfrom runtime.workflow_runtime import ExecutionRuntime\n"
+    elif mutation == "executable":
+        source = source.replace("capture_output=True", "executable='arbitrary', capture_output=True")
+    elif mutation == "positional":
+        source = source.replace('"agentos_local_tools.worker"],', '"agentos_local_tools.worker"], -1,')
+    else:
+        source += "\nfrom components import executor\n"
+    with pytest.raises(AssertionError):
+        _assert_python_process_boundary(source, relative_path)
 
 
 def test_windows_isolation_stays_inside_the_hands_backend() -> None:

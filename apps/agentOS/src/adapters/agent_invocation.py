@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Callable, Protocol
 
 from service.agents.base import AgentOutput, AgentRunContext, BaseAgent
 from service.agents.registry import AgentNotFound
@@ -36,8 +36,9 @@ class AgentInvocationError(RuntimeError):
 class AgentInvocationAdapter:
     """使用注入的冻结 Agent 解析器安全调用节点目标。"""
 
-    def __init__(self, *, registry: AgentResolver) -> None:
+    def __init__(self, *, registry: AgentResolver, before_invoke: Callable[[AgentRunContext], None] | None = None) -> None:
         self.registry = registry
+        self.before_invoke = before_invoke
         self._not_invoked_errors: dict[int, tuple[BaseException, AgentRunContext]] = {}
 
     def consume_not_invoked(self, error: BaseException, context: AgentRunContext) -> bool:
@@ -54,7 +55,14 @@ class AgentInvocationAdapter:
         """解析当前步骤 Agent 并执行，不可见目标在外部副作用前明确失败。"""
         step = context.step
         try:
-            if agent is None:
+            selected_agent = agent
+            ref = getattr(context, "agent_registration", None)
+            if ref is not None:
+                resolver = getattr(self.registry, "resolve_registration", None)
+                if not callable(resolver):
+                    raise AgentNotFound("Agent resolver cannot validate exact registration")
+                agent = resolver(ref)
+            elif agent is None:
                 agent = self.registry.resolve(
                     domain=context.workflow.domain,
                     agent_name=step.agent_name,
@@ -63,7 +71,14 @@ class AgentInvocationAdapter:
             else:
                 agent_id = str(agent.profile.agent_id or agent.profile.agent_name)
                 agent = self.registry.resolve_by_id(agent_id)
-        except (AgentNotFound, KeyError) as exc:
+            if selected_agent is not None and agent is not selected_agent:
+                raise AgentNotFound("selected Agent implementation was replaced")
+            capability = (getattr(step, "capability", None) or "").strip().lower()
+            if capability and capability not in {item.strip().lower() for item in agent.profile.capabilities}:
+                raise AgentNotFound("selected Agent does not declare the required capability")
+            if self.before_invoke is not None:
+                self.before_invoke(context)
+        except KeyError as exc:
             failure = AgentInvocationError(
                 "AGENT_NOT_IN_SCOPE",
                 step.step_id,

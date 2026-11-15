@@ -13,6 +13,7 @@ from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore, SQLiteStagedGraphCheckpointStore
 from support.stores.graph_activation_store import validate_activation_run
 from test_graph_handoff import _build_prefix
+from _runtime_events import isolated_runtime_events
 
 
 _PERMIT_SEED = pytest.StashKey()
@@ -24,7 +25,7 @@ def ready_handoff(tmp_path, tmp_path_factory, pytestconfig):
     seed = pytestconfig.stash.get(_PERMIT_SEED, None)
     if seed is None:
         folder = tmp_path_factory.mktemp("original-permit-seed")
-        with pytest.MonkeyPatch.context() as patch:
+        with isolated_runtime_events(), pytest.MonkeyPatch.context() as patch:
             rt, workflow, agent, run_id, activation_id, _, _ = _build_prefix(folder, patch)
             prepared = rt.prepare_graph_handoff(activation_id, idempotency_key="permit-handoff")
             assert prepared.status == "STATE_PREPARED", prepared.model_dump()
@@ -36,11 +37,12 @@ def ready_handoff(tmp_path, tmp_path_factory, pytestconfig):
             pytestconfig.stash[_PERMIT_SEED] = seed
     folder, definition, run_id, activation_id, handoff_id, history, _ = seed
     _copy_databases(folder, tmp_path)
-    rt, workflow, agent = _open(tmp_path, definition)
-    agent.calls.extend(history)
-    permits = rt.execution_permit_authority.store
-    return (rt, workflow, agent, run_id, activation_id, rt.graph_handoff_authority.store,
-            rt.graph_handoff_authority.staged_store, permits, handoff_id)
+    with isolated_runtime_events():
+        rt, workflow, agent = _open(tmp_path, definition)
+        agent.calls.extend(history)
+        permits = rt.execution_permit_authority.store
+        yield (rt, workflow, agent, run_id, activation_id, rt.graph_handoff_authority.store,
+               rt.graph_handoff_authority.staged_store, permits, handoff_id)
 
 
 @pytest.mark.freeze_gate

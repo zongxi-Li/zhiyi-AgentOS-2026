@@ -7,7 +7,13 @@ from support.acg.models import ControlNode, ControlType, TaskSemanticProfile, bu
 
 
 def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop() -> None:
+    from contracts.resource import ModelDemand
+    from support.acg.capabilities import CapabilityCatalog
+
     catalog = build_default_capability_catalog()
+    demand = ModelDemand(requiredFeatures=["streaming"], minContextTokens=8192)
+    catalog = CapabilityCatalog(descriptor.model_copy(update={"model_demand": demand})
+        if descriptor.capability_id == "solution_design" else descriptor for descriptor in catalog.available())
     tasks = (
         PlannedTask(
             key="understand", title="Understand", objective="Resolve the mission contract",
@@ -68,5 +74,8 @@ def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop
     assert loop.loop_spec.max_iterations == 3
     assert loop.loop_spec.on_limit == "review"
     package = ACGGraphCompiler().compile_package(blueprint, run_id="run_123456789abc")
+    demanded_step = next(step.node_id for step in blueprint.step_nodes() if step.capability == "solution_design")
+    assert package.binding_manifest.for_step(demanded_step).model_demand == demand
+    assert restored.resource_plan.models == blueprint.resource_plan.models
     rule = next(item for item in package.control_manifest.rules if item.loop is not None)
     assert rule.loop.max_iterations == 3

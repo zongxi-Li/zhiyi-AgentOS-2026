@@ -1,10 +1,26 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 
 from contracts.runtime_events import RuntimeEvent
 from runtime.live_events import RuntimeEventBroker, RuntimeEventOverflow
+
+
+def test_broker_rejects_same_run_from_an_independent_store(tmp_path):
+    def store(name):
+        return SimpleNamespace(db_path=tmp_path / name, get_runtime_display=lambda _: None)
+
+    broker = RuntimeEventBroker()
+    broker.bind_run("copied-run", store("original.sqlite3"))
+    # Reopened connections to the same durable store remain valid.
+    broker.bind_run("copied-run", store("original.sqlite3"))
+    copied = store("copied.sqlite3")
+    with pytest.raises(ValueError, match="Run store identity mismatch"):
+        broker.bind_run("copied-run", copied)
+    # Copied databases model an independent process, with its own broker.
+    RuntimeEventBroker().bind_run("copied-run", copied)
 
 
 def ev(seq: int, kind: str = "model.output.delta") -> RuntimeEvent:

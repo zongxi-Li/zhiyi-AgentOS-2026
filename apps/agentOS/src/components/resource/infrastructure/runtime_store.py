@@ -32,6 +32,15 @@ class StaleResourceObservation(RuntimeError):
     """观测序号低于当前已记录序号。"""
 
 
+def _resize_snapshot(snapshot: RuntimeSnapshot, *, previous_capacity: int, capacity: int) -> RuntimeSnapshot:
+    """保留快照推算的已占槽位，只重算容量相关字段。"""
+    allocated = max(0, previous_capacity - snapshot.available_slots)
+    return snapshot.model_copy(update={
+        "available_slots": max(0, capacity - allocated),
+        "utilization": min(1.0, allocated / capacity),
+    })
+
+
 class InMemoryResourceStore:
     """进程内存实现；测试与嵌入式场景的默认存储。"""
 
@@ -145,12 +154,8 @@ class InMemoryResourceStore:
                     f"capacity conflict for {runtime_id}: "
                     f"expected {expected_capacity}, current {profile.capacity}"
                 )
-            allocated = max(0, profile.capacity - current.snapshot.available_slots)
             updated_profile = profile.model_copy(update={"capacity": capacity})
-            updated_snapshot = current.snapshot.model_copy(update={
-                "available_slots": max(0, capacity - allocated),
-                "utilization": min(1.0, allocated / capacity),
-            })
+            updated_snapshot = _resize_snapshot(current.snapshot, previous_capacity=profile.capacity, capacity=capacity)
             self._profiles[runtime_id] = updated_profile
             versioned = VersionedRuntimeSnapshot(
                 snapshot=updated_snapshot, version=current.version + 1
@@ -158,7 +163,7 @@ class InMemoryResourceStore:
             self._snapshots[runtime_id] = versioned
             return self._copy_versioned(versioned)
 
-    def update_profile(self, profile: RuntimeProfile) -> RuntimeProfile:
+    def update_profile(self, profile: RuntimeProfile, *, expected_profile: RuntimeProfile | None = None) -> RuntimeProfile:
         with self._lock:
             try:
                 current = self._profiles[profile.runtime_id]
@@ -166,6 +171,16 @@ class InMemoryResourceStore:
                 raise KeyError(f"unknown runtime: {profile.runtime_id}") from error
             if profile.runtime_id != current.runtime_id:
                 raise ValueError("runtime profile identity is immutable")
+            if expected_profile is not None and current != expected_profile:
+                raise VersionConflict("runtime profile conflict")
+            if profile.capacity != current.capacity:
+                versioned = self._snapshots[profile.runtime_id]
+                self._snapshots[profile.runtime_id] = VersionedRuntimeSnapshot(
+                    snapshot=_resize_snapshot(
+                        versioned.snapshot, previous_capacity=current.capacity, capacity=profile.capacity,
+                    ),
+                    version=versioned.version + 1,
+                )
             self._profiles[profile.runtime_id] = profile.model_copy(deep=True)
             return profile.model_copy(deep=True)
 
@@ -540,12 +555,8 @@ class SQLiteResourceStore:
                         f"capacity conflict for {runtime_id}: "
                         f"expected {expected_capacity}, current {profile.capacity}"
                     )
-                allocated = max(0, profile.capacity - snapshot.available_slots)
                 updated_profile = profile.model_copy(update={"capacity": capacity})
-                updated_snapshot = snapshot.model_copy(update={
-                    "available_slots": max(0, capacity - allocated),
-                    "utilization": min(1.0, allocated / capacity),
-                })
+                updated_snapshot = _resize_snapshot(snapshot, previous_capacity=profile.capacity, capacity=capacity)
                 cursor = self._connection.execute(
                     "UPDATE plane_runtimes SET profile_json = ?, snapshot_json = ?, version = ? "
                     "WHERE runtime_id = ? AND version = ?",
@@ -568,12 +579,12 @@ class SQLiteResourceStore:
                 self._connection.rollback()
                 raise
 
-    def update_profile(self, profile: RuntimeProfile) -> RuntimeProfile:
+    def update_profile(self, profile: RuntimeProfile, *, expected_profile: RuntimeProfile | None = None) -> RuntimeProfile:
         with self._lock:
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
                 row = self._connection.execute(
-                    "SELECT profile_json FROM plane_runtimes WHERE runtime_id = ?",
+                    "SELECT profile_json, snapshot_json, version FROM plane_runtimes WHERE runtime_id = ?",
                     (profile.runtime_id,),
                 ).fetchone()
                 if row is None:
@@ -581,6 +592,15 @@ class SQLiteResourceStore:
                 current = RuntimeProfile.model_validate(json.loads(str(row[0])))
                 if profile.runtime_id != current.runtime_id:
                     raise ValueError("runtime profile identity is immutable")
+                if expected_profile is not None and current != expected_profile:
+                    raise VersionConflict("runtime profile conflict")
+                if profile.capacity != current.capacity:
+                    snapshot = RuntimeSnapshot.model_validate_json(str(row[1]))
+                    snapshot = _resize_snapshot(snapshot, previous_capacity=current.capacity, capacity=profile.capacity)
+                    self._connection.execute(
+                        "UPDATE plane_runtimes SET snapshot_json = ?, version = ? WHERE runtime_id = ?",
+                        (self._json(snapshot), int(row[2]) + 1, profile.runtime_id),
+                    )
                 self._connection.execute(
                     "UPDATE plane_runtimes SET profile_json = ? WHERE runtime_id = ?",
                     (self._json(profile), profile.runtime_id),

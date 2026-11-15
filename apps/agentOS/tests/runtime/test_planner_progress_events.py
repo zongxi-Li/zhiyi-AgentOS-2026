@@ -135,7 +135,7 @@ def test_planner_failure_emits_failed_event_without_leaking_error_text() -> None
 
 def test_explicit_blueprint_path_never_fakes_planner_events() -> None:
     """显式 Blueprint 兼容入口没有 Planner 运行，不得出现 planner 事件。"""
-    runtime = _runtime()
+    runtime = _runtime(agent_capabilities=["analysis"])
     task = runtime.create_mission("explicit run", workflow_id="acg-run")
 
     step = StepNode(nodeId="node-1", key="extract", capability="analysis")

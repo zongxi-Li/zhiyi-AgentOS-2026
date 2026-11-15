@@ -13,27 +13,29 @@ from contracts.workflow import WorkflowStatus
 from contracts.runtime_planning import RuntimePlanningDecision
 from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 from test_graph_handoff import _reopen
+from _runtime_events import isolated_runtime_events
 
 
 @pytest.fixture(scope="module")
 def recovery_seed(tmp_path_factory):
     from test_graph_handoff import _build_prefix
     folder = tmp_path_factory.mktemp("permit-recovery-seed")
-    with pytest.MonkeyPatch.context() as patch:
+    with isolated_runtime_events(), pytest.MonkeyPatch.context() as patch:
         rt, workflow, _, run_id, activation, _, _ = _build_prefix(folder, patch)
         prepared = rt.prepare_graph_handoff(activation, idempotency_key="recovery-seed")
         assert prepared.status == "STATE_PREPARED", prepared
         SQLiteExecutionPermitStore.upgrade_schema(workflow.db_path)
         definition = rt._workflow_for_run(workflow.get_run(run_id)).model_dump(mode="json", by_alias=True)
-        yield folder, definition, run_id, activation, prepared.handoff_id
+    yield folder, definition, run_id, activation, prepared.handoff_id
 
 
 @pytest.fixture
 def ready_handoff(recovery_seed, tmp_path):
     folder, definition, run_id, activation, handoff_id = recovery_seed
     _copy_databases(folder, tmp_path)
-    rt, workflow, agent = _open(tmp_path, definition)
-    return rt, workflow, agent, run_id, activation, None, None, SQLiteExecutionPermitStore(workflow.db_path), handoff_id
+    with isolated_runtime_events():
+        rt, workflow, agent = _open(tmp_path, definition)
+        yield rt, workflow, agent, run_id, activation, None, None, SQLiteExecutionPermitStore(workflow.db_path), handoff_id
 
 
 def _copy_databases(folder, tmp_path):

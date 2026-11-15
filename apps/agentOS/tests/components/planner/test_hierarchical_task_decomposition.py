@@ -6,7 +6,10 @@ from components.planner.acg_lowerer import ACGLowerer
 from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.service import PlanningEngine
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
-from components.planner.task_decomposer import TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer, TaskDecompositionError
+from components.planner.task_decomposer import (
+    TASK_DECOMPOSITION_PROMPT_VERSION, TaskDecomposer, TaskDecompositionError,
+    planning_validation_failures, safe_validation_failures,
+)
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from components.mission_manager.store import WorkflowRegistry
 from service.agents import AgentRegistry
@@ -185,10 +188,11 @@ def test_dependency_cycle_is_rejected() -> None:
         )
 
 
-def test_failed_contract_raises_after_exactly_one_repair() -> None:
+def test_failed_contract_stops_after_three_repairs() -> None:
     llm = _PlanLLM({"tasks": [], "relations": []})
-    with pytest.raises(Exception, match="TASK_PLAN_VALIDATION_FAILED"):
-        TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+    events = []
+    with pytest.raises(TaskDecompositionError, match="TASK_PLAN_VALIDATION_FAILED") as caught:
+        TaskDecomposer(build_default_capability_catalog(), llm, progress_callback=events.append).decompose(
             mission_id="mission_0123456789ab",
             profile=_profile(),
             strategy="dynamic_generation",
@@ -196,8 +200,72 @@ def test_failed_contract_raises_after_exactly_one_repair() -> None:
             use_llm=True,
         )
 
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 4
     assert 'Previous invalid TaskPlan JSON: {"tasks": [], "relations": []}' in llm.calls[1]["prompt"]
+    assert caught.value.metadata["validationFailures"] == [
+        {"stage": stage, "callKey": key, "code": "tasks_required", "fieldPath": ["tasks"]}
+        for stage, key in (("decompose", "decompose"), ("repair", "repair"), ("repair", "repair:2"), ("repair", "repair:3"))
+    ]
+    repair_start = next(event for event in events if event.get("stage") == "repair" and event.get("status") == "started")
+    assert repair_start["validationFailures"] == caught.value.metadata["validationFailures"][:1]
+
+
+@pytest.mark.parametrize("workset,code,path", [
+    ({"sourceManifestRefs": ["PRIVATE_MATERIAL"]}, "registered_material_required", ["tasks", 0, "workset"]),
+    ({"sourceManifestRefs": ["manifest_owned"], "unitKind": "PRIVATE_UNIT"}, "enum", ["tasks", 0, "workset", "unitKind"]),
+])
+def test_workset_diagnostics_preserve_location_without_invalid_values(workset, code, path) -> None:
+    payload = {"tasks": [{"key": "PRIVATE_TASK", "workset": workset}], "relations": []}
+    llm = _PlanLLM(payload)
+    with pytest.raises(TaskDecompositionError) as caught:
+        TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+            mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
+            task_input={"materialRefs": ["manifest_owned"]}, use_llm=True,
+        )
+    failures = planning_validation_failures(caught.value)
+    assert [(item["stage"], item["code"], item["fieldPath"]) for item in failures] == [
+        (stage, code, path) for stage in ("decompose", "repair", "repair", "repair")
+    ]
+    assert "PRIVATE" not in repr(failures)
+
+
+def test_validation_diagnostics_exclude_pydantic_messages_context_and_unknown_fields() -> None:
+    from pydantic import ValidationError
+    error = ValidationError.from_exception_data("PRIVATE_MODEL", [{
+        "type": "value_error", "loc": ("metadata", "PRIVATE_FIELD"), "input": "PRIVATE_INPUT",
+        "ctx": {"error": ValueError("PRIVATE_REASON")},
+    }])
+    failures = planning_validation_failures(error, stage="repair", call_key="repair")
+    assert failures == [{"stage": "repair", "callKey": "repair", "code": "value_error", "fieldPath": ["metadata", "?"]}]
+    assert "PRIVATE" not in repr(failures)
+    polluted = [{"stage": "PRIVATE_STAGE", "code": "PRIVATE_CODE", "fieldPath": ["PRIVATE_FIELD"] * 50,
+                 "callKey": "PRIVATE_CALL", "message": "PRIVATE_BODY"}] * 100
+    bounded = safe_validation_failures(polluted)
+    assert len(bounded) == 32 and len(bounded[0]["fieldPath"]) == 12
+    assert "PRIVATE" not in repr(bounded)
+
+
+@pytest.mark.parametrize("field,value,code", [
+    ("capabilityId", "PRIVATE_CAPABILITY", "unknown_capability"),
+    ("key", "PRIVATE KEY", "value_error"),
+    ("constraints", 42, "constraint_array_required"),
+    ("constraints", [None], "constraint_item_invalid"),
+    ("acceptanceCriteria", [], "acceptance_criteria_required"),
+])
+def test_task_diagnostics_identify_the_invalid_field_without_repeating_its_value(field, value, code) -> None:
+    task = {"key": "understand", "title": "Understand", "objective": "Resolve the supplied requirements",
+            "capabilityId": "task_understanding", "acceptanceCriteria": ["Scope is explicit"], field: value}
+    llm = _PlanLLM({"tasks": [task], "relations": []})
+    with pytest.raises(TaskDecompositionError) as caught:
+        TaskDecomposer(build_default_capability_catalog(), llm).decompose(
+            mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation", task_input={}, use_llm=True,
+        )
+    failures = planning_validation_failures(caught.value)
+    assert len(llm.calls) == 4
+    assert [(item["stage"], item["code"], item["fieldPath"]) for item in failures] == [
+        (stage, code, ["tasks", 0, field]) for stage in ("decompose", "repair", "repair", "repair")
+    ]
+    assert "PRIVATE" not in repr(failures)
 
 
 def test_standard_topology_cycle_uses_structured_patch_only_once() -> None:
@@ -448,14 +516,14 @@ def test_staged_invalid_material_reference_is_repaired_before_compilation(repair
     repaired = deepcopy(invalid)
     repaired["tasks"][0].pop("workset")
     relations = {"relations": [{"sourceKey": "understand", "targetKey": "analyze", "relationType": "depends_on"}], "controlPolicies": []}
-    llm = _SequencePlanLLM(outline, invalid, repaired if repair_succeeds else invalid, relations)
+    llm = _SequencePlanLLM(outline, invalid, repaired, relations) if repair_succeeds else _SequencePlanLLM(outline, invalid, invalid, invalid, invalid)
     if not repair_succeeds:
         with pytest.raises(TaskDecompositionError, match="unregistered materials"):
             TaskDecomposer(build_default_capability_catalog(), llm).decompose(
                 mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
                 task_input={"_effectiveCapabilityProfile": "full"}, use_llm=True,
             )
-        assert len(llm.calls) == 3  # One correction, no graph compilation or endless repair.
+        assert len(llm.calls) == 5  # Outline plus the detail unit's initial output and three corrections.
         return
     plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
         mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
@@ -500,10 +568,10 @@ def test_empty_staged_outline_is_repaired_once() -> None:
     assert "Previous invalid outline JSON" in llm.calls[1]["prompt"]
 
 
-def test_empty_staged_outline_fails_after_one_repair() -> None:
-    llm = _SequencePlanLLM({"tasks": []}, {"tasks": []})
+def test_empty_staged_outline_fails_after_three_repairs() -> None:
+    llm = _SequencePlanLLM(*[{"tasks": []} for _ in range(4)])
 
-    with pytest.raises(TaskDecompositionError, match="TASK_PLAN_STAGED_FAILED: staged outline returned no tasks"):
+    with pytest.raises(TaskDecompositionError, match="TASK_PLAN_STAGED_FAILED: staged outline returned no tasks") as caught:
         TaskDecomposer(build_default_capability_catalog(), llm).decompose(
             mission_id="mission_0123456789ab",
             profile=_profile(),
@@ -512,7 +580,10 @@ def test_empty_staged_outline_fails_after_one_repair() -> None:
             use_llm=True,
         )
 
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 4
+    assert [(failure["stage"], failure["code"]) for failure in caught.value.metadata["validationFailures"]] == [
+        ("outline", "tasks_required"), *[("outline.repair", "tasks_required")] * 3,
+    ]
 
 
 def test_incomplete_staged_detail_is_repaired_before_relations() -> None:
@@ -806,7 +877,7 @@ def test_focused_coverage_repair_rejects_incomplete_assignments() -> None:
         requiredCapabilities=["task_understanding"],
         estimatedComplexity=ComplexityLevel.SIMPLE,
     )
-    llm = _SequencePlanLLM(initial, incomplete)
+    llm = _SequencePlanLLM(initial, incomplete, incomplete, incomplete)
 
     with pytest.raises(Exception, match="every missing source ref exactly once"):
         TaskDecomposer(build_default_capability_catalog(), llm).decompose(
@@ -817,7 +888,7 @@ def test_focused_coverage_repair_rejects_incomplete_assignments() -> None:
             use_llm=True,
         )
 
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == 4
 
 
 def test_catalog_dependency_completion_does_not_depend_on_model_task_order() -> None:

@@ -8,7 +8,7 @@ import pytest
 
 from contracts.mission_semantic import SemanticPrincipal
 from contracts.runtime_planning import RuntimePlanningDecision
-from runtime.live_events import runtime_event_broker
+from runtime import live_events
 from test_execution_permit import ready_handoff
 from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 
@@ -144,33 +144,37 @@ def test_revocation_after_node_started_prevents_agent_call(ready_handoff, monkey
     rt, _, agent, run_id, _, _, _, _, handoff_id = ready_handoff
     assert rt.issue_execution_permit(handoff_id, idempotency_key="audit-last-check").status == "ISSUED"
     _continue(rt)
-    original = runtime_event_broker.publish
+    broker = live_events.runtime_event_broker
+    original = broker.publish
+    started = []
 
     async def revoke(run_id, event):
         await original(run_id, event)
         if event.event_type == "node.started":
+            started.append(event.node_id)
             rt.semantic_principal_provider = lambda: SemanticPrincipal(actorId="revoked", tenantId="tenant")
 
-    monkeypatch.setattr(runtime_event_broker, "publish", revoke)
-    try:
-        asyncio.run(rt.execute_prepared_run(run_id))
-    except ValueError:
-        pass
+    monkeypatch.setattr(broker, "publish", revoke)
+    asyncio.run(rt.execute_prepared_run(run_id))
+    assert started == ["B"]
     assert agent.calls == ["A"]
 
 
 @pytest.mark.freeze_gate
-@pytest.mark.parametrize("mutation", ["head", "binding", "cancel", "identity"])
+@pytest.mark.parametrize("mutation", ["head", "binding", "cancel", "identity", "agent_registration", "model_binding"])
 def test_late_durable_identity_change_prevents_invocation(ready_handoff, monkeypatch, mutation):
     rt, workflow, agent, run_id, _, _, _, _, handoff_id = ready_handoff
     assert rt.issue_execution_permit(handoff_id, idempotency_key="audit-late").status == "ISSUED"
     _continue(rt)
-    original = runtime_event_broker.publish
+    broker = live_events.runtime_event_broker
+    original = broker.publish
+    started = []
 
     async def change(run_id, event):
         await original(run_id, event)
         if event.event_type != "node.started":
             return
+        started.append(event.node_id)
         if mutation == "head":
             with workflow._connect() as conn:
                 conn.execute("UPDATE graph_activation_heads SET active_graph_version=99 WHERE run_id=?", (run_id,))
@@ -180,6 +184,17 @@ def test_late_durable_identity_change_prevents_invocation(ready_handoff, monkeyp
             workflow.save_run(run)
         elif mutation == "cancel":
             rt._signal_run_cancellation(run_id)
+        elif mutation in {"agent_registration", "model_binding"}:
+            repos = rt.identity_lifecycle.repositories
+            binding = repos.execution_bindings.get_for_attempt(event.attempt_id)
+            metadata = dict(binding.metadata)
+            if mutation == "agent_registration":
+                metadata["agentRegistration"] = dict(metadata["agentRegistration"], generation=999)
+            else:
+                metadata["modelBinding"] = {"provider": "tampered", "model": "unauthorized"}
+            with repos.storage.transaction() as conn:
+                conn.execute("UPDATE execution_bindings SET metadata_json=? WHERE attempt_id=?",
+                             (json.dumps(metadata), event.attempt_id))
         else:
             repos = rt.identity_lifecycle.repositories
             from domain.identity_graph.resolver import IdentityResolver
@@ -190,11 +205,13 @@ def test_late_durable_identity_change_prevents_invocation(ready_handoff, monkeyp
             with repos.storage.transaction() as conn:
                 conn.execute("UPDATE attempts SET task_id=? WHERE attempt_id=?", (other.task_id, event.attempt_id))
 
-    monkeypatch.setattr(runtime_event_broker, "publish", change)
-    try:
+    monkeypatch.setattr(broker, "publish", change)
+    if mutation == "head":
+        with pytest.raises(ValueError, match="conflicts with the durable activation head"):
+            asyncio.run(rt.execute_prepared_run(run_id))
+    else:
         asyncio.run(rt.execute_prepared_run(run_id))
-    except ValueError:
-        pass
+    assert started == ["B"]
     assert agent.calls == ["A"]
 
 
@@ -228,10 +245,7 @@ def test_transport_retry_rechecks_authority_without_false_receipt(ready_handoff,
                 adapter.registry = registry
         return await original(adapter, context=context, agent=agent)
     monkeypatch.setattr(AgentInvocationAdapter, "invoke", invoke)
-    try:
-        asyncio.run(rt.execute_prepared_run(run_id))
-    except ValueError:
-        pass
+    asyncio.run(rt.execute_prepared_run(run_id))
     if revoke:
         assert calls == ["B"] and agent.calls == ["A"]
         records = [item for item in rt.execution_value_store.list_node_commits(run_id=run_id) if ":B:" in item["commitId"]]

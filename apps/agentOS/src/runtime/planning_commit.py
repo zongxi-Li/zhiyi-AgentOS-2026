@@ -9,7 +9,7 @@ from adapters.model_adapter import StructuredGenerationError
 from components.planner.complexity import transport_error_code
 from components.planner.planning_commit import PlanningCommitService
 from components.planner.service import apply_task_plan_patch
-from components.planner.task_decomposer import TaskDecompositionError
+from components.planner.task_decomposer import TaskDecompositionError, planning_validation_failures
 from components.planner.topology import EdgeOrigin, TopologyCompileError, validate_task_plan_for_execution
 from contracts.mission_semantic import run_intent_basis
 from contracts.planning import TaskPlan, TaskPlanPatch
@@ -457,13 +457,15 @@ class RuntimePlanningCommitAuthority:
                 error_code = "INTENT_PROFILE_CONTRACT_FAILED"
             source_error = stage == "sources" and error_code is None
             error_code = error_code or ("INITIAL_SOURCES_UNAVAILABLE" if source_error else "INITIAL_PLAN_VALIDATION_FAILED")
+            validation_failures = [] if source_error else planning_validation_failures(exc, stage=stage, call_key=call_key)
             # Exception text may contain a prompt or an invalid model answer.
             # Retain stable diagnostics instead of replacing model failures with source drift.
-            logger.error("initial_planning_failed runId=%s stage=%s code=%s exception=%s",
-                         run_id, stage, error_code, type(exc).__name__)
+            logger.error("initial_planning_failed runId=%s stage=%s code=%s exception=%s validationFailures=%s",
+                         run_id, stage, error_code, type(exc).__name__, json.dumps(validation_failures))
             progress({"kind": "failed", "stage": stage, "errorCode": error_code,
                       **({"callKey": call_key} if call_key else {}),
                       "safeSummary": f"{type(exc).__name__} during initial planning",
+                      **({"validationFailures": validation_failures} if validation_failures else {}),
                       "topologyAudit": self.runtime._topology_failure_audit(exc)})
             return PlanningCommitRejection(
                 code=Code.STALE_STRATEGY if source_error else Code.INVALID_PROPOSAL,

@@ -1,5 +1,9 @@
 import asyncio
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -13,6 +17,17 @@ from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 def event(kind, payload=None, attempt="a1", node="node"):
     return RuntimeEvent(eventType=kind, runId="run", nodeId=node, attemptId=attempt,
                         sequence=0, payload=payload or {})
+
+
+@pytest.mark.parametrize("modules", [
+    "import components.planner.complexity; import runtime.live_events",
+    "import runtime.live_events; import components.planner.complexity",
+])
+def test_planner_and_display_can_be_imported_independently(modules):
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, "-c", modules], cwd=root,
+                            env={**os.environ, "PYTHONPATH": str(root / "src")}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def store_at(path):
@@ -55,6 +70,25 @@ def test_restart_recovers_public_text_and_watermark_without_run_mutation(tmp_pat
         assert (await anext(stream)).sequence > baseline.sequence
         assert store.get_run('run').model_dump_json() == original
         assert store.workspace_projection_revision('mission') == revision
+        await stream.aclose()
+    asyncio.run(run())
+
+
+def test_validation_diagnostics_survive_snapshot_restore_without_model_text(tmp_path):
+    async def run():
+        store = store_at(tmp_path / 'runs.db')
+        broker = RuntimeEventBroker(store=store)
+        issue = {'stage': 'repair', 'callKey': 'repair', 'code': 'acceptance_criteria_required',
+                 'fieldPath': ['tasks', 0, 'acceptanceCriteria'], 'message': 'PRIVATE_MODEL_TEXT'}
+        await broker.publish('run', event('planner.failed', {'validationFailures': [issue]}, attempt=None, node=None))
+        broker.flush()
+        restarted = RuntimeEventBroker(store=SQLiteWorkflowStore(store.db_path))
+        stream = restarted.subscribe('run')
+        baseline = await anext(stream)
+        failure = next(item for item in baseline.payload['events'] if item['eventType'] == 'planner.failed')
+        expected = {key: value for key, value in issue.items() if key != 'message'}
+        assert failure['payload']['validationFailures'] == [expected]
+        assert 'PRIVATE_MODEL_TEXT' not in json.dumps(baseline.payload)
         await stream.aclose()
     asyncio.run(run())
 

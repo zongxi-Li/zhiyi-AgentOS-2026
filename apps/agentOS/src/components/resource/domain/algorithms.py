@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contracts.resource import RuntimeProfile, RuntimeSnapshot
+from contracts.resource import RuntimeKind, RuntimeProfile, RuntimeSnapshot
 
 from .models import RuntimeHealth
 
@@ -43,6 +43,8 @@ def is_runtime_available(
     labels = labels or {}
     return (
         profile.enabled
+        and not profile.draining
+        and profile.kind is not RuntimeKind.AGENT_INSTANCE
         and required.issubset(profile.capabilities)
         and all(profile.labels.get(key) == value for key, value in labels.items())
         and snapshot.available_slots > 0

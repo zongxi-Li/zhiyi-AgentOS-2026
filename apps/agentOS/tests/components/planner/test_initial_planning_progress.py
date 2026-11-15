@@ -17,13 +17,16 @@ class PlannerStream:
     provider = "fake"
     model = "initial-planner"
 
-    def __init__(self, *, failure=None, on_first_call=None):
+    def __init__(self, *, failure=None, on_first_call=None, plans=None):
         self.failure = failure
         self.on_first_call = on_first_call
         self.calls = 0
+        self.plans = plans
+        self.requests = []
 
     async def stream_generate_json(self, **kwargs):
         self.calls += 1
+        self.requests.append(kwargs)
         if self.calls == 1 and self.on_first_call:
             self.on_first_call()
         run_id = kwargs["run_id"]
@@ -41,6 +44,8 @@ class PlannerStream:
                         "logicalRole": "task", "decompositionRationale": "Establish the requirements"}],
              "relations": [], "controlPolicies": []}
         )
+        if self.calls > 1 and self.plans:
+            data = self.plans[min(self.calls - 2, len(self.plans) - 1)]
         yield RuntimeEvent(eventType="model.output.delta", runId=run_id, sequence=2,
                            payload={"delta": json.dumps(data)})
         yield RuntimeEvent(eventType="model.completed", runId=run_id, sequence=3,
@@ -94,6 +99,52 @@ def test_initial_runtime_streams_and_keeps_progress_without_materializing(initia
     assert saved.lifecycle_message == "preserve concurrent state"
     assert ledger.latest(run.mission_id) is not None
     assert not saved.steps and not saved.acg_blueprint and not agent.calls
+    assert "Declare control policies only when the supplied output schema and runtime contract allow them" in llm.requests[1]["system_prompt"]
+    assert "Use supported verification_loop semantics instead of cycles" not in llm.requests[1]["system_prompt"]
+    assert "controlPolicies MUST be []" in llm.requests[1]["prompt"]
+    assert llm.requests[1]["schema"]["properties"]["controlPolicies"]["maxItems"] == 0
+
+
+@pytest.mark.parametrize("repair_succeeds", [False, True])
+def test_initial_validation_retains_first_and_repaired_issues_in_trace_and_sse(initial_run, monkeypatch, caplog, repair_succeeds):
+    from copy import deepcopy
+    from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+
+    invalid = {"tasks": [{"key": "PRIVATE_MODEL_TASK", "title": "Understand", "objective": "",
+                          "capabilityId": "task_understanding", "acceptanceCriteria": ["Scope is explicit"]}],
+               "relations": [], "controlPolicies": []}
+    repaired = deepcopy(invalid)
+    repaired["tasks"][0]["objective"] = "Analyze supplied input"
+    if not repair_succeeds:
+        repaired["tasks"][0]["acceptanceCriteria"] = []
+    llm = PlannerStream(plans=[invalid, repaired])
+    runtime, store, agent, run, ledger = dynamic_run(initial_run, llm)
+    live = []
+    monkeypatch.setattr("runtime.live_events.runtime_event_broker.publish_from_thread",
+                        lambda run_id, event: live.append(event))
+    if repair_succeeds:
+        asyncio.run(runtime.execute_prepared_run(run.run_id))
+    else:
+        with pytest.raises(ValueError, match="TASK_PLAN_CONTRACT_FAILED"):
+            asyncio.run(runtime.execute_prepared_run(run.run_id))
+    saved = SQLiteWorkflowStore(store.db_path).get_run(run.run_id)
+    events = planning_events(saved)
+    first = {"stage": "decompose", "callKey": "decompose", "code": "business_objective_required",
+             "fieldPath": ["tasks", 0, "objective"]}
+    repair_start = next(event for event in events if event.get("stage") == "repair" and event.get("status") == "started")
+    assert repair_start["validationFailures"] == [first]
+    assert llm.calls == (3 if repair_succeeds else 5) and not agent.calls and not saved.steps
+    if repair_succeeds:
+        assert events[-1]["kind"] == "completed" and ledger.latest(run.mission_id)
+    else:
+        expected = [first, *[{"stage": "repair", "callKey": key, "code": "acceptance_criteria_required",
+                             "fieldPath": ["tasks", 0, "acceptanceCriteria"]}
+                            for key in ("repair", "repair:2", "repair:3")]]
+        assert events[-1]["validationFailures"] == expected
+        assert next(event for event in live if event.event_type == "planner.failed").payload["validationFailures"] == expected
+        assert "PRIVATE_MODEL_TASK" not in repr(saved.trace)
+        assert "PRIVATE_MODEL_TASK" not in caplog.text
+        assert not ledger.latest(run.mission_id)
 
 
 @pytest.mark.parametrize("code", ["MODEL_OUTPUT_INVALID_JSON", "MODEL_TTFT_TIMEOUT"])

@@ -24,6 +24,7 @@ from support.acg.planning import (
     CommunicationSpec,
     EvidenceSpec,
     MemoryAccessSpec,
+    ModelRequirementSpec,
     SkillRequirementSpec,
 )
 
@@ -109,6 +110,37 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
     assert graph.ready_steps(ACGExecutionState(
         runId="run-1", completedStepIds=("a",),
     )) == ("b",)
+
+
+def test_model_demand_is_compiled_and_checked_as_requirement_authority():
+    from contracts.resource import ModelDemand
+    from runtime.binding import execution_requirements_for, requirements_match_manifest
+
+    blueprint = _resource_rich_blueprint()
+    legacy = ACGGraphCompiler().compile_package(blueprint, run_id="run-1")
+    assert "models" not in blueprint.model_dump(by_alias=True)["resourcePlan"]
+    assert "modelDemand" not in legacy.binding_manifest.for_step("a").model_dump(by_alias=True)
+    demand = ModelDemand(requiredFeatures=["tools"], minContextTokens=8192, excludedProviders=["untrusted"])
+    blueprint.resource_plan.models = (ModelRequirementSpec(stepId="a", demand=demand),)
+    package = ACGGraphCompiler().compile_package(blueprint, run_id="run-1")
+    assert package.blueprint_hash != legacy.blueprint_hash and package.checksum != legacy.checksum
+    assert package.binding_manifest.for_step("a").model_demand == demand
+    expected = execution_requirements_for(package.binding_manifest, ("a", "b"), domain="general")
+    assert expected["a"]["model"] == demand.model_dump(by_alias=True, mode="json")
+    assert expected["b"]["model"] is None
+    changed = deepcopy(expected)
+    changed["a"]["model"]["minContextTokens"] = 0
+    assert not requirements_match_manifest(changed, expected)
+
+
+@pytest.mark.parametrize("step_ids", [("missing",), ("a", "a")])
+def test_model_demand_cannot_be_silently_dropped_or_duplicated(step_ids):
+    from contracts.resource import ModelDemand
+
+    blueprint = _resource_rich_blueprint()
+    blueprint.resource_plan.models = tuple(ModelRequirementSpec(stepId=key, demand=ModelDemand()) for key in step_ids)
+    with pytest.raises(ValueError, match="model requirement"):
+        ACGGraphCompiler().compile_package(blueprint)
 
 
 @pytest.mark.parametrize("field", [
