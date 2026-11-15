@@ -57,8 +57,13 @@
       </details>
     </details>
     <article v-else-if="entry.kind === 'output'" v-show="historyExpanded" class="run-timeline__output">
-        <p class="run-timeline__context">{{ entry.output.planning ? '规划思路摘要' : entry.output.title }} <small>{{ outputStatus(entry.output) }}</small></p>
-        <TaskWorkSummary v-if="entry.output.node && active && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(entry.output.node.status)" :node="entry.output.node" :objective="entry.output.approach?.objective" :rationale="entry.output.approach?.rationale" />
+        <header class="run-timeline__output-heading"><h3>{{ entry.output.planning ? '规划思路摘要' : entry.output.title }}</h3><small>{{ outputStatus(entry.output) }}</small></header>
+        <details v-if="entry.output.approach?.objective || entry.output.approach?.rationale" class="run-timeline__approach">
+          <summary>查看步骤目标与规划依据</summary>
+          <p v-if="entry.output.approach?.objective">{{ entry.output.approach.objective }}</p>
+          <p v-if="entry.output.approach?.rationale && entry.output.approach.rationale !== entry.output.approach.objective">{{ entry.output.approach.rationale }}</p>
+        </details>
+        <TaskWorkSummary v-if="!entry.output.text && entry.output.node && active && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(entry.output.node.status)" :node="entry.output.node" />
         <div v-if="entry.output.text" class="run-timeline__text markdown-body" v-html="outputMarkup.get(entry.output.id)"></div>
         <p v-else-if="!entry.output.node">正在等待模型正文…</p>
         <small v-if="entry.output.planning" class="run-timeline__draft-note">规划草稿，以待确认的初步规划为准。</small>
@@ -117,9 +122,9 @@ onBeforeUnmount(disconnect)
 interface WorkOutput { id: string; title: string; timestamp: string | null; text: string; running: boolean; failed: boolean; planning: boolean; node?: NodeRuntimeState; approach?: CopilotInitialPlan['tasks'][number] }
 const outputStatus = (output: WorkOutput) => output.running
   ? output.node && !output.node.firstTokenAt && !output.node.chunkCount ? '等待正文' : '正在生成'
-  : output.failed ? '生成已中断' : '工作说明'
+  : output.failed ? '生成已中断' : '生成记录'
 const outputs = computed<WorkOutput[]>(() => Object.entries(runtime.value?.nodes || {}).filter(([, node]) => node.modelStartedAt || node.outputBuffer || node.lastActivityAt)
-  .slice(-8).map(([id, node]) => ({ id: node.outputId || id, title: node.title || props.graphNodes.find(graphNode => graphNode.acgNodeId === id)?.name || '当前步骤', timestamp: node.modelStartedAt, text: streamingContent(node.outputBuffer), planning: false, node,
+  .slice(-8).map(([id, node]) => ({ id: node.outputId || id, title: node.title || props.graphNodes.find(graphNode => graphNode.acgNodeId === id)?.name || '当前步骤', timestamp: node.modelStartedAt, text: streamingContent(node.outputBuffer, true), planning: false, node,
     approach: props.plan?.tasks.find(task => task.key === props.graphNodes.find(graphNode => graphNode.acgNodeId === id)?.semanticTaskKey),
     running: active.value && ['MODEL_STARTING', 'STREAMING'].includes(node.phase) && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(node.status), failed: node.status === 'FAILED' })))
 const pastOutputs = computed<WorkOutput[]>(() => (runtime.value?.outputHistory || []).map(item => ({ ...item, planning: item.kind === 'planning', running: false })))
@@ -241,6 +246,12 @@ const toolLabel = (tool: string) => ({ 'fs.read': '读取文件', read_file: '�
 .run-timeline__dot { width: 5px; height: 5px; flex: 0 0 5px; background: var(--wb-accent); border-radius: 50%; }
 .run-timeline__dot.is-active { animation: activity-pulse 1.8s ease-in-out infinite; }
 .run-timeline__planning, .run-timeline__plan, .run-timeline__output { margin: 0 0 22px; }
+.run-timeline__output { padding-top: 16px; border-top: 1px solid var(--wb-border); }
+.run-timeline__output-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.run-timeline__output-heading h3 { margin: 0; }
+.run-timeline__output-heading > small { flex-shrink: 0; color: var(--wb-text-muted); font-size: 11px; }
+.run-timeline__approach { margin: 0 0 12px; }
+.run-timeline__approach p { margin: 8px 0 0; font-size: 12px; }
 p { margin: 0 0 12px; overflow-wrap: anywhere; }
 p:last-child { margin-bottom: 0; }
 h3 { margin: 0 0 12px; color: var(--wb-text); font-size: 13px; font-weight: 600; }

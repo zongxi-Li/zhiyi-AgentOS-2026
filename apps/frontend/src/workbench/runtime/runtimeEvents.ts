@@ -407,7 +407,7 @@ export class RunRuntimeStore {
     const node = this.nodes[id]
     if (!node?.outputId) return
     this.retainOutput({ id: node.outputId, kind: 'node', title: node.title || '当前步骤', timestamp: node.modelStartedAt,
-      text: streamingContent(this.pending.get(id) ?? node.outputBuffer), failed: node.status === 'FAILED' })
+      text: streamingContent(this.pending.get(id) ?? node.outputBuffer, true), failed: node.status === 'FAILED' })
   }
 
   private archivePlanning() {

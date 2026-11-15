@@ -21,7 +21,7 @@
         :readonly="readonly || !allows('canResolveToolApproval')" @waiting="hasPendingToolApproval = $event" @resolved="refreshRun" /></template>
       <template #message="{ message }">
       <article class="message" :class="`is-${message.role}`">
-        <div v-if="message.planner" class="message-meta"><small>任务澄清</small></div>
+        <div class="message-meta"><span>{{ message.role === 'user' ? '你' : '任务助手' }}</span><small v-if="message.planner">任务澄清</small></div>
         <div class="message-content markdown-body" v-html="messageMarkup.get(message.id)"></div>
         <small v-if="copilotResponseSummary(message)" class="response-stats" title="服务端本次回复的耗时，包含准备与排队，不包含浏览器绘制。">{{ copilotResponseSummary(message) }}</small>
         <div v-if="message.action" class="operation-card">
