@@ -1295,7 +1295,7 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-md), 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent) inset;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  font-size: 11px;
+  font-size: 12px;
   transition: width 180ms var(--ease-out), padding 180ms var(--ease-out), border-radius 180ms ease, box-shadow 180ms ease;
   animation: workspace-request-error-enter 180ms var(--ease-out);
 }
@@ -1307,6 +1307,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--danger);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent);
+  animation: workspace-request-error-pulse 1.8s ease-in-out infinite;
 }
 .workspace-request-error__message {
   flex: 1 1 auto;
@@ -1315,19 +1316,21 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
   word-break: break-word;
   text-wrap: pretty;
-  line-height: 1.45;
+  line-height: 1.5;
+  font-weight: 500;
 }
 .workspace-request-error > button:not(.workspace-request-error__toggle) {
   order: 2;
   flex: 0 0 auto;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--border-light);
+  align-self: center;
+  min-height: 26px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 26%, var(--border-light));
   border-radius: 7px;
   color: var(--text-secondary);
   background: var(--surface-subtle);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
   white-space: nowrap;
   transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
@@ -1369,34 +1372,58 @@ onBeforeUnmount(() => {
   outline: 2px solid color-mix(in srgb, var(--danger) 55%, transparent);
   outline-offset: 2px;
 }
+/* 收起态：圆形按钮 + 左上角徽章红点，读作「有通知待查看」而不是两个挤在一起的元素。 */
 .workspace-request-error.is-collapsed {
+  position: relative;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  min-height: 46px;
-  gap: 8px;
-  padding: 8px 6px;
+  width: 38px;
+  min-height: 38px;
+  gap: 0;
+  padding: 0;
   border-radius: 12px;
-  box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--danger) 9%, transparent) inset;
+  box-shadow: var(--shadow-md), 0 0 0 1px color-mix(in srgb, var(--danger) 14%, transparent) inset;
 }
 .workspace-request-error.is-collapsed .workspace-request-error__indicator {
-  flex-basis: 7px;
-  margin-top: 0;
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  flex-basis: auto;
+  width: 9px;
+  height: 9px;
+  margin: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bg-card) 82%, transparent), 0 0 0 4px color-mix(in srgb, var(--danger) 22%, transparent);
 }
 .workspace-request-error.is-collapsed .workspace-request-error__message,
 .workspace-request-error.is-collapsed > button:not(.workspace-request-error__toggle) {
   display: none;
 }
 .workspace-request-error.is-collapsed .workspace-request-error__toggle {
-  order: 2;
+  order: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+.workspace-request-error.is-collapsed .workspace-request-error__toggle:hover,
+.workspace-request-error.is-collapsed .workspace-request-error__toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 36%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
 }
 @keyframes workspace-request-error-enter {
   from { opacity: 0; transform: translateX(16px); }
   to { opacity: 1; transform: translateX(0); }
 }
+@keyframes workspace-request-error-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 14%, transparent); }
+  50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--danger) 6%, transparent); }
+}
 @media (prefers-reduced-motion: reduce) {
   .workspace-request-error,
   .workspace-request-error__toggle,
+  .workspace-request-error__indicator,
   .workspace-request-error > button:not(.workspace-request-error__toggle) {
     animation: none;
     transition: none;
