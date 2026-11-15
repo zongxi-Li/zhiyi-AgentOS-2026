@@ -123,9 +123,9 @@ def create_cloud_app(*, continuation: ContinuationService, sessions: SessionServ
             return sessions.close(owner, match[1]) if view.status in (SessionStatus.CREATED, SessionStatus.ACTIVE) else view
         raise SafeError(ErrorCode.REQUEST_INVALID)
 
-    async def dispatch_to_completion(*args):
-        """请求取消不代表同步工作已结束，等待线程交还执行权后才释放准入计数。"""
-        operation = asyncio.create_task(run_in_threadpool(dispatch, *args))
+    async def run_to_completion(function, *args, **kwargs):
+        """认证存储和模型同步工作均在线程池执行，取消时等线程交还执行权。"""
+        operation = asyncio.create_task(run_in_threadpool(function, *args, **kwargs))
         try:
             return await asyncio.shield(operation)
         except asyncio.CancelledError:
@@ -182,10 +182,11 @@ def create_cloud_app(*, continuation: ContinuationService, sessions: SessionServ
             body = await asyncio.wait_for(read_body(request), timeout=body_timeout)
             if length is not None and int(length) != len(body):
                 raise SafeError(ErrorCode.REQUEST_INVALID)
-            identity = authenticate(method=request.method, path=path, headers=headers, body=body)
+            # nonce 可使用有界等待的持久存储；不得阻塞 ASGI 主循环。
+            identity = await run_to_completion(authenticate, method=request.method, path=path, headers=headers, body=body)
             if readiness is not None and not readiness():
                 raise SafeError(ErrorCode.TRANSPORT_UNAVAILABLE)
-            outcome = await dispatch_to_completion(request.method, path, body, identity.owner_id)
+            outcome = await run_to_completion(dispatch, request.method, path, body, identity.owner_id)
             return JSONResponse(None if outcome is None else outcome.model_dump(mode="json"),
                                 headers={"Cache-Control": "no-store"})
         except SafeError as exc:
