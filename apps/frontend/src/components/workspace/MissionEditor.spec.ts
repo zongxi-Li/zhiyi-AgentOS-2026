@@ -1,5 +1,7 @@
+import { nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { EditorView } from '@codemirror/view'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MissionEditor from './MissionEditor.vue'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 
@@ -8,6 +10,29 @@ vi.mock('@/services/api/agentos', async importOriginal => {
   return { ...actual, agentosApi: { ...actual.agentosApi, editMissionSemantics: vi.fn() } }
 })
 afterEach(() => vi.resetAllMocks())
+
+// jsdom 没有排版引擎：给 CodeMirror 提供几何 API（与 WorkspaceCodeEditor.lifecycle.spec 同配方）。
+const rangeRectDescriptors = ['getClientRects', 'getBoundingClientRect'].map(key =>
+  [key, Object.getOwnPropertyDescriptor(Range.prototype, key)] as const)
+
+beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
+  const rect = { left: 0, top: 0, right: 500, bottom: 200, width: 500, height: 200, x: 0, y: 0, toJSON() {} }
+  Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] })
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => rect })
+})
+
+afterEach(() => {
+  for (const [key, descriptor] of rangeRectDescriptors) {
+    if (descriptor) Object.defineProperty(Range.prototype, key, descriptor)
+    else delete (Range.prototype as Record<string, unknown>)[key]
+  }
+  vi.unstubAllGlobals()
+})
 
 const projection = (): MissionWorkspaceProjection => ({
   mission: {
@@ -26,6 +51,10 @@ const entry = (content: string): WorkspaceEntry => ({
   entryId: 'overview:mission.md', kind: 'virtual_document', name: 'mission.md',
   group: 'overview', displayOrder: 1, content
 })
+
+/** 视图页签：0=编辑 1=预览。 */
+const modeButtons = (wrapper: ReturnType<typeof mount>) =>
+  wrapper.findAll('.mission-editor__mode button')
 
 describe('MissionEditor', () => {
   const editable = () => {
@@ -77,7 +106,32 @@ describe('MissionEditor', () => {
     await wrapper.find('header button').trigger('click')
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
   })
-  it('keeps the editor chrome compact and renders the full mission heading in the document', () => {
+
+  it('opens mission.md in an editable editor by default and keeps the draft local', async () => {
+    const wrapper = mount(MissionEditor, {
+      props: { projection: projection(), entry: entry('# 设备人员规划\n\n## Semantic tasks\n\n内容') }
+    })
+    // 默认编辑态：CodeMirror 渲染源文（带行号 gutter）
+    expect(wrapper.find('.mission-markdown-editor').exists()).toBe(true)
+    expect(wrapper.find('.mission-markdown-editor .cm-gutters').exists()).toBe(true)
+    expect(wrapper.find('.mission-markdown-editor').text()).toContain('设备人员规划')
+    expect(wrapper.find('.editor-document__body').exists()).toBe(false)
+
+    // 编辑落本地草稿：出现未保存提示与还原按钮，投影不回写 entry.content
+    const editor = EditorView.findFromDOM(wrapper.get('.mission-markdown-editor').element as HTMLElement)!
+    editor.dispatch({ changes: { from: 0, to: 2, insert: '##' } })
+    await nextTick()
+    expect(wrapper.find('.mission-editor__draft-hint').text()).toContain('本地草稿')
+    expect(wrapper.find('.mission-editor__reset').exists()).toBe(true)
+    expect(wrapper.props('entry').content).toBe('# 设备人员规划\n\n## Semantic tasks\n\n内容')
+
+    await wrapper.find('.mission-editor__reset').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.mission-editor__reset').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the editor chrome compact and renders the full mission heading in the preview', async () => {
     const wrapper = mount(MissionEditor, {
       props: {
         projection: projection(),
@@ -86,20 +140,24 @@ describe('MissionEditor', () => {
     })
 
     expect(wrapper.find('.editor-document__header h1').text()).toBe('mission.md')
+    await modeButtons(wrapper).at(1)!.trigger('click')
+    await nextTick()
     expect(wrapper.find('.editor-document__body h1').text()).toBe('设备人员规划')
     expect(wrapper.find('.editor-document__body h2').text()).toBe('Semantic tasks')
   })
 
-  it('keeps the document body as an independently scrollable surface', () => {
+  it('keeps the document body as an independently scrollable surface', async () => {
     const wrapper = mount(MissionEditor, {
       props: { projection: projection(), entry: entry('## Long document\n\n内容') }
     })
 
     expect(wrapper.find('.mission-editor').classes()).toContain('mission-editor')
+    await modeButtons(wrapper).at(1)!.trigger('click')
+    await nextTick()
     expect(wrapper.find('.editor-document__body').exists()).toBe(true)
   })
 
-  it('renders current semantic and historical Run revision labels without using legacy goal', () => {
+  it('renders current semantic and historical Run revision labels without using legacy goal', async () => {
     const value = projection()
     value.missionDisplay = { objective: '当前正式目标', sourceType: 'SEMANTIC' }
     value.missionSemanticView = { missionId: 'mission_1', semanticStatus: 'INITIALIZED', missionRevision: 2,
@@ -109,6 +167,8 @@ describe('MissionEditor', () => {
       sourceType: 'SEMANTIC', sourceRevision: 1, objective: '历史 Run 目标', constraints: [],
       sourceReferences: [], sourceStatus: 'NOT_APPLICABLE', fingerprint: 'abc' }
     const wrapper = mount(MissionEditor, { props: { projection: value, entry: entry('') } })
+    await modeButtons(wrapper).at(1)!.trigger('click')
+    await nextTick()
     expect(wrapper.find('.editor-document__body h1').text()).toBe('当前正式目标')
     expect(wrapper.text()).toContain('正式目标 · revision 2')
     expect(wrapper.text()).toContain('SEMANTIC · revision 1')

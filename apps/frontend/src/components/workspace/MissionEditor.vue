@@ -5,6 +5,28 @@
         <h1>mission.md</h1>
         <p>{{ projection.missionSemanticView ? '任务目标与约束' : '任务说明' }}</p>
       </div>
+      <div class="mission-editor__toolbar" role="tablist" aria-label="任务说明视图">
+        <div class="mission-editor__mode">
+          <button
+            v-for="item in modeTabs"
+            :key="item.id"
+            type="button"
+            role="tab"
+            :aria-selected="mode === item.id"
+            :class="{ 'is-active': mode === item.id }"
+            @click="mode = item.id"
+          >{{ item.label }}</button>
+        </div>
+        <span v-if="mode === 'edit' && !readonly" class="mission-editor__draft-hint">
+          {{ draftDirty ? '本地草稿 · 保存链路暂未接入后端' : '编辑后暂存本地，保存链路暂未接入后端' }}
+        </span>
+        <button
+          v-if="mode === 'edit' && !readonly && draftDirty"
+          type="button"
+          class="mission-editor__reset"
+          @click="resetDraft"
+        >还原</button>
+      </div>
       <button v-if="projection.missionSemanticView && !editing" type="button" @click="beginEdit">{{ projection.missionSemanticView.semanticStatus === 'INITIALIZED' ? '编辑目标与约束' : '初始化正式语义' }}</button>
     </header>
 
@@ -29,7 +51,16 @@
       <button type="button" :disabled="saving" @click="editing = false">取消</button>
     </form>
 
-    <div class="editor-document__body markdown-body" v-html="renderedContent" />
+
+
+    <MissionMarkdownEditor
+      v-if="mode === 'edit'"
+      v-model="draft"
+      class="mission-editor__codemirror"
+      :read-only="Boolean(readonly)"
+      aria-label="任务说明 Markdown"
+    />
+    <div v-else class="editor-document__body markdown-body" v-html="previewContent" />
 
     <section v-if="projection.selectedRunBasis || projection.selectedRunBasisStatus" class="mission-editor__meta" aria-label="Mission metadata">
       <div v-if="projection.selectedRunBasis" class="property-row"><span>所选 Run 依据</span><span>{{ projection.selectedRunBasis.sourceType }} · revision {{ projection.selectedRunBasis.sourceRevision }}</span></div>
@@ -46,8 +77,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MissionRevisionNotice from './MissionRevisionNotice.vue'
+import MissionMarkdownEditor from './MissionMarkdownEditor.vue'
 import { agentosApi, type MissionSemanticEditRequest } from '@/services/api/agentos'
 import { missionDocumentContent, runDisplayObjective } from './missionSemanticDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -103,12 +135,30 @@ const saveSemantics = async () => {
   }
 }
 
-const renderedContent = computed(() => {
-  const source = props.projection.missionSemanticView
-    ? missionDocumentContent(props.projection)
-    : props.entry.content || missionDocumentContent(props.projection)
-  return renderMarkdown(source)
-})
+// 任务说明的编辑器态：内容只落在本地草稿（保存链路接入后端前不写回）。
+const modeTabs = [
+  { id: 'edit' as const, label: '编辑' },
+  { id: 'preview' as const, label: '预览' }
+]
+const mode = ref<'edit' | 'preview'>('edit')
+const sourceContent = computed(() => props.projection.missionSemanticView
+  ? missionDocumentContent(props.projection)
+  : props.entry.content || missionDocumentContent(props.projection))
+const baseline = ref('')
+const draft = ref('')
+const draftDirty = computed(() => draft.value !== baseline.value)
+watch(sourceContent, value => {
+  // 草稿未动时跟随外部内容；已编辑则保留本地草稿不被投影刷新覆盖。
+  if (draft.value === baseline.value) {
+    baseline.value = value
+    draft.value = value
+  }
+}, { immediate: true })
+const resetDraft = () => {
+  baseline.value = sourceContent.value
+  draft.value = sourceContent.value
+}
+const previewContent = computed(() => renderMarkdown(draft.value))
 
 const formatBytes = (bytes: number) => bytes < 1024
   ? `${bytes} B`
@@ -126,7 +176,7 @@ const formatBytes = (bytes: number) => bytes < 1024
   overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 34px clamp(24px, 6vw, 92px) 56px;
+  padding: 0;
   border: 1px solid var(--wb-border-soft);
   border-radius: var(--wb-radius-section);
   background: var(--wb-surface-section);
@@ -134,11 +184,13 @@ const formatBytes = (bytes: number) => bytes < 1024
   color: var(--wb-text);
 }
 
+/* 贴边编辑器：卡片不留呼吸边距，标题行/工具条/正文各自带最小内衬。 */
 .editor-document__header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 24px;
-  padding-bottom: 22px;
+  padding: 14px 16px 12px;
   border-bottom: 1px solid var(--wb-border-soft);
 }
 
@@ -147,15 +199,91 @@ const formatBytes = (bytes: number) => bytes < 1024
 .editor-document__header code { align-self: flex-start; max-width: 220px; overflow: hidden; color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
 .editor-document__eyebrow { color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
 
-.editor-document__body { width: min(100%, 820px); padding-top: 24px; }
+.editor-document__body { width: min(calc(100% - 32px), 820px); margin: 0 16px; padding: 24px 0 40px; font-size: 14px; line-height: 1.7; }
+
+/* 编辑器态：工具条 + 全宽 CodeMirror，随面板铺满，无呼吸边距。 */
+.mission-editor__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin: 0 0 0 auto;
+  padding: 0;
+}
+
+.mission-editor__mode {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--wb-border-soft);
+  border-radius: 9px;
+  background: var(--wb-surface-inset);
+}
+
+.mission-editor__mode button {
+  min-height: 26px;
+  padding: 0 12px;
+  margin: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--wb-text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: color 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+
+.mission-editor__mode button:hover { color: var(--wb-text-secondary); background: var(--wb-hover); }
+
+.mission-editor__mode button.is-active {
+  color: var(--wb-accent);
+  background: var(--wb-surface-2);
+  font-weight: 650;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+}
+
+.mission-editor__mode button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -1px; }
+
+.mission-editor__draft-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wb-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-editor__reset {
+  min-height: 26px;
+  padding: 0 11px;
+  margin: 0 0 0 auto;
+  border: 1px solid var(--wb-border-soft);
+  border-radius: 7px;
+  color: var(--wb-text-secondary);
+  background: var(--wb-surface-inset);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  transition: color 140ms var(--ease-out), border-color 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+
+.mission-editor__reset:hover {
+  color: var(--wb-accent);
+  border-color: color-mix(in srgb, var(--wb-accent) 36%, var(--wb-border-soft));
+  background: var(--wb-hover);
+}
+
+.mission-editor__codemirror { width: 100%; font-size: 13px; }
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
 .markdown-body :deep(h3) { color: var(--wb-text); line-height: 1.35; text-wrap: pretty; }
-.markdown-body :deep(h1) { margin: 0 0 18px; font-size: 25px; }
+.markdown-body :deep(h1) { margin: 0 0 18px; font-size: 18px; }
 .markdown-body :deep(h2) { margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--wb-border); font-size: 17px; }
 .markdown-body :deep(h3) { margin: 20px 0 8px; font-size: 14px; }
 .markdown-body :deep(p),
-.markdown-body :deep(li) { color: var(--wb-text-secondary); font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+.markdown-body :deep(li) { color: var(--wb-text-secondary); font-size: inherit; line-height: 1.7; overflow-wrap: anywhere; }
 .markdown-body :deep(ul),
 .markdown-body :deep(ol) { padding-left: 23px; }
 .markdown-body :deep(code) { padding: 2px 4px; color: var(--wb-text); background: var(--wb-surface-inset); font: 11px var(--font-mono, monospace); }
@@ -165,9 +293,12 @@ const formatBytes = (bytes: number) => bytes < 1024
 .markdown-body :deep(a) { color: var(--wb-accent); }
 /* Markdown 表格样式收敛到 global.css 的全局三线表 */
 
-.mission-editor__meta { width: min(100%, 820px); margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--wb-border-soft); }
+.mission-editor__meta { width: min(calc(100% - 32px), 820px); margin: 30px 16px 0; padding-top: 14px; border-top: 1px solid var(--wb-border-soft); }
 .mission-editor__meta textarea { display: block; width: 100%; margin: 8px 0; padding: 10px; color: var(--wb-text); background: var(--wb-surface-inset); border: 1px solid var(--wb-border-soft); font: inherit; }
 .mission-editor button { padding: 6px 10px; margin: 4px; color: var(--wb-text); background: var(--wb-surface-inset); border: 1px solid var(--wb-border-soft); cursor: pointer; }
+/* 工具条按钮不受上面的通用按钮规则影响：必须排在它之后（同特异性靠后者胜）。 */
+.mission-editor .mission-editor__mode button { min-height: 26px; padding: 0 12px; margin: 0; border: 0; }
+.mission-editor .mission-editor__reset { min-height: 26px; padding: 0 11px; margin: 0 0 0 auto; }
 .property-row { display: flex; justify-content: space-between; gap: 24px; min-height: 30px; padding: 7px 0; color: var(--wb-text-secondary); font-size: 12px; }
 .property-row + .property-row { border-top: 1px solid color-mix(in srgb, var(--wb-border-soft) 70%, transparent); }
 .property-row code { color: var(--wb-text); font: 11px var(--font-mono, monospace); }

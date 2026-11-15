@@ -120,6 +120,7 @@ declare module 'vue' {
     MermaidRenderer: typeof import('./src/components/agent/MermaidRenderer.vue')['default']
     MessageBubble: typeof import('./src/components/MessageBubble.vue')['default']
     MissionEditor: typeof import('./src/components/workspace/MissionEditor.vue')['default']
+    MissionMarkdownEditor: typeof import('./src/components/workspace/MissionMarkdownEditor.vue')['default']
     MissionRevisionNotice: typeof import('./src/components/workspace/MissionRevisionNotice.vue')['default']
     ModelAggregationCard: typeof import('./src/components/federated/ModelAggregationCard.vue')['default']
     ModelManagementPanel: typeof import('./src/components/resource-center/ModelManagementPanel.vue')['default']

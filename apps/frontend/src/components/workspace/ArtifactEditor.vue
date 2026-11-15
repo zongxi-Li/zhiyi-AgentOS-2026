@@ -144,10 +144,10 @@ onBeforeUnmount(() => controller?.abort())
 
 <style scoped>
 .artifact-editor { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-soft); border-radius: var(--wb-radius-section); background: var(--wb-surface-section); color: var(--wb-text); box-shadow: var(--wb-shadow-section); }
-.artifact-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 40px; padding: 5px 14px; border-bottom: 1px solid var(--wb-border-soft); background: var(--wb-surface-section); }
+.artifact-editor__header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 16px 12px; border-bottom: 1px solid var(--wb-border-soft); }
 .artifact-editor__title { min-width: 0; }
 .artifact-editor__eyebrow { display: block; color: var(--wb-accent); font: 10px var(--font-mono, monospace); letter-spacing: .1em; }
-.artifact-editor__title strong { display: block; margin: 1px 0; overflow: hidden; color: var(--wb-text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-editor__title strong { display: block; margin: 7px 0 4px; overflow: hidden; color: var(--wb-text); font-size: 19px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-editor__title small { color: var(--wb-text-muted); font: 10px var(--font-mono, monospace); }
 .artifact-editor__actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .artifact-editor__actions button { min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius-sm); color: var(--wb-text-secondary); background: transparent; cursor: pointer; font-size: 11px; }
@@ -158,14 +158,14 @@ onBeforeUnmount(() => controller?.abort())
 .artifact-editor__state strong { color: var(--text-primary); }
 .artifact-editor__state--missing { background: color-mix(in srgb, var(--info) 4%, transparent); }
 .artifact-editor__state--error { color: var(--danger); }
-.artifact-editor__body { flex: 1 1 auto; min-height: 0; max-width: 920px; width: min(100% - 44px, 920px); margin: 0 auto; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
-.markdown-body { padding: 24px 0 52px; color: var(--wb-text-secondary); }
+.artifact-editor__body { flex: 1 1 auto; min-height: 0; max-width: 820px; width: min(calc(100% - 32px), 820px); margin: 0 16px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.markdown-body { padding: 24px 0 40px; color: var(--wb-text-secondary); font-size: 14px; line-height: 1.7; }
 .markdown-body :deep(h1), .markdown-body :deep(h2), .markdown-body :deep(h3) { color: var(--wb-text); line-height: 1.35; text-wrap: pretty; }
-.markdown-body :deep(h1) { margin: 0 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--wb-border); font-size: 26px; }
-.markdown-body :deep(h2) { margin: 26px 0 10px; font-size: 18px; }
+.markdown-body :deep(h1) { margin: 0 0 18px; font-size: 18px; }
+.markdown-body :deep(h2) { margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--wb-border); font-size: 17px; }
 .markdown-body :deep(h3) { margin: 20px 0 8px; font-size: 14px; }
-.markdown-body :deep(p), .markdown-body :deep(li) { font-size: 13px; line-height: 1.8; }
-.markdown-body :deep(ul), .markdown-body :deep(ol) { padding-left: 24px; }
+.markdown-body :deep(p), .markdown-body :deep(li) { font-size: inherit; line-height: 1.7; }
+.markdown-body :deep(ul), .markdown-body :deep(ol) { padding-left: 23px; }
 .markdown-body :deep(code) { padding: 2px 4px; background: var(--wb-surface-inset); font: 11px var(--font-mono, monospace); }
 .markdown-body :deep(pre) { overflow: auto; padding: 12px; border: 1px solid var(--wb-border); background: var(--wb-surface-inset); }
 .markdown-body :deep(pre code) { padding: 0; background: transparent; }
@@ -183,6 +183,5 @@ onBeforeUnmount(() => controller?.abort())
   .artifact-editor__header { align-items: flex-start; flex-direction: column; }
   .artifact-editor__actions { width: 100%; }
   .artifact-editor__actions button { flex: 1; }
-  .artifact-editor__body { width: min(100% - 28px, 920px); }
 }
 </style>
