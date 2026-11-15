@@ -12,7 +12,7 @@ from pathlib import Path
 import secrets
 import threading
 from dataclasses import dataclass, field
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Iterator
 
 from safe.contracts.errors import ErrorCode, SafeError
@@ -119,7 +119,13 @@ class _CacheRegistry:
             with self._lock:
                 if self._entries.get(key) is not entry:
                     raise SafeError(ErrorCode.MODEL_PARTITION_UNAVAILABLE)
-            yield entry
+            try:
+                yield entry
+            except BaseException:
+                # 层前向、有限值检查或结果转换失败时，KV可能已被部分更新。
+                # 不尝试回滚缓存长度：整个句柄失效，其他会话不受影响。
+                self.release(handle)
+                raise
 
     def release(self, handle: KVHandle) -> None:
         key = str(handle)
@@ -161,15 +167,13 @@ class QwenPrefixRunner:
             raise SafeError(ErrorCode.SESSION_INVALID)
         if len(token_ids) > self.manifest.max_context:
             raise SafeError(ErrorCode.ACTIVATION_INVALID)
-        with torch.inference_mode():
+        cache_scope = nullcontext(None) if kv_handle is None else self._caches.access(kv_handle, session_id)
+        with torch.inference_mode(), cache_scope as entry:
+            if entry is not None and entry.cache.get_seq_length(0) != 0:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
             embedded = self._module.embed_tokens(torch.tensor([token_ids], dtype=torch.long))
-            if kv_handle is None:
-                hidden = _layers(self._module, self._rope, embedded)
-            else:
-                with self._caches.access(kv_handle, session_id) as entry:
-                    if entry.cache.get_seq_length(0) != 0:
-                        raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
-                    hidden = _layers(self._module, self._rope, embedded, cache=entry.cache)
+            hidden = _layers(self._module, self._rope, embedded,
+                             cache=None if entry is None else entry.cache)
             if not torch.isfinite(hidden).all():
                 raise SafeError(ErrorCode.ACTIVATION_INVALID)
             return tuple(hidden.reshape(-1).tolist()), (1, len(token_ids), self.manifest.hidden_size)
@@ -229,17 +233,15 @@ class QwenSuffixRunner:
             raise SafeError(ErrorCode.SESSION_INVALID)
         if shape[1] > self.manifest.max_context:
             raise SafeError(ErrorCode.ACTIVATION_INVALID)
-        with torch.inference_mode():
+        cache_scope = nullcontext(None) if kv_handle is None else self._caches.access(kv_handle, session_id)
+        with torch.inference_mode(), cache_scope as entry:
+            if entry is not None and entry.cache.get_seq_length(self.manifest.cut_layer) != 0:
+                raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
             hidden = torch.tensor(activation, dtype=torch.float32).reshape(shape)
             if not torch.isfinite(hidden).all():
                 raise SafeError(ErrorCode.ACTIVATION_INVALID)
-            if kv_handle is None:
-                hidden = _layers(self._module, self._rope, hidden)
-            else:
-                with self._caches.access(kv_handle, session_id) as entry:
-                    if entry.cache.get_seq_length(self.manifest.cut_layer) != 0:
-                        raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
-                    hidden = _layers(self._module, self._rope, hidden, cache=entry.cache)
+            hidden = _layers(self._module, self._rope, hidden,
+                             cache=None if entry is None else entry.cache)
             logits = self._module.lm_head(self._module.norm(hidden[:, -1:, :]))[0, -1]
             if not torch.isfinite(logits).all():
                 raise SafeError(ErrorCode.ACTIVATION_INVALID)

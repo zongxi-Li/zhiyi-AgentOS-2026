@@ -194,3 +194,57 @@ def test_close_releases_all_kv_handles_and_rejects_new_sessions(exported):
     with pytest.raises(SafeError) as error:
         prefix.create_kv("session-c")
     assert error.value.code is ErrorCode.MODEL_PARTITION_UNAVAILABLE
+
+
+@pytest.mark.parametrize("role", ["prefix", "suffix"])
+@pytest.mark.parametrize("failure", ["exception", "nonfinite"])
+@pytest.mark.parametrize("phase", ["prefill", "decode"])
+def test_partial_forward_failure_invalidates_only_affected_cache(exported, monkeypatch, role, failure, phase):
+    """实际更新合成模型KV后再注入异常/NaN，失败句柄必须失效且不影响其他会话。"""
+    from safe.infrastructure.models import qwen
+
+    _, _, root, digest = exported
+    prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
+    runner = prefix if role == "prefix" else QwenSuffixRunner(root / "suffix", approved_digest=digest)
+    handle = runner.create_kv("session-a")
+    other_handle = runner.create_kv("session-b")
+    flat, shape = prefix.prefill((1, 2))
+    if phase == "decode":
+        if role == "prefix":
+            runner.prefill((1, 2), kv_handle=handle, session_id="session-a")
+        else:
+            runner.prefill(flat, shape, kv_handle=handle, session_id="session-a")
+
+    original_layers = qwen._layers
+
+    def broken_layers(*args, **kwargs):
+        hidden = original_layers(*args, **kwargs)
+        if failure == "exception":
+            raise RuntimeError("synthetic partial forward failure")
+        return torch.full_like(hidden, float("nan"))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(qwen, "_layers", broken_layers)
+        with pytest.raises((RuntimeError, SafeError)):
+            if phase == "prefill":
+                if role == "prefix":
+                    runner.prefill((1, 2), kv_handle=handle, session_id="session-a")
+                else:
+                    runner.prefill(flat, shape, kv_handle=handle, session_id="session-a")
+            elif role == "prefix":
+                runner.decode(handle, "session-a", 3)
+            else:
+                runner.decode(handle, "session-a", (0.0,) * 16, (1, 1, 16))
+
+    with pytest.raises(SafeError) as error:
+        if role == "prefix":
+            runner.decode(handle, "session-a", 3)
+        else:
+            runner.decode(handle, "session-a", (0.0,) * 16, (1, 1, 16))
+    assert error.value.code is ErrorCode.MODEL_PARTITION_UNAVAILABLE
+    if role == "prefix":
+        runner.prefill((3, 4), kv_handle=other_handle, session_id="session-b")
+    else:
+        runner.prefill(flat, shape, kv_handle=other_handle, session_id="session-b")
+    runner.close()
+    prefix.close()
