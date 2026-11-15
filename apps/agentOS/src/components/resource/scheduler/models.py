@@ -12,6 +12,9 @@ from contracts.resource import ExecutionBinding, ResourceLease
 
 class FilterReason(str, Enum):
     DISABLED = "DISABLED"
+    DRAINING = "DRAINING"
+    AGENT_INSTANCE_NOT_SCHEDULABLE = "AGENT_INSTANCE_NOT_SCHEDULABLE"
+    NO_ELIGIBLE_AGENT = "NO_ELIGIBLE_AGENT"
     UNHEALTHY = "UNHEALTHY"
     NODE_UNHEALTHY = "NODE_UNHEALTHY"
     CAPABILITY_MISMATCH = "CAPABILITY_MISMATCH"
@@ -29,6 +32,7 @@ class FilterReason(str, Enum):
     LATENCY_EXCEEDED = "LATENCY_EXCEEDED"
     REMOTE_EXECUTION_DISABLED = "REMOTE_EXECUTION_DISABLED"
     MODEL_ENDPOINT_UNAVAILABLE = "MODEL_ENDPOINT_UNAVAILABLE"
+    MODEL_DEMAND_UNSUPPORTED_REMOTE = "MODEL_DEMAND_UNSUPPORTED_REMOTE"
     NODE_CPU_INSUFFICIENT = "NODE_CPU_INSUFFICIENT"
     NODE_MEMORY_INSUFFICIENT = "NODE_MEMORY_INSUFFICIENT"
     NODE_GPU_TYPE_MISMATCH = "NODE_GPU_TYPE_MISMATCH"
@@ -62,6 +66,7 @@ class ReadyNodeSchedulingResult(BaseModel):
     status: Literal["allocated", "queued", "rejected"]
     binding: ExecutionBinding | None = None
     lease: ResourceLease | None = None
+    agent_lease: ResourceLease | None = Field(default=None, alias="agentLease")
     candidates: list[CandidateDecision] = Field(default_factory=list)
     reason: str | None = None
 

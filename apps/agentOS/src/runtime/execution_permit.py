@@ -531,12 +531,19 @@ class ExecutionPermitAuthority:
         task = IdentityResolver(repos).resolve_semantic_task(
             blueprint_id=identity_run.blueprint_id, acg_node_id=step_id)
         executions = repos.step_executions.list_for_attempt(attempt_id)
+        from contracts.resource import ExecutionBinding
+        selected = ExecutionBinding.model_validate(binding)
         if (attempt is None or attempt.run_id != run.run_id or attempt.task_id != task.task_id
                 or identity_binding is None or identity_binding.acg_node_id != step_id
                 or identity_binding.resource_id != binding.get("resourceId")
+                or identity_binding.metadata.get("agentRegistration") != binding.get("agentRegistration")
+                or identity_binding.metadata.get("agentLeaseId") != binding.get("agentLeaseId")
+                or identity_binding.metadata.get("modelBinding") != selected.identity_metadata.get("modelBinding")
                 or not any(item.run_id == run.run_id and item.task_id == task.task_id
                            and item.status.value == "running" for item in executions)):
             raise ExecutionPermitError(Code.STALE_GRAPH, "Identity Attempt or resource binding changed before invocation")
+        if binding.get("agentRegistration") is not None:
+            self.runtime.resource_binder.assert_binding(selected)
 
     def _assert_external_promotions(self, record, handoff, checkpoint_payload):
         if not self._checkpoint_is_promoted(record, checkpoint_payload):

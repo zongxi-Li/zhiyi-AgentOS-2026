@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
 from ..authority import RuntimeResourceId
+from ..agents import AgentRegistrationRef
 from ..capability import ModelFeatureSet
 
 
@@ -71,6 +72,9 @@ class RuntimeKind(str, Enum):
     EXECUTION_BACKEND = "execution_backend"
     MODEL_SERVER = "model_server"
     TOOL_SERVICE = "tool_service"
+    # Executor slots are reserved together with their host backend, never
+    # selected as standalone execution endpoints by the generic Runtime Binder.
+    AGENT_INSTANCE = "agent_instance"
 
 
 class HealthStatus(str, Enum):
@@ -211,8 +215,22 @@ class RuntimeProfile(BaseModel):
     cost_metadata: dict[str, float] = Field(default_factory=dict, alias="costMetadata")
     model_ids: list[StrictStr] = Field(default_factory=list, alias="modelIds", description="MODEL_SERVER 直接服务的模型标识。")
     enabled: bool = Field(default=True, description="是否可接受新调度。")
+    draining: bool = False
+    agent_registration: AgentRegistrationRef | None = Field(default=None, alias="agentRegistration")
+    host_runtime_id: StrictStr | None = Field(default=None, alias="hostRuntimeId")
     metadata: dict[str, Any] = Field(default_factory=dict)
     version: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def validate_agent_instance_identity(self):
+        is_instance = self.kind is RuntimeKind.AGENT_INSTANCE
+        if is_instance != (self.agent_registration is not None and self.host_runtime_id is not None):
+            raise ValueError("Agent instance kind requires its registration and host Runtime")
+        if not is_instance and (self.agent_registration is not None or self.host_runtime_id is not None):
+            raise ValueError("only Agent instance resources may carry an Agent registration")
+        if is_instance and self.runtime_id != self.agent_registration.resource_id:
+            raise ValueError("Agent instance resource identity does not match its registration")
+        return self
 
 
 class RuntimeSnapshot(BaseModel):
@@ -229,6 +247,24 @@ class RuntimeSnapshot(BaseModel):
     reliability: float | None = Field(default=None, ge=0.0, le=1.0)
     latency_ms: float | None = Field(default=None, ge=0.0, alias="latencyMs")
     metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class ModelQuotaPolicy(BaseModel):
+    """Shared provider/account quota domain; independent of Agent and Run identity."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    scope: StrictStr = Field(min_length=1)
+    max_concurrency: int = Field(alias="maxConcurrency", ge=1, strict=True)
+    requests_per_minute: int | None = Field(default=None, alias="requestsPerMinute", ge=1, strict=True)
+    tokens_per_minute: int | None = Field(default=None, alias="tokensPerMinute", ge=1, strict=True)
+
+    @field_validator("scope")
+    @classmethod
+    def normalize_scope(cls, value):
+        if not value.strip():
+            raise ValueError("model quota scope must not be blank")
+        return value.strip()
 
 
 class ModelEndpointProfile(BaseModel):
@@ -258,6 +294,7 @@ class ModelEndpointProfile(BaseModel):
     context_window_tokens: int | None = Field(default=None, alias="contextWindowTokens", ge=1)
     max_output_tokens: int | None = Field(default=None, alias="maxOutputTokens", ge=1)
     features: ModelFeatureSet = Field(default_factory=ModelFeatureSet)
+    quota: ModelQuotaPolicy | None = None
     cost_metadata: dict[str, float] = Field(default_factory=dict, alias="costMetadata")
     labels: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
@@ -325,6 +362,7 @@ class ModelEndpointBinding(BaseModel):
     provider: StrictStr = Field(min_length=1)
     model: StrictStr = Field(min_length=1)
     version: StrictStr | None = None
+    quota: ModelQuotaPolicy | None = None
 
 
 class ExecutionBinding(BaseModel):
@@ -348,8 +386,31 @@ class ExecutionBinding(BaseModel):
     snapshot_version: int = Field(alias="snapshotVersion", ge=1)
     lease_id: StrictStr | None = Field(default=None, alias="leaseId")
     lease_version: int | None = Field(default=None, alias="leaseVersion", ge=1)
+    agent_registration: AgentRegistrationRef | None = Field(default=None, alias="agentRegistration")
+    agent_lease_id: StrictStr | None = Field(default=None, alias="agentLeaseId", min_length=1)
+    agent_lease_version: int | None = Field(default=None, alias="agentLeaseVersion", ge=1)
     bound_at: datetime = Field(default_factory=_utc_now, alias="boundAt")
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_agent_allocation(self):
+        fields = (self.agent_registration, self.agent_lease_id, self.agent_lease_version)
+        if any(value is not None for value in fields) and not all(value is not None for value in fields):
+            raise ValueError("Agent allocation requires its exact registration and lease identity")
+        if self.agent_registration is not None and (self.lease_id is None or self.runtime_kind is not RuntimeKind.EXECUTION_BACKEND):
+            raise ValueError("Agent allocation requires its execution backend lease")
+        return self
+
+    @property
+    def identity_metadata(self) -> dict[str, Any]:
+        metadata = {"runtimeBindingId": self.binding_id, "runtimeKind": self.runtime_kind.value,
+                    "snapshotVersion": self.snapshot_version, **self.metadata}
+        if self.agent_registration is not None:
+            metadata.update(agentRegistration=self.agent_registration.model_dump(by_alias=True, mode="json"),
+                            agentLeaseId=self.agent_lease_id)
+        if self.model_binding is not None and (self.model_binding.quota is not None or "modelDemand" in self.metadata):
+            metadata["modelBinding"] = self.model_binding.model_dump(by_alias=True, mode="json")
+        return metadata
 
 
 class ResourceLease(BaseModel):
@@ -391,6 +452,7 @@ __all__ = [
     "ModelDemand",
     "ModelEndpointBinding",
     "ModelEndpointProfile",
+    "ModelQuotaPolicy",
     "NodeHealthStatus",
     "RemoteExecutionPolicy",
     "NodeProfile",

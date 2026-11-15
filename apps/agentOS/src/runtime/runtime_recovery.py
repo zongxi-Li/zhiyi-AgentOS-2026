@@ -837,7 +837,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         if scope is None:
             raise ValueError("resource rebinding requires a frozen execution scope")
         bindings = dict(run.execution_state.get("resourceBindings") or {})
-        current_agent_id = str(bindings.get(step_id) or "")
+        allocated = (run.execution_state.get("executionBindings") or {}).get(step_id) or {}
+        current_agent_id = str((allocated.get("agentRegistration") or {}).get("agentId") or bindings.get(step_id) or "")
         if not current_agent_id:
             raise ValueError(f"ACG step has no frozen resource binding: {step_id}")
         history = list(run.execution_state.get("bindingHistory") or [])

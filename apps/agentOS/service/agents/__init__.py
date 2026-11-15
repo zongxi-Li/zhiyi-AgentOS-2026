@@ -6,9 +6,12 @@ Agent 的基础模型、调用上下文和注册表位于服务层：Runtime 负
 
 from .base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 from .registry import AgentNotFound, AgentRegistry
+from contracts.agents import AgentDefinition, AgentRegistrationRef
 
 __all__ = [
     "AgentNotFound",
+    "AgentDefinition",
+    "AgentRegistrationRef",
     "AgentOutput",
     "AgentProfile",
     "AgentRegistry",

@@ -97,6 +97,8 @@ def build_reused_step_projection_events(
             str(node_binding.get("agentId") or resource_id)
             if isinstance(node_binding, dict) else resource_id
         )
+        if isinstance(binding_payload.get("agentRegistration"), dict):
+            agent_id = str(binding_payload["agentRegistration"]["agentId"])
         model_id = (
             str(model_binding.get("model") or "runtime-default")
             if isinstance(model_binding, dict) else "runtime-default"

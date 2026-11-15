@@ -20,6 +20,7 @@ class _AgentProfile:
     agent_id: str
     capabilities: tuple[str, ...] = ()
     capacity: int = 1
+    enabled: bool = True
 
 
 @dataclass
@@ -76,3 +77,29 @@ def test_embedded_runtime_is_a_scheduling_candidate_for_declared_capabilities() 
     assert [candidate.profile.runtime_id for candidate in candidates] == [EMBEDDED_AGENTS_RUNTIME_ID]
     # 未声明的能力不构成候选资格。
     assert plane.runtime_candidates(["shell.exec"]) == []
+
+
+def test_disabled_agents_do_not_contribute_capabilities_or_capacity() -> None:
+    plane = ResourcePlane()
+    profile = register_embedded_agents_runtime(plane, [
+        _FakeAgent(_AgentProfile("disabled", ("analysis",), 10, enabled=False)),
+        _FakeAgent(_AgentProfile("writer", ("writing",), 1)),
+    ])
+
+    assert profile.capacity == 1
+    assert "analysis" not in profile.capabilities
+    assert "agent:disabled" not in profile.capabilities
+    assert profile.enabled
+
+
+def test_disabling_last_agent_withdraws_embedded_runtime_from_scheduling() -> None:
+    plane = ResourcePlane()
+    agent = _FakeAgent(_AgentProfile("analyst", ("analysis",), 1))
+    register_embedded_agents_runtime(plane, [agent])
+    plane.heartbeat_runtime(EMBEDDED_AGENTS_RUNTIME_ID)
+    agent.profile.enabled = False
+
+    profile = register_embedded_agents_runtime(plane, [agent])
+
+    assert not profile.enabled
+    assert plane.runtime_candidates([EMBEDDED_AGENTS_BASE_CAPABILITY]) == []

@@ -6,9 +6,10 @@ from collections.abc import Mapping
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, model_serializer, model_validator
 
 from .authority import LogicalAgentId, RuntimeResourceId
+from .resource import ModelDemand
 
 
 class FrozenContract(BaseModel):
@@ -56,6 +57,14 @@ class BindingRule(FrozenContract):
     )
     domain: StrictStr | None = None
     max_concurrency: int = Field(default=1, alias="maxConcurrency", ge=1)
+    model_demand: ModelDemand | None = Field(default=None, alias="modelDemand")
+
+    @model_serializer(mode="wrap")
+    def serialize_model_demand(self, handler):
+        payload = handler(self)
+        if self.model_demand is None:
+            payload.pop("modelDemand" if "modelDemand" in payload else "model_demand", None)
+        return payload
 
 
 class BindingManifest(FrozenContract):

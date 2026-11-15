@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from contracts.authority import LogicalAgentId
+from contracts.agents import AgentRegistrationRef
 from contracts.mission_semantic import MissionIntentBasis
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 
@@ -25,6 +26,8 @@ class AgentProfile(BaseModel):
     risk_level: str = Field(default="normal", alias="riskLevel")
     description: str = ""
     agent_id: Optional[LogicalAgentId] = Field(default=None, alias="agentId")
+    definition_version: Optional[str] = Field(default=None, alias="definitionVersion")
+    execution_mode: Literal["unspecified", "stateless", "stateful"] = Field(default="unspecified", alias="executionMode")
     # 模型路由必须同时声明提供商与模型名。它们只用于在执行期解析已登记适配器，
     # 不保存密钥、端点 URL 或供应商 SDK；具体实例始终由应用层注册表持有。
     model_provider: Optional[str] = Field(default=None, alias="modelProvider")
@@ -79,6 +82,9 @@ class AgentRunContext(BaseModel):
     # The scheduler attempt is distinct from the idempotent commit operation.
     # Runtime streaming events must follow this identity across retries.
     attempt_id: Optional[str] = Field(default=None, alias="attemptId")
+    # A live invocation captures its exact local registration. Durable binding
+    # and cross-process recovery fencing are added at the scheduling boundary.
+    agent_registration: AgentRegistrationRef | None = Field(default=None, alias="agentRegistration")
 
     @model_validator(mode="after")
     def bind_mission_intent(self):

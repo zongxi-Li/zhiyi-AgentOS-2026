@@ -27,6 +27,7 @@ from ..ports.audit_store import ResourceAuditStore
 from ..infrastructure.audit_store import InMemoryResourceAuditStore
 
 from contracts.capability import ModelFeatureSet
+from contracts.agents import AgentDefinition, AgentRegistrationRef
 from contracts.resource import (
     HealthStatus,
     ModelDemand,
@@ -112,6 +113,12 @@ def compute_registration_id(resource_id: str, owner_scope: str, profile: NodePro
 
     payload = profile.model_dump(by_alias=True, mode="json")
     payload.pop("version", None)
+    if isinstance(profile, RuntimeProfile):
+        # Preserve registration keys for pre-instance Runtime records whose
+        # wire payload predates these additive, default-valued fields.
+        for key, default in (("draining", False), ("agentRegistration", None), ("hostRuntimeId", None)):
+            if payload.get(key) == default:
+                payload.pop(key, None)
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("registrationId", None)
@@ -525,6 +532,8 @@ class ResourcePlane:
         引导路径（本进程拥有该 Runtime 的真实存活信号）允许更新能力集等
         画像字段；capacity 变化会按已占用量重新缩放松照槽位。
         """
+        if profile.kind is RuntimeKind.AGENT_INSTANCE:
+            raise ValueError("Agent instances must use the registration-specific resource API")
         self._validate_runtime_host(profile)
         initial = snapshot or RuntimeSnapshot(
             runtimeId=profile.runtime_id,
@@ -570,6 +579,8 @@ class ResourcePlane:
         registration_id: str | None = None,
     ) -> IssuedResourceCredential:
         """登记远程 Runtime 并生成只能在注册响应中读取一次的凭据。"""
+        if profile.kind is RuntimeKind.AGENT_INSTANCE:
+            raise ValueError("Agent instances must use the registration-specific resource API")
         if profile.endpoint is None or profile.endpoint.protocol == "local":
             raise ValueError("remote runtime requires a callable execution endpoint")
         supported_adapter = profile.adapter in {None, "agentos_http", "http", "https"}
@@ -672,6 +683,131 @@ class ResourcePlane:
     def runtime(self, runtime_id: str) -> RuntimeProfile:
         return self.store.get_profile(runtime_id)
 
+    def register_agent_instance(
+        self, ref: AgentRegistrationRef, definition: AgentDefinition, *,
+        host_runtime_id: str, capacity: int, enabled: bool = True,
+    ) -> RuntimeProfile:
+        """Publish concrete instance facts using existing Runtime persistence.
+
+        This does not grant dispatch eligibility. Each registration generation
+        has a distinct resource ID and therefore distinct health observations.
+        Repeated projection must preserve administrative state and capacity.
+        """
+        if (ref.agent_id, ref.definition_digest, ref.definition_version) != (
+            definition.agent_id, definition.digest, definition.definition_version,
+        ):
+            raise ValueError("Agent instance declaration does not match its registration")
+        if type(capacity) is not int or capacity < 1:
+            raise ValueError("Agent instance capacity must be a positive integer")
+        host = self.runtime(host_runtime_id)
+        if host.kind is not RuntimeKind.EXECUTION_BACKEND:
+            raise ValueError("Agent instance requires an execution backend host")
+        try:
+            current = self._agent_instance_profile(ref)
+        except KeyError:
+            current = None
+        if current is not None:
+            if current.host_runtime_id != host_runtime_id:
+                raise ValueError("Agent instance host is immutable")
+            return current
+        profile = RuntimeProfile(
+            runtimeId=ref.resource_id, kind=RuntimeKind.AGENT_INSTANCE,
+            displayName=definition.agent_name, nodeId=host.node_id,
+            placement=host.placement, trust=host.trust, ownerScope=host.owner_scope,
+            capabilities=sorted({item.strip().lower() for item in definition.capabilities}
+                                | {"exec.agents", f"agent:{ref.agent_id.lower()}"}),
+            capacity=capacity, enabled=enabled, domains=[definition.domain],
+            agentRegistration=ref, hostRuntimeId=host_runtime_id,
+            metadata={"managedBy": "agent-pool", "bindingPriority": definition.binding_priority},
+        )
+        self._validate_runtime_host(profile)
+        initial = RuntimeSnapshot(runtimeId=ref.resource_id, availableSlots=capacity, utilization=0.0)
+        try:
+            self.store.register(profile, initial)
+        except ValueError:
+            # A concurrent projection of this exact registration is harmless.
+            existing = self._agent_instance_profile(ref)
+            if existing.host_runtime_id != host_runtime_id:
+                raise
+            return existing
+        self.record_audit_event("agent_instance_registered", ref.resource_id)
+        return self.runtime(ref.resource_id)
+
+    def _agent_instance_profile(self, ref: AgentRegistrationRef) -> RuntimeProfile:
+        profile = self.runtime(ref.resource_id)
+        if profile.kind is not RuntimeKind.AGENT_INSTANCE or profile.agent_registration != ref:
+            raise ValueError("Agent instance registration identity mismatch")
+        return profile
+
+    def set_agent_instance_state(
+        self, ref: AgentRegistrationRef, *, expected_version: int,
+        enabled: bool | None = None, draining: bool | None = None, capacity: int | None = None,
+    ) -> RuntimeProfile:
+        """CAS administrative facts only; no allocation or busy counters."""
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("Agent instance expected version must be a positive integer")
+        profile = self._agent_instance_profile(ref)
+        if profile.version != expected_version:
+            raise VersionConflict("Agent instance profile version conflict")
+        if profile.metadata.get("outcomeUnknown") and (enabled is True or draining is False):
+            raise ValueError("Agent instance with unknown work requires reconciliation")
+        changes = {}
+        if enabled is not None:
+            if type(enabled) is not bool:
+                raise ValueError("Agent instance enabled must be boolean")
+            changes["enabled"] = enabled
+        if draining is not None:
+            if type(draining) is not bool:
+                raise ValueError("Agent instance draining must be boolean")
+            changes["draining"] = draining
+        if capacity is not None:
+            if type(capacity) is not int or capacity < 1:
+                raise ValueError("Agent instance capacity must be a positive integer")
+            changes["capacity"] = capacity
+        if all(getattr(profile, key) == value for key, value in changes.items()):
+            return profile
+        changes["version"] = profile.version + 1
+        result = self.store.update_profile(profile.model_copy(update=changes), expected_profile=profile)
+        self.record_audit_event("agent_instance_updated", ref.resource_id)
+        return result
+
+    def heartbeat_agent_instance(self, ref: AgentRegistrationRef) -> RuntimeHealth:
+        self._agent_instance_profile(ref)
+        return self.health_monitor.heartbeat(ref.resource_id)
+
+    def unregister_agent_instance(self, ref: AgentRegistrationRef) -> None:
+        """Remove an agent-instance fact after its leases have drained.
+
+        The registration reference is part of the persisted profile, so a stale
+        generation cannot delete a replacement instance. Lease ownership is
+        checked by the caller's coordinator before this destructive projection.
+        """
+        profile = self._agent_instance_profile(ref)
+        if profile.metadata.get("managedBy") != "agent-pool":
+            raise ValueError("only agent-pool instances can be unregistered")
+        if profile.enabled or not profile.draining or profile.metadata.get("outcomeUnknown"):
+            raise ValueError("Agent instance must be drained without unknown work before removal")
+        try:
+            self.store.delete_runtime(ref.resource_id)
+            self.record_audit_event("agent_instance_unregistered", ref.resource_id)
+        except Exception:
+            # A committed deletion with a lost acknowledgement is complete.
+            try:
+                self.runtime(ref.resource_id)
+            except KeyError:
+                return
+            raise
+
+    def quarantine_agent_instance(self, ref: AgentRegistrationRef) -> RuntimeProfile:
+        """Retain UNKNOWN independently of lease TTL and health heartbeats."""
+        profile = self._agent_instance_profile(ref)
+        updated = self.store.update_profile(profile.model_copy(update={
+            "enabled": False, "draining": True, "version": profile.version + 1,
+            "metadata": {**profile.metadata, "outcomeUnknown": True},
+        }), expected_profile=profile)
+        self.record_audit_event("agent_instance_outcome_unknown", ref.resource_id)
+        return updated
+
     def runtimes(self) -> list[RuntimeProfile]:
         return self.store.list_profiles()
 
@@ -687,6 +823,10 @@ class ResourcePlane:
 
     def set_runtime_enabled(self, runtime_id: str, *, enabled: bool) -> RuntimeProfile:
         profile = self.store.get_profile(runtime_id)
+        if profile.kind is RuntimeKind.AGENT_INSTANCE:
+            return self.set_agent_instance_state(
+                profile.agent_registration, expected_version=profile.version, enabled=enabled,
+            )
         updated = self.store.update_profile(profile.model_copy(update={"enabled": enabled}))
         for endpoint in self.store.list_model_endpoints():
             if endpoint.runtime_id == runtime_id and endpoint.enabled != enabled:
@@ -737,6 +877,12 @@ class ResourcePlane:
     def update_runtime_capacity(
         self, runtime_id: str, capacity: int, *, expected_capacity: int
     ) -> VersionedRuntimeSnapshot:
+        profile = self.runtime(runtime_id)
+        if profile.kind is RuntimeKind.AGENT_INSTANCE:
+            if profile.capacity != expected_capacity:
+                raise VersionConflict("Agent instance capacity conflict")
+            self.set_agent_instance_state(profile.agent_registration, expected_version=profile.version, capacity=capacity)
+            return self.runtime_snapshot(runtime_id)
         return self.store.update_capacity(runtime_id, capacity, expected_capacity=expected_capacity)
 
     def heartbeat_runtime(
@@ -1121,6 +1267,7 @@ class ResourcePlane:
                 contextWindowTokens=context_window,
                 maxOutputTokens=max_output,
                 features=ModelFeatureSet.model_validate(features),
+                quota=route.get("quota"),
                 costMetadata=route.get("costMetadata") or route.get("cost_metadata") or {},
                 labels=route.get("labels") or {},
                 enabled=route.get("enabled", True),

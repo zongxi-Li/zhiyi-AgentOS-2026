@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from components.resource.runtime.embedded_runtime import register_embedded_agents_runtime, EMBEDDED_AGENTS_RUNTIME_ID
+from components.resource.runtime.embedded_runtime import refresh_embedded_agents_runtime, EMBEDDED_AGENTS_RUNTIME_ID
 from components.resource.application.resource_plane import ResourcePlane
 from contracts.authority import RuntimeResourceId
 from contracts.compiled_acg import BindingManifest
@@ -21,6 +21,7 @@ from contracts.workflow import (
     WorkflowDefinition,
 )
 from service.agents import AgentRegistry
+from service.agents.pool import AgentPool
 from support.acg.schema import RuntimeBlueprintSpec
 
 
@@ -37,6 +38,7 @@ def execution_requirements_for(binding_manifest: BindingManifest, step_ids, *, d
             requiredCapabilities=required_capabilities,
             runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
             domain=rule.domain or domain,
+            model=rule.model_demand,
             preferences=({"agentRole": role_hint} if role_hint else {}),
             policyMetadata={
                 "source": "compiled-binding-manifest",
@@ -84,6 +86,10 @@ class RuntimeBindingService:
         self.agent_registry = agent_registry
         self.resource_plane = resource_plane
         self.resource_execution_adapters = resource_execution_adapters
+        self.agent_pool = AgentPool(
+            registry=agent_registry, resource_plane=resource_plane,
+            host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID,
+        )
 
     def prepare(
         self,
@@ -96,15 +102,10 @@ class RuntimeBindingService:
         """Project callable agents into the plane and persist requirements.
 
         步骤需求只声明能力与约束；Planner 的 Agent 绑定意图降级为
-        非权威偏好（agentRole），由执行器在嵌入式后端内解析角色。
+        非权威偏好（agentRole），在 READY 时由 Binder 匹配实例及其宿主。
         """
-        scoped_agent_ids = set(scope.agent_ids) if scope.agent_ids else None
-        visible_agents = [
-            agent for agent in self.agent_registry.all()
-            if scoped_agent_ids is None
-            or self.agent_registry.agent_id(agent) in scoped_agent_ids
-        ]
-        register_embedded_agents_runtime(self.resource_plane, visible_agents)
+        refresh_embedded_agents_runtime(self.resource_plane, self.agent_registry)
+        self.agent_pool.synchronize()
 
         requirements = execution_requirements_for(
             binding_manifest, (step.step_id for step in run.steps), domain=workflow.domain
@@ -120,7 +121,8 @@ class RuntimeBindingService:
 
     def refresh_embedded_runtime(self) -> None:
         """The local process owns this liveness signal, including while idle."""
-        register_embedded_agents_runtime(self.resource_plane, self.agent_registry.all())
+        refresh_embedded_agents_runtime(self.resource_plane, self.agent_registry)
+        self.agent_pool.synchronize()
         self.resource_plane.heartbeat_runtime(EMBEDDED_AGENTS_RUNTIME_ID, source="local")
 
     def validate_blueprint_agents(

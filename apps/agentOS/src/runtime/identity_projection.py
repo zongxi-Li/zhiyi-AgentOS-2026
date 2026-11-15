@@ -1243,6 +1243,11 @@ class IdentityProjectionBridge:
                 or existing.resource_id != runtime_binding.resource_id
                 or existing.agent_id != agent_id
                 or existing.model_id != model_id
+                or existing.metadata.get("agentRegistration") != (
+                    runtime_binding.agent_registration.model_dump(by_alias=True, mode="json")
+                    if runtime_binding.agent_registration is not None else None)
+                or existing.metadata.get("agentLeaseId") != runtime_binding.agent_lease_id
+                or existing.metadata.get("modelBinding") != runtime_binding.identity_metadata.get("modelBinding")
             ):
                 raise IdentityConflictError("Attempt already has another ExecutionBinding")
             return existing
@@ -1252,12 +1257,7 @@ class IdentityProjectionBridge:
             resourceId=runtime_binding.resource_id,
             agentId=agent_id,
             modelId=model_id,
-            metadata={
-                "runtimeBindingId": runtime_binding.binding_id,
-                "runtimeKind": runtime_binding.runtime_kind.value,
-                "snapshotVersion": runtime_binding.snapshot_version,
-                **runtime_binding.metadata,
-            },
+            metadata=runtime_binding.identity_metadata,
         )
         self.repositories.execution_bindings.add(binding)
         return binding

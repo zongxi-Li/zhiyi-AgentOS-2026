@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
+from uuid import uuid4
 
 from components.resource.domain.models import RuntimeCandidate, RuntimeHealth
 from components.resource.application.resource_plane import ResourcePlane
@@ -24,6 +25,7 @@ from contracts.resource import (
     Placement,
     RemoteExecutionPolicy,
     RuntimeProfile,
+    RuntimeKind,
     RuntimeSnapshot,
     TrustLevel,
     ResourceLease,
@@ -43,11 +45,13 @@ class LeaseKeepAlive:
         self, coordinator: LeaseCoordinator, lease: ResourceLease, *,
         interval: timedelta = timedelta(seconds=20), ttl: timedelta = timedelta(seconds=90),
         on_failure: Callable[[Exception], Awaitable[None] | None] | None = None,
+        additional_leases: tuple[ResourceLease, ...] = (),
     ) -> None:
         if interval <= timedelta(0) or ttl <= interval:
             raise ValueError("lease keep-alive requires positive interval below ttl")
         self.coordinator = coordinator
         self.lease = lease
+        self.additional_leases = additional_leases
         self.interval = interval
         self.ttl = ttl
         self.on_failure = on_failure
@@ -84,6 +88,10 @@ class LeaseKeepAlive:
                         lease_id=self.lease.lease_id, owner_id=self.lease.owner_id or "",
                         version=self.lease.version, ttl=self.ttl,
                     )
+                    self.additional_leases = tuple(self.coordinator.renew(
+                        lease_id=lease.lease_id, owner_id=lease.owner_id or "",
+                        version=lease.version, ttl=self.ttl,
+                    ) for lease in self.additional_leases)
                 except Exception as exc:
                     self.failure = exc if isinstance(exc, LeaseRenewalFailedError) else LeaseRenewalFailedError(str(exc))
                     self._failed.set()
@@ -112,9 +120,14 @@ def hard_constraint_reasons(
     node_status: NodeHealthStatus | None,
     node: NodeProfile | None = None,
     requirement: ExecutionRequirement,
+    check_capabilities: bool = True,
 ) -> list[FilterReason]:
     """按硬约束判定 Runtime 是否具备本次绑定资格；不产生任何状态变更。"""
     reasons: list[FilterReason] = []
+    if profile.draining:
+        reasons.append(FilterReason.DRAINING)
+    if profile.kind is RuntimeKind.AGENT_INSTANCE:
+        reasons.append(FilterReason.AGENT_INSTANCE_NOT_SCHEDULABLE)
     is_remote_runtime = profile.endpoint is not None and profile.endpoint.protocol != "local"
     if node is not None:
         if not node.enabled or node_status in {
@@ -159,7 +172,7 @@ def hard_constraint_reasons(
         NodeHealthStatus.SUSPICIOUS,
     }:
         reasons.append(FilterReason.NODE_UNHEALTHY)
-    if not set(requirement.required_capabilities).issubset(profile.capabilities):
+    if check_capabilities and not set(requirement.required_capabilities).issubset(profile.capabilities):
         reasons.append(FilterReason.CAPABILITY_MISMATCH)
     if requirement.runtime_kinds and profile.kind not in requirement.runtime_kinds:
         reasons.append(FilterReason.RUNTIME_KIND_MISMATCH)
@@ -279,11 +292,31 @@ class ResourceBinder:
             "snapshot_stale_total": 0,
         }
 
+    def _eligible_agents(self, profiles, requirement, *, host_id, now):
+        preferred = str(requirement.preferences.get("agentRole") or "").strip().lower()
+        eligible = []
+        for candidate in profiles:
+            profile = self.plane.runtime(candidate.runtime_id)
+            if (profile.kind is not RuntimeKind.AGENT_INSTANCE or profile.agent_registration != candidate.agent_registration
+                    or profile.host_runtime_id != host_id or not profile.enabled or profile.draining
+                    or not set(requirement.required_capabilities).issubset(profile.capabilities)
+                    or (requirement.domain and profile.domains and requirement.domain not in profile.domains
+                        and "general" not in profile.domains)
+                    or not self.plane.health_monitor.health(profile.runtime_id, now=now).healthy):
+                continue
+            eligible.append(profile)
+        eligible.sort(key=lambda item: (
+            preferred not in {item.agent_registration.agent_id.lower(), (item.display_name or "").strip().lower()},
+            -int(item.metadata.get("bindingPriority", 0)), item.runtime_id,
+        ))
+        return eligible
+
     def evaluate(
         self,
         requirement: ExecutionRequirement,
         *,
         now: datetime | None = None,
+        agent_candidates: dict[str, tuple[RuntimeProfile, ...]] | None = None,
     ) -> list[CandidateDecision]:
         """只读评估全部 Runtime 的资格与分数；不获取租约。"""
         current = now or datetime.now(timezone.utc)
@@ -300,7 +333,17 @@ class ResourceBinder:
                 node_status=node_status,
                 node=node,
                 requirement=requirement,
+                check_capabilities=agent_candidates is None or profile.runtime_id not in agent_candidates,
             )
+            # The current remote Step protocol carries no model route/quota.
+            # Only locally callable instances can consume this injected model.
+            if (requirement.model is not None and agent_candidates is not None
+                    and profile.kind is RuntimeKind.EXECUTION_BACKEND and profile.runtime_id not in agent_candidates):
+                reasons.append(FilterReason.MODEL_DEMAND_UNSUPPORTED_REMOTE)
+            if agent_candidates is not None and profile.runtime_id in agent_candidates and not self._eligible_agents(
+                agent_candidates[profile.runtime_id], requirement, host_id=profile.runtime_id, now=current,
+            ):
+                reasons.append(FilterReason.NO_ELIGIBLE_AGENT)
             if reasons:
                 decisions.append(CandidateDecision(
                     resourceId=profile.runtime_id,
@@ -328,14 +371,15 @@ class ResourceBinder:
         decisions.sort(key=lambda item: (not item.accepted, -(item.score or 0.0), item.resource_id))
         return decisions
 
-    def assess(self, requirement: ExecutionRequirement, *, now: datetime | None = None) -> RequirementReadiness:
+    def assess(self, requirement: ExecutionRequirement, *, now: datetime | None = None,
+               agent_candidates: dict[str, tuple[RuntimeProfile, ...]] | None = None) -> RequirementReadiness:
         """Inspect runtime, model and lease capacity through the existing authorities.
 
         Reading active slots may expire old leases, but never acquires a lease.
         This is a readiness hint: bind_ready must still perform atomic allocation.
         """
         current = now or datetime.now(timezone.utc)
-        candidates = self.evaluate(requirement, now=current)
+        candidates = self.evaluate(requirement, now=current, agent_candidates=agent_candidates)
         eligible = [c for c in candidates if c.accepted]
         endpoints = (
             self.plane.model_candidates(
@@ -404,10 +448,16 @@ class ResourceBinder:
         attempt_id: str,
         requirement: ExecutionRequirement,
         now: datetime | None = None,
+        agent_candidates: dict[str, tuple[RuntimeProfile, ...]] | None = None,
+        existing_binding: ExecutionBinding | None = None,
     ) -> ReadyNodeSchedulingResult:
         """为 READY 步骤选择 Runtime、授予租约并冻结执行绑定。"""
+        if existing_binding is not None and (
+            existing_binding.run_id, existing_binding.step_id, existing_binding.attempt_id
+        ) != (run_id, step_id, attempt_id):
+            raise ValueError("existing binding belongs to another Attempt")
         current = now or datetime.now(timezone.utc)
-        assessment = self.assess(requirement, now=current)
+        assessment = self.assess(requirement, now=current, agent_candidates=agent_candidates)
         evaluations = assessment.candidates
         model_binding = None
         if requirement.model is not None:
@@ -418,6 +468,7 @@ class ResourceBinder:
                     provider=best.provider,
                     model=best.model,
                     version=best.model_version,
+                    quota=best.quota,
                 )
         if assessment.reason in {"NO_MODEL_ENDPOINT", "NO_ELIGIBLE_RESOURCE"}:
             # 这些是永久性配置缺口；不能进入容量等待队列。
@@ -426,12 +477,33 @@ class ResourceBinder:
                 candidates=evaluations,
                 reason=assessment.reason,
             )
+        choices = []
         for decision in evaluations:
             if not decision.accepted:
                 continue
+            instances = (self._eligible_agents(agent_candidates[decision.resource_id], requirement,
+                         host_id=decision.resource_id, now=current)
+                         if agent_candidates is not None and decision.resource_id in agent_candidates else [None])
+            choices.extend((decision, instance) for instance in instances)
+        if existing_binding is not None:
+            choices = [(decision, instance) for decision, instance in choices
+                       if decision.resource_id == existing_binding.resource_id and instance is not None
+                       and instance.agent_registration == existing_binding.agent_registration]
+            if not choices:
+                return ReadyNodeSchedulingResult(status="rejected", candidates=evaluations, reason="PINNED_AGENT_UNAVAILABLE")
+        for decision, instance in choices:
             profile = self.plane.runtime(decision.resource_id)
+            if existing_binding is not None:
+                self.assert_binding(existing_binding, now=current)
+                return ReadyNodeSchedulingResult(status="allocated", binding=existing_binding,
+                    lease=self.coordinator.get(existing_binding.lease_id, now=current),
+                    agentLease=self.coordinator.get(existing_binding.agent_lease_id, now=current), candidates=evaluations)
             versioned = self.plane.runtime_snapshot(profile.runtime_id)
             lease_id = f"lease:{run_id}:{step_id}:{attempt_id}:{profile.runtime_id}"
+            if instance is not None:
+                # Provisional reservations are single-use. A compensated pair
+                # must not reuse a released lease identity on the next poll.
+                lease_id += ":" + uuid4().hex
             lease = self.coordinator.acquire(
                 lease_id=lease_id,
                 resource_id=profile.runtime_id,
@@ -445,59 +517,81 @@ class ResourceBinder:
             )
             if lease is None:
                 continue
-            confirmed = self.plane.runtime_snapshot(profile.runtime_id)
-            if confirmed.version != versioned.version:
-                self.coordinator.release(lease.lease_id)
-                continue
-            health = self.plane.health_monitor.health(profile.runtime_id, now=current)
-            if not health.healthy:
-                self.coordinator.release(lease.lease_id)
-                continue
-            confirmed_health = self.plane.get_node_health(profile.node_id, now=current)
-            if confirmed_health.status in {NodeHealthStatus.UNKNOWN, NodeHealthStatus.STALE,
-                                            NodeHealthStatus.OFFLINE, NodeHealthStatus.SUSPICIOUS}:
-                self.coordinator.release(lease.lease_id)
-                continue
-            _, score_factors = placement_score(
-                profile,
-                confirmed.snapshot,
-                reliability=health.reliability,
-                latency_ms=health.latency_ms,
-                requirement=requirement,
-            )
-            binding = ExecutionBinding(
-                bindingId=f"binding:{run_id}:{step_id}:{attempt_id}",
-                runId=run_id,
-                stepId=step_id,
-                attemptId=attempt_id,
-                resourceId=profile.runtime_id,
-                runtimeKind=profile.kind,
-                nodeId=profile.node_id,
-                placement=profile.placement,
-                trust=profile.trust,
-                modelBinding=model_binding,
-                snapshotVersion=confirmed.version,
-                leaseId=lease.lease_id,
-                leaseVersion=lease.version,
-                metadata={
-                    "score": decision.score,
-                    "deploymentTier": profile.placement.value,
-                    "runtimeKind": profile.kind.value,
-                    "placementReasons": [
-                        f"placement={profile.placement.value}",
-                        f"runtimeKind={profile.kind.value}",
-                        f"trust={profile.trust.value}",
-                        f"latencyMs={confirmed.snapshot.latency_ms}",
-                    ],
-                    "scoreFactors": score_factors,
-                },
-            )
-            return ReadyNodeSchedulingResult(
-                status="allocated",
-                binding=binding,
-                lease=lease,
-                candidates=evaluations,
-            )
+            agent_lease = None
+            allocated = False
+            try:
+                if instance is not None:
+                    agent_lease = self.coordinator.acquire(
+                        lease_id=f"{lease_id}:agent", resource_id=instance.runtime_id, capacity=instance.capacity,
+                        run_id=run_id, step_id=step_id, attempt_id=attempt_id, slot_count=1,
+                        ttl=self.lease_ttl, now=current,
+                    )
+                    if agent_lease is None or self.plane.runtime(instance.runtime_id) != instance:
+                        continue
+                confirmed = self.plane.runtime_snapshot(profile.runtime_id)
+                if confirmed.version != versioned.version or self.plane.runtime(profile.runtime_id) != profile:
+                    continue
+                health = self.plane.health_monitor.health(profile.runtime_id, now=current)
+                if not health.healthy:
+                    continue
+                confirmed_health = self.plane.get_node_health(profile.node_id, now=current)
+                if confirmed_health.status in {NodeHealthStatus.UNKNOWN, NodeHealthStatus.STALE,
+                                                NodeHealthStatus.OFFLINE, NodeHealthStatus.SUSPICIOUS}:
+                    continue
+                _, score_factors = placement_score(
+                    profile,
+                    confirmed.snapshot,
+                    reliability=health.reliability,
+                    latency_ms=health.latency_ms,
+                    requirement=requirement,
+                )
+                binding = ExecutionBinding(
+                    bindingId=f"binding:{run_id}:{step_id}:{attempt_id}",
+                    runId=run_id,
+                    stepId=step_id,
+                    attemptId=attempt_id,
+                    resourceId=profile.runtime_id,
+                    runtimeKind=profile.kind,
+                    nodeId=profile.node_id,
+                    placement=profile.placement,
+                    trust=profile.trust,
+                    modelBinding=model_binding,
+                    snapshotVersion=confirmed.version,
+                    leaseId=lease.lease_id,
+                    leaseVersion=lease.version,
+                    agentRegistration=instance.agent_registration if instance is not None else None,
+                    agentLeaseId=agent_lease.lease_id if agent_lease is not None else None,
+                    agentLeaseVersion=agent_lease.version if agent_lease is not None else None,
+                    metadata={
+                        **({"modelDemand": requirement.model.model_dump(by_alias=True, mode="json")} if requirement.model is not None else {}),
+                        "score": decision.score,
+                        "deploymentTier": profile.placement.value,
+                        "runtimeKind": profile.kind.value,
+                        "placementReasons": [
+                            f"placement={profile.placement.value}",
+                            f"runtimeKind={profile.kind.value}",
+                            f"trust={profile.trust.value}",
+                            f"latencyMs={confirmed.snapshot.latency_ms}",
+                        ],
+                        "scoreFactors": score_factors,
+                    },
+                )
+                result = ReadyNodeSchedulingResult(
+                    status="allocated",
+                    binding=binding,
+                    lease=lease,
+                    agentLease=agent_lease,
+                    candidates=evaluations,
+                )
+                allocated = True
+                return result
+            finally:
+                if not allocated:
+                    try:
+                        if agent_lease is not None:
+                            self.coordinator.release(agent_lease.lease_id)
+                    finally:
+                        self.coordinator.release(lease.lease_id)
         return ReadyNodeSchedulingResult(
             status="queued",
             candidates=evaluations,
@@ -506,5 +600,25 @@ class ResourceBinder:
 
     def release(self, lease_id: str) -> bool:
         return self.coordinator.release(lease_id)
+
+    def release_binding(self, binding: ExecutionBinding) -> bool:
+        try:
+            return self.release(binding.lease_id) if binding.lease_id else False
+        finally:
+            if binding.agent_lease_id:
+                self.release(binding.agent_lease_id)
+
+    def assert_binding(self, binding: ExecutionBinding, *, now: datetime | None = None) -> None:
+        """Renewal versions may advance; resource/owner/Attempt identity may not."""
+        current = now or datetime.now(timezone.utc)
+        pairs = [(binding.lease_id, binding.resource_id)]
+        if binding.agent_registration is not None:
+            pairs.append((binding.agent_lease_id, binding.agent_registration.resource_id))
+        for lease_id, resource_id in pairs:
+            lease = self.coordinator.get(lease_id, now=current) if lease_id else None
+            if (lease is None or lease.status != "active" or lease.expires_at <= current
+                    or (lease.resource_id, lease.run_id, lease.step_id, lease.attempt_id, lease.owner_id)
+                    != (resource_id, binding.run_id, binding.step_id, binding.attempt_id, binding.attempt_id)):
+                raise LeaseRenewalFailedError("execution binding no longer owns its resource leases")
 
 __all__ = ["LeaseKeepAlive", "ResourceBinder", "hard_constraint_reasons", "placement_score"]

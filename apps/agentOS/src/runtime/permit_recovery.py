@@ -11,6 +11,7 @@ from components.executor.node_runner import ACGNodeRunner
 from components.communicator.contracts import ContextPack
 from components.communicator.provenance import provenance_checksum
 from contracts.execution import NodeExecutionRecord
+from contracts.resource import ExecutionBinding
 from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
 from contracts import stable_checksum
 from domain.identity_graph.resolver import IdentityResolver
@@ -126,11 +127,15 @@ def _evidence(authority, run, candidate, record):
             executions = repos.step_executions.list_for_attempt(node.attempt_id)
             binding = repos.execution_bindings.get_for_attempt(node.attempt_id)
             selected = run.execution_state.get("executionBindings", {}).get(key, {})
+            runtime_binding = ExecutionBinding.model_validate(selected)
             if (attempt is None or attempt.run_id != run.run_id or attempt.task_id != task.task_id
                     or attempt.status.value != "succeeded" or len(executions) != 1
                     or executions[0].status.value != "succeeded" or executions[0].run_id != run.run_id
                     or executions[0].task_id != task.task_id or executions[0].output.get("nodeExecution") != receipt["nodeExecution"]
                     or binding is None or binding.resource_id != selected.get("resourceId")
+                    or binding.metadata.get("agentRegistration") != selected.get("agentRegistration")
+                    or binding.metadata.get("agentLeaseId") != selected.get("agentLeaseId")
+                    or binding.metadata.get("modelBinding") != runtime_binding.identity_metadata.get("modelBinding")
                     or binding.acg_node_id != key or binding.attempt_id != node.attempt_id
                     or selected.get("attemptId") != node.attempt_id
                     or selected.get("runId") != run.run_id or selected.get("stepId") != key):

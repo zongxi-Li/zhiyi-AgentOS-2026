@@ -7,7 +7,6 @@ import asyncio
 import sqlite3
 from copy import deepcopy
 from datetime import datetime
-import json
 import logging
 import os
 import secrets
@@ -54,6 +53,7 @@ from contracts.task_acceptance import frozen_task_acceptance
 from components.planner.acg_semantic_validator import (
     validate_bound_acg_semantics,
 )
+from components.planner.task_decomposer import planning_validation_failures, safe_validation_failures
 from components.resource.application.resource_plane import ResourcePlane
 from components.resource.scheduler.binder import ResourceBinder
 from components.recovery.checkpoint import (
@@ -1464,8 +1464,8 @@ class ExecutionRuntime(CollaboratorAccess):
     def _append_planner_event(self, run: RuntimeRunRecord, event: Mapping[str, Any], *, reload_run: bool = False) -> None:
         """Append one planner Runtime Event as an auditable Trace entry.
 
-        The payload whitelist is the security boundary: only scalar planning
-        facts pass through, so prompt/model text can never ride along. Durable
+        The payload whitelist is the security boundary: scalar planning facts
+        and closed diagnostic schemas pass through, never exception bodies. Durable
         planner lifecycle events carry ``planningProgress`` for legacy
         projections; high-frequency model activity is transient-only.
         """
@@ -1477,6 +1477,9 @@ class ExecutionRuntime(CollaboratorAccess):
         topology_audit = event.get("topologyAudit")
         if isinstance(topology_audit, Mapping):
             payload["topologyAudit"] = _safe_topology_audit(topology_audit)
+        validation_failures = safe_validation_failures(event.get("validationFailures"))
+        if validation_failures:
+            payload["validationFailures"] = validation_failures
         if planner_event_type == "planner.draft.updated":
             payload["nodes"] = [
                 {
@@ -1764,6 +1767,7 @@ class ExecutionRuntime(CollaboratorAccess):
                     "kind": "failed",
                     "errorCode": transport_error_code(exc) or type(exc).__name__,
                     "safeSummary": f"{type(exc).__name__} during planning",
+                    "validationFailures": planning_validation_failures(exc),
                     **({"topologyAudit": failure_audit} if failure_audit else {}),
                 })
                 raise

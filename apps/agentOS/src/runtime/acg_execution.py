@@ -36,7 +36,7 @@ from components.executor import (
 from components.executor.graph import ACGSuperstepError
 from components.memory import MemoryService, StructuredMemoryEvent
 from components.mission_manager.state_machine import StateMachine
-from contracts.resource import ExecutionBinding, ExecutionRequirement
+from contracts.resource import ExecutionBinding, ExecutionRequirement, ModelDemand, ModelQuotaPolicy
 from contracts.execution import WorkflowProgressPhase
 from contracts.workflow import (
     RuntimeMissionRecord,
@@ -64,11 +64,13 @@ from adapters.resource_execution import (
 )
 from components.resource.runtime.embedded_runtime import (
     EMBEDDED_AGENTS_RUNTIME_ID,
-    register_embedded_agents_runtime,
+    refresh_embedded_agents_runtime,
 )
 from service.agents.base import AgentProfile
+from service.agents.registry import AgentNotFound
+from service.agents.pool import AgentPool
 from adapters.audited_tool_runtime import AuditedToolRuntime
-from adapters.guarded_model import GuardedModelRuntime
+from adapters.guarded_model import GuardedModelRuntime, ModelCallGateRegistry
 from adapters.guarded_tool import GuardedToolRuntime
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.resource_model_execution import build_resource_model_runtime
@@ -77,6 +79,7 @@ from support.stores._policy import acg_review_subject
 from runtime.execution_migration import ExecutionEngineMigratingError
 from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 from runtime.binding import execution_requirements_for, requirements_match_manifest
+from runtime.model_quota import ModelCallQuota
 from runtime.state_persistence import ACGStatePersistenceService
 from support.async_tasks import await_settled, cancel_and_wait
 from contracts.runtime_events import TRANSIENT_RUNTIME_EVENT_TYPES
@@ -152,6 +155,7 @@ class ACGExecutionService(CollaboratorAccess):
         self.ports = collaborators
         self.model_max_concurrency = model_max_concurrency
         self.model_min_interval_seconds = model_min_interval_seconds
+        self._model_call_gates = ModelCallGateRegistry()
         self._terminal_run_statuses = terminal_run_statuses
         self._lifecycle_messages = lifecycle_messages
 
@@ -437,9 +441,15 @@ class ACGExecutionService(CollaboratorAccess):
             try:
                 if kind == "name":
                     return self.agent_registry.resolve(
-                        run.domain, agent_name=value, allowed_agent_ids=allowed
+                        run.domain, agent_name=value, capability=step.capability,
+                        allowed_agent_ids=allowed,
                     )
-                return self.agent_registry.resolve_by_id(value, allowed_agent_ids=allowed)
+                agent = self.agent_registry.resolve_by_id(value, allowed_agent_ids=allowed)
+                capability = (step.capability or "").strip().lower()
+                if not capability or capability in {
+                    item.strip().lower() for item in agent.profile.capabilities
+                }:
+                    return agent
             except KeyError:
                 continue
         if step.capability:
@@ -591,7 +601,10 @@ class ACGExecutionService(CollaboratorAccess):
         # A recreated Runtime resumes an already-prepared run without repeating
         # prepare_run. Re-project the embedded agent runtime so every resource
         # starts UNKNOWN and becomes usable only after this live registration.
-        register_embedded_agents_runtime(self.resource_plane, self.agent_registry.all())
+        refresh_embedded_agents_runtime(self.resource_plane, self.agent_registry)
+        agent_pool = AgentPool(registry=self.agent_registry, resource_plane=self.resource_plane,
+                               host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID)
+        agent_pool.synchronize()
 
         async def execute(step_id: str, state: ACGExecutionState):
             scheduling_started = monotonic()
@@ -614,6 +627,19 @@ class ACGExecutionService(CollaboratorAccess):
                 raise ValueError(f"READY step has no binding requirement: {step_id}")
             requirement = ExecutionRequirement.model_validate(payload)
             step = run.get_step(step_id)
+            try:
+                preferred = self._resolve_embedded_agent(run=run, step=step,
+                    role_hint=requirement.preferences.get("agentRole"))
+                requirement = requirement.model_copy(update={"preferences": {
+                    **requirement.preferences, "agentRole": str(self.agent_registry.agent_id(preferred)),
+                }})
+            except KeyError:
+                pass  # Remote backends need not have a local logical Agent.
+            commit_id = runner._commit_id(run.run_id, step_id, step.attempt,
+                loop_path=tuple(state.loop_paths.get(step_id, ())), execution_generation=state.execution_generation)
+            receipt = self.execution_value_store.get_node_commit(run_id=run.run_id, commit_id=commit_id)
+            if receipt is not None and receipt.get("stage") == "committed":
+                return await runner(step_id, state)
             attempt_number = max(step.attempt, step.retry_count) + 1
             loop_path = tuple(state.loop_paths.get(step_id, ()))
             loop_key = ".".join(str(item) for item in loop_path) or "root"
@@ -636,6 +662,18 @@ class ACGExecutionService(CollaboratorAccess):
                     else f"{run.run_id}:{step_id}:{step.attempt}:{loop_key}",
                 ))
             allocation_deadline = monotonic() + self.scheduler_wait_timeout
+            persisted = run.execution_state.get("executionBindings", {}).get(step_id)
+            if (isinstance(persisted, dict) and persisted.get("attemptId") == attempt_id
+                    and persisted.get("agentRegistration") is None
+                    and self._remote_runtime_adapter(str(persisted.get("resourceId") or "")) is None):
+                raise SchedulerNoEligibleResource("legacy local allocation requires a new Attempt",
+                    reason="LEGACY_LOCAL_BINDING", step_id=step_id)
+            existing_binding = (ExecutionBinding.model_validate(persisted)
+                                if isinstance(persisted, dict) and persisted.get("attemptId") == attempt_id
+                                and persisted.get("agentRegistration") is not None else None)
+            if existing_binding is not None and receipt is not None:
+                self.resource_plane.set_runtime_enabled(existing_binding.agent_registration.resource_id, enabled=False)
+                raise ResourceExecutionError("unfinished Agent operation requires explicit reconciliation", outcome_unknown=True)
             retry_delay = 0.05
             while True:
                 # The embedded agent runtime executes in this process. Its
@@ -657,6 +695,9 @@ class ACGExecutionService(CollaboratorAccess):
                     step_id=step_id,
                     attempt_id=attempt_id,
                     requirement=requirement,
+                    agent_candidates=agent_pool.local_candidates(
+                        run.execution_scope.agent_ids if run.execution_scope is not None else None),
+                    existing_binding=existing_binding,
                 )
                 if decision.status == "allocated":
                     break
@@ -688,12 +729,13 @@ class ACGExecutionService(CollaboratorAccess):
                 try:
                     permit_authority.assert_dispatchable(run)
                 except (ValueError, KeyError, TypeError) as exc:
-                    self.resource_binder.release(decision.lease.lease_id)
+                    self.resource_binder.release_binding(decision.binding)
                     raise ExecutionRunCancelled("execution permit changed after resource allocation") from exc
             from components.resource.scheduler.binder import LeaseKeepAlive
 
             keep_alive = LeaseKeepAlive(
-                self.resource_binder.coordinator, decision.lease
+                self.resource_binder.coordinator, decision.lease,
+                additional_leases=(decision.agent_lease,) if decision.agent_lease is not None else (),
             )
             keep_alive.start()
             remote_adapter = None
@@ -706,6 +748,7 @@ class ACGExecutionService(CollaboratorAccess):
                 selected_resource_id = binding.resource_id
                 remote_adapter = self._remote_runtime_adapter(selected_resource_id)
                 if remote_adapter is not None:
+                    runner.agent_registrations.pop(step_id, None)
                     runtime_profile = self.resource_plane.runtime(selected_resource_id)
                     runner.resource_execution_adapters[step_id] = remote_adapter
                     remote_agent_id = binding.metadata.get("agentId") or selected_resource_id
@@ -723,13 +766,13 @@ class ACGExecutionService(CollaboratorAccess):
                     agent_id = str(selected_profile.agent_id or selected_resource_id)
                 else:
                     runner.resource_execution_adapters.pop(step_id, None)
-                    selected_agent = self._resolve_embedded_agent(
-                        run=run,
-                        step=step,
-                        role_hint=requirement.preferences.get("agentRole"),
-                    )
+                    if binding.agent_registration is None:
+                        raise AgentNotFound("local execution requires a concrete Agent allocation")
+                    selected_agent = self.agent_registry.resolve_registration(binding.agent_registration,
+                        allowed_agent_ids=run.execution_scope.agent_ids if run.execution_scope is not None else None)
                     agent_id = str(self.agent_registry.agent_id(selected_agent))
                     runner.agents[step_id] = selected_agent
+                    runner.agent_registrations[step_id] = binding.agent_registration
                     selected_profile = selected_agent.profile
                 run.execution_state.setdefault("logicalAgents", {})[step_id] = agent_id
                 model_binding = self._resolve_model_binding(
@@ -739,7 +782,7 @@ class ACGExecutionService(CollaboratorAccess):
                 )
                 run.execution_state.setdefault("modelBindings", {})[step_id] = model_binding
                 if model_binding is not None:
-                    model_runtime = self._model_runtime_from_binding(model_binding)
+                    model_runtime = self._model_runtime_from_binding(model_binding, execution_binding=binding)
                     if model_runtime is not None:
                         runner.model_runtimes[step_id] = model_runtime
                 runner.attempt_ids[step_id] = attempt_id
@@ -762,8 +805,8 @@ class ACGExecutionService(CollaboratorAccess):
                         f"resource.bound:{attempt_id}", "resource.bound", attempt_id,
                         {"attemptId": attempt_id,
                          "binding": decision.binding.model_dump(by_alias=True, mode="json"),
-                         "agentId": str(profile.agent_id or decision.binding.resource_id),
-                         "modelId": str(profile.model_name or "runtime-default")},
+                         "agentId": agent_id,
+                         "modelId": str((model_binding or {}).get("model") or "runtime-default")},
                     ),
                     self._lifecycle_event(
                         f"step.started:{step_execution_id}", "step.started", step_execution_id,
@@ -774,8 +817,9 @@ class ACGExecutionService(CollaboratorAccess):
                 run.execution_state.setdefault("executionBindings", {})[step_id] = (
                     decision.binding.model_dump(by_alias=True, mode="json")
                 )
-                run.execution_state.setdefault("schedulingDecisions", []).append(
-                    {
+                scheduling_history = run.execution_state.setdefault("schedulingDecisions", [])
+                if not any(item.get("attemptId") == attempt_id for item in scheduling_history):
+                    scheduling_history.append({
                         "stepId": step_id,
                         "attemptId": attempt_id,
                         "candidates": [
@@ -783,8 +827,8 @@ class ACGExecutionService(CollaboratorAccess):
                         ],
                         "binding": decision.binding.model_dump(by_alias=True, mode="json"),
                         "lease": decision.lease.model_dump(by_alias=True, mode="json"),
-                    }
-                )
+                        "agentLease": decision.agent_lease.model_dump(by_alias=True, mode="json") if decision.agent_lease else None,
+                    })
                 run.execution_state.setdefault("resourceBindings", {})[step_id] = (
                     decision.binding.resource_id
                 )
@@ -897,8 +941,13 @@ class ACGExecutionService(CollaboratorAccess):
                 if outcome_unknown:
                     # Performance observation updates heartbeat/health. Quarantine
                     # last, so that observation cannot undo UNKNOWN isolation.
-                    self.resource_plane.set_runtime_health(selected_resource_id, healthy=False)
-                    self.resource_plane.set_runtime_enabled(selected_resource_id, enabled=False)
+                    quarantine_id = (decision.binding.agent_registration.resource_id
+                                     if decision.binding.agent_registration is not None else selected_resource_id)
+                    self.resource_plane.set_runtime_health(quarantine_id, healthy=False)
+                    if decision.binding.agent_registration is not None:
+                        self.resource_plane.quarantine_agent_instance(decision.binding.agent_registration)
+                    else:
+                        self.resource_plane.set_runtime_enabled(quarantine_id, enabled=False)
                 if step_execution_id is not None:
                     self._save_attempt_events(run, [self._lifecycle_event(
                         f"step.failed:{step_execution_id}", "step.failed", step_execution_id,
@@ -930,13 +979,15 @@ class ACGExecutionService(CollaboratorAccess):
                         lease_state = "retained_unknown" if outcome_unknown else "release_failed"
                         try:
                             if not outcome_unknown:
-                                released = self.resource_binder.release(decision.lease.lease_id)
+                                released = self.resource_binder.release_binding(decision.binding)
                                 lease_state = "released" if released else "not_owned"
                         finally:
                             cleanup_error = sys.exception()
                             settlement = {"taskState": "ended", "outcome": execution_outcome,
                                           "leaseState": lease_state, "leaseId": decision.lease.lease_id,
                                           "trigger": cancellation_reason}
+                            if decision.binding.agent_lease_id is not None:
+                                settlement["agentLeaseId"] = decision.binding.agent_lease_id
                             if failure is not None and not isinstance(failure, asyncio.CancelledError):
                                 settlement["errorType"] = type(failure).__name__
                             if cleanup_error is not None or stop_error is not None:
@@ -951,6 +1002,8 @@ class ACGExecutionService(CollaboratorAccess):
                                     lease = item.get("lease") or {}
                                     if lease.get("leaseId") == decision.lease.lease_id and lease_state == "released":
                                         lease["status"] = "released"
+                                        if isinstance(item.get("agentLease"), dict):
+                                            item["agentLease"]["status"] = "released"
                             candidate.updated_at = max(utc_now(), latest.updated_at)
                             # Cleanup metadata is not another Run transition.
                             # Commit it with CAS without emitting run.finished again.
@@ -960,6 +1013,31 @@ class ACGExecutionService(CollaboratorAccess):
 
         execute.prepare_superstep = runner.prepare_superstep
         return execute
+
+    def _assert_agent_admission(self, context) -> None:
+        ref = context.agent_registration
+        if ref is None:
+            return
+        binding = ExecutionBinding.model_validate(context.run.execution_state["executionBindings"][context.step.step_id])
+        if binding.agent_registration != ref:
+            raise AgentNotFound("Agent invocation differs from its durable allocation")
+        if self._cancellation_requested(context.run.run_id):
+            raise AgentNotFound("Agent allocation was cancelled before invocation")
+        try:
+            self.resource_binder.assert_binding(binding)
+        except LeaseRenewalFailedError as exc:
+            raise AgentNotFound("Agent allocation no longer owns its leases") from exc
+        # The exact local implementation was just validated by the adapter.
+        # Context assembly can outlive a short TTL without making it absent.
+        self.resource_plane.heartbeat_agent_instance(ref)
+        if binding.resource_id == EMBEDDED_AGENTS_RUNTIME_ID:
+            self.resource_plane.heartbeat_runtime(binding.resource_id, source="local")
+            self.resource_plane.heartbeat_node(self.resource_plane.runtime(binding.resource_id).node_id)
+        for resource_id in (ref.resource_id, binding.resource_id):
+            profile = self.resource_plane.runtime(resource_id)
+            if (not profile.enabled or profile.draining
+                    or not self.resource_plane.health_monitor.health(resource_id).healthy):
+                raise AgentNotFound("Agent allocation is no longer accepting new invocations")
 
     def _save_attempt_events(self, run: RuntimeRunRecord, events: list[dict]) -> None:
         latest = self.workflow_store.get_run(run.run_id)
@@ -1210,10 +1288,8 @@ class ACGExecutionService(CollaboratorAccess):
             runtime_id = binding.resource_id if binding is not None else resource_id
             adapter = self._remote_runtime_adapter(runtime_id)
             if adapter is None:
-                # 嵌入式后端：恢复期按历史绑定或能力解析逻辑 Agent。
-                agents[step_id] = self._resolve_embedded_agent(
-                    run=run, step=step, role_hint=None
-                )
+                # READY owns concrete admission. Committed replay does not
+                # require the historical implementation to remain registered.
                 continue
             runtime_profile = self.resource_plane.runtime(runtime_id)
             agents[step_id] = ResourceAgentProxy(
@@ -1286,17 +1362,12 @@ class ACGExecutionService(CollaboratorAccess):
         model_bindings = run.execution_state.get("modelBindings")
         if not isinstance(model_bindings, dict):
             model_bindings = {}
-        # Steps frozen to the same provider/model must share one guard. Creating
-        # one guard per step makes every semaphore independent and allows a
-        # parallel superstep to burst past the provider quota.
-        shared_model_runtimes: dict[str, object | None] = {}
-        step_model_runtimes: dict[str, object | None] = {}
-        for step_id in steps:
-            binding = model_bindings.get(step_id)
-            cache_key = json.dumps(binding, sort_keys=True) if isinstance(binding, dict) else "null"
-            if cache_key not in shared_model_runtimes:
-                shared_model_runtimes[cache_key] = self._model_runtime_from_binding(binding)
-            step_model_runtimes[step_id] = shared_model_runtimes[cache_key]
+        # Each Step keeps its own attempt/stream metadata; only the route's
+        # call gate is shared, including wrappers rebuilt at READY and in Runs.
+        step_model_runtimes = {
+            step_id: self._model_runtime_from_binding(model_bindings.get(step_id))
+            for step_id in steps
+        }
         resolved_task = task.model_copy(deep=True)
         resolved_task.input = (
             self.attachment_context_builder.enrich(dict(run.input))
@@ -1339,7 +1410,8 @@ class ACGExecutionService(CollaboratorAccess):
             memory_manifest=graph.compiled_package.memory_manifest,
             evidence_manifest=graph.compiled_package.evidence_manifest,
             agent_invoker=AgentInvocationAdapter(
-                registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry)
+                registry=(self.agent_registry.scoped(allowed_agent_ids) if allowed_agent_ids is not None else self.agent_registry),
+                before_invoke=self._assert_agent_admission,
             ),
             resource_execution_adapters=resource_adapters,
             decision_store=self.decision_store,
@@ -1760,6 +1832,8 @@ class ACGExecutionService(CollaboratorAccess):
                 }
                 if endpoint.version is not None:
                     frozen["version"] = endpoint.version
+                if endpoint.quota is not None:
+                    frozen["quota"] = endpoint.quota.model_dump(by_alias=True, mode="json")
                 return frozen
             try:
                 adapter = self.model_registry.resolve(
@@ -1781,6 +1855,8 @@ class ACGExecutionService(CollaboratorAccess):
                 frozen["version"] = endpoint.version
             if endpoint.endpoint_id is not None:
                 frozen["endpointId"] = endpoint.endpoint_id
+            if endpoint.quota is not None:
+                frozen["quota"] = endpoint.quota.model_dump(by_alias=True, mode="json")
             return frozen
         return self._freeze_model_binding(step_id=step_id, profile=profile)
 
@@ -1844,9 +1920,19 @@ class ACGExecutionService(CollaboratorAccess):
         }
         if version is not None:
             binding["version"] = version
+        # Legacy Agent profiles retain their route; configured endpoint quotas
+        # still apply rather than becoming bypassable through this fallback.
+        endpoints = [endpoint for endpoint in self.resource_plane.model_endpoints()
+                     if endpoint.provider.strip().lower() == provider.strip().lower()
+                     and endpoint.model == model and endpoint.quota is not None]
+        if endpoints:
+            if any(endpoint.quota != endpoints[0].quota for endpoint in endpoints):
+                raise ValueError("MODEL_QUOTA_AMBIGUOUS: legacy route needs an explicit model demand")
+            binding.update(endpointId=endpoints[0].endpoint_id,
+                           quota=endpoints[0].quota.model_dump(by_alias=True, mode="json"))
         return binding
 
-    def _model_runtime_from_binding(self, binding: object) -> object | None:
+    def _model_runtime_from_binding(self, binding: object, *, execution_binding=None) -> object | None:
         """依据冻结路由构造受保护运行时；未配置 Profile 时回退既有全局默认值。"""
         if binding is None:
             return None
@@ -1860,14 +1946,43 @@ class ACGExecutionService(CollaboratorAccess):
             raise ValueError("ACG model binding is incomplete")
         if version is not None and not isinstance(version, str):
             raise ValueError("ACG model binding version is invalid")
+        quota = None
+        if isinstance(endpoint_id, str):
+            policy = ModelQuotaPolicy.model_validate(binding["quota"]) if binding.get("quota") is not None else None
+
+            def validate():
+                if execution_binding is not None:
+                    self.resource_binder.assert_binding(execution_binding)
+                    if self._cancellation_requested(execution_binding.run_id):
+                        raise ExecutionRunCancelled("model call was cancelled while waiting for quota")
+                endpoint = self.resource_plane.model_endpoint(endpoint_id)
+                if (not endpoint.enabled or endpoint.quota != policy
+                        or (endpoint.provider, endpoint.model) != (provider, model)
+                        or (version is not None and endpoint.model_version != version)):
+                    raise ValueError("MODEL_ENDPOINT_CHANGED: frozen model quota route is no longer available")
+                demand = ModelDemand.model_validate(execution_binding.metadata["modelDemand"]) if (
+                    execution_binding is not None and "modelDemand" in execution_binding.metadata) else ModelDemand()
+                if endpoint_id not in {candidate.endpoint.endpoint_id for candidate in self.resource_plane.model_candidates(demand)}:
+                    raise ValueError("MODEL_ENDPOINT_UNAVAILABLE: model route no longer meets its demand")
+
+            quota = ModelCallQuota(coordinator=self.resource_binder.coordinator, policy=policy, validate=validate,
+                audit=lambda resource_id, record: self.resource_plane.record_audit_event(
+                    "model_quota_settled", resource_id, **{key: str(value) for key, value in record.items()}))
         if isinstance(endpoint_id, str):
             resource_runtime = self._resource_model_runtime(endpoint_id)
             if resource_runtime is not None:
+                if quota is not None:
+                    resource_runtime._call_quota = quota
                 return GuardedModelRuntime(
                     delegate=resource_runtime,
                     retries=1,
                     max_concurrency=self.model_max_concurrency,
                     min_interval_seconds=self.model_min_interval_seconds,
+                    _gate=self._model_call_gates.gate_for(
+                        ("endpoint", self.resource_plane, endpoint_id),
+                        max_concurrency=self.model_max_concurrency,
+                        min_interval_seconds=self.model_min_interval_seconds,
+                    ),
                 )
         return GuardedModelRuntime(
             delegate=RegisteredModelRuntime(
@@ -1875,11 +1990,19 @@ class ACGExecutionService(CollaboratorAccess):
                 provider=provider,
                 model=model,
                 version=version,
+                call_quota=quota,
             ),
             retries=2,
             max_concurrency=self.model_max_concurrency,
             min_interval_seconds=self.model_min_interval_seconds,
             retry_delay_seconds=1.0,
+            # Registry routing normalizes provider case and model whitespace.
+            # Version/prompt/Step/Run do not create a second model budget.
+            _gate=self._model_call_gates.gate_for(
+                ("registered", self.model_registry, provider.strip().lower(), model.strip()),
+                max_concurrency=self.model_max_concurrency,
+                min_interval_seconds=self.model_min_interval_seconds,
+            ),
         )
 
     def _transition_step(self, step, status: StepStatus) -> None:

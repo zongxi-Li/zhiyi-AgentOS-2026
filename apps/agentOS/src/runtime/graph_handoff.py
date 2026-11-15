@@ -286,12 +286,7 @@ class GraphHandoffAuthority:
                     (run.execution_state.get("executionBindings") or {}).get(step.step_id))
                 scheduled = [item for item in run.execution_state.get("schedulingDecisions", ())
                              if item.get("attemptId") == attempt.attempt_id]
-                expected_identity_metadata = {
-                    "runtimeBindingId": runtime_binding.binding_id,
-                    "runtimeKind": runtime_binding.runtime_kind.value,
-                    "snapshotVersion": runtime_binding.snapshot_version,
-                    **runtime_binding.metadata,
-                }
+                expected_identity_metadata = runtime_binding.identity_metadata
                 # For legacy embedded agents the lifecycle event records the
                 # selected resource as the Identity agent id when the profile
                 # has no explicit agent_id. The Run projection separately
@@ -301,6 +296,8 @@ class GraphHandoffAuthority:
                     str((run.execution_state.get("logicalAgents") or {}).get(step.step_id) or ""),
                     str(runtime_binding.resource_id),
                 }
+                if runtime_binding.agent_registration is not None:
+                    identity_agent_ids = {runtime_binding.agent_registration.agent_id}
                 if (origin.mission != mission_identity or origin.run != identity or origin.blueprint != identity_graph
                         or origin.semantic_task.mission_id != run.mission_id
                         or origin.semantic_task.task_id != attempt.task_id or origin.semantic_task.semantic_task_key != plan_key

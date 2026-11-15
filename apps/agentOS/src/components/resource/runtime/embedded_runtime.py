@@ -1,14 +1,12 @@
 """进程内逻辑 Agent 运行时：作为 EXECUTION_BACKEND 注册进资源平面。
 
-逻辑 Agent（Role）不是资源；本进程内可调用的 Agent 集合整体构成一个
-执行后端。绑定选择的是这个后端，"具体由哪个逻辑 Agent 执行"仍由执行器
-按 Planner 提示与能力解析，两层决策互不越界。
-
-该适配器只将当前进程可见的 Agent 注册表投影为一个可调度 Runtime，不改变
-具体 Agent 的调用路由或生命周期管理。
+宿主提供聚合容量和环境；具体实例由既有 Binder 在 READY 边界选择。
+聚合事实来自当前进程的全部本地实例，不受某个 Run 的授权范围影响。
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 from contracts.resource import (
     HealthStatus,
@@ -42,7 +40,7 @@ def register_embedded_agents_runtime(
     capacity = 0
     for agent in agents:
         profile = getattr(agent, "profile", None)
-        if profile is None:
+        if profile is None or not getattr(profile, "enabled", True):
             continue
         capabilities.update(
             str(item).strip().lower()
@@ -65,7 +63,7 @@ def register_embedded_agents_runtime(
         capabilities=sorted(capabilities),
         trust=TrustLevel.HOST_TRUSTED,
         capacity=max(1, capacity),
-        enabled=True,
+        enabled=capacity > 0,
         metadata={"managedBy": "bootstrap", "runtime": "embedded-agents"},
     )
     plane.ensure_node(
@@ -86,11 +84,30 @@ def register_embedded_agents_runtime(
     return profile
 
 
-# TODO(agent-registry): 注册表支持热更新后，应补充已移除 Agent 能力的回收和正在执行任务的迁移策略。
+def refresh_embedded_agents_runtime(plane: ResourcePlane, registry) -> RuntimeProfile:
+    """Project global local-instance facts, preserving instance administration."""
+    agents = []
+    for registration in registry.registrations():
+        if not registry.is_enabled(registration.ref.agent_id):
+            continue
+        profile = registration.implementation.profile
+        try:
+            resource = plane.runtime(registration.ref.resource_id)
+        except KeyError:
+            capacity = profile.capacity
+        else:
+            if resource.host_runtime_id != EMBEDDED_AGENTS_RUNTIME_ID:
+                continue
+            if not resource.enabled or resource.draining or resource.metadata.get("outcomeUnknown"):
+                continue
+            capacity = resource.capacity
+        agents.append(SimpleNamespace(profile=profile.model_copy(update={"capacity": capacity})))
+    return register_embedded_agents_runtime(plane, agents)
 
 
 __all__ = [
     "EMBEDDED_AGENTS_BASE_CAPABILITY",
     "EMBEDDED_AGENTS_RUNTIME_ID",
     "register_embedded_agents_runtime",
+    "refresh_embedded_agents_runtime",
 ]

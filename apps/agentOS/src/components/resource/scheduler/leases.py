@@ -127,6 +127,8 @@ class CapacityView:
 
 
 class LeaseCoordinator(Protocol):
+    def get(self, lease_id: str, *, now: datetime | None = None) -> ResourceLease | None: ...
+
     def active_slots(self, resource_id: str, *, now: datetime | None = None) -> int: ...
 
     def acquire(
@@ -157,6 +159,12 @@ class InMemoryLeaseCoordinator:
     def __init__(self) -> None:
         self._leases: dict[str, ResourceLease] = {}
         self._lock = RLock()
+
+    def get(self, lease_id: str, *, now: datetime | None = None) -> ResourceLease | None:
+        with self._lock:
+            self._expire(now or datetime.now(timezone.utc))
+            lease = self._leases.get(lease_id)
+            return lease.model_copy(deep=True) if lease is not None else None
 
     def acquire(
         self,
@@ -284,6 +292,16 @@ class RedisLeaseCoordinator:
             raise ValueError("Redis lease key prefix cannot be blank")
         self.client = client
         self.key_prefix = key_prefix.rstrip(":")
+
+    def get(self, lease_id: str, *, now: datetime | None = None) -> ResourceLease | None:
+        try:
+            payload = self.client.get(self._lease_key(lease_id))
+            lease = self._from_redis_payload(payload) if payload is not None else None
+            if lease is not None and lease.expires_at <= (now or datetime.now(timezone.utc)):
+                return None
+            return lease
+        except Exception as exc:
+            raise SchedulerUnavailable("SCHEDULER_UNAVAILABLE: Redis lease lookup failed") from exc
 
     def acquire(
         self,

@@ -141,6 +141,13 @@ class RuntimeDisplayProjection:
             self.folded_at.pop(lane, None)
         payload = {k: (v[:1000] if isinstance(v, str) else v) for k, v in event.payload.items()
                    if k in _SCALARS and isinstance(v, (str, int, float, bool))}
+        if event.payload.get("validationFailures"):
+            # The planner itself emits broker events. Import its diagnostic
+            # projection only after module initialization, when an event arrives.
+            from components.planner.task_decomposer import safe_validation_failures
+            validation_failures = safe_validation_failures(event.payload["validationFailures"])
+            if validation_failures:
+                payload["validationFailures"] = validation_failures
         for collection, fields, limit in (
             ("nodes", {"key", "parentKey", "title", "objective", "capabilityId", "status", "rationale"}, 100),
             ("edges", {"sourceKey", "targetKey", "relationType"}, 300),
