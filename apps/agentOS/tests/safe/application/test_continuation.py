@@ -232,3 +232,40 @@ def test_commit_failure_after_sampling_never_reexecutes_suffix():
         service.step("owner-1", first)
     assert len(runner.calls) == 1
     assert runner.released == [KVHandle("kv-session-1")]
+
+
+def test_inprocess_transport_uses_one_runner_and_json_receipts():
+    from safe.bootstrap import cloud
+
+    approved = manifest()
+    digest = ManifestService.digest(approved)
+    runner = FakeSuffix(approved)
+    transport = cloud.InProcessTransport(runner=runner, codec=FP32Codec(),
+        sampler=GreedySampler(vocab_size=4), manifest=approved,
+        approved_digest=digest, owner_id="research-owner")
+    session = transport.create_session(digest)
+    activation = ActivationService(codec=FP32Codec(), manifest=approved, approved_digest=digest)
+    first = step_request(activation, digest, session_id=session.session_id)
+    receipt = transport.step(first)
+    assert transport.step(first) == receipt
+    assert transport.query(session.session_id, first.request_id) == receipt
+    assert len(runner.calls) == 1
+    assert transport.close_session(session.session_id).status is SessionStatus.CLOSED
+    assert transport.close_session(session.session_id).status is SessionStatus.CLOSED
+    transport.close()
+    assert len(runner.released) == 1
+    with pytest.raises(SafeError, match="TRANSPORT_UNAVAILABLE"):
+        transport.create_session(digest)
+
+
+def test_inprocess_transport_rejects_other_manifest_before_creating_kv():
+    from safe.bootstrap import cloud
+
+    approved = manifest()
+    runner = FakeSuffix(approved)
+    transport = cloud.InProcessTransport(runner=runner, codec=FP32Codec(),
+        sampler=GreedySampler(vocab_size=4), manifest=approved,
+        approved_digest=ManifestService.digest(approved), owner_id="research-owner")
+    with pytest.raises(SafeError, match="MANIFEST_INCOMPATIBLE"):
+        transport.create_session("0" * 64)
+    assert runner.handles == {}

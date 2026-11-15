@@ -14,7 +14,9 @@
 
 2026-11-15后段用例：`ContinuationService` 已连接可信会话位置/KV、激活校验、suffix prefill/decode、greedy/EOS和幂等token回执。每会话最多32次输出、最多160位置，EOS或输出上限关闭会话并释放后段KV；错误后的部分推进状态不允许重用。联合回归112项和数据转换18项通过；真实权重验证结果、复现命令和装配示例见[后段闭环报告](../../../../docs/superpowers/reports/safe/2026-11-15-continuation.md)。
 
-目前已有进程内后段续算用例，认证网络服务、完整本机生成编排、DP发布与持久预算仍待实现。下表按当前代码状态维护，历史阶段报告单独保留。
+2026-11-15本机用例：已实现注入式 `SplitInferenceService`、批准制品离线 `HuggingFaceTokenizer` 和显式研究装配 `InProcessTransport`。本机负责固定模板/128 token限额、前段KV、输出32 token上限与整段文本解码；超时只查询已提交回执，不盲目重发。默认无配置仍拒绝执行，单实例只允许一个活动生成；同步调用间支持协作取消。完整EOS集合读取自已校验的generation配置，不启用其中的随机采样配置。联合回归139项通过，详见[本机用例报告](../../../../docs/superpowers/reports/safe/2026-11-15-local-generation.md)。
+
+目前已有进程内本机/后段生成用例，认证网络服务、产品接口、DP发布与持久预算仍待实现。下表按当前代码状态维护，历史阶段报告单独保留。
 
 | 内容 | 当前状态 | 说明 |
 | --- | --- | --- |
@@ -24,7 +26,9 @@
 | 七个公开门面、`contracts/`、`ports/` | 已创建轻量入口、初版严格合同和部分 Protocol | 合同只定义一次；执行/事务接口及 wire schema 仍待 P1/P2 实验冻结。 |
 | FP32 codec、形状边界、会话迁移/step/幂等规则、全局 L2 裁剪 | 已实现并有基础测试 | 仅独立基础能力；裁剪不构成 DP，摘要不构成认证。 |
 | `ContinuationService`、`GreedySampler` | 已接通进程内后段用例 | 仅收激活，返回单token；无状态greedy支持可信EOS集合、有限logits和词表校验，并列取最小索引。 |
-| `SplitInferenceService`、隐私发布服务 | 仍明确拒绝执行 | 完整本机生成入口仍抛出 `MODEL_PARTITION_UNAVAILABLE`，隐私入口抛出 `PRIVACY_UNAVAILABLE`；不返回模拟结果。 |
+| `SplitInferenceService` | 显式注入后可用，无配置拒绝 | 本机非流式生成、回执身份校验、未知结果拒绝重发、取消与双端清理；尚未开放产品/网络入口。 |
+| `HuggingFaceTokenizer`、`InProcessTransport` | 已有离线适配器与进程内JSON装配 | 完整EOS集合、固定模板；后段装配始终使用同一个suffix实例；循环传输不等于跨网络认证。 |
+| 隐私发布服务 | 仍明确拒绝执行 | 抛出 `PRIVACY_UNAVAILABLE`，裁剪与哈希不能替代激活DP。 |
 | P3 `SessionService` + `MemorySessionStore` | 已连接真实suffix用例并有并发/TTL/幂等/KV生命周期测试 | 位置在会话锁内从存储构造，回执提交后才推进；短时状态不持久化，不保存原始prompt，不等于跨网络会话服务。 |
 | Qwen2 prefix/suffix KV decode与角色制品 | 已实现离线导出、校验、双角色DynamicCache和数值对照 | KV不跨激活边界传输；CPU FP32/eager，尚无跨网络续算或吞吐验收。 |
 | 预算存储、认证/HTTP、装配和接入 | 中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
@@ -180,7 +184,7 @@ safe/
 
 TODO 编号与配套方案一致：P0 可行性与版本冻结 → P1 合同/协议/认证 → P2 前后段 prefill → P3 逐 token 会话 → P4 隐私/账本/反演评估 → P5 产品接入 → P6 性能/交付。`B1` 表示方向 B 的独立后续设计。文件内编号是该阶段的本文件子任务，不是新的全局阶段。
 
-每个运行骨架写明职责、步骤、失败处理和验收条件；尚未实现的模块使用空导出列表明确拒绝运行。P3 已通过 `ContinuationService` 连接会话、真实runner和采样；认证云端接口与本机生成编排仍未接通，组件和进程内闭环测试不代表网络或隐私能力完成。
+每个运行骨架写明职责、步骤、失败处理和验收条件；尚未实现的模块使用空导出列表明确拒绝运行。P3 已通过 `ContinuationService` 连接后段事务，并由注入式 `SplitInferenceService` 编排本机生成；认证云端接口仍未接通，进程内闭环不代表网络或隐私能力完成。
 
 当前基础用法（在 `apps/agentOS` 目录、`src` 位于 `PYTHONPATH` 时）：
 

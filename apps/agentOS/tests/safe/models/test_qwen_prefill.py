@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("transformers")
 pytest.importorskip("safetensors")
 
-from transformers import Qwen2Config, Qwen2ForCausalLM
+from transformers import PreTrainedTokenizerFast, Qwen2Config, Qwen2ForCausalLM
 from safetensors.torch import save_file
 
 from safe.contracts.errors import SafeError
@@ -33,8 +33,18 @@ def exported(tmp_path):
                if k != "lm_head.weight"}, str(source / "model.safetensors"))
     (source / "config.json").write_text(config.to_json_string(), encoding="utf-8")
     (source / "LICENSE").write_text("synthetic Apache-2.0 fixture", encoding="utf-8")
-    (source / "tokenizer.json").write_text("{}", encoding="utf-8")
-    (source / "tokenizer_config.json").write_text(json.dumps({"chat_template": "{{ messages }}"}), encoding="utf-8")
+    from tokenizers import Tokenizer, models, pre_tokenizers
+
+    vocabulary = {f"t{i}": i for i in range(32)}
+    vocabulary.update({"<unk>": 0, "你好": 1, "hello": 2, "<eos>": 3, "assistant": 4})
+    vocabulary = {token: index for token, index in vocabulary.items()
+                  if not token.startswith("t") or index >= 5}
+    backend = Tokenizer(models.WordLevel(vocabulary, unk_token="<unk>"))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>", eos_token="<eos>",
+        chat_template="{{ messages[0]['content'] }} assistant")
+    tokenizer.save_pretrained(str(source))
+    (source / "generation_config.json").write_text(json.dumps({"eos_token_id": [3]}), encoding="utf-8")
     target = tmp_path / "roles"
     result = export_qwen_artifacts(source, target, model_id="synthetic/qwen2",
                                    revision="a" * 40, cut_layer=2, license_id="Apache-2.0")
@@ -297,3 +307,58 @@ def test_session_continuation_roundtrip_matches_real_qwen_layers(exported):
         prefix.release_kv(prefix_handle)
         prefix.close()
         suffix.close()
+
+
+def test_local_generation_uses_real_roles_and_verified_tokenizer(exported):
+    from safe.application.inference import SplitInferenceService
+    from safe.bootstrap import cloud
+    from safe.contracts.inference import GenerationOptions, InferenceRequest
+    from safe.infrastructure.codecs.fp32 import FP32Codec
+    from safe.infrastructure.models import tokenizer as tokenization
+    from safe.infrastructure.models.sampling import GreedySampler
+
+    oracle, _, root, digest = exported
+    prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
+    suffix = QwenSuffixRunner(root / "suffix", approved_digest=digest)
+    tokenizer = tokenization.HuggingFaceTokenizer(root / "prefix", approved_digest=digest)
+    assert tokenizer.eos_token_ids == frozenset({3})
+    assert tokenizer.encode_prompt("你好 hello") == (1, 2, 4)
+    assert tokenizer.decode((1, 2, 3)) == "你好 hello"
+    remote = cloud.InProcessTransport(runner=suffix, codec=FP32Codec(),
+        sampler=GreedySampler(vocab_size=32, eos_token_ids=tokenizer.eos_token_ids),
+        manifest=prefix.manifest, approved_digest=digest, owner_id="synthetic-owner")
+    service = SplitInferenceService(prefix=prefix, tokenizer=tokenizer, transport=remote,
+        codec=FP32Codec(), manifest=prefix.manifest, approved_digest=digest)
+    try:
+        result = service.infer(InferenceRequest(prompt="你好 hello", generation=GenerationOptions(max_new_tokens=6)))
+        ids = list(tokenizer.encode_prompt("你好 hello"))
+        expected = []
+        for _ in range(6):
+            with torch.inference_mode():
+                token = int(oracle(torch.tensor([ids]), use_cache=False).logits[0, -1].argmax())
+            ids.append(token)
+            expected.append(token)
+            if token in tokenizer.eos_token_ids:
+                break
+        assert result.text == tokenizer.decode(tuple(expected))
+        assert result.generated_tokens == len(expected)
+        assert result.finish_reason == ("eos" if expected[-1] == 3 else "length")
+        assert not prefix._caches._entries
+        assert not suffix._caches._entries
+    finally:
+        remote.close()
+        prefix.close()
+        suffix.close()
+
+
+@pytest.mark.parametrize("eos", [[True], [32], [-1], "3"])
+def test_tokenizer_rejects_invalid_eos_even_in_freshly_exported_artifact(exported, tmp_path, eos):
+    from safe.infrastructure.models import tokenizer as tokenization
+
+    _, source, _, _ = exported
+    (source / "generation_config.json").write_text(json.dumps({"eos_token_id": eos}), encoding="utf-8")
+    target = tmp_path / "bad-eos"
+    digest = export_qwen_artifacts(source, target, model_id="synthetic/qwen2",
+        revision="a" * 40, cut_layer=2, license_id="Apache-2.0")
+    with pytest.raises(SafeError, match="MANIFEST_INCOMPATIBLE"):
+        tokenization.HuggingFaceTokenizer(target / "prefix", approved_digest=digest)
