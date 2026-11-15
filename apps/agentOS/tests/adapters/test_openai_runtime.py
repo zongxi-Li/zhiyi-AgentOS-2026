@@ -482,7 +482,7 @@ def test_provider_preserves_complete_executor_authority_and_user_request(provide
     )))
     assert [item["role"] for item in transport.payload["messages"]] == ["system", "user"]
     system = transport.payload["messages"][0]["content"]
-    assert system.startswith("You are an execution component inside Zhiyi AgentOS")
+    assert system.startswith("General operating rules:")
     assert "You are an execution agent" in system
     assert '"capabilityId":"cost_analysis"' in system
     assert transport.payload["messages"][-1]["content"] == envelope.user_prompt

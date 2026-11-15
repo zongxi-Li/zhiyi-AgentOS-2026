@@ -60,7 +60,7 @@ def test_prompt_does_not_target_task_count() -> None:
             task_input={},
         )
         assert "approximately" not in prompt
-        assert "smallest sufficient executable" in planner_system_prompt()
+        assert "Do not optimize solely for task count." in planner_system_prompt()
         assert TASK_DECOMPOSITION_PROMPT_VERSION in prompt
 
 

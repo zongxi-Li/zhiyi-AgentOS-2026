@@ -319,7 +319,7 @@ def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wordin
     assert '"taskAcceptance"' in prompt and '"criterionId":"declared-document-status"' in prompt
     assert "Mission contract:" not in prompt
     from adapters.prompt_runtime import planner_system_prompt
-    assert "source is the prerequisite or producer" in planner_system_prompt()
+    assert "sourceKey is the prerequisite or producer." in planner_system_prompt()
 
 
 def test_full_profile_uses_outline_detail_and_relation_units() -> None:

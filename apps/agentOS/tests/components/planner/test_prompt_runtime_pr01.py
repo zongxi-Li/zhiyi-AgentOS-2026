@@ -8,8 +8,8 @@ def test_planner_system_is_static_and_excludes_source_injection() -> None:
     system = planner_system_prompt()
     user = serialize_planning_request({"mission": {"objective": "review"}, "materialText": attack})
 
-    assert "semantic planner" in system
-    assert "smallest sufficient executable semantic TaskPlan" in system
+    assert "semantic TaskPlan suitable for compilation into an ACG" in system
+    assert "Do not optimize solely for task count." in system
     assert attack not in system
     assert attack in user
     assert '"trustClass":"external_untrusted"' in user
@@ -23,8 +23,8 @@ def test_planner_preset_has_no_task_count_target() -> None:
 
 def test_planner_control_instructions_defer_to_schema_and_runtime_contract() -> None:
     system = planner_system_prompt()
-    assert "Declare control policies only when the supplied output schema and runtime contract allow them" in system
-    assert "preserve checks and corrections as bounded forward-dependent tasks" in system
+    assert "Declare control policies only when the current contract permits them." in system
+    assert "represent necessary checks and corrections with bounded\nforward-dependent tasks." in system
     assert "Use supported verification_loop semantics instead of cycles" not in system
 
 
