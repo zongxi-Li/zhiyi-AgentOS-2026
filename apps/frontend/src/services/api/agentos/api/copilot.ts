@@ -3,8 +3,15 @@ import { agentosRequest } from '../client'
 import { runPath } from '../paths'
 import { apiUrl } from '@/platform'
 import { readSseFrames } from '@/utils/sse'
+import type { ResponseTimings } from '../../../../../../backend/src/shared/chat-stream/index.mjs'
 
-export interface CopilotStreamEvent { type: 'content' | 'activity' | 'heartbeat' | 'completed' | 'error'; content?: string; message?: string; exchange?: CopilotExchange }
+export type CopilotProgressPhase = 'preparing' | 'waiting_model' | 'receiving' | 'retrying' | 'validating'
+export interface CopilotStreamEvent {
+  type: 'content' | 'progress' | 'activity' | 'heartbeat' | 'completed' | 'error'
+  content?: string; message?: string; exchange?: CopilotExchange
+  phase?: CopilotProgressPhase; elapsedMs?: number; responseTimings?: ResponseTimings
+  attemptId?: string; requestId?: string; providerRequest?: number
+}
 export interface CopilotMessageOptions { modelId?: string; permission: CopilotPermission; reasoningEffort?: string }
 
 export interface CopilotExchange {
@@ -12,6 +19,8 @@ export interface CopilotExchange {
   operationId: string; user: string; assistant: string; createdAt: string; observedRevision: number
   modelId?: string | null; permission?: CopilotPermission
   reasoningEffort?: string | null
+  responseTimings?: ResponseTimings; latencyMs?: number; providerRequest?: number
+  contextUsage?: import('../types/acg').ModelContextUsage
   action?: CopilotAction
   receipt?: { proposalId: string; runId: string; kind: CopilotActionKind; status: string; executeStepIds: string[]; reusedStepIds: string[] }
 }

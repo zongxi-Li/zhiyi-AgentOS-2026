@@ -12,6 +12,8 @@ from adapters.openai_runtime import OpenAICompatibleRuntime
 from contracts.capability import CapabilityKind, CapabilityManifest
 from contracts.request_budget import ModelRequestBudget
 from adapters.agent_tools import AgentToolSession
+from adapters.request_diagnostics import context_usage, request_diagnostics, resolve_request_budget
+from contracts.capability import ModelCapabilityEnvelope
 from contracts.tools import ToolDefinition, ToolResult
 
 
@@ -141,3 +143,59 @@ def test_tool_session_keeps_frozen_budget_after_one_large_tool_result():
     assert failure.value.code == "MODEL_INPUT_BUDGET_EXCEEDED"
     assert failure.value.audit["toolActionsExecuted"] == 1
     assert len(transport.payloads) == tools.calls == 1
+
+
+def test_working_budget_uses_exact_route_allowance_and_only_existing_worksets_can_split():
+    capability = ModelCapabilityEnvelope(provider='test', model='mock', contextWindowTokens=10000, maxOutputTokens=2000)
+    ordinary = resolve_request_budget(None, capability, 2000)
+    split = resolve_request_budget(None, capability, 2000, workset=True)
+    assert ordinary.total_tokens == 10000 and ordinary.output_reserve_tokens == 2000
+    assert ordinary.working_set_trigger_tokens == 6800
+    assert ordinary.working_set_target_tokens == 5200
+    payload = {'messages': [{'role': 'user', 'content': 'evidence-' * 2600}]}
+    original = json.dumps(payload)
+    observed = request_diagnostics(payload, None, ordinary)
+    assert observed['requestBudget']['status'] == 'withinBudget'
+    assert observed['workingSet']['status'] == 'exceeded'
+    OpenAICompatibleRuntime._check_request_budget(observed)
+    with pytest.raises(Exception) as failure:
+        OpenAICompatibleRuntime._check_request_budget(request_diagnostics(payload, None, split))
+    assert failure.value.code == 'MODEL_INPUT_BUDGET_EXCEEDED'
+    assert json.dumps(payload) == original  # evidence, failures and approvals are not rewritten
+
+
+def test_unknown_route_has_no_invented_budget_and_missing_usage_is_not_measured_zero():
+    assert resolve_request_budget(None, ModelCapabilityEnvelope.unknown(provider='test', model='mock'), None) is None
+    unknown = context_usage({}, {})
+    assert unknown['measurement'] == 'unknown' and unknown['inputTokens'] is None
+    estimated = context_usage({'requestBudget': {'estimatedInputTokens': 123, 'estimator': 'estimate', 'totalTokens': 1000}}, {})
+    assert estimated['measurement'] == 'estimate' and estimated['inputTokens'] == 123
+    # This is the latest request, never an accumulated Runner/Run total.
+    assert context_usage({}, {'prompt_tokens': 7, 'total_tokens': 99999}, 100)['inputTokens'] == 7
+    assert context_usage({}, {'prompt_tokens': True})['measurement'] == 'unknown'
+
+
+@pytest.mark.parametrize('trigger,target', [(100, 100), (100, 101), (901, 50), (True, 10)])
+def test_invalid_working_budgets_fail_before_model_calls(trigger, target):
+    with pytest.raises(ValidationError):
+        ModelRequestBudget(totalTokens=1000, outputReserveTokens=100,
+                           workingSetTriggerTokens=trigger, workingSetTargetTokens=target)
+
+
+def test_model_route_budget_applies_to_streaming_planning_nodes_and_tool_turns():
+    transport = Transport()
+    registry = ModelCompatibilityRegistry()
+    registry.register(OpenAICompatibleRuntime(manifest=CapabilityManifest(
+        capabilityId='test', displayName='test', kind=CapabilityKind.MODEL, provider='test', capabilities=['mock'],
+        metadata={'modelCapabilities': {'mock': {'contextWindowTokens': 10000, 'maxOutputTokens': 2000,
+                    'features': {'tools': True}}}}), transport=transport))
+    model = RegisteredModelRuntime(registry=registry, provider='test', model='mock')
+    result = asyncio.run(model.generate_json(prompt='small', schema={'type': 'object'}))
+    assert result.request_diagnostics['requestBudget']['totalTokens'] == 10000
+    assert result.request_diagnostics['workingSet']['mode'] == 'observe'
+    assert transport.payloads[-1]['max_tokens'] == 2000
+    async def stream():
+        return [event async for event in model.stream_generate_json(prompt='small', schema={'type': 'object'}, run_id='run')]
+    completed = asyncio.run(stream())[-1]
+    assert completed.payload['requestDiagnostics']['requestBudget']['totalTokens'] == 10000
+    assert completed.payload['capability']['contextWindowTokens'] == 10000

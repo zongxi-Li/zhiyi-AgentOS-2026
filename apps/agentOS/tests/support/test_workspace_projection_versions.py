@@ -126,3 +126,29 @@ def test_runtime_run_save_advances_the_mission_watermark(tmp_path):
     store.save_run(run)
     assert store.workspace_projection_revision(mission.mission_id) > first
     assert SQLiteWorkflowStore(store.db_path).workspace_projection_revision(mission.mission_id) == store.workspace_projection_revision(mission.mission_id)
+
+
+def test_copilot_writes_invalidate_only_their_mission_without_changing_run_revision(tmp_path):
+    from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
+    from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
+    store = SQLiteWorkflowStore(tmp_path / 'copilot-events.db')
+    for key in ('a', 'b'):
+        store.save_mission(RuntimeMissionRecord(missionId=f'mission_{key}', title=key))
+        store.save_run(RuntimeRunRecord(runId=f'run_{key}', missionId=f'mission_{key}',
+            workflowId='test', domain='test', runtimeEngine='acg', executionState={'planningDeferred': True}))
+    run_revision = store.get_run('run_a').runtime_revision
+    a, b = (store.workspace_projection_revision(f'mission_{key}') for key in ('a', 'b'))
+    store.set_task_copilot_permission('mission_a', 'read_only')
+    assert store.workspace_projection_revision('mission_a') > a
+    a = store.workspace_projection_revision('mission_a')
+    store.set_task_copilot_permission('mission_a', 'read_only')
+    assert store.workspace_projection_revision('mission_a') == a
+    store.save_copilot_exchange('run_a', 'message', {'assistant': 'reply'})
+    assert store.workspace_projection_revision('mission_a') > a
+    a = store.workspace_projection_revision('mission_a')
+    store.save_planning_input('run_a', 'input', {'content': 'new requirement'})
+    assert store.workspace_projection_revision('mission_a') > a
+    assert store.workspace_projection_revision('mission_b') == b
+    assert store.get_run('run_a').runtime_revision == run_revision
+    reopened = SQLiteWorkflowStore(store.db_path)
+    assert reopened.workspace_projection_revision('mission_a') == store.workspace_projection_revision('mission_a')

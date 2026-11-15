@@ -1563,6 +1563,10 @@ class ExecutionRuntime(CollaboratorAccess):
                     payload=payload,
                 ),
             )
+        model_audit = event.get("modelAudit")
+        if isinstance(model_audit, dict) and model_audit:
+            self.record_model_invocations(run.run_id, [model_audit], scope="planning",
+                source_run=run if not reload_run else None)
         if not persist_trace:
             return
         kind = str(payload.get("kind") or {
@@ -1599,6 +1603,32 @@ class ExecutionRuntime(CollaboratorAccess):
                 payload={"planningProgress": True, "category": "planner", **payload},
             )
             self.workflow_store.save_run(run)
+
+    def record_model_invocations(self, run_id, invocations, *, scope, source_run=None):
+        """Planning and Copilot share the existing Run model-call trace.
+
+        Record failed attempts too; a failed reply is not a saved conversation.
+        This view owns neither execution commands nor a second usage ledger.
+        """
+        if not invocations:
+            return
+        from components.planner.complexity import model_invocation_audit
+        with self.run_lock_manager.lock_for(run_id):
+            try:
+                latest = self.workflow_store.get_run(run_id)
+                persisted = True
+            except KeyError:
+                if source_run is None:
+                    raise
+                latest, persisted = source_run, False
+            for invocation in invocations:
+                self.trace_store.append(latest, TraceEventType.MODEL_CALLED,
+                    observation="Model invocation metadata projected",
+                    payload={**model_invocation_audit(invocation), "scope": scope})
+            if persisted:
+                self.workflow_store.save_run(latest)
+            if source_run is not None:
+                source_run.trace = latest.trace
 
     @staticmethod
     def _topology_failure_audit(exc: BaseException) -> dict[str, Any]:

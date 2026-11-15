@@ -12,11 +12,19 @@ class ModelRequestBudget(BaseModel):
     version: Literal["request-budget.v1"] = "request-budget.v1"
     total_tokens: int = Field(alias="totalTokens", ge=1, strict=True)
     output_reserve_tokens: int = Field(alias="outputReserveTokens", ge=1, strict=True)
+    working_set_trigger_tokens: int | None = Field(default=None, alias="workingSetTriggerTokens", ge=1, strict=True)
+    working_set_target_tokens: int | None = Field(default=None, alias="workingSetTargetTokens", ge=1, strict=True)
+    working_set_mode: Literal["observe", "split"] = Field(default="observe", alias="workingSetMode")
 
     @model_validator(mode="after")
     def validate_reserve(self) -> "ModelRequestBudget":
         if self.output_reserve_tokens >= self.total_tokens:
             raise ValueError("output reserve must be smaller than total request budget")
+        trigger, target = self.working_set_trigger_tokens, self.working_set_target_tokens
+        if (trigger is None) != (target is None):
+            raise ValueError("working trigger and target must be configured together")
+        if trigger is not None and not (target < trigger <= self.total_tokens - self.output_reserve_tokens):
+            raise ValueError("working target < trigger <= input budget is required")
         return self
 
 

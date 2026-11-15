@@ -381,6 +381,8 @@ class NativeGeneralAgent(BaseAgent):
         frozen_budget = (context.step.input.get("contextPolicy") or {}).get("requestBudget")
         if frozen_budget is not None:
             prompt_metadata["requestBudget"] = frozen_budget
+        if _workset_recovery_bounded(context):
+            prompt_metadata["materialWorkset"] = True
         thinking_mode = str(context.task.input.get("thinkingMode") or "disabled")
         output_thinking_mode = thinking_mode
         timeout_seconds = 600.0 if capability == "artifact_generation" else 300.0

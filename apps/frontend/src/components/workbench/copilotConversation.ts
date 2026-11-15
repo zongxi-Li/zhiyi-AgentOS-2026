@@ -11,6 +11,22 @@ export interface CopilotConversationMessage {
   receipt?: CopilotExchange['receipt']
   proposalId: string
   sourceRunId?: string
+  responseTimings?: CopilotExchange['responseTimings']
+  latencyMs?: number
+  providerRequest?: number
+  contextUsage?: CopilotExchange['contextUsage']
+}
+
+export function copilotResponseSummary(message: Pick<CopilotExchange, 'responseTimings' | 'latencyMs' | 'providerRequest' | 'contextUsage'>) {
+  const seconds = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? `${(value / 1000).toFixed(1)} 秒` : null
+  const first = seconds(message.responseTimings?.firstContentMs)
+  const total = seconds(message.latencyMs)
+  const context = message.contextUsage
+  const input = context?.inputTokens
+  const occupancy = typeof input === 'number' && Number.isFinite(input) && input >= 0
+    ? `本次输入${context?.measurement === 'provider' ? '' : '估算'} ${input.toLocaleString('zh-CN')} Token` : ''
+  return [first ? `首段正文 ${first}` : '', total ? `完成 ${total}` : '', occupancy,
+    Number.isSafeInteger(message.providerRequest) && message.providerRequest! > 0 ? `${message.providerRequest} 次模型请求` : ''].filter(Boolean).join(' · ')
 }
 
 export function planningProfileText(metrics: ModelOutputMetrics) {

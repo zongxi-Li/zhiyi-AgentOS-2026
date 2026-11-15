@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from '@/services/api/agentos'
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
+import AcgCopilotPanel from '@/components/workbench/AcgCopilotPanel.vue'
 
 const workspaceEventCallbacks = vi.hoisted(() => new Map<string, (revision: number) => void>())
 vi.mock('@/workbench/runtime/workspaceEvents', () => ({
@@ -148,8 +149,10 @@ const mountWorkspace = async (
   vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
   vi.spyOn(agentosApi, 'listWorkflowReviews').mockResolvedValue({ items: [] } as any)
   vi.spyOn(agentosApi, 'listRunContextPacks').mockResolvedValue({ items: [] } as any)
-  vi.spyOn(agentosApi, 'getCopilot').mockResolvedValue({ runId: 'run_2', status: 'completed', revision: 0,
-    modelAvailable: false, question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
+  vi.spyOn(agentosApi, 'getRunResourceUsage').mockResolvedValue({ runId: 'run_2', usage: { totalTokens: 0, callCount: 0 } } as any)
+  vi.spyOn(agentosApi, 'listRunResourceCalls').mockResolvedValue({ runId: 'run_2', items: [], total: 0 })
+  vi.spyOn(agentosApi, 'getCopilot').mockImplementation(async runId => ({ runId, missionId: 'mission_1', status: 'completed', revision: 0,
+    modelAvailable: false, question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] }))
   const wrapper = mount(MissionWorkspaceView, {
     global: {
       plugins: [router],
@@ -163,6 +166,7 @@ const mountWorkspace = async (
         ArtifactEditor: artifactEditorStub,
         MissionEditor: missionEditorStub,
         RunProgressEditor: progressEditorStub,
+        FormalToolApprovals: true,
         'el-icon': true
       }
     }
@@ -220,6 +224,7 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.find('.secondary-sidebar').exists()).toBe(false)
     expect(wrapper.get('.auxiliary-sidebar').attributes('aria-label')).toBe('ACG Copilot')
     expect(wrapper.get('.auxiliary-sidebar .acg-copilot').exists()).toBe(true)
+    expect(wrapper.getComponent(AcgCopilotPanel).props('projectionRevision')).toBe(1)
     expect(copilotTrigger().attributes('aria-label')).toBe('收起 ACG Copilot')
     expect(wrapper.get('.editor-inspector-trigger').attributes('aria-label')).toBe('打开 Inspector')
 

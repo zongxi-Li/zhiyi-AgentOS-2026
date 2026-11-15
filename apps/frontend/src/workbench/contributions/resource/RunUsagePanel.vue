@@ -3,8 +3,9 @@
     <div class="usage-panel" aria-label="当前任务资源统计" :aria-busy="loading">
       <p v-if="error" class="usage-note" role="status">{{ error }}</p>
       <div class="usage-summary">
-        <div class="usage-total"><span>累计 Token</span><strong>{{ number(summary?.totalTokens) }}</strong><small>当前运行的全部模型调用</small></div>
-        <div><span>API 调用</span><strong>{{ number(summary?.callCount) }}</strong><small>{{ number(summary?.retryCount) }} 次重试</small></div>
+        <div class="usage-total"><span>累计已观测 Token</span><strong>{{ number(summary?.usageReportedCalls === 0 && summary?.callCount ? null : summary?.totalTokens) }}</strong><small>当前运行的模型消耗<span v-if="summary?.usageMissingCalls"> · {{ summary.usageMissingCalls }} 次调用未返回用量</span></small></div>
+        <div class="usage-current"><span>最近一次上下文输入</span><strong>{{ number(context?.inputTokens) }}</strong><small>{{ context?.measurement === 'provider' ? '供应商实测' : context?.measurement === 'estimate' ? '估算，不用于计费' : '未观测' }}<template v-if="context?.contextWindowTokens"> · 窗口 {{ number(context.contextWindowTokens) }}</template></small></div>
+        <div><span>模型调用记录</span><strong>{{ number(summary?.callCount) }}</strong><small>{{ number(summary?.retryCount) }} 次重试</small></div>
         <div><span>缓存命中率</span><strong>{{ hitRatio }}</strong><small>缓存读取 / 输入 Token</small></div>
       </div>
 
@@ -48,6 +49,7 @@ let generation = 0
 let controller: AbortController | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
 const summary = computed(() => usage.value?.usage)
+const context = computed(() => usage.value?.contextPressure.latestRequest)
 const number = (value?: number | null) => value == null ? '—' : value.toLocaleString('zh-CN')
 const hitRatio = computed(() => {
   const ratio = summary.value?.cacheHitRatio

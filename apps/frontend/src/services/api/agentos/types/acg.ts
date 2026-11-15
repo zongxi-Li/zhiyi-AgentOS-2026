@@ -129,6 +129,15 @@ export interface ModelCapabilitySnapshot {
   maxTokensField?: string | null
   features?: Record<string, boolean | null>
 }
+export interface ModelContextUsage {
+  inputTokens: number | null
+  contextWindowTokens?: number | null
+  measurement: 'provider' | 'estimate' | 'unknown'
+  estimator?: string | null
+  outputReserveTokens?: number | null
+  ratio?: number | null
+  workingSet?: { status: string; mode: string; triggerTokens?: number; targetTokens?: number; resolution?: string } | null
+}
 export interface ModelCallUsage {
   callId: string
   stepId?: string | null
@@ -153,6 +162,12 @@ export interface ModelCallUsage {
   contextPressure?: number | null
   callChainId?: string | null
   partIndex?: number | null
+  scope?: 'node' | 'planning' | 'copilot'
+  outcome?: string | null
+  errorCode?: string | null
+  retryIndex?: number | null
+  usageReported?: boolean
+  contextUsage?: ModelContextUsage
 }
 export interface RunResourceUsage {
   runId: string
@@ -171,6 +186,8 @@ export interface RunResourceUsage {
     retryCount: number
     latencyMs: number
     cacheHitRatio?: number | null
+    usageReportedCalls?: number
+    usageMissingCalls?: number
   }
   contextPressure: {
     current?: number | null
@@ -178,6 +195,7 @@ export interface RunResourceUsage {
     currentInputTokens?: number | null
     peakInputTokens?: number | null
     contextWindowTokens?: number | null
+    latestRequest?: ModelContextUsage | null
     source: string
   }
   composition: {

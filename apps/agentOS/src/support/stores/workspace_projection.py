@@ -111,5 +111,8 @@ IDENTITY_SOURCES = {
 }
 
 RUNTIME_SOURCES = {
-    **{name: "{row}.mission_id" for name in ("tasks", "runs", "mission_semantic_state")},
+    **{name: "{row}.mission_id" for name in (
+        "tasks", "runs", "mission_semantic_state", "task_copilot_permissions")},
+    **{name: "SELECT mission_id FROM runs WHERE run_id={row}.run_id" for name in (
+        "run_copilot_exchanges", "run_planning_inputs")},
 }

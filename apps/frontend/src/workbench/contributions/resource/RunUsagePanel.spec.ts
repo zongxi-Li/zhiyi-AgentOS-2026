@@ -28,6 +28,18 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
 describe('RunUsagePanel', () => {
+  it('separates the latest input occupancy from cumulative usage and labels estimates', async () => {
+    const data = usage(99999)
+    data.usage.usageMissingCalls = 1
+    data.contextPressure.latestRequest = { inputTokens: 123, contextWindowTokens: 10000, measurement: 'estimate' }
+    vi.mocked(workflowApi.getRunResourceUsage).mockResolvedValue(data)
+    const wrapper = panel()
+    await flushPromises()
+    expect(wrapper.find('.usage-total strong').text()).toBe('99,999')
+    expect(wrapper.find('.usage-current strong').text()).toBe('123')
+    expect(wrapper.find('.usage-current').text()).toContain('估算，不用于计费')
+    expect(wrapper.text()).toContain('1 次调用未返回用量')
+  })
   it('aggregates every ledger page without counting repeated calls or cache/reasoning twice', async () => {
     vi.mocked(workflowApi.listRunResourceCalls)
       .mockResolvedValueOnce({ runId: 'run_1', items: [call('a', 'alpha', 100)], nextCursor: 'next', total: 2 })

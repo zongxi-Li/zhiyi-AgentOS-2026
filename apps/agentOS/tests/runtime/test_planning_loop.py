@@ -183,6 +183,38 @@ def test_read_only_copilot_is_persistent_idempotent_and_uses_bounded_history(tmp
     assert len(RuntimePlanningInteraction(recovered).view(run.run_id)["exchanges"]) == 6
 
 
+def test_copilot_failed_attempt_usage_is_recorded_without_saving_a_reply(tmp_path):
+    from runtime.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
+    from adapters.model_adapter import StructuredGenerationError
+    runtime, _, run = prepared(tmp_path)
+    class Model:
+        fail = True
+        requests = []
+        def generate_json(self, prompt, schema, **kwargs):
+            self.requests.append(json.loads(prompt))
+            metadata = {'provider': 'fake', 'model': 'mock', 'usage': {'prompt_tokens': 17, 'total_tokens': 25},
+                'requestDiagnostics': {'requestBudget': {'estimatedInputTokens': 99, 'totalTokens': 1000}}}
+            if self.fail:
+                raise StructuredGenerationError('MODEL_OUTPUT_INVALID_JSON', 'failed reply', audit=metadata)
+            return {**metadata, 'data': {'content': '公开回复'}}
+    model = Model()
+    runtime.set_intent_llm(model)
+    service = RuntimePlanningInteraction(runtime)
+    request = CopilotMessageRequest(content='解释当前任务', operationId='usage')
+    with pytest.raises(StructuredGenerationError):
+        asyncio.run(service.message(run.run_id, request))
+    assert runtime.workflow_store.list_copilot_exchanges(run.run_id) == []
+    model.fail = False
+    reply = asyncio.run(service.message(run.run_id, request))
+    assert reply['contextUsage']['inputTokens'] == 17
+    assert reply['contextUsage']['measurement'] == 'provider'
+    assert asyncio.run(service.message(run.run_id, request)) == reply
+    calls = [e for e in runtime.get_status(run.run_id).trace if e.event_type.value == 'model_called']
+    assert len(calls) == 2 and all(e.payload['scope'] == 'copilot' for e in calls)
+    assert sum(e.payload['usage']['total_tokens'] for e in calls) == 50
+    assert len(model.requests) == 2
+
+
 def test_copilot_selection_is_request_scoped_and_enforces_permissions(tmp_path):
     from runtime.planning_interaction import CopilotMessageRequest, PlannerAnswerRequest, RuntimePlanningInteraction
     from runtime.review import ReviewConflictError
@@ -235,6 +267,8 @@ def test_copilot_stream_previews_before_commit_and_passes_effort(tmp_path):
             return [{"id": "test/stream", "provider": "test", "model": "stream", "reasoningEfforts": ["high"]}]
         async def stream_generate_json(self, **kwargs):
             self.calls.append(kwargs)
+            yield {"eventType": "model.started", "payload": {"requestId": "request-test"}}
+            yield {"eventType": "model.activity", "payload": {"elapsedMs": 1, "reasoning_content": "PRIVATE"}}
             yield {"eventType": "model.output.delta", "payload": {"delta": '{"content":"first'}}
             while not gate.is_set():
                 await asyncio.sleep(0.005)
@@ -250,13 +284,20 @@ def test_copilot_stream_previews_before_commit_and_passes_effort(tmp_path):
             event = await asyncio.wait_for(anext(stream), 5)
             if event.get("content"):
                 break
-        assert event == {"type": "content", "content": "first"}
+        assert event['type'] == 'content' and event['content'] == 'first'
+        assert event['attemptId'].startswith('attempt_')
+        assert event['responseTimings']['firstContentMs'] >= 0
         assert runtime.workflow_store.list_copilot_exchanges(run.run_id) == []
         gate.set()
         rest = [event async for event in stream]
         assert rest[-1]["type"] == "completed" and rest[-1]["exchange"]["assistant"] == "first second"
+        saved = rest[-1]['exchange']
+        assert saved['providerRequest'] == 1
+        assert saved['latencyMs'] >= saved['responseTimings']['firstContentMs'] >= saved['responseTimings']['contextPreparationMs']
+        assert 'PRIVATE' not in str(rest)
         replay = [event async for event in service.stream_message(run.run_id, request)]
         assert replay[-1]["type"] == "completed" and len(model.calls) == 1
+        assert replay[-1]['exchange']['responseTimings'] == saved['responseTimings']
         gate.clear()
         disconnected = service.stream_message(run.run_id, request.model_copy(update={"operation_id": "disconnected"}))
         while not (await asyncio.wait_for(anext(disconnected), 5)).get("content"):

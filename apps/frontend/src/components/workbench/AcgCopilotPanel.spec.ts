@@ -8,10 +8,15 @@ import { clearCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
+import { renderMarkdown } from '@/utils/markdown'
 
 vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn(), submitFormalControl: vi.fn() } }))
 vi.mock('@/services/api/agentos/client', () => ({ agentosRequest: { get: vi.fn(async () => ({ data: { items: [] } })), post: vi.fn() } }))
 vi.mock('@/workbench/runtime/runtimeEvents', () => ({ acquireRunRuntimeStore: vi.fn(() => null), releaseRunRuntimeStore: vi.fn() }))
+vi.mock('@/utils/markdown', async importOriginal => {
+  const original = await importOriginal<typeof import('@/utils/markdown')>()
+  return { ...original, renderMarkdown: vi.fn(original.renderMarkdown) }
+})
 const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision: 3, modelAvailable: true,
   question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
 const wrappers: ReturnType<typeof mount>[] = []
@@ -201,7 +206,7 @@ describe('task Copilot', () => {
     await (wrapper.vm as any).confirmAction('proposal', { ...action, expectedRevision: 2 }, 'run-1')
     expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
   })
-  it('pauses cached-view polling and resumes one loop while retaining its unsent draft', async () => {
+  it('refreshes a reactivated view once and retains its draft without periodic reads', async () => {
     vi.useFakeTimers()
     const visible = ref(true)
     const host = defineComponent({ setup: () => () => h(KeepAlive, null, { default: () => visible.value ? h(AcgCopilotPanel, { runId: 'run-1' }) : null }) })
@@ -216,10 +221,108 @@ describe('task Copilot', () => {
     expect((w.get('textarea').element as HTMLTextAreaElement).value).toBe('unsent Copilot draft')
     expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 1)
     await vi.advanceTimersByTimeAsync(3000); await flushPromises()
-    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 2)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 1)
     w.unmount(); wrappers.splice(wrappers.indexOf(w), 1)
     await vi.advanceTimersByTimeAsync(20000)
-    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 2)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 1)
+  })
+  it('coalesces Mission revisions without opening another stream or disabling valid controls', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ projectionRevision: 1 })
+    const before = vi.mocked(agentosApi.getCopilot).mock.calls.length
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before)
+    await w.setProps({ projectionRevision: 2 })
+    await w.setProps({ projectionRevision: 4 })
+    await vi.advanceTimersByTimeAsync(150); await flushPromises()
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 1)
+    expect((w.vm as any).loading).toBe(false)
+    await w.setProps({ projectionRevision: 4 })
+    await w.setProps({ projectionRevision: 3 })
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(before + 1)
+  })
+  it('reads the latest revision once more when it changes during an outstanding read', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ projectionRevision: 1 })
+    let finish!: (value: CopilotState) => void
+    vi.mocked(agentosApi.getCopilot).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await w.setProps({ projectionRevision: 2 })
+    await vi.advanceTimersByTimeAsync(150)
+    await w.setProps({ projectionRevision: 3 })
+    await w.setProps({ projectionRevision: 4 })
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+    finish(state()); await flushPromises()
+    await vi.advanceTimersByTimeAsync(150); await flushPromises()
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(3)
+  })
+  it('defers changed revisions during generation and flushes them after the reply finishes', async () => {
+    vi.useFakeTimers()
+    let complete!: (value: any) => void
+    vi.mocked(agentosApi.streamCopilotMessage).mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    const w = await panel({ projectionRevision: 1 })
+    await w.get('textarea').setValue('检查进度')
+    await w.get('form').trigger('submit'); await flushPromises()
+    await w.setProps({ projectionRevision: 2 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(1)
+    complete({ operationId: 'done', user: '检查进度', assistant: 'done', createdAt: '', observedRevision: 3 })
+    await flushPromises(); await vi.advanceTimersByTimeAsync(1000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+  })
+  it('does not resurrect access-denied state when a later Mission revision arrives', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ projectionRevision: 1 })
+    vi.mocked(agentosApi.getCopilot).mockRejectedValueOnce({ response: { status: 403 } })
+    await w.setProps({ projectionRevision: 2 })
+    await vi.advanceTimersByTimeAsync(150); await flushPromises()
+    await w.setProps({ projectionRevision: 3 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+    expect((w.vm as any).state).toBeNull()
+  })
+  it('retries a temporary invalidation failure within a fixed budget, then stays idle', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ projectionRevision: 1 })
+    vi.mocked(agentosApi.getCopilot).mockRejectedValue({ response: { status: 503 } })
+    await w.setProps({ projectionRevision: 2 })
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(4)
+  })
+  it('discards a pending revision and old response when the selected Run changes', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ projectionRevision: 1 })
+    let finishOld!: (value: CopilotState) => void
+    vi.mocked(agentosApi.getCopilot).mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+    await w.setProps({ projectionRevision: 2 })
+    await vi.advanceTimersByTimeAsync(150)
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), runId: 'run-2', taskPermission: 'read_only' })
+    await w.setProps({ runId: 'run-2', projectionRevision: 3 }); await flushPromises()
+    finishOld({ ...state(), taskPermission: 'task_collaboration' }); await flushPromises()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect((w.vm as any).state.runId).toBe('run-2')
+    expect((w.vm as any).permission).toBe('read_only')
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(3)
+  })
+  it('defers invalidation while the document is hidden and reconciles once visible', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ projectionRevision: 1 })
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    try {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await w.setProps({ projectionRevision: 2 })
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(agentosApi.getCopilot).toHaveBeenCalledTimes(1)
+      hidden.mockReturnValue(false)
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(150); await flushPromises()
+      expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+    } finally { hidden.mockRestore() }
   })
   it('owns formal controls and forwards refresh/cancel without issuing commands on mount', async () => {
     const run = {runId:'run-1',missionId:'mission-1',status:'pending',steps:[],formalControl:{status:'PLANNING_ACCEPTED'}}
@@ -318,6 +421,7 @@ describe('task Copilot', () => {
     expect((w.get('textarea').element as HTMLTextAreaElement).value).toBe('')
   })
   it('selects declared thinking effort and displays streamed text before completion without role labels', async () => {
+    vi.useFakeTimers()
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), models: [{ id: 'test/model', provider: 'test', model: 'model', reasoningEfforts: ['low', 'high', 'max'] }], defaultModelId: 'test/model' })
     let complete!: (value: any) => void
     vi.mocked(agentosApi.streamCopilotMessage).mockImplementation((_id, _content, _operation, onEvent) => {
@@ -330,12 +434,49 @@ describe('task Copilot', () => {
     await w.get('.effort-options button:nth-child(3)').trigger('click')
     await w.get('textarea').setValue('核对进度')
     await w.get('form').trigger('submit'); await flushPromises()
+    await vi.advanceTimersByTimeAsync(16)
     expect(w.get('.streaming-content').text()).toBe('正在核对')
     expect(w.findAll('.message-meta')).toHaveLength(0)
     expect(vi.mocked(agentosApi.streamCopilotMessage).mock.calls[0][5]?.reasoningEffort).toBe('high')
     complete({ operationId: 'done', user: '核对进度', assistant: '核对完成', createdAt: '2026-10-05T12:00:00Z', observedRevision: 3 })
     await flushPromises()
     expect(w.find('.streaming-content').exists()).toBe(false)
+  })
+  it('batches preview snapshots, flushes on progress, and keeps completed Markdown stable', async () => {
+    vi.useFakeTimers()
+    const saved = { operationId: 'old', user: '', assistant: '**已完成的说明**', createdAt: '2026-10-05T12:00:00Z', observedRevision: 3 }
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), exchanges: [saved] })
+    let receive!: Parameters<typeof agentosApi.streamCopilotMessage>[3]
+    let complete!: (value: any) => void
+    vi.mocked(agentosApi.streamCopilotMessage).mockImplementation((_id, _content, _operation, onEvent) => {
+      receive = onEvent
+      return new Promise(resolve => { complete = resolve })
+    })
+    const w = await panel({ projectionRevision: 1 })
+    const oldElement = w.get('.message-content strong').element
+    const oldParses = () => vi.mocked(renderMarkdown).mock.calls.filter(([text]) => text === saved.assistant).length
+    const before = oldParses()
+    await w.get('textarea').setValue('继续')
+    await w.get('form').trigger('submit'); await flushPromises()
+    receive({ type: 'progress', phase: 'waiting_model' }); await nextTick()
+    expect(w.get('.stream-activity').text()).toBe('等待模型响应')
+    for (let i = 1; i <= 100; i++) receive({ type: 'content', content: '文'.repeat(i), attemptId: 'a1' })
+    await nextTick()
+    expect(w.find('.streaming-content').exists()).toBe(false)
+    await vi.advanceTimersByTimeAsync(16)
+    expect(w.get('.streaming-content').text()).toBe('文'.repeat(100))
+    receive({ type: 'content', content: '文'.repeat(101), attemptId: 'a1' })
+    receive({ type: 'progress', phase: 'validating' }); await nextTick()
+    expect(w.get('.streaming-content').text()).toBe('文'.repeat(101))
+    expect(w.get('.stream-activity').text()).toBe('正在校验并保存回复')
+    const reply = { operationId: 'new', user: '继续', assistant: '已核对', createdAt: '2026-10-05T12:01:00Z', observedRevision: 3,
+      responseTimings: { firstContentMs: 1200 }, latencyMs: 3400, providerRequest: 2 }
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), exchanges: [saved, reply] })
+    complete(reply); await flushPromises()
+    expect(w.get('.response-stats').text()).toBe('首段正文 1.2 秒 · 完成 3.4 秒 · 2 次模型请求')
+    expect(w.get('.message-content strong').element).toBe(oldElement)
+    expect(oldParses()).toBe(before)
+    expect(vi.mocked(renderMarkdown).mock.calls.filter(([text]) => text === '文'.repeat(100))).toHaveLength(1)
   })
   it('restores a warm conversation immediately while validating fresh state before sending', async () => {
     const saved = state(); saved.exchanges = [{ operationId: 'saved', user: '上次的问题', assistant: '已保存的回复', createdAt: '2026-10-05T12:00:00Z', observedRevision: 3 }]

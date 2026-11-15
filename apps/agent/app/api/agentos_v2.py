@@ -536,8 +536,7 @@ def _project_model_endpoint(endpoint, host_runtime: RuntimeProfile | None = None
 def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for event in run.trace:
-        event_type = getattr(event.event_type, "value", event.event_type)
-        if event_type != "model_called":
+        if getattr(event.event_type, "value", event.event_type) != "model_called":
             continue
         payload = dict(event.payload) if isinstance(event.payload, dict) else {}
         usage = dict(payload.get("usage") or {})
@@ -557,12 +556,16 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
         context_window = (
             capability.get("contextWindowTokens") if isinstance(capability, dict) else None
         )
-        context_pressure = (
-            min(1.0, input_tokens / int(context_window))
-            if isinstance(context_window, int) and context_window > 0
-            else None
-        )
+        from adapters.request_diagnostics import context_usage
+        current_context = context_usage(payload.get("requestDiagnostics") or {}, usage, context_window)
+        context_pressure = current_context["ratio"]
         calls.append({
+            "contextUsage": current_context,
+            "usageReported": any(type(usage.get(k)) is int and usage[k] >= 0 for k in ("input_tokens", "prompt_tokens", "inputTokens", "total_tokens", "totalTokens")),
+            "scope": payload.get("scope", "node"),
+            "outcome": payload.get("outcome"),
+            "errorCode": payload.get("errorCode"),
+            "retryIndex": payload.get("retryIndex"),
             "cacheUsageReported": cache_reported,
             "requestDiagnostics": dict(payload.get("requestDiagnostics") or {}),
             "stablePrefixHash": payload.get("stablePrefixHash"),
@@ -2974,7 +2977,7 @@ def create_router(
             capability = _declared_capability_hint(runtime)
             if isinstance(capability, dict):
                 output_policy_value = output_policy_value or "catalog_default"
-        if calls:
+        if observed_capability:
             capability_source = "observed"
         elif isinstance(capability, dict) and capability is not observed_capability:
             capability_source = "declared"
@@ -2985,8 +2988,9 @@ def create_router(
             if isinstance(capability, dict)
             else None
         )
-        input_values = [int(call["usage"]["inputTokens"]) for call in calls]
-        current_input_tokens = input_values[-1] if input_values else None
+        input_values = [call["contextUsage"]["inputTokens"] for call in calls if call["contextUsage"]["inputTokens"] is not None]
+        latest_context = calls[-1]["contextUsage"] if calls else None
+        current_input_tokens = latest_context["inputTokens"] if latest_context else None
         peak_input_tokens = max(input_values) if input_values else None
         manifests = runtime.content_manifest_store.list_manifests(owner_type="run", owner_id=run_id)
         artifact_manifests = [item for item in manifests if item.kind is ContentKind.ARTIFACT]
@@ -3001,20 +3005,25 @@ def create_router(
             "usage": {
                 **usage,
                 "callCount": len(calls),
-                "retryCount": sum(1 for call in calls if str(call.get("effectiveReason") or "").startswith("retry")),
+                "retryCount": sum(1 for call in calls if str(call.get("effectiveReason") or "").startswith("retry")
+                    or type(call.get("retryIndex")) is int and call["retryIndex"] > 0),
                 "latencyMs": sum(int(call["latencyMs"]) for call in calls),
+                "usageReportedCalls": sum(call["usageReported"] for call in calls),
+                "usageMissingCalls": sum(not call["usageReported"] for call in calls),
                 **cache_summary(calls),
             },
             "cacheGroups": cache_groups(calls),
             "contextPressure": {
-                "current": pressures[-1] if pressures else None,
+                "current": latest_context["ratio"] if latest_context else None,
                 "peak": max(pressures) if pressures else None,
                 "currentInputTokens": current_input_tokens,
                 "peakInputTokens": peak_input_tokens,
-                "contextWindowTokens": context_window,
+                "contextWindowTokens": latest_context["contextWindowTokens"] if latest_context else context_window,
+                "latestRequest": latest_context,
                 "source": (
-                    "usage_derived"
-                    if pressures
+                    "usage_derived" if latest_context and latest_context["measurement"] == "provider"
+                    else "estimated" if latest_context and latest_context["measurement"] == "estimate"
+                    else "unknown" if latest_context
                     else "capability_declared"
                     if context_window
                     else "unknown"

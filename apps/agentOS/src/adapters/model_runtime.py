@@ -26,6 +26,7 @@ from contracts.capability import (
 )
 from contracts.runtime_events import RuntimeEvent
 from support.model_stream_policy import ModelStreamPolicy
+from adapters.request_diagnostics import resolve_request_budget
 
 
 # 允许透传的思考档位：GLM 5.3 low/high/max 与 OpenAI 系 low/medium/high 的并集。
@@ -133,7 +134,7 @@ class RegisteredModelRuntime:
             options['temperature'] = temperature
         request = ModelInvocationRequest(requestId=commit_id or f"model:{uuid4().hex}", model=self.model,
             messages=messages, responseSchema=schema, options=options, commitId=commit_id,
-            requestBudget=request_budget)
+            requestBudget=resolve_request_budget(request_budget, capability, tokens))
         try:
             adapter = self._registry.resolve(self.provider, self.model, version=self.version)
             if progress_callback is not None and getattr(adapter, "supports_streamed_tool_turns", False):
@@ -448,6 +449,9 @@ class RegisteredModelRuntime:
             temperature=temperature, streaming=True,
         )
         request, safe_audit = prepared.request, prepared.audit
+        safe_audit.update(capability=capability.model_dump(by_alias=True, mode="json"),
+            outputPolicy=prepared.output_policy.value, effectiveOutputTokens=prepared.effective_tokens,
+            effectiveReason=prepared.effective_reason)
         seq = 0
         started = self._clock()
         last_activity = started
@@ -739,7 +743,8 @@ class RegisteredModelRuntime:
             responseSchema=dict(schema),
             prefixResponseSchema=prefix_schema,
             schemaMessageIndex=schema_message_index,
-            requestBudget=(prompt_metadata or {}).get("requestBudget"),
+            requestBudget=resolve_request_budget((prompt_metadata or {}).get("requestBudget"), capability, effective_tokens,
+                workset=(prompt_metadata or {}).get("materialWorkset") is True),
             options=options,
             commitId=commit_id,
         )

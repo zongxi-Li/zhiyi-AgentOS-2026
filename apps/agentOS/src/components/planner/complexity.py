@@ -102,6 +102,16 @@ _PROMPT_AUDIT_KEYS = (
     "promptRendererVersion", "requestType", "providerFamily", "modelVersion",
     "streaming", "trustSummary", "promptVersion",
 )
+_MODEL_AUDIT_KEYS = _PROMPT_AUDIT_KEYS + (
+    "provider", "model", "usage", "requestDiagnostics", "finishReason", "latencyMs",
+    "capability", "outputPolicy", "effectiveOutputTokens", "effectiveReason",
+    "requestedOutputTokens", "outputExhausted", "callChainId", "partIndex", "outcome", "errorCode",
+    "retryIndex",
+)
+
+
+def model_invocation_audit(value):
+    return {key: value[key] for key in _MODEL_AUDIT_KEYS if key in value}
 
 
 def is_model_timeout(exc: Exception) -> bool:
@@ -239,9 +249,8 @@ def _stream_planning_call(
                     data = candidate
                 provider = str(payload.get("provider") or provider)
                 model = str(payload.get("model") or model)
-                completion_audit = {
-                    key: payload[key] for key in _PROMPT_AUDIT_KEYS if key in payload
-                }
+                completion_audit = model_invocation_audit(payload)
+                completion_audit["retryIndex"] = retry_index
             normalized = event_type if event_type.startswith("planner.") else f"planner.{event_type}"
             if normalized not in {
                 "planner.model.started", "planner.model.first_token",
@@ -257,8 +266,12 @@ def _stream_planning_call(
             }
             for key in ("elapsedMs", "idleMs", "receivedChunks", "receivedLength"):
                 value = payload.get(key)
-                if isinstance(value, (int, float)) and value >= 0:
+                if type(value) in (int, float) and value >= 0:
                     safe[key] = value
+            if event_type == "model.started" and isinstance(payload.get("requestId"), str):
+                safe["requestId"] = payload["requestId"]
+            if event_type in {"model.completed", "planner.model.completed"}:
+                safe["modelAudit"] = dict(completion_audit)
             if progress_callback:
                 progress_callback(safe)
         if data is None:
@@ -337,10 +350,9 @@ def call_planning_model(
                 result = llm.generate_json(prompt, schema, **call_kwargs)
             if isinstance(result, Mapping):
                 audit["streamUsed"] = bool(result.get("streamUsed", audit.get("streamUsed", False)))
-                invocation_audit = {
-                    key: result[key] for key in _PROMPT_AUDIT_KEYS if key in result
-                }
+                invocation_audit = model_invocation_audit(result)
                 if invocation_audit:
+                    invocation_audit.setdefault("retryIndex", attempt - 1)
                     audit.update(invocation_audit)
                     audit.setdefault("modelInvocations", []).append(invocation_audit)
             if progress_callback:
@@ -351,6 +363,13 @@ def call_planning_model(
                 })
             return result
         except Exception as exc:
+            failed_audit = model_invocation_audit(getattr(exc, "audit", {}) or {})
+            if failed_audit:
+                failed_audit.update(outcome="failed", errorCode=str(getattr(exc, "code", None) or type(exc).__name__), retryIndex=attempt - 1)
+                audit.setdefault("modelInvocations", []).append(failed_audit)
+                if progress_callback:
+                    progress_callback({"eventType": "planner.model.failed", "stage": stage,
+                        "callKey": logical_call_key, "modelAudit": failed_audit, "persistTrace": False})
             code = transport_error_code(exc)
             if code is None or attempt >= max_attempts:
                 if code in {"MODEL_TIMEOUT", "MODEL_TTFT_TIMEOUT", "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT"} and deadline - monotonic() <= 0.05:

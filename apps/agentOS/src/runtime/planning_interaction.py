@@ -3,7 +3,9 @@
 import asyncio
 import json
 import re
+from time import monotonic
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,6 +47,69 @@ class CopilotReply(BaseModel):
 class CopilotPermissionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     permission: Literal["read_only", "task_collaboration"]
+
+
+class _CopilotProgress:
+    """Project existing planner events; JSON/action buffers never leave here."""
+
+    def __init__(self, callback, started):
+        self.callback, self.started = callback, started
+        self.raw = self.preview = ''
+        self.attempt_id = None
+        self.request_id = None
+        self.requests = 0
+        self.timings = {}
+
+    def elapsed(self):
+        return max(0, round((monotonic() - self.started) * 1000))
+
+    def emit(self, kind, **payload):
+        if self.callback:
+            self.callback({'type': kind, **payload,
+                **({'attemptId': self.attempt_id} if self.attempt_id else {})})
+
+    def phase(self, phase):
+        self.emit('progress', phase=phase, elapsedMs=self.elapsed(),
+            responseTimings=dict(self.timings),
+            **({'providerRequest': self.requests} if self.requests else {}),
+            **({'requestId': self.request_id} if self.request_id else {}))
+
+    def accept(self, event):
+        kind = event.get('eventType')
+        if kind == 'planner.stage.started':
+            self.raw = self.preview = ''
+            self.attempt_id = f'attempt_{uuid4().hex}'
+            self.request_id = None
+            self.emit('content', content='')
+            self.phase('preparing')
+        elif kind == 'planner.model.started':
+            self.requests += 1
+            self.request_id = event.get('requestId')
+            # Includes serialisation/queue waiting before the first model starts;
+            # this is not provider connection time or a browser measurement.
+            self.timings.setdefault('contextPreparationMs', self.elapsed())
+            self.phase('waiting_model')
+        elif kind in {'planner.model.activity', 'planner.model.first_token'}:
+            self.phase('receiving')
+        elif kind == 'planner.stage.retry':
+            self.phase('retrying')
+        elif kind == 'planner.model.output.delta':
+            self.raw += event['delta']
+            if len(self.raw) > 65536:
+                raise ValueError('conversation output preview exceeds limit')
+            preview = partial_reply(self.raw)
+            if preview is not None and preview != self.preview:
+                self.preview = preview
+                if preview:
+                    self.timings.setdefault('firstContentMs', self.elapsed())
+                self.emit('content', content=preview, responseTimings=dict(self.timings))
+        elif kind == 'planner.model.completed':
+            self.phase('validating')
+
+    def metadata(self):
+        return {'latencyMs': self.elapsed(),
+            **({'responseTimings': dict(self.timings)} if self.timings else {}),
+            **({'providerRequest': self.requests} if self.requests else {})}
 
 
 class RuntimePlanningInteraction:
@@ -127,6 +192,7 @@ class RuntimePlanningInteraction:
             return exchange
 
     async def message(self, run_id, request, progress_callback=None):
+        started = monotonic()
         if not request.content.strip():
             raise ValueError("message must not be blank")
         # Conversation serialization never holds the execution Run lock over a model call.
@@ -142,6 +208,8 @@ class RuntimePlanningInteraction:
                         or existing.get("permission", "task_collaboration") != request.permission):
                     raise ReviewConflictError("message operation was already used")
                 return existing
+            progress = _CopilotProgress(progress_callback, started)
+            progress.phase('preparing')
             run = store.get_run(run_id)
             llm = self.runtime._planning_engine_for_run(run).intent_parser.llm
             if llm is None:
@@ -176,15 +244,21 @@ class RuntimePlanningInteraction:
                 "state": {k: view[k] for k in ("missionId", "runId", "latestRunId", "taskPermission", "status", "steps", "question", "humanAnswers", "decision")},
                 "observation": observation,
                 "observationSource": "Fresh read-only snapshot; this query does not resume or approve the Run.",
-                "recentConversation": store.list_task_copilot_exchanges(run.mission_id, limit=4),
+                "recentConversation": [{key: item[key] for key in
+                    ("sourceRunId", "operationId", "user", "assistant", "action", "receipt") if key in item}
+                    for item in store.list_task_copilot_exchanges(run.mission_id, limit=4)],
                 "permission": request.permission,
                 "reasoningEffort": request.reasoning_effort,
                 "userMessage": request.content}, ensure_ascii=False)
-            result = await asyncio.to_thread(call_planning_model, llm, stage="runtime_copilot", prompt=prompt,
-                schema=CopilotReply.model_json_schema(), audit={},
-                progress_callback=progress_callback,
-                **({"reasoning_effort": request.reasoning_effort} if request.reasoning_effort else {}),
-                model_timeout_seconds=PLANNING_MODEL_TIMEOUT_SECONDS, run_id=run_id)
+            audit = {}
+            try:
+                result = await asyncio.to_thread(call_planning_model, llm, stage="runtime_copilot", prompt=prompt,
+                    schema=CopilotReply.model_json_schema(), audit=audit,
+                    progress_callback=progress.accept,
+                    **({"reasoning_effort": request.reasoning_effort} if request.reasoning_effort else {}),
+                    model_timeout_seconds=PLANNING_MODEL_TIMEOUT_SECONDS, run_id=run_id)
+            finally:
+                self.runtime.record_model_invocations(run_id, audit.get("modelInvocations", []), scope="copilot")
             reply = CopilotReply.model_validate(result.get("data", result) if isinstance(result, dict) else result)
             exchange = {"operationId": request.operation_id, "user": request.content,
                 "assistant": reply.content, "createdAt": utc_now().isoformat(), "observedRevision": run.runtime_revision,
@@ -196,6 +270,13 @@ class RuntimePlanningInteraction:
                     exchange["action"] = self.operations.preview(store.get_run(run_id), reply.action, request.content)
                 except (ValueError, KeyError) as exc:
                     exchange["assistant"] += f"\n\n操作尚不可用：{str(exc)[:300]}"
+            exchange.update(progress.metadata())
+            invocations = audit.get("modelInvocations", [])
+            if invocations:
+                from adapters.request_diagnostics import context_usage
+                latest = invocations[-1]
+                exchange["contextUsage"] = context_usage(latest.get("requestDiagnostics") or {},
+                    latest.get("usage") or {}, (latest.get("capability") or {}).get("contextWindowTokens"))
             store.save_copilot_exchange(run_id, request.operation_id, exchange)
             return exchange
 
@@ -203,7 +284,6 @@ class RuntimePlanningInteraction:
         """Preview provider output, then publish only the validated durable exchange."""
         events = asyncio.Queue(maxsize=64)
         loop = asyncio.get_running_loop()
-        raw = ""
         active = True
 
         def offer(event):
@@ -213,21 +293,8 @@ class RuntimePlanningInteraction:
                 events.put_nowait(event)
 
         def progress(event):
-            nonlocal raw
-            if not active:
-                return
-            if event.get("eventType") == "planner.stage.started":
-                raw = ""
-                loop.call_soon_threadsafe(offer, {"type": "content", "content": ""})
-            elif event.get("eventType") == "planner.model.output.delta":
-                raw += event["delta"]
-                if len(raw) > 65536:
-                    raise ValueError("conversation output preview exceeds limit")
-                content = partial_reply(raw)
-                if content is not None:
-                    loop.call_soon_threadsafe(offer, {"type": "content", "content": content})
-            elif event.get("eventType") == "planner.model.activity":
-                loop.call_soon_threadsafe(offer, {"type": "activity"})
+            if active:
+                loop.call_soon_threadsafe(offer, event)
 
         async def produce():
             try:

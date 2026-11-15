@@ -22,6 +22,7 @@
       <article class="message" :class="`is-${message.role}`">
         <div v-if="message.planner" class="message-meta"><small>任务澄清</small></div>
         <div class="message-content markdown-body" v-html="messageMarkup.get(message.id)"></div>
+        <small v-if="copilotResponseSummary(message)" class="response-stats" title="服务端本次回复的耗时，包含准备与排队，不包含浏览器绘制。">{{ copilotResponseSummary(message) }}</small>
         <div v-if="message.action" class="operation-card">
           <strong>{{ actionLabel(message.action.kind) }}</strong>
           <p v-if="message.action.kind === 'user_input'">在当前执行片段结束后，由 Planner 重新观察并处理补充要求。</p>
@@ -39,7 +40,11 @@
         <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
       </div>
 
-      <article v-if="busy && pendingUser" class="stream-turn"><div v-if="!answering" class="message is-user"><div class="message-content">{{ pendingUser }}</div></div><div v-if="streamContent" class="message-content markdown-body streaming-content" v-html="renderMarkdown(streamContent)"></div><div v-else class="stream-activity"><el-icon class="is-loading"><Loading /></el-icon><span>{{ answering ? '正在提交回答' : '正在生成回复' }}</span><div class="thinking-line"></div></div></article>
+      <article v-if="busy && pendingUser" class="stream-turn">
+        <div v-if="!answering" class="message is-user"><div class="message-content">{{ pendingUser }}</div></div>
+        <ChatTranscriptBlock v-if="streamContent" class="message-content streaming-content" :block="streamBlock" />
+        <div class="stream-activity" role="status"><el-icon class="is-loading"><Loading /></el-icon><span>{{ answering ? '正在提交回答' : streamPhaseText }}</span><div v-if="!streamContent" class="thinking-line"></div></div>
+      </article>
       <article v-if="state?.question" class="question-card">
         <div class="question-heading"><el-icon><ChatDotRound /></el-icon><span>需要你的补充</span><small>任务已暂停</small></div>
         <p>{{ state.question.prompt }}</p>
@@ -128,21 +133,23 @@ import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMoun
 import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, Share } from '@element-plus/icons-vue'
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage, type RunActionCapabilities } from '@/services/api/agentos'
 import { readRunCapabilities, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
-import type { CopilotPermission, CopilotState, CopilotAction, CopilotActionKind } from '@/services/api/agentos/api/copilot'
-import type { CopilotConversationMessage } from './copilotConversation'
+import type { CopilotPermission, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase } from '@/services/api/agentos/api/copilot'
+import { copilotResponseSummary, type CopilotConversationMessage } from './copilotConversation'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import { renderMarkdown } from '@/utils/markdown'
 import { clearCopilotSession, getCopilotSession, saveCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
 import CopilotRunTimeline from './CopilotRunTimeline.vue'
+import ChatTranscriptBlock from '@/components/ChatTranscriptBlock.vue'
+import { createStreamBatcher, type TranscriptBlock } from '../../../../backend/src/shared/chat-stream/index.mjs'
 import { useBrand } from '@/features/brand/useBrand'
 
 const props = withDefaults(defineProps<{
   entry?: WorkspaceEntry | null; graphNode?: WorkspaceGraphNode | null; graphNodes?: WorkspaceGraphNode[]
   graph?: GraphProjection | null; runId?: string | null; runStatus?: string | null
   runtimeObservation?: RuntimeObservation | null; historical?: boolean; readonly?: boolean; actionCapabilities?: RunActionCapabilities | null
-  missionId?: string; canCancel?: boolean; cancelPending?: boolean
+  missionId?: string; canCancel?: boolean; cancelPending?: boolean; projectionRevision?: number
 }>(), { entry: null, graphNode: null, graphNodes: () => [], graph: null, runId: null, runStatus: null, runtimeObservation: null, historical: false, readonly: false, missionId: '', canCancel: false, cancelPending: false })
 const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': [] }>()
 const { activePack } = useBrand()
@@ -179,6 +186,11 @@ const receiptKey = (sourceRunId: string | undefined, proposalId: string) => `${s
 const receipts = computed(() => Object.fromEntries((state.value?.exchanges || []).filter(e => e.receipt).map(e => [receiptKey(e.sourceRunId, e.receipt!.proposalId), e.receipt!])))
 const selectedModel = ref(''), permission = ref<CopilotPermission>('task_collaboration')
 const reasoningEffort = ref(''), streamContent = ref(''), pendingUser = ref('')
+const streamPhase = ref<CopilotProgressPhase>('preparing')
+const streamPhaseText = computed(() => ({ preparing: '正在准备任务回复', waiting_model: '等待模型响应',
+  receiving: '模型正在生成回复', retrying: '模型请求未完成，正在重试', validating: '正在校验并保存回复' })[streamPhase.value])
+const streamBlock = computed<TranscriptBlock>(() => ({ id: 'copilot-current-reply', kind: 'text', state: 'streaming', text: streamContent.value }))
+let streamBatcher: ReturnType<typeof createStreamBatcher> | undefined
 const availableModels = computed(() => state.value?.models || [])
 const reasoningOptions = computed(() => availableModels.value.find(m => m.id === (selectedModel.value || state.value?.defaultModelId))?.reasoningEfforts || [])
 const effortLabel = (value: string) => ({ low: '低', medium: '中', high: '高', max: '最高' } as Record<string, string>)[value] || '关闭'
@@ -189,7 +201,9 @@ const permissionOptions = [
   { value: 'task_collaboration' as const, label: '按需确认', description: '对整个任务生效，跨运行持续协作；操作仍需确认与系统校验' }
 ]
 const modelCalls = ref<ModelCallUsage[]>([]), callCursor = ref<string | null>(null), callError = ref(''), callsLoading = ref(false)
-let generation = 0, refreshSequence = 0, timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
+let generation = 0, refreshSequence = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
+let refreshPending = false, refreshing = false, accessDenied = false
+let refreshFailures = 0
 let validatedRunId: string | null = null
 let viewActive = true
 let viewSuspended = false
@@ -200,10 +214,19 @@ const statusLabel = computed(() => hasPendingToolApproval.value ? '等待你确�
 const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
 const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed<CopilotConversationMessage[]>(() => [
-  ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }]),
+  ...(state.value?.exchanges || []).flatMap(e => [ ...(e.user ? [{ id: `${e.sourceRunId || props.runId}:${e.operationId}-u`, role: 'user', content: e.user, time: e.createdAt, planner: false, action: undefined, receipt: undefined, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined }] : []), { id: `${e.sourceRunId || props.runId}:${e.operationId}-a`, role: 'assistant', content: e.assistant, time: e.createdAt, planner: false, action: e.action, receipt: e.receipt, proposalId: e.operationId, sourceRunId: e.sourceRunId || props.runId || undefined, responseTimings: e.responseTimings, latencyMs: e.latencyMs, providerRequest: e.providerRequest, contextUsage: e.contextUsage }]),
   ...(state.value?.humanAnswers || []).flatMap(a => [{ id: `${a.questionId}-q`, role: 'assistant', content: a.prompt, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }, { id: `${a.questionId}-r`, role: 'user', content: a.answer, time: a.answeredAt, planner: true, action: undefined, receipt: undefined, proposalId: '', sourceRunId: a.sourceRunId }])
 ].sort((a, b) => a.time.localeCompare(b.time)))
-const messageMarkup = computed(() => new Map(messages.value.map(message => [message.id, renderMarkdown(message.content)])))
+let markupCache = new Map<string, { text: string; html: string }>()
+const messageMarkup = computed(() => {
+  const next = new Map<string, { text: string; html: string }>()
+  for (const message of messages.value) {
+    const previous = markupCache.get(message.id)
+    next.set(message.id, previous?.text === message.content ? previous : { text: message.content, html: renderMarkdown(message.content) })
+  }
+  markupCache = next
+  return new Map([...next].map(([id, rendered]) => [id, rendered.html]))
+})
 const lanes = ['planner', 'model', 'tool', 'execution']
 const laneLabel = (kind: string) => ({ planner: '规划', model: '模型', tool: '工具', execution: '执行' } as Record<string, string>)[kind] || kind
 const trajectory = computed(() => {
@@ -236,12 +259,19 @@ async function refresh(silent = false) {
   const id = props.runId, token = generation
   if (!id) return
   const request = ++refreshSequence
+  const revision = props.projectionRevision
+  refreshing = true
+  refreshPending = false
   // An existing, validated snapshot remains usable while its replacement loads.
   if (!silent && (!state.value || validatedRunId !== id)) loading.value = true
   try {
     const next = await agentosApi.getCopilot(id, controller?.signal)
     if (token !== generation || request !== refreshSequence) return
+    if (next.runId !== id || (next.missionId && props.missionId && next.missionId !== props.missionId)) throw new Error('任务对话身份不匹配，请刷新后重试。')
     validatedRunId = id
+    accessDenied = false
+    refreshFailures = 0
+    refreshPending = props.projectionRevision !== revision
     const changedQuestion = next.question?.questionId !== state.value?.question?.questionId
     state.value = next
     if (next.taskPermission) permission.value = next.taskPermission
@@ -250,8 +280,38 @@ async function refresh(silent = false) {
     if (!silent) error.value = ''
     scrollBottom()
     if (tab.value === 'trace' && !silent) void loadCalls()
-  } catch (e: any) { if (token === generation && request === refreshSequence && e?.code !== 'ERR_CANCELED') { error.value = errorMessage(e); if ([401, 403, 404].includes(e?.response?.status)) { state.value = null; clearCopilotSession(id) } } }
-  finally { if (token === generation && request === refreshSequence) loading.value = false }
+  } catch (e: any) {
+    if (token === generation && request === refreshSequence && e?.code !== 'ERR_CANCELED') {
+      error.value = errorMessage(e)
+      refreshFailures++
+      const status = e?.response?.status
+      refreshPending = refreshFailures <= 2 && (!status || status >= 500)
+      if ([401, 403, 404].includes(status)) { accessDenied = true; validatedRunId = null; state.value = null; clearCopilotSession(id) }
+    }
+  }
+  finally { if (token === generation && request === refreshSequence) { loading.value = false; refreshing = false; scheduleRefresh() } }
+}
+
+function stopScheduledRefresh() { clearTimeout(refreshTimer); refreshTimer = undefined }
+function scheduleRefresh() {
+  if (!refreshPending || !viewActive || document.hidden || busy.value || refreshing || accessDenied || !props.runId || refreshTimer) return
+  // Consume the Mission subscription already owned by the workbench. A burst
+  // requests at most one read, plus one follow-up if it changed during the read.
+  refreshTimer = setTimeout(() => {
+    refreshTimer = undefined
+    if (refreshPending && viewActive && !document.hidden && !busy.value && !refreshing && !accessDenied) void refresh(true)
+  }, refreshFailures ? 1000 * refreshFailures : 150)
+}
+watch(() => props.projectionRevision, (revision, previous) => {
+  if (!Number.isSafeInteger(revision) || revision! < 0 || (previous !== undefined && revision! <= previous)) return
+  refreshPending = true
+  refreshFailures = 0
+  scheduleRefresh()
+})
+watch(busy, value => { if (!value) scheduleRefresh() })
+function onVisibilityChange() {
+  if (document.hidden) stopScheduledRefresh()
+  else if (viewActive) { refreshPending = true; scheduleRefresh() }
 }
 async function loadCalls(more = false) {
   const id = props.runId, token = generation
@@ -271,15 +331,31 @@ async function send() {
   const target = question?.questionId || 'chat'
   const options = JSON.stringify([question ? '' : selectedModel.value, permission.value, reasoningEffort.value])
   if (!requestKey || requestKey.content !== content || requestKey.target !== target || requestKey.options !== options) requestKey = { content, target, options, id: crypto.randomUUID() }
+  const operationId = requestKey.id
   openMenu.value = null
   busy.value = true; error.value = ''; followBottom.value = true; tab.value = 'chat'
-  pendingUser.value = content; streamContent.value = ''
+  pendingUser.value = content; streamContent.value = ''; streamPhase.value = 'preparing'
+  let receivedContent = ''
+  const batcher = createStreamBatcher(event => {
+    if (token !== generation) return
+    streamContent.value += event.data.delta
+    scrollBottom()
+  })
+  streamBatcher = batcher
   try {
-    if (question) await agentosApi.answerPlanner(id, question.questionId, content, state.value.revision, requestKey.id, permission.value)
+    if (question) await agentosApi.answerPlanner(id, question.questionId, content, state.value.revision, operationId, permission.value)
     else {
-      const exchange = await agentosApi.streamCopilotMessage(id, content, requestKey.id, event => {
+      const exchange = await agentosApi.streamCopilotMessage(id, content, operationId, event => {
         if (token !== generation) return
-        if (event.type === 'content') { streamContent.value = event.content || ''; scrollBottom() }
+        if (event.type === 'content') {
+          const next = event.content || ''
+          if (!next.startsWith(receivedContent)) { batcher.flush(); streamContent.value = ''; receivedContent = '' }
+          batcher.accept({ event: 'content_delta', requestId: operationId, data: { delta: next.slice(receivedContent.length), attemptId: event.attemptId } })
+          receivedContent = next
+        } else {
+          batcher.flush()
+          if (event.type === 'progress' && event.phase) streamPhase.value = event.phase
+        }
       }, controller?.signal, { ...(selectedModel.value ? { modelId: selectedModel.value } : {}), permission: !allows('canCollaborate') ? 'read_only' : permission.value, ...(reasoningEffort.value ? { reasoningEffort: reasoningEffort.value } : {}) })
       if (token === generation && !state.value.exchanges.some(e => e.operationId === exchange.operationId)) state.value.exchanges.push(exchange)
       if (token === generation) { pendingUser.value = ''; streamContent.value = '' }
@@ -288,7 +364,7 @@ async function send() {
     draft.value = ''; requestKey = undefined
     await refresh()
   } catch (e) { if (token === generation) { error.value = errorMessage(e); if ((e as any)?.response?.status === 409) await refresh(true) } }
-  finally { if (token === generation) { busy.value = false; streamContent.value = ''; pendingUser.value = '' } }
+  finally { if (token === generation) batcher.flush(); batcher.dispose(); if (streamBatcher === batcher) streamBatcher = undefined; if (token === generation) { busy.value = false; streamContent.value = ''; pendingUser.value = '' } }
 }
 async function prepareOperation(kind: CopilotActionKind) {
   if (!state.value || !props.runId || busy.value || !allows(kind === 'user_input' ? 'canCollaborate' : kind === 'recover' ? 'canRetrySuccessor' : 'canRerunSuccessor') || permission.value !== 'task_collaboration') return
@@ -343,11 +419,12 @@ async function confirmAction(proposalId: string, action: CopilotAction, sourceRu
 }
 watch(() => props.graphNode?.acgNodeId || props.entry?.acgNodeId, id => { operationStep.value = id || '' }, { immediate: true })
 function onKeydown(e: KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send() } }
-function poll() { clearTimeout(timer); if (!viewActive) return; const token = generation; const terminal = ['completed', 'failed', 'cancelled', 'superseded'].includes(state.value?.status || ''); timer = setTimeout(async () => { if (viewActive && !busy.value && !loading.value && props.runId && !document.hidden) await refresh(true); if (token === generation && viewActive) poll() }, document.hidden ? 30000 : terminal ? 15000 : 3000) }
 function saveSession(id = props.runId) { if (id && state.value) saveCopilotSession(id, { state: state.value, draft: draft.value, model: selectedModel.value, permission: permission.value, effort: reasoningEffort.value, operation: requestKey }, sessionOwnerId) }
 watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
-  generation++; controller?.abort(); controller = new AbortController(); clearTimeout(timer)
+  generation++; controller?.abort(); controller = new AbortController(); stopScheduledRefresh()
+  streamBatcher?.dispose(); streamBatcher = undefined
+  refreshing = false; refreshPending = false; accessDenied = false; refreshFailures = 0
   validatedRunId = null
   hasPendingToolApproval.value = false
   hasTimelineContent.value = false
@@ -358,16 +435,16 @@ watch(() => props.runId, (_next, previous) => {
   modelCalls.value = []; callCursor.value = null; callError.value = ''; callsLoading.value = false
   const cached = props.runId ? getCopilotSession(props.runId) : undefined
   if (cached) { state.value = cached.state; draft.value = cached.draft; selectedModel.value = cached.model; permission.value = cached.permission; reasoningEffort.value = cached.effort; requestKey = cached.operation; answering.value = !!cached.state.question }
-  void refresh(); poll()
+  void refresh()
 }, { immediate: true })
 watch(tab, value => { if (value === 'trace') void loadCalls() })
 watch(reasoningOptions, options => { if (!options.includes(reasoningEffort.value)) reasoningEffort.value = '' })
 watch(draft, () => void nextTick(() => { const e = composerInput.value; if (e) { e.style.height = 'auto'; e.style.height = `${Math.min(180, Math.max(76, e.scrollHeight))}px` } }))
 function closePickers(e: PointerEvent) { if (!composerRoot.value?.contains(e.target as Node)) openMenu.value = null }
-onMounted(() => document.addEventListener('pointerdown', closePickers))
-onDeactivated(() => { viewActive = false; viewSuspended = true; clearTimeout(timer); document.removeEventListener('pointerdown', closePickers) })
-onActivated(() => { if (!viewSuspended) return; viewSuspended = false; viewActive = true; document.addEventListener('pointerdown', closePickers); if (!busy.value && !loading.value) void refresh(true); poll() })
-onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); clearTimeout(timer); document.removeEventListener('pointerdown', closePickers) })
+onMounted(() => { document.addEventListener('pointerdown', closePickers); document.addEventListener('visibilitychange', onVisibilityChange) })
+onDeactivated(() => { viewActive = false; viewSuspended = true; stopScheduledRefresh(); document.removeEventListener('pointerdown', closePickers); document.removeEventListener('visibilitychange', onVisibilityChange) })
+onActivated(() => { if (!viewSuspended) return; viewSuspended = false; viewActive = true; document.addEventListener('pointerdown', closePickers); document.addEventListener('visibilitychange', onVisibilityChange); refreshPending = true; if (!busy.value && !refreshing) void refresh(true) })
+onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopScheduledRefresh(); streamBatcher?.dispose(); document.removeEventListener('pointerdown', closePickers); document.removeEventListener('visibilitychange', onVisibilityChange) })
 </script>
 
 <style scoped>
@@ -406,6 +483,7 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .stream-activity { display:flex; align-items:center; gap:7px; color:var(--wb-text-muted); font-size:11px; }
 .stream-turn { margin-bottom:24px; }
 .streaming-content { min-height:24px; }
+.response-stats { display:block; margin-top:8px; color:var(--wb-text-muted); font-size:10px; }
 .message.is-user { width:fit-content; max-width:92%; margin-left:auto; padding:10px 13px; border-radius:12px; background:var(--wb-surface-section); border:1px solid var(--cp-border); }
 .message-content { color:var(--wb-text-secondary); font-size:13px; line-height:1.75; overflow-wrap:anywhere; text-wrap:pretty; }
 /* 元素排版交给 github-markdown-css（global.css），字号行高继承上面的 13px/1.75 */

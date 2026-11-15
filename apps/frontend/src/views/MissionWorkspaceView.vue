@@ -477,6 +477,7 @@ const auxiliaryViewProps = computed(() => ({
   historical: isHistorical.value,
   readonly: controlReadOnly.value,
   actionCapabilities: lifecycle.value.capabilities,
+  projectionRevision: projection.value?.projectionRevision,
   ...(activeAuxiliaryView.value?.getProps?.(workbenchContext.value) || {})
 }))
 type RightPaneState = {

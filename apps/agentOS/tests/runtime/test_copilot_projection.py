@@ -53,3 +53,32 @@ def test_tool_timeline_reads_existing_receipts_without_model_or_file_contents(tm
         assert "private" not in json.dumps(activity) and "foreign" not in json.dumps(activity)
     finally:
         store.close()
+
+
+def test_copilot_progress_keeps_attempt_boundaries_and_first_response_timings(monkeypatch):
+    from runtime import planning_interaction as module
+    current = [10.0]
+    monkeypatch.setattr(module, 'monotonic', lambda: current[0])
+    events = []
+    progress = module._CopilotProgress(events.append, 10.0)
+    progress.accept({'eventType': 'planner.stage.started'})
+    current[0] = 10.2
+    progress.accept({'eventType': 'planner.model.started', 'requestId': 'req-one'})
+    current[0] = 11.0
+    progress.accept({'eventType': 'planner.model.activity', 'reasoning_content': 'PRIVATE'})
+    assert events[-1]['phase'] == 'receiving'
+    assert events[-1]['requestId'] == 'req-one'
+    assert all('PRIVATE' not in str(event) for event in events)
+    progress.accept({'eventType': 'planner.model.output.delta', 'delta': '{"content":"first'})
+    first_attempt = events[-1]['attemptId']
+    progress.accept({'eventType': 'planner.stage.retry'})
+    assert events[-1]['phase'] == 'retrying'
+    progress.accept({'eventType': 'planner.stage.started'})
+    assert events[-2]['content'] == '' and events[-2]['attemptId'] != first_attempt
+    current[0] = 12.0
+    progress.accept({'eventType': 'planner.model.started', 'requestId': 'req-two'})
+    progress.accept({'eventType': 'planner.model.output.delta', 'delta': '{"content":"second","action":{"secret":"PRIVATE"}}'})
+    assert events[-1]['content'] == 'second'
+    assert 'PRIVATE' not in str(events)
+    assert progress.metadata()['providerRequest'] == 2
+    assert progress.metadata()['responseTimings'] == {'contextPreparationMs': 200, 'firstContentMs': 1000}

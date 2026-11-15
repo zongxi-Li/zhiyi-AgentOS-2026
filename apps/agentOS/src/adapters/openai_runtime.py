@@ -477,7 +477,9 @@ class OpenAICompatibleRuntime:
 
     @staticmethod
     def _check_request_budget(diagnostics: dict[str, Any]) -> None:
-        if diagnostics["requestBudget"]["status"] == "exceeded":
+        working = diagnostics.get("workingSet") or {}
+        if diagnostics["requestBudget"]["status"] == "exceeded" or (
+                working.get("status") == "exceeded" and working.get("mode") == "split"):
             raise ModelInvocationError(
                 "MODEL_INPUT_BUDGET_EXCEEDED",
                 "estimated request input plus output reserve exceeds the frozen budget; use authorized worksets or replan",
