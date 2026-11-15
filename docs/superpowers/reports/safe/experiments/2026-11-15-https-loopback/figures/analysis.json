@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "font": "Microsoft YaHei",
+  "matplotlib": "3.10.7",
+  "aggregation": "先按输入汇总重复测量中位数；点为输入，箱为输入间分布；非置信区间",
+  "input_report_sha256": "87f1408ededd9b0f27d3004027de3b3bde472c909c87eca7bf3df242868ef0dc",
+  "script_sha256": "438a38d497efd8144bb640fe41b984718fb8f62d353cd8d4d58b2b27e33cdd17",
+  "metrics": {
+    "full_ttft_ms": 129.13459999999998,
+    "https_ttft_ms": 166.99790000000002,
+    "full_tpot_ms": 46.60380519480519,
+    "https_tpot_ms": 70.79181,
+    "full_e2e_ms": 789.0007499999999,
+    "https_e2e_ms": 1179.15
+  }
+}

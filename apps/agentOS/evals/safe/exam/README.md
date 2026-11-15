@@ -49,3 +49,26 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 本次1,146个token全部匹配，图像、原始数据、依赖锁及完整命令见[实验报告](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-local-generation/README.md)。绘图依赖为独立可选环境，不修改默认Agent依赖。
 
 同日新增网络敏感性分析：`analyze_network_sensitivity.py` 复用已验证的60组计算路径，按显式256 B回执假设叠加RTT和带宽，输出360条情景记录；`gen_fig_network_sensitivity.py` 生成延迟对比和带宽×RTT热力图。两者校验数据哈希、配对与步骤完整性、情景覆盖、公式和汇总一致性，拒绝覆盖旧目录。它是串行通信分析模型，不是公网实测；完整公式、情景参数、脚本哈希和复现命令见[网络敏感性报告](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-network-sensitivity/README.md)。
+
+## 独立后段进程的真实 HTTPS 回环
+
+`verify_https_transport.py` 使用本机已有真实Qwen权重，启动独立suffix子进程和实际TCP/TLS监听，父进程持有prefix及仅用于评估的完整模型oracle。每次运行生成临时证书与随机实验凭据，客户端显式信任临时CA并校验主机名；另用默认信任库确认未信任证书被拒绝。进程退出后删除证书和凭据，不写入报告。
+
+固定合成输入经过真实HMAC、HTTPS、JSON、会话、后段KV与token回执链路；先预热并完成回执查询、业务幂等、nonce重放、篡改和跨owner检查，再做固定seed的配对实验。后段forward次数必须等于实际生成token数，重复请求不能额外进入模型；最后故意留下未执行会话，验证应用停机释放KV。
+
+```powershell
+apps/agentOS/.venv-safe/Scripts/python.exe -m pip install --require-hashes -r apps/agentOS/requirements.safe.http.lock
+apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verify_https_transport.py `
+  --source data/safe/source/qwen2.5-0.5b-instruct `
+  --artifacts data/safe/artifacts/qwen2.5-0.5b-k2 `
+  --manifest-digest 154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f `
+  --output data/safe/evidence/https-new-run --samples 20 --repeats 3 --max-new-tokens 16 --threads 4
+apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/gen_fig_https_transport.py `
+  --input data/safe/evidence/https-new-run
+```
+
+生成 `runs.csv`、`http.csv`、`report.json`；HTTP表记录实际请求/响应正文的字节数、完整调用耗时、实际step/phase/position和激活字节，不含载荷或凭据。绘图前核验哈希、配对、覆盖、控制流、步骤连续性、位置、长度、停止规则、时间一致性和KV计数，输出中文300 DPI PNG/矢量PDF。绘图另需现有 `requirements.safe.plotting.lock`。
+
+延迟是同机独立进程的回环结果，竞争同一CPU，不能据此推断公网/异构设备性能；字节只含正文，不含HTTP头、TLS记录、握手、TCP或重传。完整oracle也在父进程，不得把父进程内存解释为纯prefix需求。没有DP、反演攻击或产品入口验收。
+
+本次20×3实验共792个token一致，后段62个KV全部释放；原始CSV、两组中文图像及详细统计见[HTTPS回环报告](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-https-loopback/README.md)。

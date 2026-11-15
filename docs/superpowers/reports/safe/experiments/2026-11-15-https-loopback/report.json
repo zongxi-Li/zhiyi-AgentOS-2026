@@ -1,0 +1,61 @@
+{
+  "schema_version": "safe-https-loopback-v1",
+  "status": "passed",
+  "created_at": "2026-11-15T14:03:54.700786+00:00",
+  "samples": 20,
+  "repeats": 3,
+  "max_new_tokens": 16,
+  "threads": 4,
+  "seed": 20261115,
+  "network": "real-tcp-tls-loopback",
+  "dp": false,
+  "public_network": false,
+  "byte_scope": "actual HTTP request/response bodies only; excludes headers/TLS/TCP",
+  "latency_scope": "warmed generation including session creation/close; excludes model loading",
+  "oracle_scope": "parent also holds full model solely for evaluation; child holds suffix only",
+  "tpot_definition": "(last_token_received-first_token_received)/(generated_tokens-1)",
+  "python": "3.10.11",
+  "torch": "2.11.0+cpu",
+  "transformers": "4.46.3",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "manifest_digest": "154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f",
+  "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+  "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+  "cut_layer": 2,
+  "total_layers": 24,
+  "hidden_size": 896,
+  "eos_token_ids": [
+    151643,
+    151645
+  ],
+  "source_weights_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+  "runtime_commit": "07dafd2e971eff839fc8d9803ca2d8c76ddc6f84",
+  "script_sha256": "94dfdba2b2e7556041db903e9c475e8b62bdf27863b678e78461978fb68db77a",
+  "http_lock_sha256": "93e94477a657f29a595d69f50989937a4c5d416108fea6912b064d389a77daa6",
+  "exact_sequence_matches": 60,
+  "matched_tokens": 792,
+  "warmup_tokens": 4,
+  "worker": {
+    "status": "passed",
+    "pid": 33228,
+    "active_kv": 0,
+    "created_kv": 62,
+    "released_kv": 62,
+    "forwards": 796
+  },
+  "protocol_checks": [
+    "receipt-query",
+    "business-idempotency",
+    "nonce-replay-rejected",
+    "body-tampering-rejected",
+    "cross-owner-hidden",
+    "untrusted-certificate-rejected",
+    "shutdown-releases-abandoned-kv"
+  ],
+  "prefix_kv_empty": true,
+  "independent_suffix_process": true,
+  "data_sha256": {
+    "runs.csv": "dcb6fb707425fd29aa94b3ac6ceda2722ca9a26cd54c469a59a05e9f928fc7a9",
+    "http.csv": "e73ae0ff123bbbb2b7fac4f22bf76cea7c61d52859d9f396098c965f6ae38853"
+  }
+}

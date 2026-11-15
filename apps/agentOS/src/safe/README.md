@@ -16,11 +16,15 @@
 
 2026-11-15本机用例：已实现注入式 `SplitInferenceService`、批准制品离线 `HuggingFaceTokenizer` 和显式研究装配 `InProcessTransport`。本机负责固定模板/128 token限额、前段KV、输出32 token上限与整段文本解码；超时只查询已提交回执，不盲目重发。默认无配置仍拒绝执行，单实例只允许一个活动生成；同步调用间支持协作取消。完整EOS集合读取自已校验的generation配置，不启用其中的随机采样配置。联合回归139项通过，详见[本机用例报告](../../../../docs/superpowers/reports/safe/2026-11-15-local-generation.md)。
 
-目前已有进程内本机/后段生成用例，认证网络服务、产品接口、DP发布与持久预算仍待实现。下表按当前代码状态维护，历史阶段报告单独保留。
+目前已有进程内及认证 HTTPS 本机/后段生成用例；产品接口、DP发布与持久预算仍待实现。下表按当前代码状态维护，历史阶段报告单独保留。
 
 同日本机对照实验：Qwen2.5-0.5B、K=2/24、CPU FP32，20条合成输入×3轮，60组生成共1,146个token与完整模型全部一致。本机拆分路径的配对首token/TPOT耗时比中位数为1.24×/1.40×；当前参考实现尚无加速。已输出3组中文300 DPI PNG和矢量PDF，包含延迟分布、组件耗时和激活上传量；配置、原始CSV、统计口径和能力边界见[实验报告与图像](../../../../docs/superpowers/reports/safe/experiments/2026-11-15-local-generation/README.md)。
 
 网络扩展分析复用同一组实测计算路径，在 1000 Mbps/0.2 ms 到 5 Mbps/80 ms 的六个情景下叠加请求—回执通信，输出360条记录和带宽×RTT热力图；两端情景的端到端中位数分别约1.14秒和2.88秒。该结果使用256 B回执假设，属于通信敏感性模型，不是公网测量；公式、校验规则、图像与复现命令见[网络敏感性报告](../../../../docs/superpowers/reports/safe/experiments/2026-11-15-network-sensitivity/README.md)。
+
+同日认证传输更新：`HmacAuthenticator`、`HttpRemoteTransport`、`create_cloud_app`、`create_http_cloud_app` 已接通专用 HTTPS 端口。请求签名绑定最终正文、方法、路径、凭据、UTC时间和一次性 nonce；owner 从凭据源读取。服务具备有界正文/并发/会话记录、严格 JSON、后台 TTL 清理及停机请求排空；客户端校验证书与主机名，不跟随重定向、不使用环境代理、不自动重发 step。独立后段进程的真实 TLS 回环实验与图像入口见 `evals/safe/exam/verify_https_transport.py`、`gen_fig_https_transport.py`；范围仍为 CPU/FP32 单进程后段研究服务。
+
+已完成20条输入×3轮真实HTTPS配对：60/60组、792/792 token一致，62个后段KV全部回收；独立规格/质量审查通过，362项回归与18项数据转换通过。输出两组中文300 DPI PNG与矢量PDF，数据、统计口径及复现命令见[HTTPS回环实验](../../../../docs/superpowers/reports/safe/experiments/2026-11-15-https-loopback/README.md)。回环仍比完整本地模型慢，不作公网或DP结论。
 
 | 内容 | 当前状态 | 说明 |
 | --- | --- | --- |
@@ -30,14 +34,41 @@
 | 七个公开门面、`contracts/`、`ports/` | 已创建轻量入口、初版严格合同和部分 Protocol | 合同只定义一次；执行/事务接口及 wire schema 仍待 P1/P2 实验冻结。 |
 | FP32 codec、形状边界、会话迁移/step/幂等规则、全局 L2 裁剪 | 已实现并有基础测试 | 仅独立基础能力；裁剪不构成 DP，摘要不构成认证。 |
 | `ContinuationService`、`GreedySampler` | 已接通进程内后段用例 | 仅收激活，返回单token；无状态greedy支持可信EOS集合、有限logits和词表校验，并列取最小索引。 |
-| `SplitInferenceService` | 显式注入后可用，无配置拒绝 | 本机非流式生成、回执身份校验、未知结果拒绝重发、取消与双端清理；尚未开放产品/网络入口。 |
+| `SplitInferenceService` | 显式注入后可用，无配置拒绝 | 本机非流式生成、回执身份校验、未知结果拒绝重发、取消与双端清理；产品网关入口待接入。 |
 | `HuggingFaceTokenizer`、`InProcessTransport` | 已有离线适配器与进程内JSON装配 | 完整EOS集合、固定模板；后段装配始终使用同一个suffix实例；循环传输不等于跨网络认证。 |
 | 隐私发布服务 | 仍明确拒绝执行 | 抛出 `PRIVACY_UNAVAILABLE`，裁剪与哈希不能替代激活DP。 |
-| P3 `SessionService` + `MemorySessionStore` | 已连接真实suffix用例并有并发/TTL/幂等/KV生命周期测试 | 位置在会话锁内从存储构造，回执提交后才推进；短时状态不持久化，不保存原始prompt，不等于跨网络会话服务。 |
-| Qwen2 prefix/suffix KV decode与角色制品 | 已实现离线导出、校验、双角色DynamicCache和数值对照 | KV不跨激活边界传输；CPU FP32/eager，尚无跨网络续算或吞吐验收。 |
-| 预算存储、认证/HTTP、装配和接入 | 中文职责/TODO/验收骨架 | 尚未实现，不存在真实跨进程/跨网络续算链路。 |
+| P3 `SessionService` + `MemorySessionStore` | 已连接真实suffix及认证HTTP，有并发/TTL/幂等/KV生命周期测试 | 位置在会话锁内从存储构造，回执提交后才推进；短时状态不持久化，不保存原始prompt。 |
+| Qwen2 prefix/suffix KV decode与角色制品 | 已实现离线导出、校验、双角色DynamicCache和数值对照 | KV不跨激活边界传输；CPU FP32/eager；公网、GPU与吞吐仍待验收。 |
+| 认证、HTTP客户端/API、云端工厂 | 已接通显式装配与独立进程 TLS 回环 | HMAC防重放、凭据撤销、HTTPS、有界会话、TTL、停机排空；不等于生产部署。 |
+| 预算存储、产品接入 | 中文职责/TODO/验收骨架 | DP发布/账本和产品网关尚未实现。 |
 
 现有联邦学习和差分隐私代码属于旧的参数聚合域。它们没有接入拆分推理的激活传输链路，不能复用为安全证明、隐私预算记账或 DP-SGD 实现。
+
+## 认证传输的装配与边界
+
+HTTP依赖单独安装，不改变默认Agent安装包：
+
+```powershell
+apps/agentOS/.venv-safe/Scripts/python.exe -m pip install --require-hashes -r apps/agentOS/requirements.safe.http.lock
+```
+
+调用 `safe.bootstrap.cloud.create_http_cloud_app` 时显式注入批准的 suffix runner、FP32 codec、greedy sampler、manifest、批准摘要和 `CredentialSource`。返回 ASGI 应用，须使用 lifespan 启停，并在服务器上配置 TLS；工厂不监听端口，也不关闭调用者的模型。客户端使用 `safe.infrastructure.transport.http_client.HttpRemoteTransport`，注入批准的 HTTPS origin、凭据及可选的受信 CA 上下文。临时证书仅由实验脚本生成。
+
+| 方法与路径 | 内容 |
+| --- | --- |
+| `GET /safe/v1/capabilities` | 经过认证的服务能力 |
+| `POST /safe/v1/sessions` | 仅提交 `manifest_digest`，不允许自报 owner |
+| `POST /safe/v1/sessions/{sid}/steps` | 既有 `StepRequest`，上传激活并返回单 token 回执 |
+| `GET /safe/v1/sessions/{sid}/requests/{rid}` | 查询已提交回执；尚无回执为 `null` |
+| `DELETE /safe/v1/sessions/{sid}` | 关闭会话，终态重复关闭返回原视图 |
+
+所有请求均签名。签名域为 `SAFE-HMAC-SHA256-V1`，覆盖凭据 ID、规范方法与路径、UTC秒、nonce和正文SHA256；密钥至少32字节。请求 ID、会话 ID 在 HTTP 路径中仅允许字母、数字、`_`、`-`，长度1–128。正文仅UTF-8 JSON；重复键、未知字段、非有限数、重复头、CL/TE冲突和编码歧义均拒绝。默认正文最多12 MiB，step元数据最多16 KiB；客户端响应默认最多64 KiB。
+
+云端工厂默认最多128条会话记录、每owner一个活跃会话、8个在途请求。终态回执保留到会话绝对TTL（默认300秒）再回收，空闲TTL默认60秒；容量不足直接拒绝。维护失败撤销就绪；停机先关闭准入、等待已准入请求及同步计算交还执行权，最后释放KV。同步runner永久阻塞时，应用不能保证有界停机；部署侧需隔离进程，不能直接释放在用KV。
+
+nonce存储默认仅在当前进程内，认证时窗为±60秒；时钟回拨期间拒绝认证直到恢复。重启或多worker部署须使用共享持久原子nonce存储，或轮换实验凭据，不能将内存防重放承诺扩展到进程重启。凭据由调用者安全保存并注入，每次请求读取撤销状态；浏览器不持有长期密钥。直接TLS运行时禁用反向代理scheme伪装；若未来部署代理，须另立可信边界配置与验收。
+
+HMAC依据 [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104)，HTTP消息长度约束参考 [RFC 9112 §6.3](https://www.rfc-editor.org/rfc/rfc9112#section-6.3)；具体协议由本模块实现，不从论文复制未审查的服务代码。TLS保护链路，激活仍可能被受信后段分析；DP、反演评估和持久隐私账本均未因此实现。
 
 ## 模块边界
 
