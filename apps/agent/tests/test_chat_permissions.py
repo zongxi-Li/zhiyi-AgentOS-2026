@@ -224,6 +224,10 @@ def test_approval_ttl_expires_fail_closed_without_reaching_executor():
         assert '"error":"APPROVAL_EXPIRED"' in result
         assert not executor.calls
         assert service.pending(required_payload["approval"]["approvalId"]) is None
+        with pytest.raises(ApprovalResolutionError) as expired:
+            await service.resolve(required_payload['approval']['approvalId'],
+                decision=ApprovalDecision.ALLOW_ONCE, session_id='session-expiry')
+        assert expired.value.code == 'APPROVAL_EXPIRED'
 
     asyncio.run(scenario())
 

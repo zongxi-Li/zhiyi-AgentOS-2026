@@ -356,6 +356,8 @@ class ChatPermissionService:
         pending = self._pending.get(approval_id)
         if pending is None:
             if approval_id in self._completed:
+                if self._completed[approval_id].status == 'expired':
+                    raise ApprovalResolutionError('APPROVAL_EXPIRED', 'approval has expired')
                 raise ApprovalResolutionError("APPROVAL_REPLAYED", "approval has already been resolved")
             raise ApprovalResolutionError("APPROVAL_NOT_FOUND", "approval does not exist", status_code=404)
         request = pending.request

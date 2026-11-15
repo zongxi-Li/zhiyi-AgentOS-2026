@@ -11,7 +11,7 @@
           :class="{ 'is-resolved': item.approval?.status !== 'pending' }"
         >
           <div class="approval-work__title">
-            {{ item.approval?.operation === 'Run command' ? '需要确认命令执行' : '需要确认文件操作' }}
+            {{ item.approval?.status === 'expired' ? '审批已过期' : item.approval?.operation === 'Run command' ? '需要确认命令执行' : '需要确认文件操作' }}
           </div>
           <div class="approval-work__summary">{{ item.approval?.operationSummary }}</div>
           <div v-if="item.approval?.command" class="approval-work__command">
@@ -49,7 +49,7 @@
             >拒绝</button>
           </div>
           <div v-else class="approval-work__resolved">
-            {{ item.approval?.status === 'approved' ? '已允许' : item.approval?.status === 'denied' ? '已拒绝' : '已失效' }}
+            {{ item.approval?.status === 'approved' ? '已允许' : item.approval?.status === 'denied' ? '已拒绝' : item.approval?.status === 'expired' ? '已过期' : '已失效' }}
           </div>
         </article>
       </section>
@@ -120,6 +120,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { chatApi, type ChatApprovalDecision } from '@/services/api/chat'
+import { wasErrorUserNotified } from '@/utils/request'
 
 interface TerminalExecution {
   command: string
@@ -179,9 +180,11 @@ const props = defineProps<Props>()
 const approvalBusy = ref<Record<string, boolean>>({})
 
 const terminalActivities = computed(() => props.items
+  .filter(item => item.terminal || item.approval?.status !== 'expired')
   .filter(item => item.stage.split(':')[1] === 'terminal' || item.stage.split(':')[1] === 'run_command'))
 
 const fileActivities = computed(() => props.items
+  .filter(item => item.activity?.status === 'completed' || item.approval?.status !== 'expired')
   .filter(item => item.activity && item.activity.kind !== 'terminal'))
 
 const approvalActivities = computed(() => props.items
@@ -206,15 +209,16 @@ const resolveApproval = async (item: WorkFeedItem, decision: ChatApprovalDecisio
   if (!approval || approvalBusy.value[approval.approvalId]) return
   approvalBusy.value = { ...approvalBusy.value, [approval.approvalId]: true }
   try {
-    await chatApi.resolveApproval(approval.approvalId, {
+    const result = await chatApi.resolveApproval(approval.approvalId, {
       decision,
       sessionId: approval.sessionId,
       invocationId: approval.invocationId,
       capabilityId: approval.capabilityId,
       relativePath: approval.relativePath
     })
-  } catch {
-    ElMessage.error('审批请求处理失败，请重试')
+    if (result.status === 'expired') approval.status = 'expired'
+  } catch (error) {
+    if (!wasErrorUserNotified(error)) ElMessage.error('审批请求处理失败，请重试')
   } finally {
     const next = { ...approvalBusy.value }
     delete next[approval.approvalId]

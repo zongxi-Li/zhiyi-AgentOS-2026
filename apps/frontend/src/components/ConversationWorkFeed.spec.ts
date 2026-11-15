@@ -1,4 +1,7 @@
-import { shallowMount } from '@vue/test-utils'
+import { shallowMount, flushPromises } from '@vue/test-utils'
+import { reactive } from 'vue'
+import { ElMessage } from 'element-plus'
+import { markErrorAsUserNotified } from '@/utils/requestErrors'
 import { describe, expect, it, vi } from 'vitest'
 import ConversationWorkFeed from './ConversationWorkFeed.vue'
 import { chatApi } from '@/services/api/chat'
@@ -6,10 +9,37 @@ import { chatApi } from '@/services/api/chat'
 const stubs = { 'el-icon': true }
 
 const mountFeed = (items: any[]) => shallowMount(ConversationWorkFeed, {
-  props: { items }
+  props: { items: reactive(items) }
 })
 
 describe('ConversationWorkFeed（对话信息栏的命令与执行）', () => {
+  const approvalItem = () => ({stage:'tool:run_command:call',status:'approval_required',description:'command',
+    approval:{approvalId:'expired',toolCallId:'call',invocationId:'call',toolName:'run_command',capabilityId:'shell.exec',
+      operation:'Run command',operationSummary:'Run command',command:'echo approved',createdAt:'2026-01-01T00:00:00Z',status:'pending',sessionId:'session'}})
+  it('shows an expired approval without failure notifications or execution controls', async () => {
+    const error=vi.spyOn(ElMessage,'error')
+    const resolve=vi.spyOn(chatApi,'resolveApproval').mockResolvedValue({approvalId:'expired',status:'expired',decision:'allow_once'})
+    const wrapper=mountFeed([approvalItem()])
+    await wrapper.get('.approval-work__button.is-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.approval-work__resolved').text()).toBe('已过期')
+    expect(wrapper.text()).toContain('审批已过期')
+    expect(wrapper.findAll('.approval-work__button')).toHaveLength(0)
+    expect(wrapper.find('.terminal-work').exists()).toBe(false)
+    expect((wrapper.vm as any).pendingApprovalCount).toBe(0)
+    expect(error).not.toHaveBeenCalled()
+    resolve.mockRestore(); error.mockRestore(); wrapper.unmount()
+  })
+  it.each([false,true])('retains real errors and avoids a duplicate notified error (%s)', async notified => {
+    const error=vi.spyOn(ElMessage,'error')
+    const failure=new Error('network unavailable')
+    const resolve=vi.spyOn(chatApi,'resolveApproval').mockRejectedValue(notified ? markErrorAsUserNotified(failure) : failure)
+    const wrapper=mountFeed([approvalItem()])
+    await wrapper.get('.approval-work__button.is-primary').trigger('click'); await flushPromises()
+    expect(error).toHaveBeenCalledTimes(notified ? 0 : 1)
+    expect(wrapper.findAll('.approval-work__button')).toHaveLength(2)
+    resolve.mockRestore(); error.mockRestore(); wrapper.unmount()
+  })
   it('shows the empty hint when the conversation has no work items', () => {
     const wrapper = mountFeed([])
     expect(wrapper.find('.work-feed__empty').exists()).toBe(true)

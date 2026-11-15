@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import { AxiosError } from 'axios'
 import type { ReasoningEffort, ThinkingMode } from '@/config/modelSettings'
 import type { ContextMessage } from '@/features/chat/compaction'
 
@@ -106,7 +107,19 @@ export const chatApi = {
       relativePath?: string
     }
   ) {
-    const response = await request.post(`/ai/chat/approvals/${encodeURIComponent(approvalId)}`, payload)
+    // 过期/服务重启后失效属于审批终态，先交给业务层识别，避免全局拦截器弹“处理失败”。
+    const response = await request.post(`/ai/chat/approvals/${encodeURIComponent(approvalId)}`, payload, {
+      validateStatus: status => (status >= 200 && status < 300) || status === 404 || status === 409
+    })
+    const code = response.data?.detail?.code ?? response.data?.code
+    if ((response.status === 404 && code === 'APPROVAL_NOT_FOUND')
+        || (response.status === 409 && code === 'APPROVAL_EXPIRED')) {
+      return {approvalId, status:'expired', decision:payload.decision}
+    }
+    if (response.status >= 400) {
+      throw new AxiosError(response.data?.detail?.message || response.data?.message || '审批请求处理失败',
+        code || 'APPROVAL_REQUEST_FAILED', response.config, response.request, response)
+    }
     return response.data as { approvalId: string; status: string; decision: ChatApprovalDecision }
   },
 
