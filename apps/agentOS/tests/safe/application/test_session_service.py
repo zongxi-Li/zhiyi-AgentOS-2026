@@ -230,3 +230,149 @@ def test_failed_kv_release_remains_retryable_without_reopening_session() -> None
     assert safe.cleanup_expired() == 0
     assert runner.released == [KVHandle("kv-session-1")]
 
+
+@pytest.mark.parametrize("write_then_fail", [False, True])
+def test_receipt_commit_failure_invalidates_advanced_kv(write_then_fail) -> None:
+    """模拟内存回执写入前/后抛错，不能继续使用已推进的模型状态。"""
+    class BrokenReceipts(dict):
+        def __setitem__(self, key, value):
+            if write_then_fail:
+                super().__setitem__(key, value)
+            raise MemoryError("synthetic receipt commit failure")
+
+    runner = FakeRunner()
+    store = MemorySessionStore(runner=runner)
+    safe = SessionService(store)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    # 只为模拟容器分配失败注入内部存储；不增加生产环境故障注入接口。
+    store._sessions["session-1"].receipts = BrokenReceipts()
+    calls = []
+
+    def forward(value):
+        calls.append(value.step)
+        return 9, False
+
+    with pytest.raises(MemoryError, match="receipt commit failure"):
+        safe.execute("owner-1", request(), forward)
+    assert safe.view("owner-1", "session-1").status is SessionStatus.FAILED
+    assert safe.view("owner-1", "session-1").next_step == 0
+    assert safe.receipt("owner-1", "session-1", "request-0") is None
+    assert runner.released == [KVHandle("kv-session-1")]
+    with pytest.raises(SafeError):
+        safe.execute("owner-1", request(), forward)
+    assert calls == [0]
+
+
+def test_absolute_deadline_during_forward_does_not_publish_late_receipt() -> None:
+    clock = ManualClock()
+    runner = FakeRunner()
+    safe = service(clock, runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+
+    def slow_forward(_):
+        clock.advance(300.0)
+        return 9, False
+
+    with pytest.raises(SafeError) as error:
+        safe.execute("owner-1", request(), slow_forward)
+    assert error.value.code is ErrorCode.SESSION_INVALID
+    assert safe.view("owner-1", "session-1").status is SessionStatus.EXPIRED
+    assert safe.receipt("owner-1", "session-1", "request-0") is None
+    assert runner.released == [KVHandle("kv-session-1")]
+
+
+def test_execution_error_survives_release_error_and_cleanup_can_retry() -> None:
+    runner = FakeRunner()
+    runner.fail_release = True
+    safe = service(runner=runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+
+    def broken_forward(_):
+        raise ValueError("synthetic forward failure")
+
+    with pytest.raises(ValueError, match="forward failure"):
+        safe.execute("owner-1", request(), broken_forward)
+    assert safe.view("owner-1", "session-1").status is SessionStatus.FAILED
+    runner.fail_release = False
+    safe.cleanup_expired()
+    assert runner.released == [KVHandle("kv-session-1")]
+
+
+def test_cancelled_forward_invalidates_kv() -> None:
+    from asyncio import CancelledError
+
+    runner = FakeRunner()
+    safe = service(runner=runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+
+    def cancelled(_):
+        raise CancelledError()
+
+    with pytest.raises(CancelledError):
+        safe.execute("owner-1", request(), cancelled)
+    assert safe.view("owner-1", "session-1").status is SessionStatus.FAILED
+    assert runner.released == [KVHandle("kv-session-1")]
+
+
+@pytest.mark.parametrize("setting", ["idle_ttl", "absolute_ttl"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_ttl_must_be_finite(setting, value) -> None:
+    with pytest.raises(ValueError):
+        MemorySessionStore(**{setting: value})
+
+
+def test_callback_query_cannot_expire_or_close_its_running_kv() -> None:
+    clock = ManualClock()
+    runner = FakeRunner()
+    safe = service(clock, runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+
+    def forward(_):
+        clock.advance(61.0)
+        assert safe.view("owner-1", "session-1").status is SessionStatus.ACTIVE
+        assert runner.released == []
+        with pytest.raises(SafeError):
+            safe.close("owner-1", "session-1")
+        with pytest.raises(SafeError):
+            safe.execute("owner-1", request(), lambda _: (99, False))
+        return 9, False
+
+    assert safe.execute("owner-1", request(), forward).token_id == 9
+    assert safe.view("owner-1", "session-1").status is SessionStatus.ACTIVE
+    assert runner.released == []
+
+
+def test_cleanup_attempts_other_sessions_after_one_release_failure() -> None:
+    class PartialFailureRunner(FakeRunner):
+        def release_kv(self, handle):
+            if handle == "kv-session-1":
+                raise RuntimeError("synthetic isolated release failure")
+            super().release_kv(handle)
+
+    clock = ManualClock()
+    runner = PartialFailureRunner()
+    safe = service(clock, runner)
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    safe.create("owner-1", "a" * 64, session_id="session-2")
+    clock.advance(60.0)
+    with pytest.raises(RuntimeError, match="isolated release failure"):
+        safe.cleanup_expired()
+    assert runner.released == [KVHandle("kv-session-2")]
+    assert safe.view("owner-1", "session-1").status is SessionStatus.EXPIRED
+    assert safe.view("owner-1", "session-2").status is SessionStatus.EXPIRED
+
+
+def test_completed_receipt_can_be_recovered_after_later_step_failure() -> None:
+    """响应丢失后仍可查询成功回执，即使后续步骤已失败也不重新计算。"""
+    safe = service()
+    safe.create("owner-1", "a" * 64, session_id="session-1")
+    first = safe.execute("owner-1", request(), lambda _: (9, False))
+
+    def broken(_):
+        raise RuntimeError("synthetic later failure")
+
+    with pytest.raises(RuntimeError):
+        safe.execute("owner-1", request("request-1", step=1, phase="decode"), broken)
+    assert safe.receipt("owner-1", "session-1", "request-0") == first
+    assert safe.execute("owner-1", request(), lambda _: pytest.fail("不得重复执行")) == first
+

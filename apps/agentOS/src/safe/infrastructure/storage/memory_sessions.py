@@ -5,9 +5,10 @@
 执行一次。生产装配仍需把 runner、认证、资源上限和生命周期清理器注入更高层。
 
 TODO(P3-1)：增加会话总数、回执数、并发执行数和激活内存的有界配额。
-TODO(P3-2)：接入不透明 KV 句柄，并在关闭/失败/过期时等待或隔离后幂等释放。
-TODO(P3-3)：将长时间 runner 从锁内执行改为“占位-执行-提交”条件变量事务，
-           保持重复请求等待而不是占用线程；提交失败必须进入 FAILED。
+已实现：回执发布失败或同步执行取消进入FAILED；绝对TTL在前向返回后复核；
+执行中同线程查询不释放KV；释放失败可重试且不阻断其他会话的清理。
+TODO(P3-2)：在真正的远端suffix用例中接入本存储持有的KV句柄；GPU任务须由runner等待或隔离。
+TODO(P3-3)：按容量测量决定是否将长时间runner改为占位/执行/提交事务；保留同一请求只推进一次。
 TODO(P3-4)：增加显式后台清理生命周期和重启隔离域；当前进程重启即全部失效。
 """
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import math
 import re
 import secrets
 import threading
@@ -53,6 +55,7 @@ class _SessionRecord:
     absolute_deadline: float
     kv_handle: KVHandle | None = field(default=None, repr=False)
     kv_released: bool = False
+    executing: bool = False
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     receipts: dict[str, _StoredReceipt] = field(default_factory=dict, repr=False)
 
@@ -68,9 +71,9 @@ class MemorySessionStore:
         absolute_ttl: float = 300.0,
         runner: ModelRunner | None = None,
     ) -> None:
-        if type(idle_ttl) is not float or idle_ttl <= 0:
+        if type(idle_ttl) is not float or not math.isfinite(idle_ttl) or idle_ttl <= 0:
             raise ValueError("idle_ttl必须是正浮点数")
-        if type(absolute_ttl) is not float or absolute_ttl <= 0:
+        if type(absolute_ttl) is not float or not math.isfinite(absolute_ttl) or absolute_ttl <= 0:
             raise ValueError("absolute_ttl必须是正浮点数")
         if idle_ttl > absolute_ttl:
             raise ValueError("idle_ttl不能大于absolute_ttl")
@@ -125,6 +128,8 @@ class MemorySessionStore:
         record = self._owned(owner_id, request.session_id)
         fingerprint = self._fingerprint(request)
         with record.lock:
+            if record.executing:
+                raise SafeError(ErrorCode.SESSION_INVALID)
             self._expire_locked(record)
             previous = record.receipts.get(request.request_id)
             if previous is not None:
@@ -141,6 +146,7 @@ class MemorySessionStore:
                 raise SafeError(ErrorCode.STEP_OUT_OF_ORDER)
             if record.status is SessionStatus.CREATED:
                 record.status = transition(record.status, SessionStatus.ACTIVE)
+            record.executing = True
             try:
                 outcome = runner(request)
                 token_id, finished = outcome
@@ -153,13 +159,29 @@ class MemorySessionStore:
                     token_id=token_id,
                     finished=finished,
                 )
-            except Exception:
-                record.status = SessionStatus.FAILED
-                self._release_locked(record)
+                completed_at = self._clock.monotonic()
+                if completed_at >= record.absolute_deadline:
+                    # 计算已结束才允许释放；绝对寿命不能被一次长前向延长。
+                    record.status = SessionStatus.EXPIRED
+                    raise SafeError(ErrorCode.SESSION_INVALID)
+                # 回执发布也属于模型事务；写入失败后绝不能再次推进同一KV。
+                record.receipts[request.request_id] = _StoredReceipt(fingerprint, receipt)
+            except BaseException:
+                # CancelledError/KeyboardInterrupt同样可能发生在KV已推进之后。
+                # 同步回调返回或抛错意味着执行权已交还；不能将此视为强制停止GPU。
+                if record.status is not SessionStatus.EXPIRED:
+                    record.status = SessionStatus.FAILED
+                record.receipts.pop(request.request_id, None)
+                try:
+                    self._release_locked(record)
+                except Exception:
+                    # 保留原始计算/提交异常；未释放的句柄留给显式清理重试。
+                    pass
                 raise
-            record.receipts[request.request_id] = _StoredReceipt(fingerprint, receipt)
+            finally:
+                record.executing = False
             record.next_step += 1
-            record.last_activity = self._clock.monotonic()
+            record.last_activity = completed_at
             if finished:
                 record.status = transition(record.status, SessionStatus.CLOSED)
                 self._release_locked(record)
@@ -168,6 +190,8 @@ class MemorySessionStore:
     def close(self, owner_id: str, session_id: str) -> SessionView:
         record = self._owned(owner_id, session_id)
         with record.lock:
+            if record.executing:
+                raise SafeError(ErrorCode.SESSION_INVALID)
             self._expire_locked(record)
             if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
                 raise SafeError(ErrorCode.SESSION_INVALID)
@@ -178,6 +202,8 @@ class MemorySessionStore:
     def fail(self, owner_id: str, session_id: str) -> SessionView:
         record = self._owned(owner_id, session_id)
         with record.lock:
+            if record.executing:
+                raise SafeError(ErrorCode.SESSION_INVALID)
             self._expire_locked(record)
             if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
                 raise SafeError(ErrorCode.SESSION_INVALID)
@@ -187,15 +213,23 @@ class MemorySessionStore:
 
     def cleanup_expired(self) -> int:
         count = 0
+        first_error: Exception | None = None
         with self._sessions_lock:
             records = tuple(self._sessions.values())
         for record in records:
             with record.lock:
-                before = record.status
-                self._expire_locked(record)
-                count += int(before is not SessionStatus.EXPIRED and record.status is SessionStatus.EXPIRED)
-                if record.status in (SessionStatus.CLOSED, SessionStatus.FAILED, SessionStatus.EXPIRED):
-                    self._release_locked(record)
+                try:
+                    before = record.status
+                    self._expire_locked(record)
+                    count += int(before is not SessionStatus.EXPIRED and record.status is SessionStatus.EXPIRED)
+                    if record.status in (SessionStatus.CLOSED, SessionStatus.FAILED, SessionStatus.EXPIRED):
+                        self._release_locked(record)
+                except Exception as exc:
+                    # 一个角色的释放失败不能阻止本轮清理其他会话。
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None:
+            raise first_error
         return count
 
     def _owned(self, owner_id: str, session_id: str) -> _SessionRecord:
@@ -209,6 +243,8 @@ class MemorySessionStore:
         return record
 
     def _expire_locked(self, record: _SessionRecord) -> None:
+        if record.executing:
+            return  # 同线程回调查询不允许释放在用KV；绝对TTL在前向返回后核验。
         if record.status not in (SessionStatus.CREATED, SessionStatus.ACTIVE):
             return
         now = self._clock.monotonic()
