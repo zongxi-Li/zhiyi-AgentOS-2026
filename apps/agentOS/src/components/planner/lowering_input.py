@@ -17,6 +17,7 @@ from support.acg.planning import (
     CommunicationSpec,
     EvidenceSpec,
     MemoryAccessSpec,
+    ModelRequirementSpec,
 )
 from support.acg.schema import ACGBlueprint, ACGEdge, ComplexityLevel, EdgeType, StepNode
 from support.acg.semantic_profile import TaskSemanticProfile
@@ -157,6 +158,8 @@ def build_acg_lowering_input(
 
     resource_plan = ACGResourcePlan(
         bindings=agent_bindings,
+        models=tuple(ModelRequirementSpec(stepId=node_id_by_task[task.key], demand=descriptors[task.key].model_demand)
+                     for task in task_plan.nodes if descriptors[task.key].model_demand is not None),
         memory=tuple(memory_reads),
         evidence=tuple(
             spec.model_copy(update={

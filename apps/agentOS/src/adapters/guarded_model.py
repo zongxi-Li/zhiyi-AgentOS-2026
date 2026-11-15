@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Hashable
 from contextlib import asynccontextmanager
+from threading import RLock
+from time import monotonic
 from typing import TypeVar
 from uuid import uuid4
 
@@ -60,49 +62,81 @@ def _safe_stream_diagnostics(error: StructuredGenerationError) -> dict[str, obje
 
 
 class _CallGate:
-    """在单个包装器范围内限制并发和调用起始间隔。
-
-    运行时对象通常按应用依赖生命周期创建，因此闸门不使用无锁全局变量；不同模型
-    实例不会相互阻塞。同一实例的重试会再次经过闸门，避免故障时放大上游压力。
-    """
+    """同一路由的包装器共享调用容量；调用状态仍留在各自包装器中。"""
 
     def __init__(self, *, max_concurrency: int, min_interval_seconds: float) -> None:
         if max_concurrency < 1:
             raise ValueError("max_concurrency must be at least 1")
         if min_interval_seconds < 0:
             raise ValueError("min_interval_seconds must not be negative")
-        self._semaphore = asyncio.Semaphore(max_concurrency)
-        self._spacing_lock = asyncio.Lock()
+        self.max_concurrency = max_concurrency
         self._min_interval_seconds = min_interval_seconds
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_lock = RLock()
+        self._semaphore: asyncio.Semaphore | None = None
+        self._spacing_lock: asyncio.Lock | None = None
         self._last_started: float | None = None
+
+    def _primitives(self) -> tuple[asyncio.Semaphore, asyncio.Lock]:
+        loop = asyncio.get_running_loop()
+        with self._loop_lock:
+            if self._loop is not loop:
+                if self._loop is not None and not self._loop.is_closed():
+                    # asyncio primitives cannot coordinate two live loops. Fail
+                    # closed rather than silently granting a second capacity.
+                    raise StructuredGenerationError(
+                        "MODEL_GATE_EVENT_LOOP_MISMATCH",
+                        "model call gate is owned by another live event loop",
+                    )
+                self._loop = loop
+                self._semaphore = asyncio.Semaphore(self.max_concurrency)
+                self._spacing_lock = asyncio.Lock()
+            assert self._semaphore is not None and self._spacing_lock is not None
+            return self._semaphore, self._spacing_lock
 
     async def call(self, operation: Callable[[], Awaitable[_Result]]) -> _Result:
         """在取得并发许可且满足最小间隔后执行一次外部调用。"""
-        async with self._semaphore:
-            async with self._spacing_lock:
-                now = asyncio.get_running_loop().time()
-                if self._last_started is not None:
-                    remaining = self._min_interval_seconds - (now - self._last_started)
-                    if remaining > 0:
-                        await asyncio.sleep(remaining)
-                self._last_started = asyncio.get_running_loop().time()
+        async with self.stream_slot():
             return await operation()
 
     @asynccontextmanager
     async def stream_slot(self):
         """Hold one concurrency slot for the complete provider stream."""
-        await self._semaphore.acquire()
-        try:
-            async with self._spacing_lock:
-                now = asyncio.get_running_loop().time()
+        semaphore, spacing_lock = self._primitives()
+        async with semaphore:
+            async with spacing_lock:
+                now = monotonic()
                 if self._last_started is not None:
                     remaining = self._min_interval_seconds - (now - self._last_started)
                     if remaining > 0:
                         await asyncio.sleep(remaining)
-                self._last_started = asyncio.get_running_loop().time()
+                self._last_started = monotonic()
             yield
-        finally:
-            self._semaphore.release()
+
+
+class ModelCallGateRegistry:
+    """应用执行服务内的路由闸门缓存，不注册资源或裁决调度租约。"""
+
+    def __init__(self) -> None:
+        self._gates: dict[Hashable, _CallGate] = {}
+        self._lock = RLock()
+
+    def gate_for(
+        self, route: Hashable, *, max_concurrency: int, min_interval_seconds: float,
+    ) -> _CallGate:
+        with self._lock:
+            gate = self._gates.get(route)
+            if gate is None:
+                gate = _CallGate(
+                    max_concurrency=max_concurrency,
+                    min_interval_seconds=min_interval_seconds,
+                )
+                self._gates[route] = gate
+            elif (gate.max_concurrency, gate._min_interval_seconds) != (
+                max_concurrency, min_interval_seconds,
+            ):
+                raise ValueError("model call gate policy cannot change for an existing route")
+            return gate
 
 
 class GuardedModelRuntime:
@@ -116,6 +150,7 @@ class GuardedModelRuntime:
         max_concurrency: int = 4,
         min_interval_seconds: float = 0.0,
         retry_delay_seconds: float = 0.0,
+        _gate: _CallGate | None = None,
     ) -> None:
         if retries < 0:
             raise ValueError("retries must not be negative")
@@ -126,7 +161,11 @@ class GuardedModelRuntime:
         self.retry_delay_seconds = retry_delay_seconds
         self.max_concurrency = max_concurrency
         self.min_interval_seconds = min_interval_seconds
-        self._gate = _CallGate(
+        if _gate is not None and (
+            _gate.max_concurrency, _gate._min_interval_seconds
+        ) != (max_concurrency, min_interval_seconds):
+            raise ValueError("model call gate policy does not match wrapper configuration")
+        self._gate = _gate or _CallGate(
             max_concurrency=max_concurrency,
             min_interval_seconds=min_interval_seconds,
         )
@@ -242,8 +281,14 @@ class GuardedModelRuntime:
             self.last_attempt_id = attempt_id
             try:
                 async with self._gate.stream_slot():
-                    async for event in streamer(**delegate_kwargs):
-                        yield event
+                    iterator = streamer(**delegate_kwargs).__aiter__()
+                    try:
+                        async for event in iterator:
+                            yield event
+                    finally:
+                        closer = getattr(iterator, "aclose", None)
+                        if callable(closer):
+                            await closer()
                 return
             except asyncio.CancelledError:
                 raise
@@ -280,4 +325,4 @@ class GuardedModelRuntime:
         return describer()
 
 
-__all__ = ["GuardedModelRuntime"]
+__all__ = ["GuardedModelRuntime", "ModelCallGateRegistry"]

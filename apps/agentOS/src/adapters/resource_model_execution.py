@@ -228,6 +228,7 @@ def build_resource_model_runtime(
     credential_provider: ResourceModelCredentialProvider,
     execution_observer: ResourceModelExecutionObserver | None = None,
     audit_reporter: ResourceModelAuditReporter | None = None,
+    call_quota=None,
 ) -> RegisteredModelRuntime:
     """为已经绑定的端点构造隔离的模型运行时，不改写全局模型注册表。"""
     registry = ModelCompatibilityRegistry()
@@ -238,7 +239,7 @@ def build_resource_model_runtime(
         execution_observer=execution_observer,
         audit_reporter=audit_reporter,
     ))
-    return RegisteredModelRuntime(registry=registry, provider=endpoint.provider, model=endpoint.model)
+    return RegisteredModelRuntime(registry=registry, provider=endpoint.provider, model=endpoint.model, call_quota=call_quota)
 
 
 __all__ = [

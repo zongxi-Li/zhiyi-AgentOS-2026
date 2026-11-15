@@ -120,6 +120,7 @@ class ACGNodeRunner:
         # Filled by the scheduler decorator for each live step attempt. It is
         # deliberately separate from commitId, which remains an idempotency key.
         self.attempt_ids: dict[str, str] = {}
+        self.agent_registrations: dict[str, object] = {}
         self.capability_descriptors = dict(capability_descriptors or {})
         self.tool_runtime = tool_runtime
         self.communication_broker = communication_broker
@@ -165,7 +166,6 @@ class ACGNodeRunner:
         选择已声明分支，不会把它写入 ``ACGExecutionState`` 或 checkpoint。
         """
         step = self.steps[step_id]
-        agent = self.agents[step_id]
         loop_path = tuple(state.loop_paths.get(step_id, ()))
         commit_id = self._commit_id(
             state.run_id, step_id, step.attempt, loop_path=loop_path,
@@ -208,6 +208,7 @@ class ACGNodeRunner:
                         commit_id=commit_id,
                     )
             return replayed
+        agent = self.agents[step_id]
         # 先持久化 prepared，再进入 Agent/Tool 适配边界。若中断发生在外部调用期间，
         # 恢复会传递同一 commitId，外部实现可据此幂等重试；不会误认为已完成。
         self.value_store.prepare_node_commit(run_id=state.run_id, commit_id=commit_id)
@@ -411,6 +412,7 @@ class ACGNodeRunner:
             capabilityDescriptor=self.capability_descriptors.get(step.capability or ""),
             commitId=commit_id,
             attemptId=execution_record.attempt_id,
+            agentRegistration=self.agent_registrations.get(step_id),
         )
         if hasattr(step_tool_runtime, 'bind_context'):
             guard = (lambda: self.invocation_guard(step_id, state)) if self.invocation_guard else None

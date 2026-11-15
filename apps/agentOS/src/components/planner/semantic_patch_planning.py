@@ -15,6 +15,7 @@ from support.acg.capabilities import CapabilityCatalog
 from support.acg.planning import (
     ACGResourcePlan,
     AgentBindingSpec,
+    ModelRequirementSpec,
     CommunicationSpec,
     EvidenceSpec,
     MemoryAccessSpec,
@@ -288,6 +289,10 @@ def _rebuild_resource_plan(
 
     return ACGResourcePlan(
         bindings=tuple(bindings),
+        models=tuple(item for item in current.models if item.step_id in retained_step_ids) + tuple(
+            ModelRequirementSpec(stepId=node_id_by_task[key], demand=descriptors[key].model_demand)
+            for key in sorted(changed_keys) if descriptors[key].model_demand is not None
+        ),
         skills=skills,
         memory=tuple(memory),
         evidence=tuple(

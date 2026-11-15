@@ -7,6 +7,7 @@ from typing import Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from contracts.request_budget import ModelRequestBudget, SupplementalReadBudget
+from contracts.resource import ModelDemand
 
 PlanningRiskLevel = Literal["normal", "elevated", "high", "critical"]
 _RISK_LEVEL_ORDER: tuple[PlanningRiskLevel, ...] = (
@@ -70,6 +71,7 @@ class PlanningCapabilityDescriptor(BaseModel):
     input_contract: dict = Field(default_factory=dict, alias="inputContract")
     output_contract: dict = Field(default_factory=dict, alias="outputContract")
     context_policy: ContextConsumptionPolicy | None = Field(default=None, alias="contextPolicy")
+    model_demand: ModelDemand | None = Field(default=None, alias="modelDemand")
     produces_artifact: bool = Field(default=False, alias="producesArtifact")
     requires_evidence: bool = Field(default=False, alias="requiresEvidence")
     writes_memory: bool = Field(default=False, alias="writesMemory")

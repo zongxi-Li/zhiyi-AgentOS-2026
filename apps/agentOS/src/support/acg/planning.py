@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from contracts.authority import LogicalAgentId
+from contracts.resource import ModelDemand
 
 
 class PlanningSpec(BaseModel):
@@ -24,6 +25,11 @@ class AgentBindingSpec(PlanningSpec):
     )
     max_concurrency: int = Field(default=1, alias="maxConcurrency", ge=1)
     ephemeral: bool = False
+
+
+class ModelRequirementSpec(PlanningSpec):
+    step_id: str = Field(alias="stepId", min_length=1)
+    demand: ModelDemand
 
 
 class SkillRequirementSpec(PlanningSpec):
@@ -75,10 +81,18 @@ class ACGResourcePlan(PlanningSpec):
     """Planner-owned resource/context semantics kept outside executable topology."""
 
     bindings: tuple[AgentBindingSpec, ...] = ()
+    models: tuple[ModelRequirementSpec, ...] = ()
     skills: tuple[SkillRequirementSpec, ...] = ()
     memory: tuple[MemoryAccessSpec, ...] = ()
     evidence: tuple[EvidenceSpec, ...] = ()
     communication: tuple[CommunicationSpec, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def serialize_models(self, handler):
+        payload = handler(self)
+        if not self.models:
+            payload.pop("models", None)
+        return payload
 
 
 __all__ = [
@@ -87,6 +101,7 @@ __all__ = [
     "CommunicationSpec",
     "EvidenceSpec",
     "MemoryAccessSpec",
+    "ModelRequirementSpec",
     "PlanningSpec",
     "SkillRequirementSpec",
 ]

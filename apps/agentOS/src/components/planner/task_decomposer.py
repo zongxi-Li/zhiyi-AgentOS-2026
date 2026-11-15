@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from time import monotonic
 from copy import deepcopy
 from collections.abc import Mapping
-from typing import Any, Callable
+from typing import Any, Callable, get_args
+from pydantic import ValidationError
+from pydantic_core import ErrorType
 from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
+from adapters.model_adapter import StructuredGenerationError
 
 from contracts.planning import (
     PlannedTask,
@@ -23,7 +27,7 @@ from contracts.artifacts import (
     canonicalize_final_synthesis_nodes,
 )
 from components.planner.topology import (
-    REPAIR_PATCH_SCHEMA, EdgeOrigin, TaskPlanTopologyCompiler, TopologyCompileError,
+    REPAIR_PATCH_SCHEMA, EdgeOrigin, TaskPlanTopologyCompiler, TopologyCompileError, TopologyConflictCode,
     apply_repair_patch, conflict_context, is_model_repair_eligible,
     validate_task_plan_for_execution,
     failed_topology_audit, successful_topology_audit,
@@ -33,12 +37,14 @@ from support.acg.semantic_profile import TaskSemanticProfile
 
 from .complexity import (
     PLANNING_BUDGETS, PLANNING_MODEL_TIMEOUT_SECONDS, call_planning_model,
+    PLANNING_TOTAL_TIMEOUT_SECONDS, PLANNING_WATCHDOG_SECONDS,
     transport_error_code,
 )
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v8"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v9"
+TASK_PLAN_MAX_REPAIRS = 3
 INITIAL_DAG_CONTRACT = (
     "INITIAL DAG CONTRACT: this Run's formal initial graph materializer accepts a DAG only. "
     "controlPolicies MUST be []. Do not create verification_loop, backward edges or control nodes. "
@@ -129,11 +135,84 @@ _SCHEMA = {
 }
 
 
+_VALIDATION_CODES = frozenset(get_args(ErrorType)) | frozenset(code.value for code in TopologyConflictCode) | frozenset({
+    "tasks_required", "task_object_required", "business_objective_required",
+    "acceptance_criteria_required", "unknown_capability", "unique_task_key",
+    "initial_dag_required", "registered_material_required", "source_coverage_required",
+    "source_assignments_required", "source_assignment_object_required", "source_assignment_invalid", "source_assignment_coverage",
+    "topology_patch_invalid", "relation_object_required",
+    "task_key_required", "frozen_task_count", "constraint_array_required", "constraint_item_invalid",
+    "MODEL_OUTPUT_INVALID_JSON", "MODEL_OUTPUT_SCHEMA_INVALID", "unclassified_validation_error",
+})
+_VALIDATION_FIELDS = frozenset("tasks nodes relations controlPolicies key parentKey title objective capabilityId capabilityRequirements acceptanceCriteria sourceRefs decompositionRationale logicalRole workset sourceManifestRefs unitKind cursorStrategy packingPolicy parallelismPolicy estimatedUnitCount constraints type sourceKey targetKey relationType bodyEntryKey bodyExitKey conditionSourceKey statusPointer repeatValues maxRevisions onExhausted expectedArtifacts metadata missionId planVersion assignments sourceRef taskKey rationale operations relationIndex".split())
+_VALIDATION_FIELDS |= frozenset(re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower() for key in _VALIDATION_FIELDS)
+_VALIDATION_STAGE = re.compile(r"(?:validation|sources|intent_profile|decompose|repair|repair_coverage|outline(?:\.repair)?|detail(?::[1-9][0-9]{0,5})?(?:\.repair)?|relations(?:\.(?:repair|cycle-repair|initial-dag-repair))?)(?::[1-9][0-9]{0,5})?\Z")
+
+
+def safe_validation_failures(value: object) -> list[dict[str, Any]]:
+    """Keep only bounded rule names and schema locations, never model values/messages."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    result = []
+    for item in value[:32]:
+        if not isinstance(item, Mapping):
+            continue
+        stage = item.get("stage")
+        path = item.get("fieldPath")
+        code = item.get("code")
+        failure = {
+            "stage": stage if isinstance(stage, str) and _VALIDATION_STAGE.fullmatch(stage) else "validation",
+            "code": code if isinstance(code, str) and code in _VALIDATION_CODES else "unclassified_validation_error",
+            "fieldPath": [
+                part if (type(part) is int and 0 <= part <= 1_000_000)
+                or (isinstance(part, str) and part in _VALIDATION_FIELDS) else "?"
+                for part in path[:12]
+            ] if isinstance(path, (list, tuple)) else [],
+        }
+        call_key = item.get("callKey")
+        if isinstance(call_key, str) and _VALIDATION_STAGE.fullmatch(call_key):
+            failure["callKey"] = call_key
+        result.append(failure)
+    return result
+
+
+def planning_validation_failures(
+    exc: BaseException, *, stage: str = "validation", call_key: str | None = None,
+) -> list[dict[str, Any]]:
+    current, seen, prefix = exc, set(), ()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        metadata = getattr(current, "metadata", None)
+        if isinstance(metadata, Mapping) and metadata.get("validationFailures"):
+            return safe_validation_failures(metadata["validationFailures"])
+        if isinstance(current, ValidationError):
+            issues = [{"code": item["type"], "fieldPath": (*prefix, *item["loc"])}
+                      for item in current.errors(include_input=False, include_context=False, include_url=False)]
+        elif getattr(current, "validation_code", None):
+            issues = [{"code": current.validation_code, "fieldPath": (*prefix, *current.field_path)}]
+        elif isinstance(current, TopologyCompileError):
+            issues = [{"code": current.conflict.code.value, "fieldPath": ["relations"]}]
+        elif isinstance(getattr(current, "code", None), str) and current.code in _VALIDATION_CODES:
+            issues = [{"code": current.code, "fieldPath": []}]
+        else:
+            prefix = (*prefix, *getattr(current, "field_path", ()))
+            current = current.__cause__
+            continue
+        return safe_validation_failures([{**issue, "stage": stage, "callKey": call_key} for issue in issues])
+    if transport_error_code(exc):
+        return []
+    return safe_validation_failures([{"stage": stage, "callKey": call_key,
+                                      "code": "unclassified_validation_error", "fieldPath": prefix}])
+
+
 class TaskDecompositionError(ValueError):
-    def __init__(self, message: str, *, cause_code: str | None = None, metadata: dict[str, Any] | None = None) -> None:
+    def __init__(self, message: str, *, cause_code: str | None = None, metadata: dict[str, Any] | None = None,
+                 validation_code: str | None = None, field_path: tuple[str | int, ...] = ()) -> None:
         super().__init__(message)
         self.cause_code = cause_code
         self.metadata = dict(metadata or {})
+        self.validation_code = validation_code
+        self.field_path = field_path
 
 
 class TaskDecomposer:
@@ -211,511 +290,342 @@ class TaskDecomposer:
         run_id: str | None = None,
         **kwargs,
     ) -> Any:
-        """带超时预算声明的模型调用：单点超时自动重试一次并留审计。
+        """Delegate timeout budgets and transport retries to the shared model caller."""
+        self.last_audit["lastStage"] = stage
+        self.last_audit["lastCallKey"] = call_key or stage
+        if kwargs.get("prompt_version"):
+            self.last_audit["promptVersion"] = kwargs["prompt_version"]
 
-        瞬态读超时不应判死整条规划链（2026-09-01 run_1a25f0d4ad89 根因），
-        但也不得无限放大延迟：同一调用点最多两次尝试，持续超时按既有失败
-        路径上抛。
-        """
+        def progress(event):
+            if event.get("eventType") == "planner.stage.started" and self.last_audit.get("validationFailures"):
+                event = {**event, "validationFailures": safe_validation_failures(self.last_audit["validationFailures"])}
+            self.progress_callback(event)
+
         return call_planning_model(
             self.llm, stage=stage, prompt=prompt, schema=schema,
             audit=self.last_audit, model_timeout_seconds=self.model_timeout_seconds,
-            progress_callback=self.progress_callback, call_key=call_key,
+            progress_callback=progress if self.progress_callback else None, call_key=call_key,
             planning_deadline=planning_deadline, run_id=run_id, **kwargs,
         )
 
+    def _record_validation_failure(self, exc: BaseException) -> None:
+        if transport_error_code(exc):
+            return
+        failures = planning_validation_failures(
+            exc, stage=self.last_audit.get("lastStage", "validation"),
+            call_key=self.last_audit.get("lastCallKey"),
+        )
+        recorded = self.last_audit.setdefault("validationFailures", [])
+        for failure in failures:
+            if not recorded or recorded[-1] != failure:
+                recorded.append(failure)
+        self.last_audit["validationFailures"] = recorded[-32:]
+
+    @staticmethod
+    def _repair_call_key(base: str, attempt: int) -> str:
+        return base if attempt == 1 else f"{base}:{attempt}"
+
+    def _repair_feedback(self, error: Exception, previous: Any, attempt: int, *, label: str) -> str:
+        issues = planning_validation_failures(
+            error, stage=self.last_audit.get("lastStage", "validation"),
+            call_key=self.last_audit.get("lastCallKey"),
+        )
+        return (
+            f"\nRepair attempt {attempt}/{TASK_PLAN_MAX_REPAIRS}. "
+            "Correct the latest validation errors while preserving unaffected task identities and requirements. "
+            "Return only the JSON required by the supplied schema.\n"
+            f"Latest validation issues: {json.dumps(issues, ensure_ascii=False)}\n"
+            f"Validation detail: {error}\n"
+            f"Previous invalid {label} JSON: {json.dumps(previous, ensure_ascii=False, default=str)}"
+        )
+
+    def _generate_validated(
+        self, *, stage: str, prompt: str, schema: dict, validate: Callable[[Any], Any],
+        reasoning_effort: str | None, planning_deadline: float | None, run_id: str | None,
+        call_key: str | None = None, repair: Callable | None = None,
+    ) -> tuple[Any, Any]:
+        """Generate one unit, then allow at most three validation-driven corrections.
+
+        Network retries remain owned by call_planning_model. A failed patch leaves
+        the current plan and its compiler conflict intact for the next correction.
+        """
+        current = None
+        validation_error = latest_error = None
+        key = call_key or stage
+        repair_stage = "repair" if stage == "decompose" else f"{stage}.repair"
+        version = TASK_DECOMPOSITION_PROMPT_VERSION + ("" if stage == "decompose" else f".{stage}")
+        for attempt in range(TASK_PLAN_MAX_REPAIRS + 1):
+            generated = False
+            try:
+                if attempt and repair is not None:
+                    candidate = repair(current, validation_error, attempt, latest_error)
+                else:
+                    candidate = self._call_llm(
+                        stage=repair_stage if attempt else stage,
+                        prompt=prompt + self._repair_feedback(
+                            latest_error, current, attempt,
+                            label="TaskPlan" if stage == "decompose" else stage,
+                        ) if attempt else prompt,
+                        schema=schema, reasoning_effort=reasoning_effort,
+                        prompt_version=f"{version}.repair{attempt}" if attempt else version,
+                        call_key=self._repair_call_key(repair_stage if stage == "decompose" else f"{key}.repair", attempt) if attempt else key,
+                        planning_deadline=planning_deadline, run_id=run_id,
+                    )
+                current, generated = candidate, True
+                self._capture_model_audit(current)
+                return current, validate(current)
+            except Exception as exc:
+                if transport_error_code(exc):
+                    raise
+                if isinstance(exc, StructuredGenerationError) and exc.code not in {
+                    "MODEL_OUTPUT_INVALID_JSON", "MODEL_OUTPUT_SCHEMA_INVALID",
+                }:
+                    raise
+                if not isinstance(exc, (ValueError, KeyError, TypeError, StructuredGenerationError)):
+                    raise
+                self._record_validation_failure(exc)
+                if attempt == TASK_PLAN_MAX_REPAIRS or (
+                    isinstance(exc, TopologyCompileError) and not is_model_repair_eligible(exc.conflict)
+                ):
+                    raise
+                if generated or validation_error is None:
+                    validation_error = exc
+                latest_error = exc
+        raise AssertionError("unreachable planning repair loop")
+
+    def _repair_task_plan(
+        self, raw, validation_error, attempt, latest_error, *, profile, strategy,
+        prompt, schema, reasoning_effort, planning_deadline, run_id, frozen_tasks=None,
+    ):
+        payload = raw.get("data", raw) if isinstance(raw, dict) else {}
+        feedback = self._repair_feedback(latest_error, payload, attempt, label="TaskPlan")
+        common = dict(reasoning_effort=reasoning_effort, planning_deadline=planning_deadline, run_id=run_id)
+        if isinstance(validation_error, TopologyCompileError):
+            conflict = conflict_context(validation_error.conflict)
+            patch = self._call_llm(
+                stage="relations.repair",
+                prompt="Patch only the model relation/control proposal using this compiler conflict.\n"
+                + f"Frozen Tasks: {json.dumps(payload.get('tasks', []), ensure_ascii=False)}\n"
+                + f"Current model relations: {json.dumps(payload.get('relations', []), ensure_ascii=False)}\n"
+                + f"Current control policies: {json.dumps(payload.get('controlPolicies', []), ensure_ascii=False)}\n"
+                + f"Structured conflict: {json.dumps(conflict, ensure_ascii=False)}\n"
+                + "Return patch operations only. Never change frozen tasks, capability requirements, "
+                "source identities, or catalog edges. Use originalRelationIndex.\n"
+                + (INITIAL_DAG_CONTRACT if strategy == "initial_commit_candidate" else
+                   "Express feedback with add_verification_loop when a supported bounded loop is needed.")
+                + feedback,
+                schema=REPAIR_PATCH_SCHEMA,
+                prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair{attempt}",
+                call_key=self._repair_call_key("relations.cycle-repair", attempt), **common,
+            )
+            patch_payload = patch.get("data", patch)
+            if not isinstance(patch_payload, dict) or not isinstance(patch_payload.get("operations"), list) or any(
+                not isinstance(operation, dict) for operation in patch_payload["operations"]
+            ):
+                raise TaskDecompositionError("repair patch operations must be an array of objects",
+                    validation_code="topology_patch_invalid", field_path=("operations",))
+            try:
+                relations, policies = apply_repair_patch(
+                    relations=list(payload.get("relations", [])), control_policies=list(payload.get("controlPolicies", [])),
+                    patch=patch_payload, task_keys={str(item.get("key")) for item in payload.get("tasks", [])},
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise TaskDecompositionError(str(exc), validation_code="topology_patch_invalid", field_path=("operations",)) from exc
+            self.last_audit["topology"] = {
+                "compile1Conflict": conflict, "repairPatch": patch_payload,
+                "repairAttempts": attempt,
+            }
+            return {**payload, "relations": relations, "controlPolicies": policies}
+        missing_refs = self._coverage_gap_refs(validation_error)
+        if missing_refs and raw is not None:
+            return self._repair_source_ref_coverage(
+                raw=raw, profile=profile, missing_refs=missing_refs,
+                repair_attempt=attempt, validation_error=latest_error, **common,
+            )
+        if frozen_tasks is not None:
+            repaired = self._call_llm(
+                stage="relations.repair", prompt=prompt + "\nKeep frozen tasks unchanged." + feedback,
+                schema=schema, prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair{attempt}",
+                call_key=self._repair_call_key("relations.repair", attempt), **common,
+            )
+            result = repaired.get("data", repaired)
+            return {"tasks": frozen_tasks, "relations": result.get("relations", []),
+                    "controlPolicies": result.get("controlPolicies", [])}
+        return self._call_llm(
+            stage="repair", prompt=prompt + feedback, schema=schema,
+            prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair{attempt}",
+            call_key=self._repair_call_key("repair", attempt), **common,
+        )
+
     def decompose(
-        self,
-        *,
-        mission_id: str,
-        profile: TaskSemanticProfile,
-        strategy: str,
-        task_input: Mapping[str, Any] | None,
-        use_llm: bool,
-        reasoning_effort: str | None = None,
+        self, *, mission_id: str, profile: TaskSemanticProfile, strategy: str,
+        task_input: Mapping[str, Any] | None, use_llm: bool, reasoning_effort: str | None = None,
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
-        planning_deadline: float | None = None,
-        run_id: str | None = None,
+        planning_deadline: float | None = None, run_id: str | None = None,
     ) -> TaskPlan:
         planning_schema = deepcopy(_SCHEMA)
         if strategy == "initial_commit_candidate":
             planning_schema["properties"]["controlPolicies"]["maxItems"] = 0
         self.last_audit = {
-            "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
-            **planner_prompt_metadata(),
+            "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION, **planner_prompt_metadata(),
             "schemaHash": schema_hash(planning_schema),
             "modelId": str(getattr(self.llm, "model", None) or "unreported"),
             "modelVersion": str(getattr(self.llm, "version", None) or "unreported"),
             "mode": "model" if use_llm and self.llm is not None else "deterministic",
         }
-        if use_llm and self.llm is not None:
-            prompt = self.build_prompt(
-                profile=profile,
-                task_input=task_input,
-                existing_semantic_tasks=existing_semantic_tasks,
+        if not use_llm or self.llm is None:
+            return self._fallback(
+                mission_id=mission_id, profile=profile, strategy=strategy,
+                reason="model decomposition disabled or unavailable",
+                existing_semantic_tasks=existing_semantic_tasks, task_input=task_input,
             )
-            if strategy == "initial_commit_candidate":
-                prompt += "\n" + INITIAL_DAG_CONTRACT
-            if (task_input or {}).get("_effectiveCapabilityProfile") == "full":
-                return self._decompose_staged(
-                    mission_id=mission_id,
-                    profile=profile,
-                    strategy=strategy,
-                    task_input=task_input,
-                    existing_semantic_tasks=existing_semantic_tasks,
-                    prompt=prompt,
-                    reasoning_effort=reasoning_effort,
-                    planning_deadline=planning_deadline,
-                    run_id=run_id,
-                )
-            first: Any = None
-            try:
-                first = self._call_llm(
-                    stage="decompose",
-                    prompt=prompt,
-                    schema=planning_schema,
-                    reasoning_effort=reasoning_effort,
-                    prompt_version=TASK_DECOMPOSITION_PROMPT_VERSION,
-                    call_key="decompose",
-                    planning_deadline=planning_deadline,
-                    run_id=run_id,
-                )
-                self._capture_model_audit(first)
-                return self._to_plan(
-                    mission_id,
-                    profile,
-                    strategy,
-                    first,
-                    task_input=task_input,
-                    existing_semantic_tasks=existing_semantic_tasks,
-                )
-            except Exception as first_error:
-                if transport_error_code(first_error):
-                    self.last_audit["mode"] = "failed"
-                    self.last_audit["error"] = type(first_error).__name__
-                    raise TaskDecompositionError(
-                        f"TASK_PLAN_TRANSPORT_FAILED: {transport_error_code(first_error)}",
-                        cause_code=transport_error_code(first_error),
-                        metadata=dict(self.last_audit.get("lastTransportError") or {}),
-                    ) from first_error
-                try:
-                    missing_refs = self._coverage_gap_refs(first_error)
-                    if isinstance(first_error, TopologyCompileError):
-                        if not is_model_repair_eligible(first_error.conflict) or first is None:
-                            raise
-                        raw = deepcopy(first.get("data", first))
-                        structured_conflict = conflict_context(first_error.conflict)
-                        repair_patch = self._call_llm(
-                            stage="relations.repair",
-                            prompt=(
-                                "Patch only the model relation/control proposal using this compiler conflict.\n"
-                                + f"Frozen Tasks: {json.dumps(raw.get('tasks', []), ensure_ascii=False)}\n"
-                                + f"Current model relations: {json.dumps(raw.get('relations', []), ensure_ascii=False)}\n"
-                                + f"Current control policies: {json.dumps(raw.get('controlPolicies', []), ensure_ascii=False)}\n"
-                                + f"Structured conflict: {json.dumps(structured_conflict, ensure_ascii=False)}\n"
-                                + "Return patch operations only. Never change frozen tasks, capability requirements, "
-                                + "source identities, or catalog edges. Use originalRelationIndex."
-                            ),
-                            schema=REPAIR_PATCH_SCHEMA, reasoning_effort=reasoning_effort,
-                            prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1",
-                            call_key="relations.cycle-repair", planning_deadline=planning_deadline,
-                            run_id=run_id,
-                        )
-                        patch_payload = repair_patch.get("data", repair_patch)
-                        relations, policies = apply_repair_patch(
-                            relations=list(raw.get("relations", [])),
-                            control_policies=list(raw.get("controlPolicies", [])),
-                            patch=patch_payload,
-                            task_keys={str(item.get("key")) for item in raw.get("tasks", [])},
-                        )
-                        raw["relations"] = relations
-                        raw["controlPolicies"] = policies
-                        self.last_audit["topology"] = {
-                            "compile1Conflict": structured_conflict, "repairPatch": patch_payload,
-                            "repairAttempts": 1,
-                        }
-                        repaired = raw
-                        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1"
-                    elif missing_refs and first is not None:
-                        repaired = self._repair_source_ref_coverage(
-                            raw=first,
-                            profile=profile,
-                            missing_refs=missing_refs,
-                            reasoning_effort=reasoning_effort,
-                            planning_deadline=planning_deadline,
-                            run_id=run_id,
-                        )
-                        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
-                    else:
-                        invalid_plan = json.dumps(first, ensure_ascii=False, default=str)
-                        repaired = self._call_llm(
-                            stage="repair",
-                            prompt=prompt
-                            + "\nThe previous result failed TaskPlan schema validation. "
-                            + "Repair it once and return the complete JSON again. "
-                            + f"Validation detail: {first_error}\n"
-                            + f"Previous invalid TaskPlan JSON: {invalid_plan}",
-                            schema=planning_schema,
-                            reasoning_effort=reasoning_effort,
-                            prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1",
-                            call_key="repair",
-                            planning_deadline=planning_deadline,
-                            run_id=run_id,
-                        )
-                        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1"
-                    self.last_audit["promptVersion"] = repair_version
-                    self._capture_model_audit(repaired)
-                    return self._to_plan(
-                        mission_id,
-                        profile,
-                        strategy,
-                        repaired,
-                        task_input=task_input,
-                        existing_semantic_tasks=existing_semantic_tasks,
-                    )
-                except Exception as repair_error:
-                    self.last_audit["mode"] = "failed"
-                    self.last_audit["error"] = type(repair_error).__name__
-                    raise TaskDecompositionError(
-                        "TASK_PLAN_VALIDATION_FAILED after one repair: "
-                        f"{repair_error}",
-                        metadata={
-                            **({"topologyCompilation": self.last_audit["topologyCompilation"]}
-                               if "topologyCompilation" in self.last_audit else {}),
-                            "repairAttempts": 1,
-                        },
-                    ) from repair_error
-        return self._fallback(
-            mission_id=mission_id,
-            profile=profile,
-            strategy=strategy,
-            reason="model decomposition disabled or unavailable",
-            existing_semantic_tasks=existing_semantic_tasks,
-            task_input=task_input,
-        )
+        if planning_deadline is None:
+            planning_deadline = monotonic() + (
+                PLANNING_TOTAL_TIMEOUT_SECONDS if PLANNING_TOTAL_TIMEOUT_SECONDS > 0 else PLANNING_WATCHDOG_SECONDS
+            )
+        prompt = self.build_prompt(profile=profile, task_input=task_input, existing_semantic_tasks=existing_semantic_tasks)
+        if strategy == "initial_commit_candidate":
+            prompt += "\n" + INITIAL_DAG_CONTRACT
+        if (task_input or {}).get("_effectiveCapabilityProfile") == "full":
+            return self._decompose_staged(
+                mission_id=mission_id, profile=profile, strategy=strategy, task_input=task_input,
+                existing_semantic_tasks=existing_semantic_tasks, prompt=prompt,
+                reasoning_effort=reasoning_effort, planning_deadline=planning_deadline, run_id=run_id,
+            )
+        try:
+            _, plan = self._generate_validated(
+                stage="decompose", prompt=prompt, schema=planning_schema,
+                validate=lambda raw: self._to_plan(mission_id, profile, strategy, raw,
+                    task_input=task_input, existing_semantic_tasks=existing_semantic_tasks),
+                repair=lambda raw, error, attempt, latest: self._repair_task_plan(
+                    raw, error, attempt, latest, profile=profile, strategy=strategy,
+                    prompt=prompt, schema=planning_schema, reasoning_effort=reasoning_effort,
+                    planning_deadline=planning_deadline, run_id=run_id,
+                ),
+                reasoning_effort=reasoning_effort, planning_deadline=planning_deadline, run_id=run_id,
+            )
+            return plan
+        except Exception as exc:
+            self.last_audit.update(mode="failed", error=type(exc).__name__)
+            transport_code = transport_error_code(exc)
+            raise TaskDecompositionError(
+                f"TASK_PLAN_TRANSPORT_FAILED: {transport_code}" if transport_code else f"TASK_PLAN_VALIDATION_FAILED: {exc}",
+                cause_code=transport_code,
+                metadata={"validationFailures": self.last_audit.get("validationFailures", []),
+                          **dict(self.last_audit.get("lastTransportError") or {}),
+                          **({"topologyCompilation": self.last_audit["topologyCompilation"]}
+                             if "topologyCompilation" in self.last_audit else {})},
+            ) from exc
 
     def _decompose_staged(
-        self,
-        *,
-        mission_id: str,
-        profile: TaskSemanticProfile,
-        strategy: str,
-        task_input: Mapping[str, Any] | None,
-        existing_semantic_tasks: tuple[Mapping[str, Any], ...],
-        prompt: str,
-        reasoning_effort: str | None,
-        planning_deadline: float | None,
-        run_id: str | None,
+        self, *, mission_id: str, profile: TaskSemanticProfile, strategy: str,
+        task_input: Mapping[str, Any] | None, existing_semantic_tasks: tuple[Mapping[str, Any], ...],
+        prompt: str, reasoning_effort: str | None, planning_deadline: float | None, run_id: str | None,
     ) -> TaskPlan:
-        """Build a large TaskPlan through bounded JSON units.
-
-        Stable semantic keys are fixed by the outline. Detail failures retry only
-        their five-task batch and relation failures retry only the relation unit.
-        """
+        """Validate each outline/detail/relation unit before moving to the next."""
         task_item_schema = deepcopy(_SCHEMA["properties"]["tasks"]["items"])
-        outline_schema = {
-            "type": "object",
-            "properties": {
-                "tasks": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "key": {"type": "string"},
-                            "title": {"type": "string"},
-                            "capabilityId": {"type": "string"},
-                            "logicalRole": {"type": "string"},
-                            "sourceRefs": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["key", "title", "capabilityId", "logicalRole", "sourceRefs"],
-                    },
-                }
-            },
-            "required": ["tasks"],
-        }
-        self.last_audit.update({"mode": "model_staged", "stages": []})
+        outline_schema = {"type": "object", "properties": {"tasks": {
+            "type": "array", "items": {"type": "object", "properties": {
+                name: deepcopy(task_item_schema["properties"][name])
+                for name in ("key", "title", "capabilityId", "logicalRole", "sourceRefs")
+            }, "required": ["key", "title", "capabilityId", "logicalRole", "sourceRefs"]},
+        }}, "required": ["tasks"]}
+        common = dict(reasoning_effort=reasoning_effort, planning_deadline=planning_deadline, run_id=run_id)
+        self.last_audit.update(mode="model_staged", stages=[])
         try:
-            outline_prompt = prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives."
-            outline_result = self._call_llm(
-                stage="outline",
-                prompt=outline_prompt,
-                schema=outline_schema,
-                reasoning_effort=reasoning_effort,
-                prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline",
-                call_key="outline",
-                planning_deadline=planning_deadline,
-                run_id=run_id,
+            _, (outline, keys) = self._generate_validated(
+                stage="outline", prompt=prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, "
+                "primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
+                schema=outline_schema, validate=self._validated_outline_tasks, **common,
             )
-            try:
-                outline, keys = self._validated_outline_tasks(outline_result)
-            except TaskDecompositionError as outline_error:
-                outline_result = self._call_llm(
-                    stage="outline.repair",
-                    prompt=(
-                        outline_prompt
-                        + "\nRepair the outline once. It must contain at least one task and every task "
-                        + "must have a unique non-empty key. Return the complete outline JSON again. "
-                        + f"Validation detail: {outline_error}\n"
-                        + f"Previous invalid outline JSON: {json.dumps(outline_result, ensure_ascii=False, default=str)}"
-                    ),
-                    schema=outline_schema,
-                    reasoning_effort=reasoning_effort,
-                    prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.outline.repair1",
-                    call_key="outline.repair",
-                    planning_deadline=planning_deadline,
-                    run_id=run_id,
-                )
-                outline, keys = self._validated_outline_tasks(outline_result)
             self.last_audit["stages"].append({"stage": "outline", "taskCount": len(keys)})
             self._publish_draft(stage="outline", outline=outline)
-
-            detailed_tasks: list[dict[str, Any]] = []
+            detailed_tasks = []
             for offset in range(0, len(outline), 5):
                 batch = outline[offset:offset + 5]
-                detail_index = offset // 5 + 1
-                batch_keys = [str(item["key"]) for item in batch]
-                detail_schema = {
-                    "type": "object",
-                    "properties": {
-                        "tasks": {
-                            "type": "array",
-                            "minItems": len(batch),
-                            "maxItems": len(batch),
-                            "items": task_item_schema,
-                        }
-                    },
-                    "required": ["tasks"],
-                }
-                detail_prompt = (
-                    "STAGE DETAIL: expand exactly this outline batch into complete TaskPlan task objects. "
+                detail_schema = {"type": "object", "properties": {"tasks": {
+                    "type": "array", "minItems": len(batch), "maxItems": len(batch), "items": task_item_schema,
+                }}, "required": ["tasks"]}
+
+                def validate_detail(raw):
+                    rows = self._validated_detail_tasks(raw, batch)
+                    self._validate_workset_sources(rows, task_input)
+                    return rows
+
+                _, rows = self._generate_validated(
+                    stage="detail", call_key=f"detail:{offset // 5 + 1}", schema=detail_schema,
+                    prompt="STAGE DETAIL: expand exactly this outline batch into complete TaskPlan task objects. "
                     "Preserve every key and capabilityId exactly; return no other tasks and no relations. "
                     "Every task needs a business objective, acceptance criteria, source refs and rationale.\n"
-                    f"Mission planning context: {prompt}\n"
-                    f"Frozen outline batch: {json.dumps(batch, ensure_ascii=False)}"
+                    f"Mission planning context: {prompt}\nFrozen outline batch: {json.dumps(batch, ensure_ascii=False)}",
+                    validate=validate_detail, **common,
                 )
-                detail_repaired = False
-                try:
-                    detail_result = self._call_llm(
-                        stage="detail",
-                        prompt=detail_prompt,
-                        schema=detail_schema,
-                        reasoning_effort=reasoning_effort,
-                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail",
-                        call_key=f"detail:{detail_index}",
-                        planning_deadline=planning_deadline,
-                        run_id=run_id,
-                    )
-                except Exception as exc:
-                    if transport_error_code(exc):
-                        raise
-                    detail_repaired = True
-                    detail_result = self._call_llm(
-                        stage="detail.repair",
-                        prompt=detail_prompt + f"\nRepair this batch once. Previous error: {exc}",
-                        schema=detail_schema,
-                        reasoning_effort=reasoning_effort,
-                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
-                        call_key=f"detail:{detail_index}.repair",
-                        planning_deadline=planning_deadline,
-                        run_id=run_id,
-                    )
-                try:
-                    normalized_rows = self._validated_detail_tasks(detail_result, batch)
-                    self._validate_workset_sources(normalized_rows, task_input)
-                except TaskDecompositionError as detail_error:
-                    if detail_repaired:
-                        raise
-                    detail_result = self._call_llm(
-                        stage="detail.repair",
-                        prompt=(
-                            detail_prompt
-                            + "\nRepair this batch once. Every task must preserve its frozen identity and "
-                            + "include a non-empty business objective and acceptance criteria. "
-                            + f"Validation detail: {detail_error}\n"
-                            + f"Previous invalid detail JSON: {json.dumps(detail_result, ensure_ascii=False, default=str)}"
-                        ),
-                        schema=detail_schema,
-                        reasoning_effort=reasoning_effort,
-                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.detail.repair1",
-                        call_key=f"detail:{detail_index}.repair",
-                        planning_deadline=planning_deadline,
-                        run_id=run_id,
-                    )
-                    normalized_rows = self._validated_detail_tasks(detail_result, batch)
-                    self._validate_workset_sources(normalized_rows, task_input)
-                detailed_tasks.extend(normalized_rows)
-                self.last_audit["stages"].append({"stage": "detail", "keys": batch_keys})
-                self._publish_draft(
-                    stage="detail",
-                    outline=outline,
-                    detailed_tasks=detailed_tasks,
-                )
-
-            relation_schema = {
-                "type": "object",
-                "properties": {
-                    "relations": deepcopy(_SCHEMA["properties"]["relations"]),
-                    "controlPolicies": deepcopy(_SCHEMA["properties"]["controlPolicies"]),
-                },
-                "required": ["relations", "controlPolicies"],
-            }
+                detailed_tasks.extend(rows)
+                self.last_audit["stages"].append({"stage": "detail", "keys": [str(item["key"]) for item in batch]})
+                self._publish_draft(stage="detail", outline=outline, detailed_tasks=detailed_tasks)
+            relation_schema = {"type": "object", "properties": {
+                "relations": deepcopy(_SCHEMA["properties"]["relations"]),
+                "controlPolicies": deepcopy(_SCHEMA["properties"]["controlPolicies"]),
+            }, "required": ["relations", "controlPolicies"]}
             if strategy == "initial_commit_candidate":
                 relation_schema["properties"]["controlPolicies"]["maxItems"] = 0
-            compact = [
-                {
-                    "key": item["key"],
-                    "capabilityId": item["capabilityId"],
-                    "logicalRole": item.get("logicalRole", "task"),
-                    "objective": item.get("objective", ""),
-                }
-                for item in detailed_tasks
-            ]
+            compact = [{key: item.get(key, "task" if key == "logicalRole" else "")
+                        for key in ("key", "capabilityId", "logicalRole", "objective")} for item in detailed_tasks]
             relation_prompt = (
                 "STAGE RELATIONS: create the acyclic prerequisite-to-dependent topology for these frozen tasks. "
                 + (INITIAL_DAG_CONTRACT + "\n" if strategy == "initial_commit_candidate" else
                    "Add a verification_loop only when a refinement-to-verification region is present; use maxRevisions=2.\n")
                 + f"Tasks: {json.dumps(compact, ensure_ascii=False)}"
             )
-            try:
-                relation_result = self._call_llm(
-                    stage="relations",
-                    prompt=relation_prompt,
-                    schema=relation_schema,
-                    reasoning_effort=reasoning_effort,
-                    prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations",
-                    call_key="relations",
-                    planning_deadline=planning_deadline,
-                    run_id=run_id,
+
+            def validate_relations(raw):
+                payload = raw.get("data", raw) if isinstance(raw, dict) else None
+                if not isinstance(payload, dict):
+                    raise TaskDecompositionError("relation result must be an object",
+                        validation_code="relation_object_required", field_path=("relations",))
+                return self._to_plan(mission_id, profile, strategy,
+                    {"tasks": detailed_tasks, "relations": payload.get("relations", []),
+                     "controlPolicies": payload.get("controlPolicies", [])},
+                    task_input=task_input, existing_semantic_tasks=existing_semantic_tasks)
+
+            def repair_relations(raw, error, attempt, latest):
+                nonlocal detailed_tasks
+                payload = raw.get("data", raw) if isinstance(raw, dict) else {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                combined = {"tasks": detailed_tasks, "relations": payload.get("relations", []),
+                            "controlPolicies": payload.get("controlPolicies", [])}
+                result = self._repair_task_plan(
+                    combined, error, attempt, latest, profile=profile, strategy=strategy,
+                    prompt=relation_prompt, schema=relation_schema, frozen_tasks=detailed_tasks, **common,
                 )
-            except Exception as exc:
-                if transport_error_code(exc):
-                    raise
-                relation_result = self._call_llm(
-                    stage="relations.repair",
-                    prompt=relation_prompt + f"\nRepair the relation unit once. Previous error: {exc}",
-                    schema=relation_schema,
-                    reasoning_effort=reasoning_effort,
-                    prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair1",
-                    call_key="relations.repair",
-                    planning_deadline=planning_deadline,
-                    run_id=run_id,
-                )
-            relation_payload = relation_result.get("data", relation_result)
-            combined = {
-                "tasks": detailed_tasks,
-                "relations": relation_payload.get("relations", []),
-                "controlPolicies": relation_payload.get("controlPolicies", []),
-            }
-            self.last_audit["stages"].append({"stage": "relations"})
-            try:
-                plan = self._to_plan(
-                    mission_id, profile, strategy, combined,
-                    task_input=task_input,
-                    existing_semantic_tasks=existing_semantic_tasks,
-                )
-            except Exception as exc:
-                missing_refs = self._coverage_gap_refs(exc)
-                if strategy == "initial_commit_candidate" and str(exc).startswith("INITIAL_CONTROL_GRAPH_UNSUPPORTED"):
-                    repaired = self._call_llm(
-                        stage="relations.repair",
-                        prompt=relation_prompt + "\nRepair only this relation unit once. Keep frozen tasks unchanged. "
-                            + f"Validation detail: {exc}\nPrevious relations: {json.dumps(relation_payload, ensure_ascii=False)}",
-                        schema=relation_schema, reasoning_effort=reasoning_effort,
-                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.initial-dag-repair1",
-                        call_key="relations.initial-dag-repair", planning_deadline=planning_deadline, run_id=run_id)
-                    relation_payload = repaired.get("data", repaired)
-                    combined = {"tasks": detailed_tasks, "relations": relation_payload.get("relations", []),
-                                "controlPolicies": relation_payload.get("controlPolicies", [])}
-                elif missing_refs:
-                    combined = self._repair_source_ref_coverage(
-                        raw=combined,
-                        profile=profile,
-                        missing_refs=missing_refs,
-                        reasoning_effort=reasoning_effort,
-                        planning_deadline=planning_deadline,
-                        run_id=run_id,
-                    )
-                elif isinstance(exc, TopologyCompileError) and is_model_repair_eligible(exc.conflict):
-                    structured_conflict = conflict_context(exc.conflict)
-                    repair_patch = self._call_llm(
-                        stage="relations.repair",
-                        prompt=(
-                            "Patch the model relation/control proposal using the complete compiler conflict.\n"
-                            + f"Frozen Tasks: {json.dumps(compact, ensure_ascii=False)}\n"
-                            + f"Current model relations: {json.dumps(combined['relations'], ensure_ascii=False)}\n"
-                            + f"Current control policies: {json.dumps(combined['controlPolicies'], ensure_ascii=False)}\n"
-                            + f"Structured conflict: {json.dumps(structured_conflict, ensure_ascii=False)}\n"
-                            + "Return patch operations only. You may change model relations and controlPolicies. "
-                            + "Never remove a capability requirement/catalog edge, change frozen task keys or "
-                            + "capabilities, or change source/material identities. Use originalRelationIndex to "
-                            + "remove or replace model relations. Express feedback with add_verification_loop."
-                        ),
-                        schema=REPAIR_PATCH_SCHEMA,
-                        reasoning_effort=reasoning_effort,
-                        prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair1",
-                        call_key="relations.cycle-repair",
-                        planning_deadline=planning_deadline,
-                        run_id=run_id,
-                    )
-                    patch_payload = repair_patch.get("data", repair_patch)
-                    patched_relations, patched_policies = apply_repair_patch(
-                        relations=list(combined["relations"]),
-                        control_policies=list(combined["controlPolicies"]),
-                        patch=patch_payload,
-                        task_keys={str(item["key"]) for item in detailed_tasks},
-                    )
-                    combined = {
-                        "tasks": detailed_tasks,
-                        "relations": patched_relations,
-                        "controlPolicies": patched_policies,
-                    }
-                    relation_payload = combined
-                    self.last_audit["topology"] = {
-                        "compile1Conflict": structured_conflict,
-                        "repairPatch": patch_payload,
-                        "repairAttempts": 1,
-                    }
-                    self.last_audit["stages"].append(
-                        {"stage": "relations.cycle-repair"}
-                    )
-                else:
-                    raise
-                plan = self._to_plan(
-                    mission_id, profile, strategy, combined,
-                    task_input=task_input,
-                    existing_semantic_tasks=existing_semantic_tasks,
-                )
-                if "topology" in self.last_audit:
-                    self.last_audit["topology"]["compile2Result"] = "valid"
-            self._publish_draft(
-                stage="relations",
-                outline=outline,
-                detailed_tasks=detailed_tasks,
-                relations=list(relation_payload.get("relations", [])),
+                detailed_tasks = result["tasks"]
+                return result
+
+            relations, plan = self._generate_validated(
+                stage="relations", prompt=relation_prompt, schema=relation_schema,
+                validate=validate_relations, repair=repair_relations, **common,
             )
-            self._capture_model_audit(outline_result)
+            self.last_audit["stages"].append({"stage": "relations"})
+            if "topology" in self.last_audit:
+                self.last_audit["topology"]["compile2Result"] = "valid"
+            payload = relations.get("data", relations)
+            self._publish_draft(stage="relations", outline=outline, detailed_tasks=detailed_tasks,
+                                relations=list(payload.get("relations", [])))
             return plan
         except Exception as exc:
-            self.last_audit["mode"] = "failed"
-            self.last_audit["error"] = type(exc).__name__
+            self.last_audit.update(mode="failed", error=type(exc).__name__)
             if isinstance(exc, TopologyCompileError):
                 self.last_audit["topology"] = {
-                    **dict(self.last_audit.get("topology") or {}),
-                    "finalConflict": conflict_context(exc.conflict),
-                    "repairAttempts": int(
-                        (self.last_audit.get("topology") or {}).get("repairAttempts", 0)
-                    ),
+                    **dict(self.last_audit.get("topology") or {}), "finalConflict": conflict_context(exc.conflict),
                 }
-            cause_code = transport_error_code(exc)
             raise TaskDecompositionError(
-                f"TASK_PLAN_STAGED_FAILED: {exc}",
-                cause_code=cause_code,
-                metadata={
-                    **dict(self.last_audit.get("lastTransportError") or {}),
-                    **({"topology": self.last_audit["topology"]} if "topology" in self.last_audit else {}),
-                    **({"topologyCompilation": self.last_audit["topologyCompilation"]}
-                       if "topologyCompilation" in self.last_audit else {}),
-                },
+                f"TASK_PLAN_STAGED_FAILED: {exc}", cause_code=transport_error_code(exc),
+                metadata={**dict(self.last_audit.get("lastTransportError") or {}),
+                          "validationFailures": self.last_audit.get("validationFailures", []),
+                          **({"topology": self.last_audit["topology"]} if "topology" in self.last_audit else {}),
+                          **({"topologyCompilation": self.last_audit["topologyCompilation"]}
+                             if "topologyCompilation" in self.last_audit else {})},
             ) from exc
 
     @staticmethod
@@ -739,19 +649,21 @@ class TaskDecomposer:
         reasoning_effort: str | None = None,
         planning_deadline: float | None = None,
         run_id: str | None = None,
+        repair_attempt: int = 1,
+        validation_error: Exception | None = None,
     ) -> Any:
         """Repair provenance annotations without rewriting valid task semantics/topology."""
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(tasks, list) or not tasks:
-            raise TaskDecompositionError("coverage repair requires the original task list")
+            raise TaskDecompositionError("coverage repair requires the original task list", validation_code="tasks_required", field_path=("tasks",))
         task_keys = tuple(
             str(item.get("key") or "").strip()
             for item in tasks
             if isinstance(item, dict) and str(item.get("key") or "").strip()
         )
         if not task_keys:
-            raise TaskDecompositionError("coverage repair requires stable task keys")
+            raise TaskDecompositionError("coverage repair requires stable task keys", validation_code="task_key_required", field_path=("tasks", "key"))
 
         source_registry = {
             item["ref"]: item["text"]
@@ -763,7 +675,7 @@ class TaskDecomposer:
             if ref in source_registry
         ]
         if len(missing_registry) != len(missing_refs):
-            raise TaskDecompositionError("coverage repair contains unknown source refs")
+            raise TaskDecompositionError("coverage repair contains unknown source refs", validation_code="source_coverage_required", field_path=("tasks", "sourceRefs"))
 
         schema = {
             "type": "object",
@@ -796,7 +708,7 @@ class TaskDecomposer:
             for item in tasks
             if isinstance(item, dict)
         ]
-        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair1.coverage"
+        repair_version = f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair{repair_attempt}.coverage"
         self.last_audit["promptVersion"] = repair_version
         assignment_result = self._call_llm(
             stage="repair_coverage",
@@ -805,11 +717,13 @@ class TaskDecomposer:
             "Assign every missing sourceRef exactly once to the existing task whose objective "
             "and acceptance criteria will produce or verify that requirement. Return JSON only.\n"
             f"Missing source registry entries: {json.dumps(missing_registry, ensure_ascii=False)}\n"
-            f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}",
+            f"Existing tasks: {json.dumps(task_catalog, ensure_ascii=False)}"
+            + (self._repair_feedback(validation_error, payload, repair_attempt, label="TaskPlan")
+               if validation_error is not None else ""),
             schema=schema,
             reasoning_effort=reasoning_effort,
             prompt_version=repair_version,
-            call_key="repair_coverage",
+            call_key=self._repair_call_key("repair_coverage", repair_attempt),
             planning_deadline=planning_deadline,
             run_id=run_id,
         )
@@ -825,22 +739,23 @@ class TaskDecomposer:
             else None
         )
         if not isinstance(assignments, list):
-            raise TaskDecompositionError("coverage repair returned no assignments")
+            raise TaskDecompositionError("coverage repair returned no assignments", validation_code="source_assignments_required", field_path=("assignments",))
 
         assigned_refs: list[str] = []
         assignments_by_task: dict[str, list[str]] = {}
-        for item in assignments:
+        for index, item in enumerate(assignments):
             if not isinstance(item, dict):
-                raise TaskDecompositionError("coverage repair assignment must be an object")
+                raise TaskDecompositionError("coverage repair assignment must be an object", validation_code="source_assignment_object_required", field_path=("assignments", index))
             source_ref = str(item.get("sourceRef") or "").strip()
             task_key = str(item.get("taskKey") or "").strip()
             if source_ref not in missing_refs or task_key not in task_keys:
-                raise TaskDecompositionError("coverage repair returned an unknown ref or task key")
+                raise TaskDecompositionError("coverage repair returned an unknown ref or task key", validation_code="source_assignment_invalid", field_path=("assignments", index))
             assigned_refs.append(source_ref)
             assignments_by_task.setdefault(task_key, []).append(source_ref)
         if len(assigned_refs) != len(set(assigned_refs)) or set(assigned_refs) != set(missing_refs):
             raise TaskDecompositionError(
-                "coverage repair must assign every missing source ref exactly once"
+                "coverage repair must assign every missing source ref exactly once",
+                validation_code="source_assignment_coverage", field_path=("assignments",),
             )
 
         repaired = deepcopy(raw)
@@ -872,7 +787,6 @@ class TaskDecomposer:
         task_input: Mapping[str, Any] | None,
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> str:
-        level = profile.estimated_complexity
         catalog = []
         visible_capabilities = self.capability_catalog.expand_dependencies(
             profile.required_capabilities
@@ -958,56 +872,72 @@ class TaskDecomposer:
         if strategy == "initial_commit_candidate" and isinstance(payload, dict) and payload.get("controlPolicies"):
             raise TaskDecompositionError(
                 "INITIAL_CONTROL_GRAPH_UNSUPPORTED: formal initial graphs require controlPolicies=[]. "
-                "Preserve verification/correction obligations with a bounded forward-only task sequence.")
+                "Preserve verification/correction obligations with a bounded forward-only task sequence.",
+                validation_code="initial_dag_required", field_path=("controlPolicies",))
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(tasks, list) or not tasks:
-            raise TaskDecompositionError("decomposer returned no tasks")
+            raise TaskDecompositionError("decomposer returned no tasks", validation_code="tasks_required", field_path=("tasks",))
         self._validate_workset_sources(tasks, task_input)
         nodes: list[PlannedTask] = []
         key_map: dict[str, str] = {}
         raw_parent_keys: list[str | None] = []
         used_keys: set[str] = set()
-        for item in tasks:
+        for task_index, item in enumerate(tasks):
+            if not isinstance(item, dict):
+                raise TaskDecompositionError("task must be an object", validation_code="task_object_required", field_path=("tasks", task_index))
             capability = str(item.get("capabilityId") or "").strip().lower()
-            self.capability_catalog.get(capability)
+            try:
+                self.capability_catalog.get(capability)
+            except (KeyError, ValueError) as exc:
+                raise TaskDecompositionError(str(exc), validation_code="unknown_capability", field_path=("tasks", task_index, "capabilityId")) from exc
             objective = str(item.get("objective") or "").strip()
             if not objective or re.match(r"^(complete|完成)\s*\S*$", objective, re.IGNORECASE):
-                raise TaskDecompositionError(f"task {item.get('key')} has no business objective")
+                raise TaskDecompositionError(f"task {item.get('key')} has no business objective", validation_code="business_objective_required", field_path=("tasks", task_index, "objective"))
             criteria = tuple(str(value).strip() for value in item.get("acceptanceCriteria", []) if str(value).strip())
             if not criteria:
-                raise TaskDecompositionError(f"task {item.get('key')} has empty acceptance criteria")
+                raise TaskDecompositionError(f"task {item.get('key')} has empty acceptance criteria", validation_code="acceptance_criteria_required", field_path=("tasks", task_index, "acceptanceCriteria"))
             raw_key = str(item.get("key") or "").strip()
-            key = self._resolve_semantic_task_key(
-                raw_key=raw_key,
-                capability=capability,
-                logical_role=str(item.get("logicalRole") or "task").strip(),
-                existing_semantic_tasks=existing_semantic_tasks,
-                used_keys=used_keys,
-            )
+            try:
+                key = self._resolve_semantic_task_key(
+                    raw_key=raw_key,
+                    capability=capability,
+                    logical_role=str(item.get("logicalRole") or "task").strip(),
+                    existing_semantic_tasks=existing_semantic_tasks,
+                    used_keys=used_keys,
+                )
+            except TaskDecompositionError as exc:
+                exc.field_path = ("tasks", task_index, *exc.field_path)
+                raise
             if raw_key in key_map:
-                raise TaskDecompositionError(f"duplicate semantic task key: {raw_key}")
+                raise TaskDecompositionError(f"duplicate semantic task key: {raw_key}", validation_code="unique_task_key", field_path=("tasks", task_index, "key"))
             key_map[raw_key] = key
             used_keys.add(key)
             raw_parent_keys.append(item.get("parentKey"))
-            nodes.append(PlannedTask(
-                key=key,
-                parentKey=None,
-                title=str(item.get("title") or objective[:60]).strip(),
-                objective=objective,
-                constraints=self._normalize_constraints(item.get("constraints")),
-                capabilityRequirements=(capability,),
-                acceptanceCriteria=criteria,
-                sourceRefs=tuple(str(value) for value in item.get("sourceRefs", []) if str(value)),
-                decompositionRationale=str(item.get("decompositionRationale") or ""),
-                logicalRole=str(item.get("logicalRole") or "task"),
-                producedArtifacts=tuple(
-                    str(value).strip()
-                    for value in item.get("producedArtifacts", [])
-                    if str(value).strip()
-                ),
-                workset=self._normalize_workset_spec(item.get("workset")),
-                metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
-            ))
+            try:
+                nodes.append(PlannedTask(
+                    key=key,
+                    parentKey=None,
+                    title=str(item.get("title") or objective[:60]).strip(),
+                    objective=objective,
+                    constraints=self._normalize_constraints(item.get("constraints")),
+                    capabilityRequirements=(capability,),
+                    acceptanceCriteria=criteria,
+                    sourceRefs=tuple(str(value) for value in item.get("sourceRefs", []) if str(value)),
+                    decompositionRationale=str(item.get("decompositionRationale") or ""),
+                    logicalRole=str(item.get("logicalRole") or "task"),
+                    producedArtifacts=tuple(
+                        str(value).strip()
+                        for value in item.get("producedArtifacts", [])
+                        if str(value).strip()
+                    ),
+                    workset=self._normalize_workset_spec(item.get("workset")),
+                    metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
+                ))
+            except TaskDecompositionError as exc:
+                exc.field_path = ("tasks", task_index, *exc.field_path)
+                raise
+            except ValidationError as exc:
+                raise TaskDecompositionError("task schema validation failed", field_path=("tasks", task_index)) from exc
         nodes = [
             node.model_copy(update={
                 "parent_key": key_map.get(raw_parent, raw_parent) if raw_parent else None,
@@ -1114,13 +1044,19 @@ class TaskDecomposer:
     @staticmethod
     def _validate_workset_sources(tasks, task_input) -> None:
         allowed = set((task_input or {}).get("materialRefs") or ())
-        for task in tasks:
+        for index, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                raise TaskDecompositionError("task must be an object", validation_code="task_object_required", field_path=("tasks", index))
             try:
                 spec = TaskDecomposer._normalize_workset_spec(task.get("workset"))
                 if spec is not None:
                     spec.validate_sources(allowed)
             except ValueError as exc:
-                raise TaskDecompositionError(f"task {task.get('key')}: {exc}") from exc
+                raise TaskDecompositionError(
+                    f"task {task.get('key')}: {exc}",
+                    validation_code=None if isinstance(exc, ValidationError) else "registered_material_required",
+                    field_path=("tasks", index, "workset"),
+                ) from exc
 
     @staticmethod
     def _normalize_workset_spec(raw: Any) -> WorksetSpec | None:
@@ -1148,10 +1084,10 @@ class TaskDecomposer:
         payload = raw.get("data", raw) if isinstance(raw, dict) else None
         outline = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(outline, list) or not outline:
-            raise TaskDecompositionError("staged outline returned no tasks")
+            raise TaskDecompositionError("staged outline returned no tasks", validation_code="tasks_required", field_path=("tasks",))
         keys = [str(item.get("key") or "").strip() for item in outline if isinstance(item, dict)]
         if len(keys) != len(outline) or not all(keys) or len(keys) != len(set(keys)):
-            raise TaskDecompositionError("staged outline contains empty or duplicate task keys")
+            raise TaskDecompositionError("staged outline contains empty or duplicate task keys", validation_code="unique_task_key", field_path=("tasks", "key"))
         return outline, keys
 
     @staticmethod
@@ -1159,7 +1095,7 @@ class TaskDecomposer:
         payload = raw.get("data", raw) if isinstance(raw, dict) else None
         rows = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(rows, list) or len(rows) != len(frozen_batch):
-            raise TaskDecompositionError("staged detail batch changed frozen task count")
+            raise TaskDecompositionError("staged detail batch changed frozen task count", validation_code="frozen_task_count", field_path=("tasks",))
         rows_by_key = {
             str(item.get("key") or ""): item
             for item in rows
@@ -1170,7 +1106,7 @@ class TaskDecomposer:
             frozen_key = str(frozen.get("key") or "")
             row = rows_by_key.get(frozen_key, rows[index])
             if not isinstance(row, dict):
-                raise TaskDecompositionError("staged detail batch contains a non-object task")
+                raise TaskDecompositionError("staged detail batch contains a non-object task", validation_code="task_object_required", field_path=("tasks", index))
             normalized = dict(row)
             # Identity fields belong exclusively to the frozen outline. Detail
             # units contribute content and may not rename or rebind tasks.
@@ -1180,13 +1116,13 @@ class TaskDecomposer:
             if not isinstance(normalized.get("sourceRefs"), list):
                 normalized["sourceRefs"] = list(frozen.get("sourceRefs") or [])
             if not str(normalized.get("capabilityId") or "").strip():
-                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has no capabilityId")
+                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has no capabilityId", validation_code="unknown_capability", field_path=("tasks", index, "capabilityId"))
             objective = str(normalized.get("objective") or "").strip()
             if not objective or re.match(r"^(complete|瀹屾垚)\s*\S*$", objective, re.IGNORECASE):
-                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has no business objective")
+                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has no business objective", validation_code="business_objective_required", field_path=("tasks", index, "objective"))
             criteria = [str(value).strip() for value in normalized.get("acceptanceCriteria", []) if str(value).strip()]
             if not criteria:
-                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has empty acceptance criteria")
+                raise TaskDecompositionError(f"staged detail task {frozen_key!r} has empty acceptance criteria", validation_code="acceptance_criteria_required", field_path=("tasks", index, "acceptanceCriteria"))
             normalized_rows.append(normalized)
         return normalized_rows
 
@@ -1207,7 +1143,7 @@ class TaskDecomposer:
         capability key without hashing semantic content.
         """
         if not raw_key:
-            raise TaskDecompositionError("task has no semantic logical key")
+            raise TaskDecompositionError("task has no semantic logical key", validation_code="task_key_required", field_path=("key",))
         if raw_key in {str(item.get("key") or "").strip() for item in existing_semantic_tasks}:
             return raw_key
         matches = [
@@ -1238,7 +1174,7 @@ class TaskDecomposer:
         if value in (None, "", []):
             return []
         if not isinstance(value, list):
-            raise TaskDecompositionError("task constraints must be an array")
+            raise TaskDecompositionError("task constraints must be an array", validation_code="constraint_array_required", field_path=("constraints",))
         normalized: list[dict[str, Any]] = []
         for item in value:
             if isinstance(item, dict):
@@ -1246,7 +1182,7 @@ class TaskDecomposer:
             elif isinstance(item, str) and item.strip():
                 normalized.append({"type": "task_constraint", "value": item.strip()})
             else:
-                raise TaskDecompositionError("task constraint must be an object or non-empty string")
+                raise TaskDecompositionError("task constraint must be an object or non-empty string", validation_code="constraint_item_invalid", field_path=("constraints",))
         return normalized
 
     def _ensure_expected_artifact_producer(
@@ -1428,7 +1364,8 @@ class TaskDecomposer:
         ]
         if missing_refs:
             raise TaskDecompositionError(
-                "TaskPlan coverage gap for source refs: " + ", ".join(missing_refs)
+                "TaskPlan coverage gap for source refs: " + ", ".join(missing_refs),
+                validation_code="source_coverage_required", field_path=("tasks", "sourceRefs"),
             )
 
     def _fallback(
@@ -1532,6 +1469,7 @@ class TaskDecomposer:
 __all__ = [
     "PLANNING_MODEL_TIMEOUT_SECONDS",
     "TASK_DECOMPOSITION_PROMPT_VERSION",
+    "TASK_PLAN_MAX_REPAIRS",
     "TaskDecomposer",
     "TaskDecompositionError",
 ]

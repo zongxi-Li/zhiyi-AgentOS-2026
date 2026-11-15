@@ -14,6 +14,7 @@ from adapters.http_transport import HttpJsonTransport, RotatingKeyProvider
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.openai_runtime import OpenAICompatibleRuntime
 from contracts.capability import CapabilityKind, CapabilityManifest
+from contracts.resource import ModelQuotaPolicy
 from runtime.bootstrap import bootstrap
 from runtime.dependencies import DependencyRegistry
 
@@ -36,6 +37,7 @@ class ModelSetup:
     request_timeout: float
     allow_insecure: bool
     model_capabilities: dict[str, Any] = field(default_factory=dict)
+    quota: ModelQuotaPolicy | None = None
 
 
 class ApplicationSetup:
@@ -158,7 +160,8 @@ class ApplicationSetup:
                 capabilityId=setup.capability_id, kind=CapabilityKind.MODEL,
                 displayName=setup.capability_id, provider=setup.provider,
                 capabilities=list(setup.models), version=setup.version,
-                metadata={"priority": setup.priority, "modelCapabilities": setup.model_capabilities},
+                metadata={"priority": setup.priority, "modelCapabilities": setup.model_capabilities,
+                          "quota": setup.quota.model_dump(by_alias=True, mode="json") if setup.quota else None},
             ),
             transport=HttpJsonTransport(
                 base_url=setup.base_url, key_provider=provider,
@@ -265,6 +268,10 @@ class ApplicationSetup:
                 for name, spec in model_capabilities.items()
             ):
                 raise ApplicationSetupError('APP_MODEL_CONFIG_INVALID: invalid model capabilities')
+            try:
+                quota = ModelQuotaPolicy.model_validate(item["quota"]) if item.get("quota") is not None else None
+            except ValueError as exc:
+                raise ApplicationSetupError("APP_MODEL_CONFIG_INVALID: invalid model quota") from exc
             setups.append(
                 ModelSetup(
                     capability_id=capability_id,
@@ -280,6 +287,7 @@ class ApplicationSetup:
                     ),
                     allow_insecure=allow_insecure,
                     model_capabilities=model_capabilities,
+                    quota=quota,
                 )
             )
         return tuple(setups)

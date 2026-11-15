@@ -14,7 +14,7 @@ from .native_capabilities import (
 )
 from .planning import (
     ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec,
-    MemoryAccessSpec, SkillRequirementSpec,
+    MemoryAccessSpec, ModelRequirementSpec, SkillRequirementSpec,
 )
 from .schema import (
     ACGBlueprint, RuntimeBlueprintSpec, ACGEdge, ACGNode, ACGNodeBase,
@@ -31,7 +31,7 @@ __all__ = [
     "CapabilityPromptProfile", "ComplexityAssessment",
     "ComplexityLevel", "CommunicationSpec", "ConditionEvaluationError", "ConditionOperator", "ConditionSpec",
     "ControlNode", "ControlType", "EdgeActivation", "EdgeType", "EvidenceSpec",
-    "MemoryAccessSpec", "NATIVE_CAPABILITY_IDS", "NodeType", "PlanningCapabilityDescriptor",
+    "MemoryAccessSpec", "ModelRequirementSpec", "NATIVE_CAPABILITY_IDS", "NodeType", "PlanningCapabilityDescriptor",
     "PlanningRiskLevel", "SkillRequirementSpec", "StepNode", "TaskSemanticProfile",
     "build_default_capability_catalog", "detect_cycle", "find_dangling_dependencies",
     "highest_planning_risk_level", "native_capability_descriptors", "parse_node",

@@ -7,6 +7,7 @@ import json
 import math
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack, nullcontext
 from time import monotonic
 from typing import Any
 from uuid import uuid4
@@ -72,6 +73,7 @@ class RegisteredModelRuntime:
         version: str | None = None,
         clock: Callable[[], float] = monotonic,
         wait_for: Callable[[Awaitable[Any], float], Awaitable[Any]] | None = None,
+        call_quota: Callable | None = None,
     ) -> None:
         """保存只读路由键；空键在构造期失败，避免节点开始后才发现配置不完整。"""
         self._registry = registry
@@ -80,6 +82,7 @@ class RegisteredModelRuntime:
         self.version = version.strip() if version is not None else None
         self._clock = clock
         self._wait_for = wait_for or _wait_for
+        self._call_quota = call_quota
         if not self.provider:
             raise ValueError("MODEL_PROVIDER_REQUIRED: Agent profile must set modelProvider")
         if not self.model:
@@ -138,8 +141,8 @@ class RegisteredModelRuntime:
         try:
             adapter = self._registry.resolve(self.provider, self.model, version=self.version)
             if progress_callback is not None and getattr(adapter, "supports_streamed_tool_turns", False):
-                return await self._wait_for(self._stream_tool_turn(adapter, request, progress_callback), timeout_seconds)
-            return await self._wait_for(adapter.invoke(request), timeout_seconds)
+                return await self._wait_for(self._stream_tool_turn(adapter, request, progress_callback, timeout_seconds), timeout_seconds)
+            return await self._wait_for(self._invoke(adapter, request, timeout_seconds), timeout_seconds)
         except asyncio.TimeoutError as exc:
             raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
         except ModelInvocationError as exc:
@@ -147,9 +150,31 @@ class RegisteredModelRuntime:
                 "provider": self.provider, "model": self.model, "usage": dict(exc.usage),
                 "requestDiagnostics": dict(exc.metadata.get("requestDiagnostics") or {})}) from exc
 
-    async def _stream_tool_turn(self, adapter, request, progress):
+    async def _invoke(self, adapter, request, timeout):
+        slot = self._call_quota(request, timeout) if self._call_quota else nullcontext()
+        async with slot as charge:
+            response = await adapter.invoke(request)
+            if charge is not None:
+                charge.observe(response.usage)
+            return response
+
+    async def _stream(self, adapter, request, timeout, charge=None):
+        slot = self._call_quota(request, timeout) if self._call_quota and charge is None else nullcontext(charge)
+        async with slot as charge:
+            iterator = adapter.astream(request).__aiter__()
+            try:
+                async for event in iterator:
+                    if charge is not None:
+                        charge.observe(event.response.usage if event.response is not None else event.metadata.get("usage"))
+                    yield event
+            finally:
+                closer = getattr(iterator, "aclose", None)
+                if callable(closer):
+                    await closer()
+
+    async def _stream_tool_turn(self, adapter, request, progress, timeout):
         """Forward public content while retaining the complete tool turn internally."""
-        iterator = adapter.astream(request).__aiter__()
+        iterator = self._stream(adapter, request, timeout).__aiter__()
         response = None
         first = False
         chunks = length = 0
@@ -269,7 +294,7 @@ class RegisteredModelRuntime:
             effective_reason = prepared.effective_reason
             try:
                 response = await self._wait_for(
-                    adapter.invoke(request),
+                    self._invoke(adapter, request, candidate_timeout),
                     candidate_timeout,
                 )
                 selected_capability = capability
@@ -312,6 +337,8 @@ class RegisteredModelRuntime:
                         "outputExhausted": exc.code == "MODEL_OUTPUT_EXHAUSTED",
                     },
                 ) from exc
+            except StructuredGenerationError:
+                raise
             except Exception as exc:
                 raise StructuredGenerationError(
                     "MODEL_PROVIDER_FAILED",
@@ -452,6 +479,9 @@ class RegisteredModelRuntime:
         safe_audit.update(capability=capability.model_dump(by_alias=True, mode="json"),
             outputPolicy=prepared.output_policy.value, effectiveOutputTokens=prepared.effective_tokens,
             effectiveReason=prepared.effective_reason)
+        # Queue for shared quota before starting provider TTFT/idle clocks.
+        quota_stack = AsyncExitStack()
+        charge = await quota_stack.enter_async_context(self._call_quota(request, total_timeout)) if self._call_quota else None
         seq = 0
         started = self._clock()
         last_activity = started
@@ -464,7 +494,7 @@ class RegisteredModelRuntime:
         finish_reason: str | None = None
         stream_usage: dict[str, Any] = {}
         stream_diagnostics: dict[str, Any] = {}
-        iterator = streamer(request)
+        iterator = self._stream(adapter, request, total_timeout, charge)
 
         def emit(kind: str, payload: dict[str, Any] | None = None) -> RuntimeEvent:
             nonlocal seq
@@ -486,15 +516,15 @@ class RegisteredModelRuntime:
                 "receivedLength": sum(map(len, buffer)),
             }
 
-        yield emit("model.started", {
-            "requestId": request_id,
-            "provider": self.provider,
-            "model": self.model,
-            "streamingCapability": True,
-            **safe_audit,
-        })
         completed = False
         try:
+            yield emit("model.started", {
+                "requestId": request_id,
+                "provider": self.provider,
+                "model": self.model,
+                "streamingCapability": True,
+                **safe_audit,
+            })
             while True:
                 total_left = total_timeout - (self._clock() - started)
                 if total_left <= 0:
@@ -574,17 +604,20 @@ class RegisteredModelRuntime:
                     completed = True
                     break
         except asyncio.CancelledError:
-            close = getattr(iterator, "aclose", None)
-            if callable(close):
-                await close()
             raise
         except Exception as exc:
-            close = getattr(iterator, "aclose", None)
-            if callable(close):
-                await close()
             if isinstance(exc, StructuredGenerationError):
                 exc.audit = {**safe_audit, **exc.audit}
+                if charge is not None:
+                    charge.observe(exc.audit.get("usage"))
             raise
+        finally:
+            try:
+                close = getattr(iterator, "aclose", None)
+                if callable(close):
+                    await close()
+            finally:
+                await quota_stack.aclose()
         if not first:
             raise StructuredGenerationError(
                 "MODEL_TTFT_TIMEOUT",

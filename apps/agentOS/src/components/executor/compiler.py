@@ -106,7 +106,7 @@ class ACGGraphCompiler:
             if edge.source_id in executable_ids and edge.target_id in executable_ids
         )
 
-        binding_manifest = self._compile_bindings(blueprint.resource_plan.bindings, steps)
+        binding_manifest = self._compile_bindings(blueprint.resource_plan.bindings, steps, blueprint.resource_plan.models)
         skill_manifest = self._compile_skills(blueprint.resource_plan.skills, steps)
         memory_manifest = self._compile_memory(blueprint.resource_plan.memory, steps)
         evidence_manifest = self._compile_evidence(blueprint.resource_plan.evidence, steps)
@@ -222,7 +222,12 @@ class ACGGraphCompiler:
         return mode
 
     @staticmethod
-    def _compile_bindings(bindings: tuple[AgentBindingSpec, ...], steps):
+    def _compile_bindings(bindings: tuple[AgentBindingSpec, ...], steps, models=()):
+        demands = {}
+        for spec in models:
+            if spec.step_id not in steps or spec.step_id in demands:
+                raise ValueError(f"model requirement references unknown or duplicate Step: {spec.step_id}")
+            demands[spec.step_id] = spec.demand
         explicit = {step_id: [] for step_id in steps}
         for binding in bindings:
             if binding.step_id in explicit:
@@ -244,6 +249,7 @@ class ACGGraphCompiler:
                 requiredCapabilities=tuple(sorted(capabilities)),
                 allowedResourceIds=(),
                 maxConcurrency=min((agent.max_concurrency for agent in agents), default=1),
+                modelDemand=demands.get(step_id),
             ))
         return BindingManifest(rules=tuple(rules))
 

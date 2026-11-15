@@ -131,7 +131,10 @@ class CognitiveRouter:
             *(alias.strip().lower() for alias in descriptor.aliases),
         }
         ranked: list[tuple[tuple[int, float, int, int], BaseAgent]] = []
-        for index, agent in enumerate(agents or list(self.agent_registry.all())):
+        candidates = self.agent_registry.all() if agents is None else agents
+        for index, agent in enumerate(candidates):
+            if not agent.profile.enabled or not self.agent_registry.is_enabled(str(self.agent_registry.agent_id(agent))):
+                continue
             agent_domain = (agent.profile.domain or "").strip().lower()
             if task_domain == "general":
                 if agent_domain != "general":

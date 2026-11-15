@@ -82,6 +82,73 @@ def test_registered_model_runtime_closes_provider_iterator_on_consumer_cancel() 
     asyncio.run(scenario())
 
 
+def test_stream_quota_settles_usage_and_releases_capacity_before_next_call() -> None:
+    from datetime import timedelta
+
+    from components.resource.scheduler.leases import InMemoryLeaseCoordinator
+    from contracts.resource import ModelQuotaPolicy
+    from runtime.model_quota import ModelCallQuota
+
+    class _CompletedAdapter(_ClosingStreamingAdapter):
+        def astream(self, request):
+            async def iterator():
+                try:
+                    yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta='{"answer":"ok"}',
+                                           provider="fixture", model="fixture-model")
+                    yield ModelStreamEvent(requestId=request.request_id, eventType="completed",
+                                           provider="fixture", model="fixture-model", metadata={"usage": {"total_tokens": 2}})
+                finally:
+                    self.closed.set()
+            return iterator()
+
+    adapter = _CompletedAdapter()
+    registry = ModelCompatibilityRegistry()
+    registry.register(adapter)
+    coordinator = InMemoryLeaseCoordinator()
+    records = []
+    quota = ModelCallQuota(coordinator=coordinator,
+        policy=ModelQuotaPolicy(scope="shared-stream", maxConcurrency=1, tokensPerMinute=100_000),
+        audit=lambda _resource, record: records.append(record))
+    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model", call_quota=quota)
+
+    def stream(**timeouts):
+        return runtime.stream_generate_json(prompt="private prompt", schema={"type": "object"},
+                                            run_id="run-quota-stream", max_output_tokens=8, **timeouts)
+
+    async def scenario():
+        for _ in range(2):
+            adapter.closed.clear()
+            events = [event async for event in stream()]
+            assert events[-1].event_type == "model.completed"
+            assert adapter.closed.is_set() and coordinator.active_slots(quota.resource_id) == 0
+            assert records[-1]["actualTokens"] == 2 and records[-1]["status"] == "settled"
+        occupied = coordinator.acquire(lease_id="occupied-stream", resource_id=quota.resource_id, capacity=1,
+            run_id="other-run", step_id="other-step", attempt_id="other-attempt", ttl=timedelta(seconds=2))
+        assert occupied is not None
+
+        async def release_capacity():
+            await asyncio.sleep(.03)
+            coordinator.release(occupied.lease_id)
+
+        release_task = asyncio.create_task(release_capacity())
+        try:
+            events = [event async for event in stream(ttft_timeout=.005, total_timeout=1)]
+        finally:
+            await release_task
+        assert events[-1].event_type == "model.completed"
+        assert coordinator.active_slots(quota.resource_id) == 0 and records[-1]["actualTokens"] == 2
+        adapter.closed.clear()
+        partial = stream()
+        async for event in partial:
+            if event.event_type == "model.output.delta":
+                break
+        await partial.aclose()
+        assert adapter.closed.is_set() and coordinator.active_slots(quota.resource_id) == 0
+        assert len(records) == 4 and records[-1]["status"] == "unknown"
+
+    asyncio.run(scenario())
+
+
 def test_private_provider_activity_keeps_stream_alive_until_public_json_arrives() -> None:
     # provider 活动节奏用注入时钟表达：Windows 默认计时粒度（~15.6ms）下，
     # 真实 sleep(0.01) 的唤醒延迟在 10~25.6ms 间随机分布，会以固定概率越过
