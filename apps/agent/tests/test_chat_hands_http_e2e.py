@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from adapters.hands_http import HandsHttpTransport
-from adapters.local_runtime import LocalRuntimeClient
+from adapters.tool.hands_http import HandsHttpTransport
+from adapters.transport.local_runtime import LocalRuntimeClient
 from app.tools.chat_catalog import ChatToolCatalog
 from app.tools.local_runtime import LocalRuntimeToolExecutor
 from app.tools.permissions import ApprovalDecision, ChatPermissionService

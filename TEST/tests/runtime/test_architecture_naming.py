@@ -3,7 +3,7 @@
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
 from runtime import ExecutionRuntime
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from support.acg import RuntimeBlueprintSpec
+from contracts.acg.schema import RuntimeBlueprintSpec
 
 
 def test_architecture_exports_only_responsibility_names() -> None:

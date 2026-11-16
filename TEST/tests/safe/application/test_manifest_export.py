@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from safe.application.manifest import ManifestService
-from safe.contracts.errors import SafeError
+from components.safe.application.manifest import ManifestService
+from components.safe.contracts.errors import SafeError
 
 
 def test_export_delegates_to_injected_port_only():

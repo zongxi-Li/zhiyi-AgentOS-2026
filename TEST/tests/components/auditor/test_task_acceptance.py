@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from components.auditor.artifact_acceptance import inspect_artifact, JSON_CHECK_BYTES
 from components.auditor.task_acceptance import evaluate_task_acceptance
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.task_acceptance import TaskAcceptanceSpec, frozen_task_acceptance
 

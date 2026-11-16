@@ -2,10 +2,10 @@
 
 import pytest
 
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.session import SessionStatus
-from safe.domain.idempotency import require_same_request
-from safe.domain.session_state import require_next_step, transition
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.session import SessionStatus
+from components.safe.domain.idempotency import require_same_request
+from components.safe.domain.session_state import require_next_step, transition
 
 
 def test_terminal_session_cannot_be_reopened():

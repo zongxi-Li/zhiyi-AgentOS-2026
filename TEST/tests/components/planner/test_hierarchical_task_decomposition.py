@@ -11,10 +11,12 @@ from components.planner.task_decomposer import (
     planning_validation_failures, safe_validation_failures,
 )
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
-from components.mission_manager.store import WorkflowRegistry
-from service.agents import AgentRegistry
-from adapters.model.native import register_native_runtime
-from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
+from components.mission.store import WorkflowRegistry
+from adapters.agent import AgentRegistry
+from adapters.agent.native import register_native_runtime
+from contracts.acg.schema import ComplexityLevel
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 class _PlanLLM:
@@ -318,7 +320,7 @@ def test_prompt_exposes_hard_capability_dependencies_and_uses_requirement_wordin
     assert '"planningRequest"' in prompt
     assert '"taskAcceptance"' in prompt and '"criterionId":"declared-document-status"' in prompt
     assert "Mission contract:" not in prompt
-    from adapters.prompt_runtime import planner_system_prompt
+    from adapters.model.prompt_runtime import planner_system_prompt
     assert "sourceKey is the prerequisite or producer." in planner_system_prompt()
 
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import hashlib
 
-from components.marketplace.application.service import MarketplaceService
-from components.marketplace.contracts import CatalogItem, CustomResourceRequest, InstallationJob, InstallationStatus
-from components.marketplace.infrastructure import InMemoryCatalog, InMemoryInstallationJobs
-from components.marketplace.infrastructure import SQLiteInstallationJobStore
+from components.resource.catalog.application.service import MarketplaceService
+from components.resource.catalog.contracts import CatalogItem, CustomResourceRequest, InstallationJob, InstallationStatus
+from components.resource.catalog.infrastructure import InMemoryCatalog, InMemoryInstallationJobs
+from components.resource.catalog.infrastructure import SQLiteInstallationJobStore
 from components.resource.application.resource_plane import ResourcePlane
 from contracts.resource import Placement, RuntimeKind, TrustLevel
 from contracts.resource import RuntimeProfile

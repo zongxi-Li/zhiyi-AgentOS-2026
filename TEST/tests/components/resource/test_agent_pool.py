@@ -15,8 +15,8 @@ from components.resource.infrastructure.runtime_store import SQLiteResourceStore
 from components.resource.runtime.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID, register_embedded_agents_runtime, refresh_embedded_agents_runtime
 from components.resource.scheduler.binder import ResourceBinder
 from contracts.resource import ExecutionRequirement, Placement, RuntimeKind, RuntimeProfile, RuntimeSnapshot
-from service.agents import AgentNotFound, AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from service.agents.pool import AgentPool
+from adapters.agent import AgentNotFound, AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from components.resource.agents.pool import AgentPool
 
 
 class _Agent(BaseAgent):

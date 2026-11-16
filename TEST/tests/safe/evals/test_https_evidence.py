@@ -10,7 +10,7 @@ import pytest
 
 
 def load_module():
-    path = Path(__file__).resolve().parents[3] / "evals/safe/exam/gen_fig_https_transport.py"
+    path = Path(__file__).resolve().parents[4] / "evals/safe/exam/gen_fig_https_transport.py"
     spec = importlib.util.spec_from_file_location("safe_https_figures", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

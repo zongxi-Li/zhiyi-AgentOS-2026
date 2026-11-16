@@ -8,10 +8,10 @@ from collections.abc import Mapping, Sequence
 from threading import Thread
 from time import monotonic
 from typing import Any, Callable
-from adapters.prompt_runtime import planner_prompt_metadata, planner_system_prompt
+from adapters.model.prompt_runtime import planner_prompt_metadata, planner_system_prompt
 
-from support.acg.schema import ComplexityLevel
-from support.acg.semantic_profile import ComplexityAssessment
+from contracts.acg.schema import ComplexityLevel
+from contracts.acg.semantic_profile import ComplexityAssessment
 
 
 DIMENSIONS = (

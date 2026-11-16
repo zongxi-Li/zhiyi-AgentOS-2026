@@ -2,8 +2,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import pytest
-from components.mission_manager.semantic_resolver import MissionSemanticResolver
-from contracts.mission_revision import MissionRevisionDecision, MissionRevisionConflict, revision_observation
+from components.mission.semantic_resolver import MissionSemanticResolver
+from components.mission.mission_revision import MissionRevisionDecision, MissionRevisionConflict, revision_observation
 from contracts.mission_semantic import SemanticPrincipal
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore

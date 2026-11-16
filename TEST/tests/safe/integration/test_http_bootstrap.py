@@ -12,17 +12,17 @@ httpx = pytest.importorskip("httpx", reason="需要独立 requirements.safe.http
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from safe.application.activation import ActivationService
-from safe.application.manifest import ManifestService
-from safe.bootstrap import cloud
-from safe.contracts.manifest import SplitModelManifest
-from safe.contracts.session import ActivationContext
-from safe.infrastructure.codecs.fp32 import FP32Codec
-from safe.infrastructure.models.sampling import GreedySampler
-from safe.infrastructure.security.authentication import InMemoryNonceStore
-from safe.infrastructure.security.signing import sign_request
-from safe.ports.credentials import Credential
-from safe.ports.model_runner import KVHandle
+from components.safe.application.activation import ActivationService
+from components.safe.application.manifest import ManifestService
+from components.safe.bootstrap import cloud
+from components.safe.contracts.manifest import SplitModelManifest
+from components.safe.contracts.session import ActivationContext
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.infrastructure.models.sampling import GreedySampler
+from components.safe.infrastructure.security.authentication import InMemoryNonceStore
+from components.safe.infrastructure.security.signing import sign_request
+from components.safe.ports.credentials import Credential
+from components.safe.ports.model_runner import KVHandle
 
 
 class Clock:

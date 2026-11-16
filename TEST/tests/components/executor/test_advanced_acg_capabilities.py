@@ -28,9 +28,9 @@ from components.executor.value_store import (
 )
 from components.memory import MemoryService
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 class _Agent(BaseAgent):

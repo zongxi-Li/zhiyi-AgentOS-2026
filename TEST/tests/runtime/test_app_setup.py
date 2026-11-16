@@ -9,10 +9,10 @@ from threading import Thread
 
 import pytest
 
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
 from contracts.capability import ModelInvocationRequest
-from runtime.app_setup import ApplicationSetup, ApplicationSetupError
+from runtime.composition.app_setup import ApplicationSetup, ApplicationSetupError
 
 
 class _CompatibleHandler(BaseHTTPRequestHandler):

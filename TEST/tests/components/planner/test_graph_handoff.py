@@ -23,7 +23,7 @@ def attach(runtime, workflow):
 def _build_prefix(tmp_path, monkeypatch, *, before_accept=None):
     import TEST.tests.components.planner.test_react_loop as test_react_loop
     from TEST.tests.components.planner.test_graph_materialization_audit import test_real_executed_A_pending_BC_materialized_D_survives_process_restart
-    from runtime.planning_commit import RuntimePlanningCommitAuthority
+    from runtime.orchestration.planning_commit import RuntimePlanningCommitAuthority
     from contracts.planning import TaskPlanRelation
     captured = []
     original = test_react_loop.runtime_at

@@ -6,14 +6,14 @@ import asyncio
 
 from components.memory import MemoryService, PhaseCapsule
 from components.memory.store import SQLiteMemoryStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRelation, PlannedTask
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, EvidenceSpec
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, EvidenceSpec
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

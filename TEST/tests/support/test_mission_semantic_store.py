@@ -9,7 +9,7 @@ import pytest
 
 from contracts.mission_semantic import MissionSemanticOperation, MissionSemanticRequest, SemanticPrincipal
 from contracts.workflow import MissionRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
-from components.mission_manager.semantic_service import MissionSemanticService
+from components.mission.semantic_service import MissionSemanticService
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.mission_semantic_store import request_fingerprint

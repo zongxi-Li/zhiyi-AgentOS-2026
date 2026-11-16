@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from adapters.agent_architecture import AgentArchitectureRegistry, FrameworkAgent
+from adapters.agent.architecture import AgentArchitectureRegistry, FrameworkAgent
 from components.communicator.contracts import ContextPack
 from contracts.capability import (
     AgentFramework,
@@ -16,7 +16,7 @@ from contracts.capability import (
     CapabilityManifest,
 )
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from service.agents.base import AgentProfile, AgentRunContext
+from adapters.agent.base import AgentProfile, AgentRunContext
 
 
 class _FrameworkAdapter:

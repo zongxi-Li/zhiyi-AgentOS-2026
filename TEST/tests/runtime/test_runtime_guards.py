@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-from adapters.guarded_tool import ToolInvocationError
-from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
+from adapters.tool.guarded import ToolInvocationError
+from adapters.model.protocols import StructuredGenerationError, StructuredGenerationResult
 from contracts.workflow import WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from components.mission_manager.store import WorkflowRegistry
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from components.mission.store import WorkflowRegistry
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -80,8 +80,8 @@ def _freeze_single_step_graph(runtime: ExecutionRuntime) -> None:
     """
     from components.planner.acg_lowerer import ACGLowerer, ACGLoweringInput, ACGLoweringStep
     from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
-    from support.acg.planning import ACGResourcePlan, AgentBindingSpec
-    from support.acg.schema import ComplexityLevel
+    from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
+    from contracts.acg.schema import ComplexityLevel
 
     def build(task, run, workflow):
         definition = workflow.steps[0]

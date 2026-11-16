@@ -1,3 +1,5 @@
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 import json
 import os
@@ -9,8 +11,8 @@ import pytest
 
 from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
-from runtime.live_events import RuntimeEventBroker, RuntimeEventOverflow
-from runtime.runtime_display import RuntimeDisplayProjection, public_narrative
+from runtime.events.live_events import RuntimeEventBroker, RuntimeEventOverflow
+from runtime.projections.runtime_display import RuntimeDisplayProjection, public_narrative
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
@@ -24,7 +26,7 @@ def event(kind, payload=None, attempt="a1", node="node"):
     "import runtime.live_events; import components.planner.complexity",
 ])
 def test_planner_and_display_can_be_imported_independently(modules):
-    root = Path(__file__).resolve().parents[1]
+    root = AGENTOS_ROOT
     result = subprocess.run([sys.executable, "-c", modules], cwd=root,
                             env={**os.environ, "PYTHONPATH": str(root / "src")}, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

@@ -10,8 +10,9 @@ from contracts.planning import (
     TaskImplementationBinding,
     TaskPlan,
 )
-from support.acg.capabilities import CapabilityCatalog, PlanningCapabilityDescriptor
-from support.acg.planning import (
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
+from contracts.acg.planning import (
     ACGResourcePlan,
     AgentBindingSpec,
     CommunicationSpec,
@@ -19,8 +20,8 @@ from support.acg.planning import (
     MemoryAccessSpec,
     ModelRequirementSpec,
 )
-from support.acg.schema import ACGBlueprint, ACGEdge, ComplexityLevel, EdgeType, StepNode
-from support.acg.semantic_profile import TaskSemanticProfile
+from contracts.acg.schema import ACGBlueprint, ACGEdge, ComplexityLevel, EdgeType, StepNode
+from contracts.acg.semantic_profile import TaskSemanticProfile
 from .acg_lowerer import ACGLoweringInput, ACGLoweringStep
 from .cognitive_router import CollaborationNetwork
 from .context_policy import resolve_prefetch

@@ -4,9 +4,11 @@ import json
 
 import pytest
 
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model.protocols import StructuredGenerationError
 from components.planner.task_decomposer import TaskDecomposer, TaskDecompositionError, TASK_PLAN_MAX_REPAIRS, TASK_DECOMPOSITION_PROMPT_VERSION
-from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
+from contracts.acg.schema import ComplexityLevel
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
 from TEST.tests.components.planner.test_hierarchical_task_decomposition import _PlanLLM, _SequencePlanLLM
 
 

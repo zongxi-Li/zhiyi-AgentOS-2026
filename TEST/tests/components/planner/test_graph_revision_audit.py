@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from components.planner.planning_commit import PlanningCommitService
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanPatch
 from contracts.planning_commit import PlanningCommitRejectionCode as Code
-from runtime.state_persistence import acg_execution_state_from_run
+from runtime.orchestration.state_persistence import acg_execution_state_from_run
 from support.stores.planning_commit_store import SQLitePlanningCommitStore, content_fingerprint
 from TEST.tests.components.planner.test_graph_revision_commit import accepted_source
 from TEST.tests.components.planner.test_horizon import ready_boundary, runtime_boundary
@@ -437,7 +437,7 @@ def test_transient_profile_change_cannot_escape_frozen_derivation_inputs(ready_b
 @pytest.mark.parametrize("change", ["cancel", "revoke"])
 def test_provenance_capture_finishes_before_final_authority_fence(ready_boundary, monkeypatch, change):
     runtime, store, ledger, run_id, source, _ = accepted_source(ready_boundary)
-    from runtime.graph_revision import GraphProvider
+    from runtime.orchestration.graph_revision import GraphProvider
     original = GraphProvider.get_source_provenance
     def capture_then_change(provider, request):
         result = original(provider, request)

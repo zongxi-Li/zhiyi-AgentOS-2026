@@ -1,6 +1,6 @@
 """Pure semantic projection and Run-basis capture; no persistence or authority."""
 
-from apps.agentOS.src.components.mission.mission_semantic import (
+from contracts.mission_semantic import (
     EffectiveMissionSnapshot, MissionSemanticView, MissionIntentBasis,
     FrozenSemanticConstraint, intent_basis_fingerprint,
 )

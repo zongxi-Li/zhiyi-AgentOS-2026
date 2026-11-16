@@ -4,7 +4,7 @@ from components.recovery import (
     failure_event_from_exception,
 )
 from components.communicator.reliable import CommunicationBackpressureError
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model.protocols import StructuredGenerationError
 from contracts.recovery import (
     FailureEvent,
     FailureSource,

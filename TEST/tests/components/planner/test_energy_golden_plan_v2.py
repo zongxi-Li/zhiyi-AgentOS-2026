@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from components.planner.task_decomposer import TaskDecomposer
-from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
+from contracts.acg.schema import ComplexityLevel
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 class _EnergyPlanLLM:

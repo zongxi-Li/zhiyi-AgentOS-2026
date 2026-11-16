@@ -24,11 +24,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder  # noqa: E402
-from adapters.model_runtime import RegisteredModelRuntime  # noqa: E402
+from adapters.model.registered_runtime import RegisteredModelRuntime  # noqa: E402
 from components.planner.intent_analyzer import IntentParser  # noqa: E402
 from components.planner.task_decomposer import TaskDecomposer  # noqa: E402
-from runtime.app_setup import ApplicationSetup  # noqa: E402
-from support.acg.models import build_default_capability_catalog  # noqa: E402
+from runtime.composition.app_setup import ApplicationSetup  # noqa: E402
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 COMMON_SCHEMA = {

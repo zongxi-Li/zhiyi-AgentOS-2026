@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from contracts.planning import PlannedTask, TaskPlanRelation, VerificationLoopPolicy
-from support.acg.capabilities import CapabilityCatalog
+from support.capabilities import CapabilityCatalog
 
 from .errors import TopologyCompileError
 from .model import TopologyCompileResult

@@ -13,12 +13,12 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.memory import MemoryQuery
 from contracts.workflow import StepStatus, TraceEventType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

@@ -15,15 +15,17 @@ import json
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "apps/agentOS/src"))
 
-from safe.infrastructure.experiments.network_sensitivity import (
+from components.safe.infrastructure.experiments.network_sensitivity import (
     NetworkScenario,
     load_verified_benchmark,
     model_run,
     summarize_scenario,
 )
-from safe.infrastructure.experiments import network_sensitivity
+from components.safe.infrastructure.experiments import network_sensitivity
 
 
 SCENARIOS = (

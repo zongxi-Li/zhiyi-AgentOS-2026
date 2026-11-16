@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from adapters.agent_architecture import AgentArchitectureRegistry
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.skill_tool_compatibility import SkillToolCompatibilityRegistry
+from adapters.agent.architecture import AgentArchitectureRegistry
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.tool.compatibility import SkillToolCompatibilityRegistry
 from contracts.capability import (
     AgentFramework,
     CapabilityInvocation,
@@ -19,7 +19,7 @@ from contracts.capability import (
     ModelInvocationResponse,
     ToolProtocol,
 )
-from runtime.bootstrap import bootstrap
+from runtime.composition.bootstrap import bootstrap
 
 
 class _ModelAdapter:

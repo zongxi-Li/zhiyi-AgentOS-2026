@@ -5,7 +5,7 @@ import pytest
 
 
 from contracts.runtime_events import RuntimeEvent
-from runtime.live_events import RuntimeEventBroker, RuntimeEventOverflow
+from runtime.events.live_events import RuntimeEventBroker, RuntimeEventOverflow
 
 
 def test_broker_rejects_same_run_from_an_independent_store(tmp_path):

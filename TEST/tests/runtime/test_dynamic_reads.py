@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.workflow import WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

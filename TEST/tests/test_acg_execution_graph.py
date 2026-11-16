@@ -12,7 +12,7 @@ from components.executor.graph import ACGConditionalRoute, ACGExecutionGraph, AC
 from components.executor.state_graph import ACGStateGraph
 from components.executor.node_runner import ACGNodeRunner
 from components.executor.value_store import InMemoryExecutionValueStore
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model.protocols import StructuredGenerationError
 from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCommand
 from components.auditor import InMemoryDecisionStore
 from components.auditor.governance.trace import TraceStore
@@ -21,19 +21,9 @@ from contracts.compiled_acg import EvidenceManifest, EvidenceRule
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from components.communicator import CommunicatorService
 from components.memory import MemoryService
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import (
-    ACGBlueprint,
-    ACGEdge,
-    ConditionOperator,
-    ConditionSpec,
-    ConsensusSpec,
-    ControlNode,
-    ControlType,
-    EdgeType,
-    StepNode,
-)
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
 
 
 def test_execution_graph_runs_ready_steps_then_dependents() -> None:
@@ -1270,7 +1260,7 @@ def test_all_skipped_branches_skip_join_even_with_completed_shared_predecessor()
 
 
 def test_unknown_cancelled_sibling_is_preserved_in_superstep_failure():
-    from adapters.resource_execution import ResourceExecutionError
+    from adapters.agent.resource_execution import ResourceExecutionError
     graph = ACGExecutionGraph(nodes=("known", "unknown"))
     async def scenario():
         started = asyncio.Event()

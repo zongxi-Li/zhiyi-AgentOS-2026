@@ -2,7 +2,7 @@
 import pytest
 
 from contracts.planning import TaskPlan, PlannedTask
-from runtime.human_review_policy import bind_review_policy, validate_review_policy, review_policy
+from components.auditor.human_review_policy import bind_review_policy, validate_review_policy, review_policy
 from TEST.tests.components.planner.test_initial_planning_sources import initial_run, accept
 from TEST.tests.components.planner.test_horizon import ready_boundary, runtime_boundary
 
@@ -31,7 +31,7 @@ def test_initial_manual_policy_is_frozen_and_mode_drift_is_not_reinterpreted(ini
     record = accept(initial_run)
     origin = record.source_provenance
     assert origin.lowering_options['reviewPolicy']['scope'] == 'all-executable-steps'
-    from runtime.initial_graph_compilation import compile_initial_content
+    from components.planner.initial_graph_compilation import compile_initial_content
     content = compile_initial_content(record)
     assert content.blueprint.step_nodes()
     assert all(step.review_required for step in content.blueprint.step_nodes())

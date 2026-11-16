@@ -1,13 +1,14 @@
 """Stable public entry point for Agent Computation Graph contracts."""
 
-from .capabilities import CapabilityCatalog, CapabilityPromptProfile, PlanningCapabilityDescriptor
-from .graph import ready_steps
-from .native_capabilities import build_default_capability_catalog
-from .planning import (
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import CapabilityPromptProfile, PlanningCapabilityDescriptor
+from components.scheduler.blueprint import ready_steps
+from support.packs.native_capabilities import build_default_capability_catalog
+from contracts.acg.planning import (
     ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec,
     MemoryAccessSpec, SkillRequirementSpec,
 )
-from .schema import (
+from contracts.acg.schema import (
     ACGBlueprint,
     RuntimeBlueprintSpec,
     ACGEdge,
@@ -25,8 +26,8 @@ from .schema import (
     StepNode,
     parse_node,
 )
-from .semantic_profile import CapabilityCandidate, ComplexityAssessment, TaskSemanticProfile
-from .validation import ACGValidationError, validate_blueprint
+from contracts.acg.semantic_profile import CapabilityCandidate, ComplexityAssessment, TaskSemanticProfile
+from components.planner.acg_validation import ACGValidationError, validate_blueprint
 
 __all__ = [
     "ACGBlueprint",

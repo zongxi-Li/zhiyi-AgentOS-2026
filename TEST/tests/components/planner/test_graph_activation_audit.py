@@ -105,7 +105,7 @@ def test_lifecycle_recovery_cannot_recreate_missing_identity_from_paused_graph(r
 
 
 def test_bulk_identity_scan_cannot_adopt_paused_graph(ready_boundary, monkeypatch):
-    from runtime.reconciliation import IdentityProjectionReconciler
+    from runtime.orchestration.reconciliation import IdentityProjectionReconciler
     runtime, workflow, _, run_id, _, agent, _ = activated(ready_boundary)
     runtime._flush_identity_outbox()
     assert workflow.list_outbox() == []
@@ -182,7 +182,7 @@ def test_materialization_full_acceptance_identity_is_rechecked(ready_boundary, f
 def _reopen(folder, definition):
     from TEST.tests.components.planner.test_react_loop import runtime_at
     from contracts.mission_semantic import SemanticPrincipal
-    from components.mission_manager.semantic_service import MissionSemanticService
+    from components.mission.semantic_service import MissionSemanticService
     from support.stores.planning_commit_store import SQLitePlanningCommitStore
     from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
     runtime, store, agent = runtime_at(Path(folder))

@@ -6,19 +6,17 @@ import json
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Optional, Protocol
 
-from support.acg.capabilities import (
-    CapabilityCatalog,
-    highest_planning_risk_level,
-)
-from support.acg.native_capabilities import build_default_capability_catalog
-from support.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import highest_planning_risk_level
+from support.packs.native_capabilities import build_default_capability_catalog
+from contracts.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
 from .complexity import (
     PLANNING_MODEL_TIMEOUT_SECONDS,
     assess_complexity,
     call_planning_model,
     transport_error_code,
 )
-from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
+from adapters.model.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
 
 
 INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v3"

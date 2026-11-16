@@ -5,7 +5,7 @@ import pytest
 
 from components.executor.graph import ACGExecutionState
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
-from runtime.state_persistence import ACGStatePersistenceService
+from runtime.orchestration.state_persistence import ACGStatePersistenceService
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 

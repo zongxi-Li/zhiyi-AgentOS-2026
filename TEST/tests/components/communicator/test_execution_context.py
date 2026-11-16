@@ -7,7 +7,7 @@ import pytest
 from components.communicator import CommunicatorService
 from components.executor.value_store import ExecutionValueAccessError
 from components.executor.value_store import InMemoryExecutionValueStore
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def test_strict_contract_reads_only_declared_upstream_fields() -> None:

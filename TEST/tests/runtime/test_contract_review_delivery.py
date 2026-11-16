@@ -1,4 +1,6 @@
 """C1 audit regressions using real native execution and the production router."""
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 from contextlib import closing
 import hashlib
@@ -25,7 +27,7 @@ def delivery(tmp_path_factory):
 
 @pytest.fixture
 def client_factory(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "agent"))
+    monkeypatch.syspath_prepend(str((REPO_ROOT / "apps") / "agent"))
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.agentos_v2 import create_router

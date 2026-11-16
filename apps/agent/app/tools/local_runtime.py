@@ -15,7 +15,7 @@ import time
 import math
 from typing import Any, Awaitable, Callable, Mapping
 
-from adapters.local_runtime import LocalRuntimeClient
+from adapters.transport.local_runtime import LocalRuntimeClient
 from components.resource.runtime.local_runtime import LocalRuntimeHealthTransport, LocalRuntimeHealthProjector
 from components.resource.application.resource_plane import ResourcePlane
 from contracts.capability import CapabilityInvocation

@@ -12,13 +12,8 @@ from contracts.compiled_acg import (
     UnsupportedCompiledACGPackageVersion,
     load_compiled_acg_package,
 )
-from support.acg.models import (
-    ACGBlueprint,
-    ACGEdge,
-    EdgeType,
-    StepNode,
-)
-from support.acg.planning import (
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from contracts.acg.planning import (
     ACGResourcePlan,
     AgentBindingSpec,
     CommunicationSpec,
@@ -114,7 +109,7 @@ def test_resource_graph_compiles_to_canonical_nodes_edges_and_manifests() -> Non
 
 def test_model_demand_is_compiled_and_checked_as_requirement_authority():
     from contracts.resource import ModelDemand
-    from runtime.binding import execution_requirements_for, requirements_match_manifest
+    from runtime.orchestration.binding import execution_requirements_for, requirements_match_manifest
 
     blueprint = _resource_rich_blueprint()
     legacy = ACGGraphCompiler().compile_package(blueprint, run_id="run-1")

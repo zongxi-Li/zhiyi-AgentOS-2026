@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from contracts.identity import new_attempt_id, new_binding_id, new_blueprint_id, new_run_id, new_task_id
 from domain.identity_graph import ExecutionBinding, TaskBinding
 from domain.models import AcgBlueprint, Attempt, AttemptStatus, Mission, SemanticTask, WorkflowRun
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 
 
 def _seed_run_chain(repositories: SQLiteV2Repositories, *, title: str = "汇总输出") -> tuple[str, str]:

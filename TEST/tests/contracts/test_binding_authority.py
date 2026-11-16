@@ -20,7 +20,7 @@ from contracts.resource import (
     RuntimeKind,
     TrustLevel,
 )
-from support.acg.planning import AgentBindingSpec
+from contracts.acg.planning import AgentBindingSpec
 
 
 def test_planning_and_runtime_binding_identities_are_distinct_types() -> None:

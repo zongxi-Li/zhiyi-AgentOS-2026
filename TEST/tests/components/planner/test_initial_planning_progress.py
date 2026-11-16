@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model.protocols import StructuredGenerationError
 from components.planner.task_decomposer import TaskDecompositionError
 from contracts.mission_semantic import MissionSemanticRequest
 from contracts.runtime_events import RuntimeEvent
@@ -75,7 +75,7 @@ def test_initial_runtime_streams_and_keeps_progress_without_materializing(initia
     llm = PlannerStream()
     runtime, store, agent, run, ledger = dynamic_run(initial_run, llm)
     live = []
-    monkeypatch.setattr("runtime.live_events.runtime_event_broker.publish_from_thread",
+    monkeypatch.setattr("runtime.events.live_events.runtime_event_broker.publish_from_thread",
                         lambda run_id, event: live.append(event))
 
     def concurrent_update():
@@ -120,7 +120,7 @@ def test_initial_validation_retains_first_and_repaired_issues_in_trace_and_sse(i
     llm = PlannerStream(plans=[invalid, repaired])
     runtime, store, agent, run, ledger = dynamic_run(initial_run, llm)
     live = []
-    monkeypatch.setattr("runtime.live_events.runtime_event_broker.publish_from_thread",
+    monkeypatch.setattr("runtime.events.live_events.runtime_event_broker.publish_from_thread",
                         lambda run_id, event: live.append(event))
     if repair_succeeds:
         asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -151,7 +151,7 @@ def test_initial_validation_retains_first_and_repaired_issues_in_trace_and_sse(i
 def test_initial_failure_retains_stage_and_model_code_without_private_text(initial_run, monkeypatch, code):
     runtime, store, agent, run, ledger = dynamic_run(initial_run, PlannerStream(failure=code))
     live = []
-    monkeypatch.setattr("runtime.live_events.runtime_event_broker.publish_from_thread",
+    monkeypatch.setattr("runtime.events.live_events.runtime_event_broker.publish_from_thread",
                         lambda run_id, event: live.append(event))
     with pytest.raises(ValueError, match="INVALID_PROPOSAL.*" + code):
         asyncio.run(runtime.execute_prepared_run(run.run_id))

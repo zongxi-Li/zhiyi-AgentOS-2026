@@ -10,17 +10,17 @@ import pytest
 httpx = pytest.importorskip("httpx", reason="需要独立 requirements.safe.http.lock 环境")
 pytest.importorskip("fastapi")
 
-from safe.application.activation import ActivationService
-from safe.application.continuation import ContinuationService
-from safe.application.manifest import ManifestService
-from safe.application.session import SessionService
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.manifest import SplitModelManifest
-from safe.contracts.session import ActivationContext, SessionStatus
-from safe.infrastructure.codecs.fp32 import FP32Codec
-from safe.infrastructure.models.sampling import GreedySampler
-from safe.infrastructure.storage.memory_sessions import MemorySessionStore
-from safe.ports.model_runner import KVHandle
+from components.safe.application.activation import ActivationService
+from components.safe.application.continuation import ContinuationService
+from components.safe.application.manifest import ManifestService
+from components.safe.application.session import SessionService
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.manifest import SplitModelManifest
+from components.safe.contracts.session import ActivationContext, SessionStatus
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.infrastructure.models.sampling import GreedySampler
+from components.safe.infrastructure.storage.memory_sessions import MemorySessionStore
+from components.safe.ports.model_runner import KVHandle
 
 
 def make_services():
@@ -62,13 +62,13 @@ def make_services():
 
 
 def make_credential(owner="owner-a", credential_id="credential-a"):
-    from safe.ports.credentials import Credential
+    from components.safe.ports.credentials import Credential
     return Credential(credential_id=credential_id, owner_id=owner, secret=b"synthetic-test-key-32-bytes-only!!",
                       scopes=frozenset({"safe:infer"}))
 
 
 def signed(credential, method, path, body=b"", nonce=None):
-    from safe.infrastructure.security.signing import sign_request
+    from components.safe.infrastructure.security.signing import sign_request
     return sign_request(credential=credential, method=method, path=path,
                         timestamp=int(time.time()), nonce=nonce or secrets.token_hex(16), body=body)
 
@@ -76,8 +76,8 @@ def signed(credential, method, path, body=b"", nonce=None):
 @pytest.fixture
 def cloud():
     from fastapi.testclient import TestClient
-    from safe.infrastructure.security.authentication import HmacAuthenticator, InMemoryNonceStore
-    from safe.interfaces.cloud_api import create_cloud_app
+    from components.safe.infrastructure.security.authentication import HmacAuthenticator, InMemoryNonceStore
+    from components.safe.interfaces.cloud_api import create_cloud_app
 
     continuation, sessions, runner, activation, digest = make_services()
     credentials = {item.credential_id: item for item in (make_credential(), make_credential("owner-b", "credential-b"))}
@@ -200,7 +200,7 @@ def test_http_rejects_ambiguous_actual_request_target(cloud, path):
 
 
 def test_http_error_mapping_covers_all_codes():
-    from safe.interfaces.http_errors import HTTP_STATUS
+    from components.safe.interfaces.http_errors import HTTP_STATUS
     assert set(HTTP_STATUS) == set(ErrorCode)
 
 
@@ -235,20 +235,20 @@ def test_http_rejects_request_id_that_cannot_be_queried(cloud, identifier):
 @pytest.mark.parametrize("origin", ["http://localhost:8000", "https://a.example/path", "https://a.example?query=1",
                                     "https://user:password@a.example", "https://a.example/#fragment"])
 def test_client_rejects_unapproved_origin_forms(origin):
-    from safe.infrastructure.transport.http_client import HttpRemoteTransport
+    from components.safe.infrastructure.transport.http_client import HttpRemoteTransport
     with pytest.raises(ValueError):
         HttpRemoteTransport(origin=origin, credential=make_credential())
 
 
 def test_client_refuses_disabled_tls_verification():
-    from safe.infrastructure.transport.http_client import HttpRemoteTransport
+    from components.safe.infrastructure.transport.http_client import HttpRemoteTransport
     context = ssl._create_unverified_context()
     with pytest.raises(ValueError):
         HttpRemoteTransport(origin="https://example.test", credential=make_credential(), ssl_context=context)
 
 
 def test_client_uses_final_bytes_fresh_nonces_and_measures_real_response():
-    from safe.infrastructure.transport.http_client import HttpRemoteTransport
+    from components.safe.infrastructure.transport.http_client import HttpRemoteTransport
     requests, observations = [], []
     response_body = b'{"protocol_version":"safe-v1","available":true}'
 
@@ -274,7 +274,7 @@ def test_client_uses_final_bytes_fresh_nonces_and_measures_real_response():
     (200, b'{"available":true,"secret":"SECRET"}', {"Content-Type": "application/json"}),
     (500, b"SECRET", {"Content-Type": "text/plain"})])
 def test_client_rejects_redirect_invalid_or_oversized_response_without_retry(status, body, headers):
-    from safe.infrastructure.transport.http_client import HttpRemoteTransport
+    from components.safe.infrastructure.transport.http_client import HttpRemoteTransport
     calls = []
 
     def handle(request):
@@ -295,7 +295,7 @@ def test_client_rejects_redirect_invalid_or_oversized_response_without_retry(sta
 
 @pytest.mark.parametrize("kind", ["validation", "http-error"])
 def test_client_public_error_detaches_sensitive_response_and_request_context(kind):
-    from safe.infrastructure.transport.http_client import HttpRemoteTransport
+    from components.safe.infrastructure.transport.http_client import HttpRemoteTransport
 
     def handle(request):
         if kind == "http-error":

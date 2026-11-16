@@ -8,7 +8,7 @@ from contracts.workflow import (
     StepStatus,
     WorkflowStatus,
 )
-from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
+from contracts.mission_semantic import run_intent_basis
 
 
 def validate_intent_basis(existing: RuntimeRunRecord | None, incoming: RuntimeRunRecord) -> None:

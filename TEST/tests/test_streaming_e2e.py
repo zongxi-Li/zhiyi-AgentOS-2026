@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-from adapters.model.native import NativeGeneralAgent
+from adapters.agent.native import NativeGeneralAgent
 from components.communicator.contracts import ContextPack
 from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
-from runtime.live_events import RuntimeEventBroker
-from service.agents import AgentRunContext
-from support.acg.models import build_default_capability_catalog
+from runtime.events.live_events import RuntimeEventBroker
+from adapters.agent import AgentRunContext
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 class _FakeStreamingProvider:
@@ -41,7 +41,7 @@ class _FakeStreamingProvider:
 def test_fake_provider_native_agent_broker_timeline_and_sse_shape(monkeypatch) -> None:
     async def scenario() -> list[RuntimeEvent]:
         broker = RuntimeEventBroker()
-        import adapters.model.native as native_module
+        import adapters.agent.native as native_module
         monkeypatch.setattr(native_module, "runtime_event_broker", broker)
         agent = NativeGeneralAgent()
         model = _FakeStreamingProvider(broker)

@@ -6,10 +6,10 @@ import math
 import pytest
 from pydantic import ValidationError
 
-from safe.contracts.activation import ActivationEnvelope
-from safe.contracts.errors import SafeError
-from safe.infrastructure.codecs.fp32 import FP32Codec
-from safe.infrastructure.privacy.clipping import clip_global_l2
+from components.safe.contracts.activation import ActivationEnvelope
+from components.safe.contracts.errors import SafeError
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.infrastructure.privacy.clipping import clip_global_l2
 
 
 def test_fp32_roundtrip_has_explicit_little_endian_layout():

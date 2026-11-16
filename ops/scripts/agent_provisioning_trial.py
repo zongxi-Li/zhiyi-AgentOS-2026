@@ -27,17 +27,17 @@ for path in (ROOT / "apps/agentOS", ROOT / "apps/agentOS/src"):
 
 
 async def execute(output: Path) -> dict:
-    from components.marketplace.infrastructure import InMemoryInstallationJobs
+    from components.resource.catalog.infrastructure import InMemoryInstallationJobs
     from components.memory.store import MemoryStore
-    from components.mission_manager.store import WorkflowRegistry
+    from components.mission.store import WorkflowRegistry
     from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
     from contracts.resource import ExecutionRequirement
     from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
     from runtime.workflow_runtime import ExecutionRuntime
-    from service.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-    from service.agents.provisioning import AgentProvisioner
-    from support.acg.models import ACGBlueprint, StepNode
-    from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+    from adapters.agent import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+    from components.resource.agents.provisioning import AgentProvisioner
+    from contracts.acg.schema import ACGBlueprint, StepNode
+    from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
     from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
     output.mkdir(parents=True, exist_ok=False)

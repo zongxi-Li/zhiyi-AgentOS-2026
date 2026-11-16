@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import asyncio
 
-from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
-from adapters.model.native import NativeGeneralAgent
+from adapters.model.protocols import StructuredGenerationError, StructuredGenerationResult
+from adapters.agent.native import NativeGeneralAgent
 from components.communicator.contracts import ContextPack
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from service.agents import AgentRunContext
+from adapters.agent import AgentRunContext
 
 
 class _ScriptedRuntime:

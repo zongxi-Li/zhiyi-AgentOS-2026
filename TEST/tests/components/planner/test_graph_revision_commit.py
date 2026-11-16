@@ -162,7 +162,7 @@ def test_runtime_wait_transition_preserves_source_origin(ready_boundary, monkeyp
 @pytest.mark.parametrize("same_key", [True, False])
 def test_cross_connection_graph_acceptance_is_unique(ready_boundary, same_key, monkeypatch):
     runtime, store, ledger, run_id, source, _ = accepted_source(ready_boundary)
-    from runtime.planning_commit import RuntimePlanningCommitAuthority
+    from runtime.orchestration.planning_commit import RuntimePlanningCommitAuthority
     from components.planner.planning_commit import PlanningCommitService
     captured = []
     original = PlanningCommitService.accept
@@ -289,7 +289,7 @@ def test_no_client_constructed_graph_provider_can_accept_without_derivation_cert
     with ledger.connection() as conn, conn:
         conn.execute("DELETE FROM planning_commit_outbox WHERE commit_id=?", (original.commit_id,))
         conn.execute("DELETE FROM planning_commit_records WHERE commit_id=?", (original.commit_id,))
-    from runtime.graph_revision import GraphProvider
+    from runtime.orchestration.graph_revision import GraphProvider
     from contracts.planning_commit import PlanningCommitRequest
     from components.planner.planning_commit import PlanningCommitService
     provider = GraphProvider(runtime.planning_commit_authority, run_id, candidate, ledger.get(source_id), runtime.semantic_principal_provider())
@@ -304,7 +304,7 @@ def test_no_client_constructed_graph_provider_can_accept_without_derivation_cert
 def test_checkpoint_identity_and_control_evidence_are_required(ready_boundary, damage):
     runtime, store, ledger, run_id, source, _ = accepted_source(ready_boundary)
     run = store.get_run(run_id)
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     state = acg_execution_state_from_run(run)
     if damage == "version": state.graph_version += 1
     else: state.control_frames = [{"controlId": "unproved", "controlType": "loop"}]

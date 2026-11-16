@@ -5,8 +5,8 @@ from time import monotonic
 
 import pytest
 
-from adapters.guarded_model import GuardedModelRuntime, ModelCallGateRegistry
-from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
+from adapters.model.guarded import GuardedModelRuntime, ModelCallGateRegistry
+from adapters.model.protocols import StructuredGenerationError, StructuredGenerationResult
 from contracts.runtime_events import RuntimeEvent
 
 

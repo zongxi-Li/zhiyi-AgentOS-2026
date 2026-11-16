@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from openai.resources.chat.completions import Completions
 
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.prompt_runtime import planner_prompt_metadata
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.prompt_runtime import planner_prompt_metadata
 from app.execution.wiring import GatewayIntentLLM, RegisteredPlannerLLM, bind_registered_planner_llm
 from app.llm.gateway import LLMGateway
 from app.llm.providers.openai_compatible_provider import OpenAICompatibleProvider

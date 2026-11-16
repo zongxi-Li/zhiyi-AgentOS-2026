@@ -9,7 +9,7 @@ from domain.identity_graph import (
 )
 from domain.repository import IdentityConflictError
 from runtime import AcgIdentityLifecycleService
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 
 
 def test_task_binding_rejects_node_outside_blueprint() -> None:

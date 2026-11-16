@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from components.auditor.artifact_acceptance import inspect_artifact, JSON_CHECK_BYTES
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 
 

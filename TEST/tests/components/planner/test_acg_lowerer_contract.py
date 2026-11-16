@@ -13,8 +13,8 @@ from components.planner.acg_lowerer import (
     ACGLowerer,
 )
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan, TaskPlanRelation
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec
-from support.acg.schema import ComplexityLevel, EdgeType
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
+from contracts.acg.schema import ComplexityLevel, EdgeType
 
 
 def _input(*relations: tuple[str, str]) -> ACGLoweringInput:

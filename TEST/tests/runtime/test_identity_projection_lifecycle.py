@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGEdge, EdgeType
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGEdge, EdgeType
 
 
 import asyncio
@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.planning import (
     TaskBindingPatch,
     TaskImplementationBinding,
@@ -31,12 +31,14 @@ from runtime import (
     IdentityQueryService,
     IdentityProjectionBridge,
 )
-from runtime.reconciliation import DEAD_LETTER_MAX_ATTEMPTS
+from runtime.orchestration.reconciliation import DEAD_LETTER_MAX_ATTEMPTS
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, CapabilityCatalog, StepNode, build_default_capability_catalog
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.schema import ACGBlueprint, StepNode
+from support.capabilities import CapabilityCatalog
+from support.packs.native_capabilities import build_default_capability_catalog
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

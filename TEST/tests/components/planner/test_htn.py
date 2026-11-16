@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from components.executor import ACGExecutionState
-from components.mission_manager.semantic_service import MissionSemanticService
+from components.mission.semantic_service import MissionSemanticService
 from components.planner.htn import (HTNBudget, HTNError, HTNMethodCatalog, HTNMethodSelector,
                                     build_native_htn_catalog, htn_planning_enabled)
 from components.planner.react_loop import BoundedReActPlanningLoop
@@ -21,7 +21,7 @@ from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.runtime_planning import (RuntimePlanningObservation, RuntimePlanningRound,
                                         RuntimePlanningState, StepObservation)
 from contracts.workflow import StepStatus, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
-from support.acg.native_capabilities import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 from TEST.tests.components.planner.test_react_loop import ReActFakeLLM, runtime_at
 
 

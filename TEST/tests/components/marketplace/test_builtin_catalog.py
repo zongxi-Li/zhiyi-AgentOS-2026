@@ -3,9 +3,9 @@ import hashlib
 import json
 import time
 import httpx
-from components.marketplace.builtins.catalog import build_builtin_catalog
-from components.marketplace.infrastructure import LocalPackageLauncher, InMemoryCatalog, InMemoryInstallationJobs, LoopbackHttpEndpointProbe, validate_package
-from components.marketplace.application.service import MarketplaceService
+from components.resource.catalog.builtins.catalog import build_builtin_catalog
+from components.resource.catalog.infrastructure import LocalPackageLauncher, InMemoryCatalog, InMemoryInstallationJobs, LoopbackHttpEndpointProbe, validate_package
+from components.resource.catalog.application.service import MarketplaceService
 from components.resource.application.resource_plane import ResourcePlane
 from contracts.resource.resource_signing import build_resource_signature
 
@@ -58,7 +58,7 @@ def test_actual_install_signed_execute_stop_and_uninstall(tmp_path):
         assert "<h1>Hello</h1>" in (workspace / output["outputPath"]).read_text(encoding="utf-8")
         assert httpx.post(address, content=body, headers=headers).status_code == 401
         # 验证真实 ACG HTTP 执行适配器也能消费工具的 AgentOutput 合同。
-        from adapters.resource_execution import build_resource_execution_adapter
+        from adapters.agent.resource_execution import build_resource_execution_adapter
         from types import SimpleNamespace
         import asyncio
         adapter = build_resource_execution_adapter(runtime, credential_provider=plane)
@@ -71,7 +71,7 @@ def test_actual_install_signed_execute_stop_and_uninstall(tmp_path):
             finally:
                 await adapter.aclose()
         assert asyncio.run(invoke()).output["format"] == "html"
-        from adapters.resource_execution import ResourceExecutionError
+        from adapters.agent.resource_execution import ResourceExecutionError
         adapter = build_resource_execution_adapter(runtime, credential_provider=plane)
         context.context_pack.data = {"sourcePath": "input.md", "targetFormat": "exe"}
         with pytest.raises(ResourceExecutionError) as failure:

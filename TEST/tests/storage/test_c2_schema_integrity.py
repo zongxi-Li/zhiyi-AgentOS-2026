@@ -1,4 +1,6 @@
 """Missing evidence is corruption, not an incomplete Schema installation."""
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 from pathlib import Path
 import sys
 
@@ -10,7 +12,7 @@ from TEST.tests.storage.test_c2_schema_upgrade import contents, sql, base, paths
 
 # Reuse the real accepted revision / activation / handoff SQLite seed. It
 # contains an actually executed A and no invented Receipt or Permit payload.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "components" / "planner"))
+sys.path.insert(0, str(TEST_ROOT / "components" / "planner"))
 from test_execution_permit import ready_handoff
 from test_horizon import ready_boundary, runtime_boundary
 from test_initial_planning_sources import initial_run

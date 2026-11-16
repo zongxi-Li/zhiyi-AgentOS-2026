@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+
 import json
 from pathlib import Path
 
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
-from adapters.model_adapter import StructuredGenerationResult
-from adapters.prompt_runtime import (
+from adapters.model.protocols import StructuredGenerationResult
+from adapters.model.prompt_runtime import (
     AgentPreset,
     canonical_hash,
     compose_execution_prompt,
@@ -16,11 +18,11 @@ from adapters.prompt_runtime import (
 )
 from components.executor.node_runner import ACGNodeRunner
 from components.planner.complexity import call_planning_model
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def test_behavioral_eval_manifest_is_valid_and_contains_chinese_injection() -> None:
-    manifest_path = Path(__file__).parents[2] / "evals" / "prompt_runtime_pr03_cases.json"
+    manifest_path = REPO_ROOT / "evals" / "prompt_runtime_pr03_cases.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     chinese_case = next(
         case for case in manifest["injectionCases"] if case["id"] == "plugin-zh-01"

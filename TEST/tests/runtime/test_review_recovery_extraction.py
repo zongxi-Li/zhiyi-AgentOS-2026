@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+
 import ast
 import asyncio
 from pathlib import Path
@@ -17,12 +19,12 @@ from pathlib import Path
 import pytest
 
 from runtime.workflow_runtime import ExecutionRuntime, ReviewConflictError as FacadeReviewConflictError
-from runtime.review import ReviewConflictError as ServiceReviewConflictError
+from runtime.orchestration.review import ReviewConflictError as ServiceReviewConflictError
 from components.auditor import SQLiteDecisionStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.workflow import (
     ReviewDecision,
     ReviewDecisionType,
@@ -32,11 +34,18 @@ from contracts.workflow import (
     WorkflowStepDefinition,
     WorkflowStatus,
 )
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
-RUNTIME_SOURCE = Path(__file__).resolve().parents[2] / "src" / "runtime"
+RUNTIME_SOURCE = AGENTOS_ROOT / "src" / "runtime"
+ORCHESTRATION_SOURCE = RUNTIME_SOURCE / "orchestration"
+COMPOSITION_SOURCE = RUNTIME_SOURCE / "composition"
+
+
+def _service_source(module_file: str) -> Path:
+    root = COMPOSITION_SOURCE if module_file == "ports.py" else ORCHESTRATION_SOURCE
+    return root / module_file
 
 
 class _ReviewAgent(BaseAgent):
@@ -61,8 +70,8 @@ def _freeze_single_step_graph(runtime: ExecutionRuntime) -> None:
     """轻量 workflow 提升通道已删除:夹具显式冻结等价的单节点蓝图。"""
     from components.planner.acg_lowerer import ACGLowerer, ACGLoweringInput, ACGLoweringStep
     from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
-    from support.acg.planning import ACGResourcePlan, AgentBindingSpec
-    from support.acg.schema import ComplexityLevel
+    from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
+    from contracts.acg.schema import ComplexityLevel
 
     def build(task, run, workflow):
         definition = workflow.steps[0]
@@ -123,7 +132,7 @@ def _paused_review_run(runtime: ExecutionRuntime):
 
 
 def _imported(module_file: str) -> tuple[set[str], set[str]]:
-    tree = ast.parse((RUNTIME_SOURCE / module_file).read_text(encoding="utf-8"))
+    tree = ast.parse(_service_source(module_file).read_text(encoding="utf-8"))
     modules: set[str] = set()
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -142,9 +151,9 @@ def test_review_service_import_boundary() -> None:
     modules, names = _imported("review.py")
     for forbidden_module in (
         "runtime.workflow_runtime",
-        "runtime.acg_execution",
-        "runtime.runtime_recovery",
-        "runtime.semantic_revision",
+        "runtime.orchestration.acg_execution",
+        "runtime.orchestration.runtime_recovery",
+        "runtime.orchestration.semantic_revision",
         "components.planner",
         "fastapi",
     ):
@@ -157,9 +166,9 @@ def test_recovery_coordinator_import_boundary() -> None:
     modules, names = _imported("runtime_recovery.py")
     for forbidden_module in (
         "runtime.workflow_runtime",
-        "runtime.review",
-        "runtime.acg_execution",
-        "runtime.semantic_revision",
+        "runtime.orchestration.review",
+        "runtime.orchestration.acg_execution",
+        "runtime.orchestration.semantic_revision",
         "components.planner",
         "fastapi",
     ):
@@ -207,7 +216,7 @@ def test_workflow_runtime_facade_residual_audit() -> None:
 
 def test_review_and_recovery_never_take_run_locks() -> None:
     for module_file in ("review.py", "runtime_recovery.py"):
-        tree = ast.parse((RUNTIME_SOURCE / module_file).read_text(encoding="utf-8"))
+        tree = ast.parse(_service_source(module_file).read_text(encoding="utf-8"))
         attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
         names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
         modules, imported_names = _imported(module_file)

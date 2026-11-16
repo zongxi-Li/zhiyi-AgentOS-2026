@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from components.planner.complexity import assess_complexity
 from components.planner.intent_analyzer import INTENT_PROFILE_PROMPT_VERSION, IntentParser
-from support.acg.models import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
+from support.packs.native_capabilities import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
 
 
 def test_intent_parser_preserves_typed_evidence_boundary():

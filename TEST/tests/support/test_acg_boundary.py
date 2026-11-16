@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 def test_step_node_uses_the_exported_node_type() -> None:
-    from support.acg.models import NodeType, StepNode
+    from contracts.acg.schema import NodeType, StepNode
 
     node = StepNode(nodeId="step-1")
 
@@ -13,14 +13,14 @@ def test_step_node_uses_the_exported_node_type() -> None:
 
 
 def test_acg_package_has_an_explicit_public_blueprint_export() -> None:
-    from support.acg import ACGBlueprint, RuntimeBlueprintSpec
+    from contracts.acg.schema import ACGBlueprint, RuntimeBlueprintSpec
 
     assert ACGBlueprint is RuntimeBlueprintSpec
     assert RuntimeBlueprintSpec.__name__ == "RuntimeBlueprintSpec"
 
 
 def test_task_understanding_preserves_detailed_acceptance_criteria() -> None:
-    from support.acg.models import build_default_capability_catalog
+    from support.packs.native_capabilities import build_default_capability_catalog
 
     descriptor = build_default_capability_catalog().get("task_understanding")
 
@@ -31,9 +31,9 @@ def test_task_understanding_preserves_detailed_acceptance_criteria() -> None:
 
 
 def test_legacy_models_module_is_an_import_only_compatibility_facade() -> None:
-    import support.acg.models as facade
-    from support.acg.capabilities import CapabilityCatalog
-    from support.acg.schema import StepNode
+    import support.acg as facade
+    from support.capabilities import CapabilityCatalog
+    from contracts.acg.schema import StepNode
 
     assert facade.StepNode is StepNode
     assert facade.CapabilityCatalog is CapabilityCatalog

@@ -16,13 +16,13 @@ import pytest
 from components.planner.acg_lowerer import ACGLowerer
 from components.planner.lowering_input import build_template_lowering_input
 from components.planner.semantic_planner import SemanticPlanner
-from components.mission_manager.semantic_service import MissionSemanticService
+from components.mission.semantic_service import MissionSemanticService
 from contracts.mission_semantic import MissionSemanticRequest, SemanticPrincipal
 from contracts.planning import PlannedTask, TaskPlanPatch, TaskPlanRelation
 from contracts.runtime_planning import RuntimePlanningDecision
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
-from runtime.semantic_revision import SemanticRevisionService
-from support.acg.planning import CommunicationSpec
+from runtime.orchestration.semantic_revision import SemanticRevisionService
+from contracts.acg.planning import CommunicationSpec
 from support.stores.graph_activation_store import SQLiteGraphActivationStore
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
 from TEST.tests.components.planner.test_graph_handoff import attach as attach_handoff
@@ -195,7 +195,7 @@ def observe_cost(rt, ledger, staged, *, on_begin=None, before_validate=None):
     Source Identity plan-map validation is earlier, included in validation_ms.
     SELECT counts are statements, not pages, objects or returned rows.
     """
-    import runtime.graph_handoff as handoff
+    import runtime.orchestration.graph_handoff as handoff
     from components.executor import ACGGraphCompiler
     metrics = dict(transactions=[], validation_ms=[], compiler_ms=[], safe_cut_ms=[],
         prefix_evidence_span_ms=[], stage_ms=[], selects=Counter())

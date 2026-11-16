@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from components.executor import InMemoryExecutionValueStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.planning import (
     PlannedTask,
@@ -23,10 +23,10 @@ from contracts.workflow import (
 )
 from runtime import ExecutionRuntime
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.schema import ACGBlueprint
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

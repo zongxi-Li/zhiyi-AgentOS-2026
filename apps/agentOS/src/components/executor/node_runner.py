@@ -21,9 +21,9 @@ from components.communicator.contracts import ContextPack, estimate_tokens, inpu
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService, StructuredMemoryEventBuilder
-from apps.agentOS.src.components.environment.content import ContentManifestStore, ContentWorksetSession
-from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
-from adapters.resource_execution import ResourceExecutionAdapter
+from components.environment.content import ContentManifestStore, ContentWorksetSession
+from adapters.agent.invocation import AgentInvocationAdapter, AgentInvocationError
+from adapters.agent.resource_execution import ResourceExecutionAdapter
 from contracts.communication import validate_contract_payload
 from contracts.artifacts import canonicalize_artifact_identity, final_synthesis_output_schema
 from contracts.governance import AuditRequest
@@ -32,9 +32,8 @@ from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowD
 from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryManifest, SkillManifest
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from contracts.content import ContentKind
-from service.agents.base import BaseAgent, AgentRunContext
+from adapters.agent.base import BaseAgent, AgentRunContext
 from contracts.runtime_events import RuntimeEvent, TRANSIENT_RUNTIME_EVENT_TYPES
-from runtime.live_events import runtime_event_broker
 
 from .graph import ACGExecutionState
 from .value_store import ExecutionValueStore, InMemoryExecutionValueStore
@@ -78,14 +77,16 @@ class ACGNodeRunner:
         compiled_package: CompiledACGPackage | None = None,
         fault_hook: Callable[[str], None] | None = None,
         invocation_guard: Callable[[str, ACGExecutionState], None] | None = None,
+        runtime_event_publisher: object | None = None,
     ) -> None:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
         self.task = task
+        self.runtime_event_publisher = runtime_event_publisher
         self.run = run
-        from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
+        from contracts.mission_semantic import run_intent_basis
         self.mission_intent_basis = run_intent_basis(run)
         if self.mission_intent_basis is not None:
-            from runtime.planner_input_adapter import planner_input
+            from components.mission.planner_input import planner_input
             # Adapter-local compatibility projection, never saved as Mission state.
             self.task = task.model_copy(deep=True, update={
                 "title": self.mission_intent_basis.objective,
@@ -158,6 +159,10 @@ class ACGNodeRunner:
             entropy_budget=entropy_budget,
             resource_execution_adapters=resource_execution_adapters,
         )
+
+    async def _publish_runtime_event(self, run_id: str, event: RuntimeEvent) -> None:
+        if self.runtime_event_publisher is not None:
+            await self.runtime_event_publisher.publish(run_id, event)
 
     async def __call__(self, step_id: str, state: ACGExecutionState) -> dict[str, Any]:
         """执行一个 Step，并返回 Pregel 轮次可消费的受控结果。
@@ -413,12 +418,13 @@ class ACGNodeRunner:
             commitId=commit_id,
             attemptId=execution_record.attempt_id,
             agentRegistration=self.agent_registrations.get(step_id),
+            runtime_event_publisher=self.runtime_event_publisher,
         )
         if hasattr(step_tool_runtime, 'bind_context'):
             guard = (lambda: self.invocation_guard(step_id, state)) if self.invocation_guard else None
             step_tool_runtime = step_tool_runtime.bind_context(agent_context, guard)
             agent_context.tool_runtime = step_tool_runtime
-        await runtime_event_broker.publish(
+        await self._publish_runtime_event(
             state.run_id,
             RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
                          attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),
@@ -710,7 +716,7 @@ class ACGNodeRunner:
             commit_id=commit_id,
             payload=commit_record,
         )
-        await runtime_event_broker.publish(
+        await self._publish_runtime_event(
             state.run_id,
             RuntimeEvent(eventType="node.completed", runId=state.run_id, nodeId=step_id,
                          attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),

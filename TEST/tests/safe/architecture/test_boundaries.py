@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-import safe
+from components import safe
 
 ROOT = Path(safe.__file__).parent
 LAYERS = {"contracts", "domain", "ports", "application", "infrastructure", "interfaces", "bootstrap", "integration"}
@@ -35,13 +35,14 @@ def test_dependency_directions_and_lightweight_inner_layers():
             if isinstance(node, ast.Import):
                 names = [item.name for item in node.names]
             elif isinstance(node, ast.ImportFrom):
-                assert node.level == 0, f"请使用统一safe.*绝对导入：{path}"
+                assert node.level == 0, f"请使用统一components.safe.*绝对导入：{path}"
                 names = [node.module or ""]
             for name in names:
                 parts = name.split(".")
-                if parts[0] == "safe":
-                    assert len(parts) >= 2 and parts[1] in ALLOWED[layer], (relative, name)
+                if parts[:2] == ["components", "safe"]:
+                    assert len(parts) >= 3 and parts[2] in ALLOWED[layer], (relative, name)
                     assert "legacy" not in parts and "encryptionservice" not in parts, (relative, name)
+                    continue
                 elif layer in PURE:
                     assert parts[0] in sys.stdlib_module_names | {"pydantic", "__future__"}, (relative, name)
                 if parts[0] in {"apps", "components", "adapters", "runtime"} or parts[0] == "contracts":
@@ -72,16 +73,16 @@ def audit(event, args):
             raise AssertionError("导入时写文件")
 sys.addaudithook(audit)
 for name in ("inference", "activation", "manifest", "privacy", "privacy_ledger", "session", "transport"):
-    importlib.import_module("safe." + name)
-from safe.inference import InferenceRequest
-from safe.contracts.inference import InferenceRequest as Contract
+    importlib.import_module("components.safe." + name)
+from components.safe.inference import InferenceRequest
+from components.safe.contracts.inference import InferenceRequest as Contract
 assert InferenceRequest is Contract
-from safe.manifest import SplitModelManifest
-from safe.inference import SplitModelManifest as Reexport
+from components.safe.manifest import SplitModelManifest
+from components.safe.inference import SplitModelManifest as Reexport
 assert SplitModelManifest is Reexport
 assert not (forbidden & set(sys.modules))
 '''
-    result = subprocess.run([sys.executable, "-B", "-c", script, str(ROOT.parent)],
+    result = subprocess.run([sys.executable, "-B", "-c", script, str(ROOT.parents[1])],
                             cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert not list(tmp_path.iterdir())

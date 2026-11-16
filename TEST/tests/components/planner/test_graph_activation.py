@@ -147,7 +147,7 @@ def test_new_receipt_blocks_activation(ready_boundary):
 
 
 def test_latest_checkpoint_change_blocks_activation(ready_boundary):
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     runtime, workflow, _, run_id, materialization_id, _ = chain(ready_boundary, prepare_key="act")
     run = workflow.get_run(run_id)
     state = acg_execution_state_from_run(run)
@@ -329,7 +329,7 @@ def test_recovery_cannot_resume_from_the_paused_projection(ready_boundary):
 
 def materialized_chain_with_checkpoint(ready_boundary):
     """Accepted source with an acknowledged v1 checkpoint head, then graph+materialization."""
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     runtime, workflow, ledger, run_id, source, agent = accepted_source(ready_boundary)
     run = workflow.get_run(run_id)
     state = acg_execution_state_from_run(run)

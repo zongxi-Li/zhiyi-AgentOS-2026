@@ -147,7 +147,7 @@ def test_uncertain_or_damaged_recovery_has_no_execution_right(ready_handoff, mon
         rt.cancel(run_id)
         before = workflow.get_run(run_id)
     elif cut == "operator_input":
-        import runtime.permit_recovery as recovery
+        import runtime.orchestration.permit_recovery as recovery
         original = recovery._evidence
         def changed(*args, **kwargs):
             result = original(*args, **kwargs)
@@ -173,8 +173,8 @@ def test_uncertain_or_damaged_recovery_has_no_execution_right(ready_handoff, mon
 @pytest.mark.freeze_gate
 @pytest.mark.parametrize("revoked", [False, True])
 def test_permit_failure_review_retry_uses_new_attempt_after_reopen(ready_handoff, monkeypatch, revoked):
-    from adapters.agent_invocation import AgentInvocationAdapter
-    from service.agents.registry import AgentNotFound
+    from adapters.agent.invocation import AgentInvocationAdapter
+    from adapters.agent.registry import AgentNotFound
     from contracts.workflow import ReviewDecision
     from contracts.mission_semantic import SemanticPrincipal
     rt, workflow, agent, run_id, _, _, _, permits, handoff_id = ready_handoff

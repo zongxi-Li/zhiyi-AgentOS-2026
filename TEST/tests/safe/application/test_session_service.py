@@ -6,12 +6,12 @@ import threading
 
 import pytest
 
-from safe.application.session import SessionService
-from safe.contracts.activation import ActivationEnvelope
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.session import SessionStatus, StepRequest
-from safe.infrastructure.storage.memory_sessions import MemorySessionStore
-from safe.ports.model_runner import KVHandle
+from components.safe.application.session import SessionService
+from components.safe.contracts.activation import ActivationEnvelope
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.session import SessionStatus, StepRequest
+from components.safe.infrastructure.storage.memory_sessions import MemorySessionStore
+from components.safe.ports.model_runner import KVHandle
 
 
 class ManualClock:
@@ -436,7 +436,7 @@ def test_context_executor_receives_stored_position_and_owned_kv() -> None:
         contexts.append((context, handle))
         return 9, False
 
-    from safe.infrastructure.codecs.fp32 import FP32Codec
+    from components.safe.infrastructure.codecs.fp32 import FP32Codec
 
     first = request().model_copy(update={"activation": FP32Codec().encode((1.0, 2.0, 3.0), (1, 3, 1))})
     receipt = safe.execute_with_context("owner-1", first, forward)

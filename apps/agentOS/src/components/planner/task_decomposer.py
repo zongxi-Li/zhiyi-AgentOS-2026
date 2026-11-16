@@ -10,8 +10,8 @@ from collections.abc import Mapping
 from typing import Any, Callable, get_args
 from pydantic import ValidationError
 from pydantic_core import ErrorType
-from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
+from adapters.model.protocols import StructuredGenerationError
 
 from contracts.planning import (
     PlannedTask,
@@ -32,8 +32,8 @@ from components.planner.topology import (
     validate_task_plan_for_execution,
     failed_topology_audit, successful_topology_audit,
 )
-from support.acg.capabilities import CapabilityCatalog
-from support.acg.semantic_profile import TaskSemanticProfile
+from support.capabilities import CapabilityCatalog
+from contracts.acg.semantic_profile import TaskSemanticProfile
 
 from .complexity import (
     PLANNING_BUDGETS, PLANNING_MODEL_TIMEOUT_SECONDS, call_planning_model,

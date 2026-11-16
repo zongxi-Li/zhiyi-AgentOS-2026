@@ -4,7 +4,7 @@ import pytest
 
 from components.executor.node_runner import ACGNodeRunner
 from components.executor.graph import ACGExecutionState
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 
 
 class _LocalAgent(BaseAgent):

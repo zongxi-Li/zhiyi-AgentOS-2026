@@ -8,10 +8,10 @@ from threading import Barrier
 import pytest
 from pydantic import ValidationError
 
-from components.mission_manager.semantic_resolver import MissionSemanticResolver
+from components.mission.semantic_resolver import MissionSemanticResolver
 from contracts.mission_semantic import MissionIntentBasis, MissionSemanticOperation, run_intent_basis
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
-from runtime.planner_input_adapter import planner_input, material_input
+from components.mission.planner_input import planner_input, material_input
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 

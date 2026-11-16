@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from apps.agentOS.src.components.mission.mission_semantic import (
+from contracts.mission_semantic import (
     EffectiveMissionSnapshot, MissionSemanticOperation, MissionSemanticRequest,
     SemanticCommit, SemanticOperationReceipt, SemanticOperationResult, SemanticPrincipal,
 )
@@ -42,7 +42,7 @@ class MissionSemanticService:
         self._require_access(principal, mission_id, "read")
 
     def decide_run_revision(self, principal, mission_id, run_id, request):
-        from apps.agentOS.src.components.mission.mission_revision import MissionRevisionDecision
+        from components.mission.mission_revision import MissionRevisionDecision
         principal = self._require_access(principal, mission_id, "write")
         request = MissionRevisionDecision.model_validate(request.model_dump())
         return self.store.decide_run_revision(principal, mission_id, run_id, request)

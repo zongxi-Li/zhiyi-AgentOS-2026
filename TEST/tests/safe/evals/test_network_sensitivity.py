@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from safe.infrastructure.experiments.network_sensitivity import (
+from components.safe.infrastructure.experiments.network_sensitivity import (
     NetworkScenario,
     calculate_transfer_ms,
     model_run,
@@ -67,9 +67,9 @@ def test_scenario_rejects_invalid_network_assumptions(bandwidth, rtt, response):
 
 
 def test_report_directory_rejects_tampered_csv(tmp_path):
-    from safe.infrastructure.experiments.network_sensitivity import load_verified_benchmark
+    from components.safe.infrastructure.experiments.network_sensitivity import load_verified_benchmark
 
-    source = Path(__file__).resolve().parents[5] / "docs/superpowers/reports/safe/experiments/2026-11-15-local-generation"
+    source = Path(__file__).resolve().parents[4] / "docs/superpowers/reports/safe/experiments/2026-11-15-local-generation"
     if not (source / "report.json").exists():
         pytest.skip("仓库未带实验原始证据")
     for name in ("report.json", "runs.csv", "steps.csv"):
@@ -155,14 +155,14 @@ def _source(directory, *, mutation=None):
     lambda runs, steps: steps[-1].update(activation_raw_bytes="5"),
 ])
 def test_source_rejects_semantic_corruption_even_with_matching_hashes(tmp_path, mutation):
-    from safe.infrastructure.experiments.network_sensitivity import load_verified_benchmark
+    from components.safe.infrastructure.experiments.network_sensitivity import load_verified_benchmark
 
     with pytest.raises(ValueError):
         load_verified_benchmark(_source(tmp_path / "source", mutation=mutation))
 
 
 def _script(name):
-    return Path(__file__).resolve().parents[3] / "evals/safe/exam" / name
+    return Path(__file__).resolve().parents[4] / "evals/safe/exam" / name
 
 
 def _analyze(source, output):
@@ -188,7 +188,7 @@ def test_cli_emits_complete_grid_with_script_fingerprint_and_refuses_overwrite(t
     assert report["n_runs"] == 1
     assert report["n_scenarios"] == 6
     assert report["response_bytes_measured"] is False
-    from safe.infrastructure.experiments.network_sensitivity import load_verified_analysis
+    from components.safe.infrastructure.experiments.network_sensitivity import load_verified_analysis
     verified, records = load_verified_analysis(output)
     assert verified["status"] == "passed"
     assert len(records) == 6

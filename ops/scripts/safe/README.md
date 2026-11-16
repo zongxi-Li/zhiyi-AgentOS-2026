@@ -1,8 +1,8 @@
 # safe 显式研究工具
 
-`export_model.py` 已实现显式离线角色导出；`verify_split.py`、`benchmark.py` 仍是非零拒绝的TODO入口。真实模型同进程验证位于 `apps/agentOS/evals/safe/exam/verify_qwen_prefill.py`；独立双进程/远程verify工具仍待实现。所有入口不自动下载模型。
+`export_model.py` 已实现显式离线角色导出；`verify_split.py`、`benchmark.py` 仍是非零拒绝的TODO入口。真实模型同进程验证位于 `evals/safe/exam/verify_qwen_prefill.py`；独立双进程/远程verify工具仍待实现。所有入口不自动下载模型。
 
-后续真实逻辑统一放在 `safe.application` 和 `safe.infrastructure`，工具仅调用 `safe.bootstrap.cli`，不在脚本里维护第二套模型/协议实现。
+后续真实逻辑统一放在 `components.safe.application` 和 `components.safe.infrastructure`，工具仅调用 `components.safe.bootstrap.cli`，不在脚本里维护第二套模型/协议实现。
 
 | 工具 | 后续职责 | 前置阶段 |
 | --- | --- | --- |
@@ -19,4 +19,4 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B ops/scripts/safe/export_model.py -
 
 输出摘要需核实后显式批准到配置；源码/权重许可分别保留。完整实测见 `docs/superpowers/reports/safe/2026-11-14-qwen-prefill.md`。
 
-对应架构见 [`safe/README.md`](../../../apps/agentOS/src/safe/README.md)。证据输出到显式指定的数据/报告目录，不写入 `src/safe`，不保存真实用户输入或密钥。
+对应架构见 [`safe/README.md`](../../../apps/agentOS/src/components/safe/README.md)。证据输出到显式指定的数据/报告目录，不写入 `src/components/safe`，不保存真实用户输入或密钥。

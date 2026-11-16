@@ -282,10 +282,11 @@ def start_hands(home, info, creds, state, env, start):
     native.write_json(config, {'workspaceRoot':info['workspace'],'credentialsFile':str(keys),
         'grantsFile':str(grants),'dataDir':str(home/'hands-ledger'),'host':'127.0.0.1',
         'port':ports(info)['host'],'confinement':'none','dynamicWorkspaces':True})
-    node_env = dict(env, TSX_TSCONFIG_PATH=str(ROOT/'apps/agentOS/src/hands/tsconfig.json'))
+    hands_root = ROOT/'apps/agentOS/src/components/environment/hands'
+    node_env = dict(env, TSX_TSCONFIG_PATH=str(hands_root/'tsconfig.json'))
     try:
-        record = start('host',[shutil.which('node'),str(ROOT/'apps/agentOS/src/hands/node_modules/tsx/dist/cli.mjs'),
-            '--tsconfig',str(ROOT/'apps/agentOS/src/hands/tsconfig.json'),(ROOT/'apps/agentOS/src/hands/hands/service-main.ts').as_posix(),
+        record = start('host',[shutil.which('node'),str(hands_root/'node_modules/tsx/dist/cli.mjs'),
+            '--tsconfig',str(hands_root/'tsconfig.json'),(hands_root/'hands/service-main.ts').as_posix(),
             '--config',str(config)],node_env)
         desktop.wait_until(lambda:native.health(ports(info)['host'],'/v1/health').get('ok'),record,60)
     finally:

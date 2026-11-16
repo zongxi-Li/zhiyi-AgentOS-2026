@@ -6,35 +6,30 @@
 
 from __future__ import annotations
 
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+
 import asyncio
 from pathlib import Path
 
 from runtime.workflow_runtime import ExecutionRuntime
 from components.executor.value_store import InMemoryExecutionValueStore
 from components.memory.store import MemoryStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.workflow import (
     ReviewDecision,
     ReviewDecisionType,
     WorkflowDefinition,
     WorkflowStepDefinition,
 )
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import (
-    ACGBlueprint,
-    ACGEdge,
-    ControlNode,
-    ControlType,
-    ConsensusSpec,
-    EdgeType,
-    StepNode,
-)
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, ControlNode, ControlType, ConsensusSpec, EdgeType, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
 
 
-RUNTIME_SOURCE = Path(__file__).parents[2] / "src" / "runtime"
+RUNTIME_SOURCE = AGENTOS_ROOT / "src" / "runtime"
+ORCHESTRATION_SOURCE = RUNTIME_SOURCE / "orchestration"
 
 
 class _RunAgent(BaseAgent):
@@ -279,7 +274,7 @@ def test_review_interrupt_and_resume_trace_parity() -> None:
 def test_acg_execution_service_import_boundary() -> None:
     import ast
 
-    source = (RUNTIME_SOURCE / "acg_execution.py").read_text(encoding="utf-8")
+    source = (ORCHESTRATION_SOURCE / "acg_execution.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported_modules = {
         node.module

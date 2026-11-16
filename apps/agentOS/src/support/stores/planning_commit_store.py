@@ -4,7 +4,6 @@ Constructor never creates a database or upgrades a schema. Acceptance writes onl
 the ledger and its outbox, not TaskPlan identity tables, Run, graph or receipts.
 """
 from contextlib import contextmanager, closing
-import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -13,11 +12,11 @@ from threading import RLock, local
 from contracts.planning_commit import PlanningCommitRecord
 from contracts.planning import TaskPlan, TaskPlanPatch
 from contracts.graph_revision import GraphRevisionProposal
+from contracts.stable_digest import model_digest
 
 
 def content_fingerprint(model):
-    return hashlib.sha256(json.dumps(model.model_dump(mode="json", by_alias=True),
-        sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return model_digest(model)
 
 
 class SQLitePlanningCommitStore:

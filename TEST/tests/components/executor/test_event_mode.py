@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import EdgeType
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import EdgeType
 
 
 import asyncio
@@ -17,8 +17,8 @@ from components.executor.node_runner import ACGNodeRunner
 from components.executor.value_store import InMemoryExecutionValueStore
 from components.memory import MemoryService
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from support.acg.models import ACGBlueprint, ACGEdge, StepNode
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from contracts.acg.schema import ACGBlueprint, ACGEdge, StepNode
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 
 
 class _EventRecordingAgent(BaseAgent):

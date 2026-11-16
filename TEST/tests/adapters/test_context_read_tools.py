@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.agent_tools import AgentToolSession, supports_agent_tools
-from adapters.context_tools import ContextReadTools
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.openai_runtime import OpenAICompatibleRuntime
+from adapters.agent.tool_session import AgentToolSession, supports_agent_tools
+from adapters.tool.context_read import ContextReadTools
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.openai_runtime import OpenAICompatibleRuntime
 from components.communicator.broker import CommunicationBroker, CommunicationAccessError, EntropyBudgetExceededError
 from components.communicator.manifest import CommunicationManifest, CommunicationRule
 from components.communicator.reader import CommunicationReader
@@ -160,13 +160,13 @@ def test_real_model_tool_loop_reads_without_hands_and_replays_decisions(tmp_path
 
 
 def test_native_agent_and_node_runner_record_supplemental_provenance_without_body(tmp_path):
-    from adapters.model.native import NativeGeneralAgent
+    from adapters.agent.native import NativeGeneralAgent
     from components.communicator import CommunicatorService
     from components.executor.graph import ACGExecutionState
     from components.executor.node_runner import ACGNodeRunner
     from components.memory import MemoryService
     from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
-    from support.acg.models import build_default_capability_catalog
+    from support.packs.native_capabilities import build_default_capability_catalog
 
     store, broker, reader = setup_reader(tmp_path)
     descriptor = build_default_capability_catalog().get("analysis")
@@ -201,7 +201,7 @@ def test_native_agent_and_node_runner_record_supplemental_provenance_without_bod
 
 
 def test_tool_result_is_included_in_complete_model_request_budget(tmp_path):
-    from adapters.model_adapter import StructuredGenerationError
+    from adapters.model.protocols import StructuredGenerationError
 
     _, broker, reader = setup_reader(tmp_path, data={"details": "private material " * 1800},
         budget=SupplementalReadBudget(maxReadTokens=12000, pageTokens=1000, totalTokens=16000))

@@ -3,10 +3,10 @@
 import pytest
 from pydantic import ValidationError
 
-from safe.contracts.inference import GenerationOptions, InferenceRequest
-from safe.contracts.manifest import SplitModelManifest
-from safe.contracts.privacy import PrivacyProfile
-from safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.contracts.inference import GenerationOptions, InferenceRequest
+from components.safe.contracts.manifest import SplitModelManifest
+from components.safe.contracts.privacy import PrivacyProfile
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
 
 
 def test_contract_json_roundtrip_preserves_shape():

@@ -10,7 +10,9 @@ import platform
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "apps/agentOS/src"))
 
 PROMPTS = (
     "你好，请用一句话介绍你自己。", "一加一等于多少？", "请把hello翻译成中文。",
@@ -49,10 +51,10 @@ def main() -> int:
     import psutil
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from transformers.cache_utils import DynamicCache
-    from safe.contracts.manifest import SplitModelManifest
-    from safe.domain.compatibility import manifest_digest
-    from safe.infrastructure.artifacts.local_store import LocalArtifactStore
-    from safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
+    from components.safe.contracts.manifest import SplitModelManifest
+    from components.safe.domain.compatibility import manifest_digest
+    from components.safe.infrastructure.artifacts.local_store import LocalArtifactStore
+    from components.safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
 
     torch.set_num_threads(args.threads)
     process = psutil.Process()
@@ -101,13 +103,13 @@ def main() -> int:
         ).eval()
         cloud = sessions = activation = sampler = None
         if args.continuation:
-            from safe.application.activation import ActivationService
-            from safe.application.continuation import ContinuationService
-            from safe.application.session import SessionService
-            from safe.contracts.session import ActivationContext, SessionStatus, StepRequest
-            from safe.infrastructure.codecs.fp32 import FP32Codec
-            from safe.infrastructure.models.sampling import GreedySampler
-            from safe.infrastructure.storage.memory_sessions import MemorySessionStore
+            from components.safe.application.activation import ActivationService
+            from components.safe.application.continuation import ContinuationService
+            from components.safe.application.session import SessionService
+            from components.safe.contracts.session import ActivationContext, SessionStatus, StepRequest
+            from components.safe.infrastructure.codecs.fp32 import FP32Codec
+            from components.safe.infrastructure.models.sampling import GreedySampler
+            from components.safe.infrastructure.storage.memory_sessions import MemorySessionStore
 
             class ObservedSampler:
                 """仅评估使用：保留本步logits作oracle对照，不写入报告或wire回执。"""

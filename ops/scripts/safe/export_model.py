@@ -8,6 +8,6 @@ if __name__ == "__main__":
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "apps/agentOS/src"))
-    from safe.bootstrap.cli import main
+    from components.safe.bootstrap.cli import main
 
     raise SystemExit(main())

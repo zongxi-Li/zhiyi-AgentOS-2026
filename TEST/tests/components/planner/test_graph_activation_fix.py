@@ -53,7 +53,7 @@ def test_valid_typed_attack_snapshot_rejected(ready_boundary, kind):
     attack(run, kind)
     run = RuntimeRunRecord.model_validate_json(run.model_dump_json(by_alias=True))
     from contracts.compiled_acg import load_compiled_acg_package
-    from support.acg.schema import ACGBlueprint
+    from contracts.acg.schema import ACGBlueprint
     # These attacks also remain valid compiled-package contracts; rejection
     # must come from the durable activation binding, not package syntax.
     load_compiled_acg_package(run.execution_state["compiledACGPackage"])

@@ -4,20 +4,14 @@ from datetime import datetime, timezone
 
 import pytest
 
-from support.acg.validation import ACGValidationError
-from support.acg.models import (
-    ACGBlueprint,
-    ACGEdge,
-    EdgeType,
-    StepNode,
-    TaskSemanticProfile,
-    build_default_capability_catalog,
-    detect_cycle,
-    ready_steps,
-    topological_order,
-    validate_blueprint,
-)
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec, MemoryAccessSpec
+from components.planner.acg_validation import ACGValidationError
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
+from domain.acg_graph import detect_cycle, topological_order
+from components.scheduler.blueprint import ready_steps
+from components.planner.acg_validation import validate_blueprint
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec, MemoryAccessSpec
 
 
 def test_blueprint_serialization_contract_snapshot() -> None:
@@ -71,10 +65,11 @@ def test_blueprint_serialization_contract_snapshot() -> None:
 def test_workflow_promotion_was_removed() -> None:
     """轻量 workflow 提升通道已退役:公共 API 不再存在。"""
     import support.acg as acg_public
+    import support.acg.models as acg_models
     import components.planner.lowering_input as lowering
 
     assert not hasattr(acg_public, "promote_workflow_to_acg")
-    assert not hasattr(acg_public.models, "promote_workflow_to_acg")
+    assert not hasattr(acg_models, "promote_workflow_to_acg")
     assert not hasattr(lowering, "promote_workflow_to_acg")
     import importlib.util
 

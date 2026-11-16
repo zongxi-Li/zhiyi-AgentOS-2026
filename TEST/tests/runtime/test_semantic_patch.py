@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from components.executor import GraphPatchConflictError, InMemoryExecutionValueStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from components.planner.topology import TopologyCompileError
 from components.memory.store import MemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
@@ -34,12 +34,12 @@ from contracts.workflow import (
     WorkflowStepDefinition,
 )
 from runtime import ExecutionRuntime
-from runtime.semantic_patch import derive_graph_patch
+from components.planner.semantic_patch import derive_graph_patch
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, EdgeType, StepNode
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.schema import ACGBlueprint, EdgeType, StepNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

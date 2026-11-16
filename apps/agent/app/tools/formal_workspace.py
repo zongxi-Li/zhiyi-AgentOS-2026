@@ -6,8 +6,8 @@ from uuid import uuid4
 from datetime import timedelta
 from pathlib import Path
 
-from adapters.audited_tool_runtime import AuditedToolRuntime
-from adapters.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown
+from adapters.tool.audited_runtime import AuditedToolRuntime
+from adapters.tool.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown
 from support.async_tasks import await_settled
 from components.resource.scheduler.binder import LeaseKeepAlive
 from contracts.resource import ExecutionRequirement, RuntimeKind
@@ -15,7 +15,7 @@ from contracts.local_runtime import LocalRuntimeExecutionRequest, LocalRuntimeEx
 from contracts.runtime_events import RuntimeEvent
 from contracts.tools import hands_tools, ToolExecutionResult
 from contracts.communication import validate_contract_payload
-from runtime.live_events import runtime_event_broker
+from runtime.events.live_events import runtime_event_broker
 from app.tools.permissions import get_chat_permission_service, normalize_relative_path
 from support.work_timeouts import human_approval_wait
 
@@ -49,7 +49,7 @@ class FormalWorkspaceTools:
         This consumes existing evidence; it grants no filesystem or Shell tool
         to the verification/synthesis agent and never scans another node's data.
         """
-        from adapters.hands_http import receipt_checksum
+        from adapters.tool.hands_http import receipt_checksum
         found = {}
         def visit(value):
             if isinstance(value,dict):

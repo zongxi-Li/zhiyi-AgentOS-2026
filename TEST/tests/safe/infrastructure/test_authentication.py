@@ -5,10 +5,10 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.identity import AuthenticatedIdentity
-from safe.infrastructure.security import authentication, signing
-from safe.ports import credentials
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.identity import AuthenticatedIdentity
+from components.safe.infrastructure.security import authentication, signing
+from components.safe.ports import credentials
 
 
 NOW = 1700000000

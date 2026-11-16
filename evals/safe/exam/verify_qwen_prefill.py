@@ -14,7 +14,9 @@ import platform
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "apps/agentOS/src"))
 
 PROMPTS = (
     "你好，请用一句话介绍你自己。", "一加一等于多少？", "请把hello翻译成中文。",
@@ -46,11 +48,11 @@ def main() -> int:
     import safetensors
     import psutil
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from safe.application.activation import ActivationService
-    from safe.contracts.session import ActivationContext, StepRequest
-    from safe.infrastructure.artifacts.local_store import LocalArtifactStore
-    from safe.infrastructure.codecs.fp32 import FP32Codec
-    from safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
+    from components.safe.application.activation import ActivationService
+    from components.safe.contracts.session import ActivationContext, StepRequest
+    from components.safe.infrastructure.artifacts.local_store import LocalArtifactStore
+    from components.safe.infrastructure.codecs.fp32 import FP32Codec
+    from components.safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
 
     torch.set_num_threads(args.threads)
     started = time.perf_counter()

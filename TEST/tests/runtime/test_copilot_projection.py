@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from components.executor.value_store import SQLiteExecutionValueStore
 from contracts.planning import TaskPlan, PlannedTask
-from runtime.copilot_projection import initial_plan_summary
+from runtime.projections.copilot_projection import initial_plan_summary
 
 
 def sources():

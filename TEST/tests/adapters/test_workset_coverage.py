@@ -3,13 +3,13 @@ from copy import deepcopy
 
 import pytest
 
-from adapters.model.native import NativeGeneralAgent
-from adapters.model_adapter import StructuredGenerationError
+from adapters.agent.native import NativeGeneralAgent
+from adapters.model.protocols import StructuredGenerationError
 from components.communicator.contracts import ContextPack
-from components.content import ContentWorksetSession, SQLiteContentManifestStore
+from components.environment.content import ContentWorksetSession, SQLiteContentManifestStore
 from contracts.content import ContentKind, WorksetSpec
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
-from service.agents.base import AgentOutput, AgentRunContext
+from adapters.agent.base import AgentOutput, AgentRunContext
 
 
 def context():

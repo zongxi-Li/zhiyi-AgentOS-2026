@@ -5,17 +5,17 @@ import threading
 
 import pytest
 
-from safe.application import continuation
-from safe.application.activation import ActivationService
-from safe.application.manifest import ManifestService
-from safe.application.session import SessionService
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.manifest import SplitModelManifest
-from safe.contracts.session import ActivationContext, SessionStatus, StepRequest
-from safe.infrastructure.codecs.fp32 import FP32Codec
-from safe.infrastructure.models.sampling import GreedySampler
-from safe.infrastructure.storage.memory_sessions import MemorySessionStore
-from safe.ports.model_runner import KVHandle
+from components.safe.application import continuation
+from components.safe.application.activation import ActivationService
+from components.safe.application.manifest import ManifestService
+from components.safe.application.session import SessionService
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.manifest import SplitModelManifest
+from components.safe.contracts.session import ActivationContext, SessionStatus, StepRequest
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.infrastructure.models.sampling import GreedySampler
+from components.safe.infrastructure.storage.memory_sessions import MemorySessionStore
+from components.safe.ports.model_runner import KVHandle
 
 
 def manifest():
@@ -235,7 +235,7 @@ def test_commit_failure_after_sampling_never_reexecutes_suffix():
 
 
 def test_inprocess_transport_uses_one_runner_and_json_receipts():
-    from safe.bootstrap import cloud
+    from components.safe.bootstrap import cloud
 
     approved = manifest()
     digest = ManifestService.digest(approved)
@@ -259,7 +259,7 @@ def test_inprocess_transport_uses_one_runner_and_json_receipts():
 
 
 def test_inprocess_transport_rejects_other_manifest_before_creating_kv():
-    from safe.bootstrap import cloud
+    from components.safe.bootstrap import cloud
 
     approved = manifest()
     runner = FakeSuffix(approved)

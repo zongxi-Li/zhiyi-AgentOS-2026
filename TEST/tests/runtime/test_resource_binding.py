@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from components.executor.graph import ACGSuperstepError
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from components.memory.store import MemoryStore
 from components.resource.runtime.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
 from components.resource.application.resource_plane import ResourcePlane
@@ -24,8 +24,8 @@ from components.resource.scheduler.models import (
     SchedulerAllocationTimeout,
     SchedulerNoEligibleResource,
 )
-from adapters.resource_execution import ResourceExecutionError
-from adapters.resource_execution import HttpResourceExecutionAdapter
+from adapters.agent.resource_execution import ResourceExecutionError
+from adapters.agent.resource_execution import HttpResourceExecutionAdapter
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.resource import (
     HealthStatus,
@@ -38,8 +38,8 @@ from contracts.resource import (
 )
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -196,7 +196,7 @@ def test_runtime_lazily_builds_remote_adapter_from_registered_profile(monkeypatc
         built.append((profile.runtime_id, credential_provider))
         return _Adapter()
 
-    monkeypatch.setattr("runtime.acg_execution.build_resource_execution_adapter", factory)
+    monkeypatch.setattr("runtime.orchestration.acg_execution.build_resource_execution_adapter", factory)
     runtime, _ = _runtime([], resource_plane=plane)
 
     adapter = runtime.acg_execution_service._remote_runtime_adapter("edge-01")

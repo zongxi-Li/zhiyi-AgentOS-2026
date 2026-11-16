@@ -146,7 +146,7 @@ def test_initial_compile_failure_and_ordinary_graph_forgery_rejected(initial_run
 def reopen(folder, commit_id):
     """Independent host assembly over the same temporary persistent databases."""
     from TEST.tests.components.planner.test_react_loop import runtime_at
-    from components.mission_manager.semantic_service import MissionSemanticService
+    from components.mission.semantic_service import MissionSemanticService
     from contracts.mission_semantic import SemanticPrincipal
     from support.stores.planning_commit_store import SQLitePlanningCommitStore
     runtime, workflow, agent = runtime_at(Path(folder))
@@ -174,7 +174,7 @@ def _durable_cut(folder, commit_id, cut):
     result = runtime.materialize_initial_commit(commit_id, idempotency_key="initial-materialize")
     if result.status not in {"MATERIALIZED_INACTIVE", "IDEMPOTENT_REPLAY"}:
         os._exit(90)
-    from runtime.initial_graph_compilation import compile_initial_content
+    from components.planner.initial_graph_compilation import compile_initial_content
     persisted = runtime.graph_materialization_authority.store.get_materialization(result.materialization_id)
     rebuilt = compile_initial_content(runtime.planning_commit_authority.store.get(commit_id),
                                       timestamp=persisted.initial_content.blueprint.created_at)
@@ -298,7 +298,7 @@ def test_legacy_initial_cannot_materialize_and_corrupt_package_cannot_activate(i
 
 
 def test_frozen_compilation_does_not_read_runtime_and_native_source_lowers(initial_run):
-    from runtime.initial_graph_compilation import compile_initial_content
+    from components.planner.initial_graph_compilation import compile_initial_content
     from contracts.workflow import WorkflowDefinition, WorkflowDefinitionType
     from contracts.mission_semantic import MissionSemanticRequest
     runtime, workflow, agent, _, ledger = initial_run
@@ -432,7 +432,7 @@ def test_initial_step_projection_uses_blueprint_without_run_input_overrides(init
 
 @pytest.mark.parametrize("phase", ["compile", "activation"])
 def test_initial_recipe_identity_is_fenced(initial_run, monkeypatch, phase):
-    import runtime.initial_graph_compilation as compilation
+    import components.planner.initial_graph_compilation as compilation
     context = setup_initial(initial_run)
     runtime, workflow, _, run, commit, journal, heads = context
     if phase == "compile":

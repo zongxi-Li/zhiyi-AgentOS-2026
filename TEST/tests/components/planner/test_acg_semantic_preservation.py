@@ -11,10 +11,10 @@ from components.planner.acg_semantic_validator import (
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from components.planner.topology.compiler import TaskPlanTopologyCompiler
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
-from support.acg.models import (
-    ACGBlueprint, ACGEdge, CapabilityCatalog, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode,
-    PlanningCapabilityDescriptor, TaskSemanticProfile,
-)
+from contracts.acg.schema import ACGBlueprint, ACGEdge, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
+from contracts.acg.semantic_profile import TaskSemanticProfile
 
 
 def _task(key: str) -> PlannedTask:

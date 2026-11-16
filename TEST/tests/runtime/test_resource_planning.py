@@ -207,7 +207,7 @@ def test_resource_condition_requires_exact_fields_and_aware_deadline():
 
 @pytest.mark.parametrize("backup_fails", [False, True])
 def test_local_failover_is_sparse_and_exhaustion_reaches_planner(tmp_path, backup_fails):
-    from adapters.resource_execution import ResourceExecutionError
+    from adapters.agent.resource_execution import ResourceExecutionError
     from contracts.resource import Placement, ResourceEndpoint, RuntimeProfile, RuntimeSnapshot, TrustLevel
     runtime, agent, run = prepared(tmp_path)
     capabilities = sorted({c for req in run.execution_state["bindingRequirements"].values()

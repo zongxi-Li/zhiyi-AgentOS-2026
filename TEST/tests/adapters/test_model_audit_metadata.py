@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapters.model_adapter import StructuredGenerationResult
+from adapters.model.protocols import StructuredGenerationResult
 
 
 def test_model_audit_record_excludes_prompt_and_generated_data() -> None:

@@ -11,7 +11,7 @@ from TEST.tests.components.planner.test_planning_commit_runtime import attach, d
 from components.planner.planning_commit import PlanningCommitService
 from contracts.initial_planning import InitialPlanningSourceProvenance
 from contracts.planning_commit import PlanningCommitRecord, PlanningCommitRejectionCode as Code
-from runtime.planning_commit import RuntimePlanningCommitAuthority
+from runtime.orchestration.planning_commit import RuntimePlanningCommitAuthority
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
 
 
@@ -62,7 +62,7 @@ def test_initial_current_source_fences(initial_run, monkeypatch, change):
         descriptor = runtime.capability_catalog.available()[0]
         monkeypatch.setattr(descriptor, "description", descriptor.description + " drift")
     elif change == "policy":
-        import runtime.initial_planning_sources as sources
+        import runtime.orchestration.initial_planning_sources as sources
         original = sources.compilation_policy
         def drift():
             value = original()
@@ -156,7 +156,7 @@ def test_legacy_initial_stays_readable_and_is_never_upgraded(initial_run, monkey
     request = runtime.planning_commit_authority.replay_request(record, "initial-planning:" + run.run_id)
     request = request.model_copy(update={"sources": sources})
     body = request.model_dump(mode="json", by_alias=True, exclude={"idempotency_key"})
-    from runtime.planning_commit import fingerprint
+    from runtime.orchestration.planning_commit import fingerprint
     historical = record.model_copy(update={"source_provenance": None, "sources": sources,
         "request_fingerprint": fingerprint(body)})
     with ledger.connection() as conn, conn:
@@ -174,7 +174,7 @@ def test_legacy_initial_stays_readable_and_is_never_upgraded(initial_run, monkey
 
 def test_source_changes_at_final_capture_reject_without_record(initial_run, monkeypatch):
     runtime, _, agent, run, ledger = initial_run
-    from runtime.planning_commit import RuntimePlanningCommitProvider
+    from runtime.orchestration.planning_commit import RuntimePlanningCommitProvider
     original = RuntimePlanningCommitProvider.get_source_provenance
     def drift(provider, request):
         value = original(provider, request)
@@ -188,7 +188,7 @@ def test_source_changes_at_final_capture_reject_without_record(initial_run, monk
 
 def test_missing_provenance_from_runtime_provider_cannot_be_accepted(initial_run, monkeypatch):
     runtime, _, _, run, ledger = initial_run
-    from runtime.planning_commit import RuntimePlanningCommitProvider
+    from runtime.orchestration.planning_commit import RuntimePlanningCommitProvider
     monkeypatch.setattr(RuntimePlanningCommitProvider, "get_source_provenance", lambda *_: None)
     result = runtime.planning_commit_authority.accept_initial(run.run_id)
     assert result.code == Code.INVALID_PROPOSAL and not ledger.pending_events()
@@ -268,7 +268,7 @@ def test_new_inputs_changing_during_unlocked_planning_reject(initial_run, monkey
             workflow = runtime._workflow_for_run(run).model_copy(deep=True, update={"domain": "changed"})
             monkeypatch.setattr(runtime, "_workflow_for_run", lambda _: workflow)
         else:
-            import runtime.initial_planning_sources as sources
+            import runtime.orchestration.initial_planning_sources as sources
             policy = sources.compilation_policy().model_copy(deep=True)
             policy.versions["lowerer"] = "changed"
             monkeypatch.setattr(sources, "compilation_policy", lambda: policy)

@@ -8,15 +8,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
-from adapters.model.native import NativeGeneralAgent
-from components.content import ContentWorksetSession, SQLiteContentManifestStore
+from adapters.model.protocols import StructuredGenerationError, StructuredGenerationResult
+from adapters.agent.native import NativeGeneralAgent
+from components.environment.content import ContentWorksetSession, SQLiteContentManifestStore
 from components.communicator.contracts import ContextPack
 from contracts.content import ContentKind, WorksetSpec
 from contracts.runtime_events import RuntimeEvent
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from service.agents import AgentRunContext
-from support.acg.models import build_default_capability_catalog
+from adapters.agent import AgentRunContext
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 class _SearchResult:

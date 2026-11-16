@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from components.marketplace.contracts import CatalogItem, InstallationJob, InstallationStatus
+from components.resource.catalog.contracts import CatalogItem, InstallationJob, InstallationStatus
 
 
 def test_catalog_item_rejects_package_escape_and_invalid_checksum() -> None:

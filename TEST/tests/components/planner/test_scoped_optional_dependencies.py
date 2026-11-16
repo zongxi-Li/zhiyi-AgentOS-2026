@@ -1,5 +1,6 @@
 import pytest
-from support.acg.capabilities import CapabilityCatalog, PlanningCapabilityDescriptor
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
 
 
 def test_disabled_workspace_optional_edge_does_not_leak_or_mutate_global_catalog():

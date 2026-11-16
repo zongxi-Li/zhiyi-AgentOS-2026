@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from adapters.http_transport import HttpJsonTransport, RotatingKeyProvider
+from adapters.transport.http import HttpJsonTransport, RotatingKeyProvider
 
 
 class _Response:

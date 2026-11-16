@@ -11,6 +11,8 @@
 - 新路径默认关闭：生产源码除自身两模块外无人引用。
 """
 
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+
 import asyncio
 import json
 from pathlib import Path
@@ -20,10 +22,10 @@ import pytest
 from components.planner.unified_actions import PlannerActionGateway
 from components.auditor import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.planner_actions import (
     PlannerActionRequest,
     PlannerCandidateTasksProposal,
@@ -43,10 +45,10 @@ from contracts.workflow import (
 from components.recovery.checkpoint import ACGCheckpointStore
 from runtime import ExecutionRuntime
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from service.agents import AgentRegistry
-from service.agents.base import AgentProfile, AgentOutput, BaseAgent
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.native_capabilities import build_default_capability_catalog
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentProfile, AgentOutput, BaseAgent
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from support.packs.native_capabilities import build_default_capability_catalog
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
@@ -503,13 +505,13 @@ def test_new_protocol_is_referenced_only_through_the_opt_in_seam():
     允许的引用点 = 协议自身两模块 + ReAct 循环 + PlanningEngine 显式参数 +
     facade 的环境开关装配（默认关闭，见 test_react_loop 的行为级测试）。
     """
-    root = Path(__file__).resolve().parents[3] / "src"
+    root = AGENTOS_ROOT / "src"
     allowed = {
         "contracts/planner_actions.py",
         "components/planner/unified_actions.py",
         "components/planner/react_loop.py",
         "components/planner/service.py",
-        "runtime/workflow_runtime.py",
+        "runtime/orchestration/workflow.py",
     }
     offenders = []
     for path in root.rglob("*.py"):

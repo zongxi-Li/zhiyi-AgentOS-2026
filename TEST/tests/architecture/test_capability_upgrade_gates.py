@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+
 import ast
 import re
 from pathlib import Path
@@ -11,7 +13,7 @@ from components.executor.graph import ACGExecutionGraph
 from runtime.workflow_runtime import ExecutionRuntime
 
 
-SRC = Path(__file__).resolve().parents[2] / "src"
+SRC = AGENTOS_ROOT / "src"
 
 
 def _python_sources(root: Path):
@@ -73,7 +75,7 @@ def _assert_python_process_boundary(source: str, relative_path: str) -> None:
     allowed_calls = set()
     packaged_worker = relative_path.endswith("builtins/server.py")
     if packaged_worker:
-        authority_roots = ("runtime", "service.agents", "components.executor", "components.resource")
+        authority_roots = ("runtime", "adapters.agent", "components.executor", "components.resource")
         assert not any(name == root or name.startswith(root + ".")
                        for name in imports for root in authority_roots)
         serve = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "serve"]
@@ -175,7 +177,7 @@ def test_local_runtime_is_only_a_contract_and_transport_boundary() -> None:
     local_files = (SRC / "contracts" / "local_runtime.py", SRC / "adapters" / "local_runtime.py")
     forbidden_classes = {"CapabilityRegistry", "ResourceRegistry", "RuntimeEventBroker"}
     forbidden_imports = {
-        "service.agents.base", "app.tools.terminal", "app.tools.chat_catalog",
+        "adapters.agent.base", "app.tools.terminal", "app.tools.chat_catalog",
         "subprocess", "httpx", "requests", "socket",
     }
     forbidden_calls = {"exec", "eval", "system", "Popen", "run", "create_subprocess_shell"}

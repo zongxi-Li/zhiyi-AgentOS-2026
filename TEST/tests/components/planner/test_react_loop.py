@@ -18,10 +18,10 @@ from components.planner.service import PlanningEngine
 from components.planner.unified_actions import PlannerActionGateway
 from components.auditor import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningState
 from contracts.workflow import (
@@ -33,10 +33,10 @@ from contracts.workflow import (
 from components.recovery.checkpoint import ACGCheckpointStore
 from runtime import ExecutionRuntime
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from service.agents import AgentRegistry
-from service.agents.base import AgentProfile, AgentOutput, BaseAgent
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.native_capabilities import build_default_capability_catalog
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentProfile, AgentOutput, BaseAgent
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from support.packs.native_capabilities import build_default_capability_catalog
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 

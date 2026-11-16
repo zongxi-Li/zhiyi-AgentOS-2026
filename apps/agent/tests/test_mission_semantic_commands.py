@@ -192,7 +192,7 @@ def test_flag_disabled_and_legacy_mission_initialization(api):
     assert run_intent_basis(run) is None
     assert client.get(f'/agentos/v2/missions/{legacy["missionId"]}/semantics').status_code == 409
     # Re-enable the existing installed schema. No migration or inferred facts.
-    from components.mission_manager.semantic_service import MissionSemanticService
+    from components.mission.semantic_service import MissionSemanticService
     repositories = runtime.identity_lifecycle.repositories
     runtime.mission_semantic_service = MissionSemanticService(store=runtime.workflow_store,
         authorize=lambda p, m, a: repositories.missions.get(m).user_id == p.actor_id

@@ -1,11 +1,11 @@
 """Workspace read projections never become semantic writers or Run capture points."""
 import pytest
 
-from components.mission_manager.semantic_resolver import MissionSemanticResolver
+from components.mission.semantic_resolver import MissionSemanticResolver
 from contracts.mission_semantic import MissionSemanticOperation
 from contracts.workflow import RuntimeMissionRecord
 from domain.models import Mission, RunStatus
-from runtime.workspace import MissionWorkspaceProjection, WorkspaceRunSummary, with_mission_semantics
+from runtime.projections.workspace import MissionWorkspaceProjection, WorkspaceRunSummary, with_mission_semantics
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from adapters.local_runtime import LocalRuntimeClient
+from adapters.transport.local_runtime import LocalRuntimeClient
 from contracts.capability import CapabilityInvocation
 from contracts.local_runtime import (
     LocalRuntimeAuthorizationRef,

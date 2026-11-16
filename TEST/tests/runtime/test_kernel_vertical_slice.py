@@ -1,4 +1,6 @@
 """Real business input -> v2 native execution -> canonical artifact and HTTP."""
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 import hashlib
 import json
@@ -84,7 +86,7 @@ def test_contract_revision_restart_delivers_canonical_artifact_and_http(tmp_path
     entries = projection["workspace"]["entries"]
     assert [e["artifactId"] for e in entries if e.get("kind") == "artifact" and e.get("group") == "output"] == [artifact["artifactId"]]
     # Exercise the existing production HTTP router, not a replacement API.
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "agent"))
+    monkeypatch.syspath_prepend(str((REPO_ROOT / "apps") / "agent"))
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.agentos_v2 import create_router
@@ -113,7 +115,7 @@ def test_contract_revision_restart_delivers_canonical_artifact_and_http(tmp_path
     replay = asyncio.run(resumed.execute_prepared_run(run_id))
     assert replay.status == WorkflowStatus.COMPLETED and new_agent.calls == ["C", "D"]
     assert result_projection(resumed, run_id)["artifacts"] == projection["artifacts"]
-    evidence = Path(__file__).resolve().parents[4] / "tmp" / "c1-evidence.json"
+    evidence = REPO_ROOT / "tmp" / "c1-evidence.json"
     evidence.parent.mkdir(exist_ok=True)
     activation = resumed.execution_permit_authority.store.get_activation(permit.activation_id)
     revision = resumed.planning_commit_authority.store.get(activation.source_commit_id)

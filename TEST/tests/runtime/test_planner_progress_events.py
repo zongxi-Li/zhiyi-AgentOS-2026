@@ -17,13 +17,13 @@ import asyncio
 import pytest
 
 from runtime.workflow_runtime import ExecutionRuntime
-from components.mission_manager.store import WorkflowRegistry
-from service.agents import AgentRegistry, AgentProfile, BaseAgent, AgentOutput
+from components.mission.store import WorkflowRegistry
+from adapters.agent import AgentRegistry, AgentProfile, BaseAgent, AgentOutput
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, PlannedTask
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 class Runner(BaseAgent):

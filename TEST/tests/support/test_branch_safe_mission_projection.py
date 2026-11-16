@@ -1,4 +1,6 @@
 """Shared Memory/SQLite contracts: Mission is a summary of independent Runs."""
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import json
 import os
 import subprocess
@@ -9,9 +11,9 @@ from threading import Barrier, Event
 
 import pytest
 
-from components.mission_manager.service import MissionManager
-from components.mission_manager.state_machine import InvalidStateTransition, StateMachine
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.service import MissionManager
+from components.mission.state_machine import InvalidStateTransition, StateMachine
+from components.mission.store import WorkflowRegistry
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, WorkflowStep, StepStatus
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
@@ -184,7 +186,7 @@ def test_independent_sqlite_writers_and_process_restart_keep_one_consistent_summ
     assert reopened.get_mission(mission.mission_id).status.value == 'failed'
     for run in records:
         assert reopened.get_run(run.run_id).model_dump(mode='json') == run.model_dump(mode='json')
-    root = Path(__file__).resolve().parents[4]
+    root = REPO_ROOT
     env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(root / 'apps/agentOS/src'), str(root / 'apps/agentOS')])}
     code = """import json,sys
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore

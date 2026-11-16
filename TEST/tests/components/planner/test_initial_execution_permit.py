@@ -238,7 +238,7 @@ def test_initial_issued_permit_does_not_bypass_current_sources(initial_run, monk
 
 @pytest.mark.parametrize("change", ["permission", "cancel", "binding", "identity"])
 def test_initial_last_invocation_guard_after_attempt_creation(initial_run, monkeypatch, change):
-    from runtime.live_events import runtime_event_broker
+    from runtime.events.live_events import runtime_event_broker
     rt, workflow, agent, run, _, handoff_id = prepared_initial(initial_run)
     assert rt.issue_execution_permit(handoff_id, idempotency_key="last-guard").status == "ISSUED"
     original = runtime_event_broker.publish

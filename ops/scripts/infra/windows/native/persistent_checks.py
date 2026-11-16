@@ -117,7 +117,7 @@ def capture(home, run_id, output):
     native.write_json(output.with_name(output.stem+'-output.json'),content)
     if info.get('backend') == 'hands':
         import asyncio
-        from adapters.hands_http import HandsHttpTransport, receipt_checksum
+        from adapters.tool.hands_http import HandsHttpTransport, receipt_checksum
         class Credentials:
             def current_signing_credential(self, resource_id): return 'n01a-credential',creds['hmac']
         async def reconcile():

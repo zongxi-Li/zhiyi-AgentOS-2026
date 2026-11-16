@@ -8,16 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.agent_invocation import AgentInvocationError
+from adapters.agent.invocation import AgentInvocationError
 from contracts.workflow import WorkflowStatus
-from runtime.permit_recovery import assert_settled_operations
+from runtime.orchestration.permit_recovery import assert_settled_operations
 from TEST.tests.components.planner.test_permit_recovery import ready_handoff, recovery_seed, _open, _dead_worker
 
 
 @pytest.mark.freeze_gate
 def test_not_invoked_proof_is_adapter_context_bound_and_single_use():
-    from adapters.agent_invocation import AgentInvocationAdapter
-    from service.agents.registry import AgentNotFound
+    from adapters.agent.invocation import AgentInvocationAdapter
+    from adapters.agent.registry import AgentNotFound
     class Missing:
         def resolve_by_id(self, agent_id):
             raise AgentNotFound(agent_id)
@@ -94,7 +94,7 @@ def test_agent_cannot_mint_not_invoked_evidence(ready_handoff, monkeypatch, kind
 
 
 def _receipt_crash(folder, definition, run_id):
-    from runtime.live_events import runtime_event_broker
+    from runtime.events.live_events import runtime_event_broker
     rt, _, _ = _open(folder, definition)
     original = runtime_event_broker.publish
     async def die(run_id, event):
@@ -134,7 +134,7 @@ def test_receipt_without_workflow_completion_is_an_explicit_barrier(ready_handof
 
 
 def _reconcile_worker(folder, definition, run_id, entered, release, committed, results, cut):
-    import runtime.permit_recovery as recovery
+    import runtime.orchestration.permit_recovery as recovery
     rt, workflow, _ = _open(folder, definition)
     original_evidence = recovery._evidence
     paused = False

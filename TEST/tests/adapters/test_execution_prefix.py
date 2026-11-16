@@ -6,15 +6,15 @@ import json
 
 import pytest
 
-from adapters.execution_prefix import execution_messages
+from adapters.model.execution_prefix import execution_messages
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.openai_runtime import OpenAICompatibleRuntime, ModelInvocationError
-from adapters.prompt_runtime import canonical_hash
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.openai_runtime import OpenAICompatibleRuntime, ModelInvocationError
+from adapters.model.prompt_runtime import canonical_hash
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def envelope(capability="analysis", **overrides):
@@ -193,7 +193,7 @@ def test_guarded_runtime_routes_shared_layout_to_actual_transport_and_audits_the
 
 @pytest.mark.parametrize("streaming", [False, True])
 def test_invalid_json_keeps_actual_request_diagnostics_without_body(streaming):
-    from adapters.model_adapter import StructuredGenerationError
+    from adapters.model.protocols import StructuredGenerationError
 
     class Transport:
         async def post_json(self, **kwargs):

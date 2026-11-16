@@ -5,14 +5,14 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from adapters.model_adapter import StructuredGenerationError
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.openai_runtime import OpenAICompatibleRuntime
+from adapters.model.protocols import StructuredGenerationError
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.openai_runtime import OpenAICompatibleRuntime
 from contracts.capability import CapabilityKind, CapabilityManifest
 from contracts.request_budget import ModelRequestBudget
-from adapters.agent_tools import AgentToolSession
-from adapters.request_diagnostics import context_usage, request_diagnostics, resolve_request_budget
+from adapters.agent.tool_session import AgentToolSession
+from adapters.model.request_diagnostics import context_usage, request_diagnostics, resolve_request_budget
 from contracts.capability import ModelCapabilityEnvelope
 from contracts.tools import ToolDefinition, ToolResult
 

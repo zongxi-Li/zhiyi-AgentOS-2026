@@ -14,12 +14,14 @@ from components.attachments import (
     PdfTextExtractor,
     PlainTextExtractor,
 )
-from components.content import SQLiteContentManifestStore
-from components.content import ContentWorksetSession
+from components.environment.content import SQLiteContentManifestStore
+from components.environment.content import ContentWorksetSession
 from components.planner.task_decomposer import TaskDecomposer
 from contracts.attachments import InputAttachmentStatus
-from support.acg.models import ComplexityLevel, TaskSemanticProfile, build_default_capability_catalog
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.schema import ComplexityLevel
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 
 
 def _service(tmp_path, *, max_file_bytes=1024 * 1024, max_total_bytes=2 * 1024 * 1024):

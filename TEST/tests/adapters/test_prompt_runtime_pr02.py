@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
-from adapters.prompt_runtime import AgentPreset, preset_for_capability, render_capability_policy
-from support.acg.models import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
+from adapters.model.prompt_runtime import AgentPreset, preset_for_capability, render_capability_policy
+from support.packs.native_capabilities import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
 
 
 def _envelope(capability: str, **overrides):

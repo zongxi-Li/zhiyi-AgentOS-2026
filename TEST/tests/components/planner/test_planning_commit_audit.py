@@ -149,7 +149,7 @@ def test_persisted_acceptance_mode_cannot_be_removed(ready_boundary):
 def test_compiler_generated_dependency_cannot_target_completed_sink(tmp_path):
     from TEST.tests.components.planner.test_react_loop import runtime_at
     from contracts.mission_semantic import MissionSemanticRequest, SemanticPrincipal
-    from components.mission_manager.semantic_service import MissionSemanticService
+    from components.mission.semantic_service import MissionSemanticService
     runtime, store, _ = runtime_at(tmp_path)
     owner = SemanticPrincipal(actorId="owner", tenantId="tenant")
     store._init_semantic_schema()
@@ -165,7 +165,7 @@ def test_compiler_generated_dependency_cannot_target_completed_sink(tmp_path):
     for step in run.steps:
         step.status = StepStatus.COMPLETED
         step.attempt = 1
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     state = acg_execution_state_from_run(run)
     observation = runtime.runtime_planning_coordinator.observe(run, state, "exhausted")
     run.execution_state["planningLoop"] = RuntimePlanningState(current=RuntimePlanningRound(
@@ -334,7 +334,7 @@ def test_barrier_write_failures_preserve_one_acceptance(ready_boundary, monkeypa
     assert len(ledger.pending_events()) == 1
     monkeypatch.setattr(target, method, original)
     monkeypatch.setattr(coordinator, "planner_for_run", lambda _: pytest.fail("barrier recovery called model"))
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     held = store.get_run(run_id)
     assert asyncio.run(coordinator.boundary(held, acg_execution_state_from_run(held), "restart")) == "stop"
     assert store.get_run(run_id).status == WorkflowStatus.WAITING_REVIEW

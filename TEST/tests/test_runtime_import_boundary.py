@@ -1,5 +1,7 @@
 """Regression tests for imports required by the default runtime path."""
 
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+
 import ast
 import importlib
 from pathlib import Path
@@ -7,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-RUNTIME_SOURCE = Path(__file__).parents[1] / "src" / "runtime"
+RUNTIME_SOURCE = AGENTOS_ROOT / "src" / "runtime"
 
 
 def test_runtime_constructs_the_current_planning_engine() -> None:
@@ -19,7 +21,7 @@ def test_runtime_constructs_the_current_planning_engine() -> None:
 
 
 def test_retrieval_adapter_does_not_require_the_removed_retrieval_package() -> None:
-    adapter = importlib.import_module("adapters.retrieval_adapter")
+    adapter = importlib.import_module("adapters.retrieval.external")
 
     assert adapter.__all__ == []
 
@@ -27,13 +29,13 @@ def test_retrieval_adapter_does_not_require_the_removed_retrieval_package() -> N
 @pytest.mark.parametrize(
     "module_name",
     [
-        "acg_execution.py",
-        "binding.py",
-        "ports.py",
-        "review.py",
-        "runtime_recovery.py",
-        "semantic_revision.py",
-        "state_persistence.py",
+        "orchestration/acg_execution.py",
+        "orchestration/binding.py",
+        "composition/ports.py",
+        "orchestration/review.py",
+        "orchestration/runtime_recovery.py",
+        "orchestration/semantic_revision.py",
+        "orchestration/state_persistence.py",
     ],
 )
 def test_extracted_runtime_services_do_not_import_the_runtime_facade(

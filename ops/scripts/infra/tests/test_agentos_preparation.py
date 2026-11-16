@@ -139,8 +139,8 @@ def test_agent_test_bootstrap_preserves_old_evidence(tmp_path):
 
 def test_official_alter_column_identity_layout_is_accepted_without_rewrite(paths, capsys):
     import re
-    from storage.v2.schema import SCHEMA_SQL
-    from storage.v2.sqlite import SQLiteV2Storage
+    from storage.schema import SCHEMA_SQL
+    from storage.sqlite import SQLiteV2Storage
     from support.stores.c2_schema_upgrade import _initialize
     for role in ('workflow', 'checkpoint'):
         _initialize(role, paths[role])

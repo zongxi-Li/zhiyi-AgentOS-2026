@@ -22,13 +22,13 @@ import threading
 import pytest
 
 from runtime.workflow_runtime import ExecutionRuntime
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 class _GatedAgent(BaseAgent):

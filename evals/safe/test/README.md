@@ -7,13 +7,13 @@
 从仓库根目录运行：
 
 ```powershell
-python -B apps/agentOS/evals/safe/test/test_safe_data_flow.py
+python -B evals/safe/test/test_safe_data_flow.py
 ```
 
 也支持从任意工作目录通过脚本绝对路径运行。输出逐项测试名称与中文说明，全部通过退出码为0，断言失败或意外异常退出码非零。只运行JSON转换测试：
 
 ```powershell
-python -B apps/agentOS/evals/safe/test/test_safe_data_flow.py SafeDataFlowTests.test_02_prefill_and_decode_json_byte_roundtrip
+python -B evals/safe/test/test_safe_data_flow.py SafeDataFlowTests.test_02_prefill_and_decode_json_byte_roundtrip
 ```
 
 ## 当前覆盖
@@ -37,4 +37,4 @@ Python浮点转换成FP32通常会舍入，因此使用独立FP32参考表示，
 3. **P3：** 接上双端KV、逐token、会话事务和取消，覆盖重复请求、乱序、结果不确定与过期。
 4. **P4：** 机制校准和持久预算完成后，增加隐私发布事务与恢复测试。
 
-本脚本作为手动功能回归入口；既有单元/架构测试继续保留在 `apps/agentOS/tests/safe/`。当前不包含真实模型、认证HTTP、KV、TTL、SQLite预算、噪声校准或完整DP验收，后续实现后再更新相关测试，不能删除不可用断言后直接宣称能力完成。
+本脚本作为手动功能回归入口；既有单元/架构测试继续保留在 `TEST/tests/safe/`。当前不包含真实模型、认证HTTP、KV、TTL、SQLite预算、噪声校准或完整DP验收，后续实现后再更新相关测试，不能删除不可用断言后直接宣称能力完成。

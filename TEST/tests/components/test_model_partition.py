@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from components.model_partition.service import (
+from components.safe.integration.model_partition import (
     ModelPartitionService,
     ModelPartitionUnavailableError,
 )

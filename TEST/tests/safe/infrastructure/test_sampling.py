@@ -4,8 +4,8 @@ import math
 
 import pytest
 
-from safe.contracts.errors import SafeError
-from safe.infrastructure.models import sampling
+from components.safe.contracts.errors import SafeError
+from components.safe.infrastructure.models import sampling
 
 
 def test_greedy_uses_first_maximum_and_marks_only_configured_eos():

@@ -7,12 +7,12 @@ from fastapi.testclient import TestClient
 
 from app.api.agentos_v2 import create_router
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context
-from components.mission_manager.semantic_service import MissionSemanticService
-from components.mission_manager.semantic_resolver import MissionSemanticResolver
+from components.mission.semantic_service import MissionSemanticService
+from components.mission.semantic_resolver import MissionSemanticResolver
 from contracts.mission_semantic import MissionSemanticRequest, SemanticPrincipal
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 

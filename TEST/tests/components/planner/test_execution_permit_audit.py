@@ -221,7 +221,7 @@ def test_transport_retry_rechecks_authority_without_false_receipt(ready_handoff,
     rt, _, agent, run_id, _, _, _, _, handoff_id = ready_handoff
     assert rt.issue_execution_permit(handoff_id, idempotency_key="audit-retry").status == "ISSUED"
     _continue(rt)
-    from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
+    from adapters.agent.invocation import AgentInvocationAdapter, AgentInvocationError
     original = AgentInvocationAdapter.invoke
     calls = []
     class Missing:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from adapters.domain_identity import (
+from runtime.projections.domain_identity import (
     acg_blueprint_to_domain,
     mission_record_to_domain,
     runtime_run_to_domain,
@@ -10,7 +10,7 @@ from adapters.domain_identity import (
 from contracts.execution import StepStatus
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, WorkflowStep
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus, MissionStatus
-from support.acg.models import ACGBlueprint
+from contracts.acg.schema import ACGBlueprint
 
 
 def test_agent_task_adapter_does_not_turn_failed_run_state_into_failed_user_goal() -> None:

@@ -9,10 +9,10 @@ from components.planner.lowering_input import build_template_lowering_input
 from components.planner.semantic_planner import SemanticPlanner, SemanticPlanningError
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
-from support.acg.models import (
-    CapabilityCatalog, EdgeType, PlanningCapabilityDescriptor,
-    build_default_capability_catalog,
-)
+from support.capabilities import CapabilityCatalog
+from contracts.acg.schema import EdgeType
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def _workflow(*, planning_nodes=()) -> WorkflowDefinition:

@@ -6,11 +6,11 @@ import asyncio
 
 import pytest
 
-from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
+from adapters.agent.invocation import AgentInvocationAdapter, AgentInvocationError
 from components.communicator.contracts import ContextPack
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
-from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
-from service.agents.registry import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
+from adapters.agent.registry import AgentRegistry
 
 
 class _Agent(BaseAgent):

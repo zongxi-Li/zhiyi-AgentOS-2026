@@ -16,7 +16,7 @@ from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context
 from components.executor import InMemoryExecutionValueStore
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.attachments import (
     AttachmentLimits,
     DocumentTextExtractorRegistry,
@@ -27,8 +27,8 @@ from components.attachments import (
 from components.planner import TaskDecompositionError
 from contracts.resource_signing import build_resource_signature
 from components.recovery.checkpoint import ACGCheckpointStore
-from components.mission_manager.store import WorkflowRegistry
-from components.marketplace.contracts import InstallationJob
+from components.mission.store import WorkflowRegistry
+from components.resource.catalog.contracts import InstallationJob
 from contracts.evolution import PolicyMutation, Trajectory
 from contracts.content import ContentKind
 from contracts.attachments import InputAttachmentStatus
@@ -57,12 +57,12 @@ from contracts.workflow import (
     WorkflowStepDefinition,
 )
 from runtime import ExecutionRuntime
-from runtime.live_events import RuntimeEventBroker
+from runtime.events.live_events import RuntimeEventBroker
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 
 
 _SECRET = "REFERENCE-ONLY-OUTPUT-BODY"
@@ -1112,9 +1112,9 @@ async def test_agent_provisioning_shared_pool_requires_a_local_operator(tmp_path
 
 
 async def test_agent_provisioning_api_and_marketplace_share_managed_lifecycle(tmp_path):
-    from components.marketplace.application.service import MarketplaceService
-    from components.marketplace.contracts import InstallationStatus
-    from components.marketplace.infrastructure import InMemoryCatalog, InMemoryInstallationJobs
+    from components.resource.catalog.application.service import MarketplaceService
+    from components.resource.catalog.contracts import InstallationStatus
+    from components.resource.catalog.infrastructure import InMemoryCatalog, InMemoryInstallationJobs
 
     runtime = _runtime(tmp_path)
     jobs = InMemoryInstallationJobs()
@@ -1178,9 +1178,9 @@ async def test_agent_provisioning_api_and_marketplace_share_managed_lifecycle(tm
 
 
 async def test_marketplace_real_tool_upload_execute_download_and_owner_isolation(tmp_path) -> None:
-    from components.marketplace.builtins.catalog import build_builtin_catalog
-    from components.marketplace.application.service import MarketplaceService
-    from components.marketplace.infrastructure import InMemoryCatalog, InMemoryInstallationJobs, LocalPackageLauncher, LoopbackHttpEndpointProbe
+    from components.resource.catalog.builtins.catalog import build_builtin_catalog
+    from components.resource.catalog.application.service import MarketplaceService
+    from components.resource.catalog.infrastructure import InMemoryCatalog, InMemoryInstallationJobs, LocalPackageLauncher, LoopbackHttpEndpointProbe
     runtime = _runtime(tmp_path)
     items = build_builtin_catalog(tmp_path / "catalog", tmp_path / "packages")
     launcher = LocalPackageLauncher(package_root=tmp_path / "packages", install_root=tmp_path / "installed")

@@ -4,7 +4,7 @@ from adapters.model.native_prompt import (
     VERIFICATION_PROMPT_VERSION,
     NativeCapabilityPromptBuilder,
 )
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def test_native_v4_prompt_preserves_planned_task_semantics_without_expression_caps() -> None:

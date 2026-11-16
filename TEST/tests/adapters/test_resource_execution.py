@@ -7,16 +7,16 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from adapters.resource_execution import (
+from adapters.agent.resource_execution import (
     HttpResourceExecutionAdapter,
     ResourceExecutionError,
     build_resource_execution_adapter,
     normalize_execution_endpoint,
 )
-from adapters.resource_execution import ResourceCredentialProvider
+from adapters.agent.resource_execution import ResourceCredentialProvider
 from contracts.resource import ResourceEndpoint, RuntimeKind, RuntimeProfile
 from contracts.resource_signing import build_resource_signature
-from service.agents.base import AgentOutput
+from adapters.agent.base import AgentOutput
 
 
 def _context() -> SimpleNamespace:

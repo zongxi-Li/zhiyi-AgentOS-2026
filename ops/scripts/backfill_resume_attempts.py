@@ -50,10 +50,10 @@ def main() -> int:
             print(f"缺少数据库文件: {database}", file=sys.stderr)
             return 2
 
-    from components.content import SQLiteContentManifestStore
+    from components.environment.content import SQLiteContentManifestStore
     from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-    from runtime.reconciliation import IdentityProjectionReconciler
-    from runtime.resume_projection import build_reused_step_projection_events
+    from runtime.orchestration.reconciliation import IdentityProjectionReconciler
+    from runtime.projections.resume_projection import build_reused_step_projection_events
     from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
     store = SQLiteWorkflowStore(WORKFLOW_DB)

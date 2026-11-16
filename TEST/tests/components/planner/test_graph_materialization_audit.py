@@ -28,7 +28,7 @@ def test_final_identity_read_cannot_hide_trusted_source_changes(ready_boundary, 
             if change == "receipt":
                 runtime.execution_value_store.prepare_node_commit(run_id=run_id, commit_id=f"commit:{run_id}:A:1")
             elif change == "checkpoint":
-                from runtime.state_persistence import acg_execution_state_from_run
+                from runtime.orchestration.state_persistence import acg_execution_state_from_run
                 run = workflow.get_run(run_id)
                 state = acg_execution_state_from_run(run)
                 state.graph_id = run.acg_blueprint["graphId"]
@@ -216,7 +216,7 @@ def test_real_executed_A_pending_BC_materialized_D_survives_process_restart(tmp_
     from contracts.planning import PlannedTask, TaskPlanPatch, TaskPlanRelation
     from contracts.runtime_planning import RuntimePlanningDecision
     from contracts.mission_semantic import MissionSemanticRequest, SemanticPrincipal
-    from components.mission_manager.semantic_service import MissionSemanticService
+    from components.mission.semantic_service import MissionSemanticService
     runtime, workflow, agent = runtime_at(tmp_path)
     runtime.workflow_registry.register(WorkflowDefinition(workflowId="abc", name="abc", domain="general", runtimeEngine="acg",
         planningNodes=tuple(PlannedTask(key="step:"+k, title=k, objective="do "+k,
@@ -249,8 +249,8 @@ def test_real_executed_A_pending_BC_materialized_D_survives_process_restart(tmp_
         # Construct a complete initial graph fixture BEFORE persistence/execution.
         # Legacy template graphs omit explicit communication contracts; the
         # existing safe-cut deliberately refuses to add them to a settled A.
-        from support.acg.planning import CommunicationSpec
-        from runtime.semantic_revision import SemanticRevisionService
+        from contracts.acg.planning import CommunicationSpec
+        from runtime.orchestration.semantic_revision import SemanticRevisionService
         original_build = runtime._build_acg_blueprint
         def complete_initial_graph(*args, **kwargs):
             blueprint, plan, bindings = original_build(*args, **kwargs)
@@ -337,7 +337,7 @@ def test_actual_execution_or_authority_progress_during_compilation_refuses_regis
             elif change == "scope": run.execution_scope = run.execution_scope.model_copy(update={"capability_ids": ()})
             elif change == "control_history": run.execution_state["controlReviewDecisions"] = {"branch": "approved"}
             elif change == "checkpoint_ack":
-                from runtime.state_persistence import acg_execution_state_from_run
+                from runtime.orchestration.state_persistence import acg_execution_state_from_run
                 state = acg_execution_state_from_run(run)
                 state.graph_id = run.acg_blueprint["graphId"]
                 state.output_summaries["A"] = "new output evidence"

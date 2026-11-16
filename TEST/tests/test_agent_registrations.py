@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
-from service.agents import AgentNotFound, AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from adapters.agent.invocation import AgentInvocationAdapter, AgentInvocationError
+from adapters.agent import AgentNotFound, AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 
 
 class _Agent(BaseAgent):

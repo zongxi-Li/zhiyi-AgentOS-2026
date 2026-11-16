@@ -59,13 +59,13 @@ from contracts.planner_actions import (
     proposal_fingerprint,
 )
 from contracts.planning import TaskPlan
-from apps.agentOS.src.components.mission.mission_semantic import run_intent_basis
+from contracts.mission_semantic import run_intent_basis
 from components.planner.htn import HTNError, htn_planning_enabled
 from components.planner.horizon import HorizonError, horizon_planning_enabled
 from contracts.horizon import HorizonSelection
 from contracts.runtime_planning import RuntimePlanningState
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
-from support.acg.capabilities import CapabilityCatalog
+from support.capabilities import CapabilityCatalog
 from support.stores.workflow_store import WorkflowStore
 
 

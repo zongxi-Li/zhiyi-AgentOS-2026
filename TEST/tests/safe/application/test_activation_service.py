@@ -2,12 +2,12 @@
 
 import pytest
 
-from safe.application.activation import ActivationService
-from safe.application.manifest import ManifestService
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.manifest import SplitModelManifest
-from safe.contracts.session import ActivationContext
-from safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.application.activation import ActivationService
+from components.safe.application.manifest import ManifestService
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.manifest import SplitModelManifest
+from components.safe.contracts.session import ActivationContext
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
 
 
 def manifest():

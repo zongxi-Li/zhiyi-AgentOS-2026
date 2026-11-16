@@ -5,12 +5,12 @@ from time import monotonic
 
 import pytest
 
-from adapters.model_runtime import RegisteredModelRuntime
+from adapters.model.registered_runtime import RegisteredModelRuntime
 from components.planner.complexity import call_planning_model
 from components.planner.intent_analyzer import IntentParser
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelCapabilityEnvelope, ModelStreamEvent
 from contracts.runtime_events import RuntimeEvent
-from adapters.model_compatibility import ModelCompatibilityRegistry
+from adapters.model.compatibility import ModelCompatibilityRegistry
 
 
 class _PlannerStream:

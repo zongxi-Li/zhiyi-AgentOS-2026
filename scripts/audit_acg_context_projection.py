@@ -16,7 +16,7 @@ AGENTOS_ROOT = Path(__file__).resolve().parents[1] / "apps" / "agentOS"
 sys.path[:0] = [str(AGENTOS_ROOT / "src"), str(AGENTOS_ROOT)]
 
 from adapters.model.prompt_context import project_inline_content, project_prompt_context
-from adapters.prompt_runtime import TrustClass, trust_envelope
+from adapters.model.prompt_runtime import TrustClass, trust_envelope
 
 
 def compare_projection(data_dir: Path, run_id: str) -> dict:

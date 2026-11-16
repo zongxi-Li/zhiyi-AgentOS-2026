@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from domain.models import AcgBlueprint, Mission, RunStatus, WorkflowRun
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 
 
 def _seed_run(repositories: SQLiteV2Repositories, *, run_id: str) -> WorkflowRun:

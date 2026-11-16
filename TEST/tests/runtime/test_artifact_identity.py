@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGEdge, EdgeType
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGEdge, EdgeType
 
 
 import sqlite3
@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.executor.node_runner import ACGNodeRunner
 from contracts.artifacts import final_synthesis_output_schema
 from contracts.content import ContentKind
@@ -23,8 +23,8 @@ from runtime import (
     IdentityQueryService,
     PlannerIdentityBridge,
 )
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, StepNode
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.schema import ACGBlueprint, StepNode
 
 
 def test_final_synthesis_output_schema_accepts_canonical_run_deliverable_type() -> None:

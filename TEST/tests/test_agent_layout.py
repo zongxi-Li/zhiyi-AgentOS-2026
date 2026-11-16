@@ -7,7 +7,7 @@ from pathlib import Path
 
 def test_agent_service_is_importable_from_service_layer() -> None:
     """Agent 基础模型和注册表必须从 service 层提供，供 Runtime 与部件统一依赖。"""
-    from service.agents import AgentProfile, AgentRegistry, BaseAgent
+    from adapters.agent import AgentProfile, AgentRegistry, BaseAgent
 
     assert AgentProfile is not None
     assert AgentRegistry is not None

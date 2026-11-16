@@ -12,7 +12,7 @@ from contracts.planning_commit import PlanningCommitRequest, PlanningCommitRejec
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation, RuntimePlanningState
 from contracts.workflow import WorkflowStatus
 from contracts.mission_semantic import run_intent_basis
-from runtime.planning_commit import RuntimePlanningCommitProvider
+from runtime.orchestration.planning_commit import RuntimePlanningCommitProvider
 from support.stores.planning_commit_store import SQLitePlanningCommitStore, content_fingerprint
 from TEST.tests.components.planner.test_planning_commit import TrustedProvider, sources, request
 from TEST.tests.components.planner.test_horizon import ready_boundary, runtime_boundary

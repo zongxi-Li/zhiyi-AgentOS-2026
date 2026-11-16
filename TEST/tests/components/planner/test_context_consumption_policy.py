@@ -5,8 +5,8 @@ import pytest
 from components.planner.context_policy import resolve_prefetch
 from components.planner.lowering_input import lowering_step_from_task
 from contracts.planning import PlannedTask
-from support.acg.capabilities import ContextConsumptionPolicy, PlanningCapabilityDescriptor
-from support.acg.native_capabilities import build_default_capability_catalog
+from contracts.acg.capabilities import ContextConsumptionPolicy, PlanningCapabilityDescriptor
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def consumer(**policy):
@@ -87,8 +87,8 @@ def test_initial_plan_compiles_prefetch_and_memory_budget_without_mutating_old_p
     from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
     from components.planner.lowering_input import build_acg_lowering_input
     from components.planner.semantic_planner import SemanticPlanner
-    from support.acg.capabilities import CapabilityCatalog
-    from support.acg.semantic_profile import TaskSemanticProfile
+    from support.capabilities import CapabilityCatalog
+    from contracts.acg.semantic_profile import TaskSemanticProfile
 
     source = PlanningCapabilityDescriptor(capabilityId="producer", displayName="Producer",
         outputContract={"type": "object", "properties": {"analysis": {}, "large_unrelated": {}, "constraints": {}},

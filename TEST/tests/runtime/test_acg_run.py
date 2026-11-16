@@ -17,16 +17,16 @@ from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.auditor import SQLiteDecisionStore
 from components.executor.graph import ACGExecutionState
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts import UnsupportedCompiledACGPackageVersion
 from contracts.workflow import ReviewDecision, ReviewDecisionType, StepStatus, WorkflowDefinition, RuntimeRunRecord, WorkflowStep, WorkflowStepDefinition, WorkflowStatus
 from contracts.planning import TaskImplementationBinding, TaskPlan, TaskPlanRelation, PlannedTask
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, ConditionOperator, ConditionSpec, ConsensusSpec, ControlNode, ControlType, EdgeType, StepNode
 
 
 class _RunAgent(BaseAgent):

@@ -52,7 +52,7 @@ def wait_run(client, created):
 
 def delivery_setup(runtime, coordinator):
     from examples.contract_review import WORKFLOW_ID
-    from support.acg.native_capabilities import build_default_capability_catalog
+    from support.packs.native_capabilities import build_default_capability_catalog
     definition = runtime.workflow_registry.get(WORKFLOW_ID)
     output = build_default_capability_catalog().get("artifact_generation").output_contract
     runtime.workflow_registry.register(definition.model_copy(update={

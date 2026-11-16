@@ -4,6 +4,8 @@ Every case drives the real composition root (build_default_runtime) on
 temporary databases. No implicit C2 schema DDL, no fake lock release, and
 the original assembly error always survives the cleanup.
 """
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 from contextlib import closing
 import asyncio
 import os
@@ -16,7 +18,7 @@ import pytest
 from support.stores import c2_schema_upgrade as ops
 
 
-ROOT = Path(__file__).resolve().parents[4]
+ROOT = REPO_ROOT
 
 ENV_KEYS = ("AGENTOS_WORKFLOW_DB_PATH", "AGENTOS_LANGGRAPH_CHECKPOINT_DB", "AGENTOS_EXECUTION_VALUE_DB",
             "AGENTOS_CONTENT_MANIFEST_DB", "AGENTOS_EXECUTION_MEMORY_DB", "AGENTOS_PROVENANCE_DB",
@@ -85,7 +87,7 @@ def lock_held():
 
 
 def spy_identity_close(monkeypatch):
-    from runtime.runner import AcgIdentityLifecycleService
+    from components.mission.identity_lifecycle import AcgIdentityLifecycleService
     calls = []
     original = AcgIdentityLifecycleService.close
 
@@ -178,7 +180,7 @@ def test_cleanup_failure_does_not_mask_original_assembly_error(tmp_path, monkeyp
     services = spy_identity_close(monkeypatch)
     trio = initialize_trio(tmp_path)
     assert ops.upgrade_databases(**trio)["status"] == "READY"
-    from storage.v2.sqlite import SQLiteV2Storage
+    from storage.sqlite import SQLiteV2Storage
 
     def boom(self):
         raise RuntimeError("cleanup close exploded")
@@ -350,7 +352,7 @@ def test_adversarial_partial_construction_closes_actual_connections(tmp_path, mo
         monkeypatch.setattr(wiring, name, record)
     original = getattr(wiring, stage)
     if stage == "ExecutionRuntime":
-        import runtime.workflow_runtime as runtime_module
+        import runtime.orchestration.workflow as runtime_module
         def fail_inside_constructor(*args, **kwargs):
             raise RuntimeError("injected middle of ExecutionRuntime constructor")
         monkeypatch.setattr(runtime_module, "RuntimeBindingService", fail_inside_constructor)

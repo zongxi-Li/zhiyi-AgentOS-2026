@@ -4,11 +4,11 @@ Real Windows service/desktop acceptance is recorded separately; these tests do
 not substitute for it.
 """
 import pytest
-from adapters.audited_tool_runtime import AuditedToolRuntime
-from adapters.guarded_tool import GuardedToolRuntime
+from adapters.tool.audited_runtime import AuditedToolRuntime
+from adapters.tool.guarded import GuardedToolRuntime
 from components.executor.value_store import SQLiteExecutionValueStore, ExecutionValueAccessError
 from types import SimpleNamespace
-from adapters.hands_http import receipt_checksum
+from adapters.tool.hands_http import receipt_checksum
 
 
 def test_tool_values_are_immutable_run_owned_and_survive_reopen(tmp_path):

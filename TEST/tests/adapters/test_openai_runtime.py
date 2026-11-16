@@ -7,15 +7,15 @@ import logging
 
 import pytest
 
-from adapters.http_transport import HttpTransportError
-from adapters.openai_runtime import ModelInvocationError, OpenAICompatibleRuntime, decode_json_object
+from adapters.transport.http import HttpTransportError
+from adapters.model.openai_runtime import ModelInvocationError, OpenAICompatibleRuntime, decode_json_object
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
     ModelInvocationRequest,
 )
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def test_markdown_literal_control_whitespace_is_decoded_without_regenerating_content():

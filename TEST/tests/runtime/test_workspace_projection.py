@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
 from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
@@ -17,9 +17,9 @@ from runtime import (
     WorkspaceEntryKind,
     WorkspaceIdentityQuality,
 )
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 def _foundation(tmp_path):

@@ -11,15 +11,15 @@ from pathlib import Path
 from threading import Thread
 from typing import Any, Mapping
 
-from adapters.model.native import register_native_runtime
-from adapters.local_runtime import LocalRuntimeClient
+from adapters.agent.native import register_native_runtime
+from adapters.transport.local_runtime import LocalRuntimeClient
 from components.auditor.decision_store import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.evolution.service import EvolutionService
 from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.attachments import (
     AttachmentLimits,
     DocumentTextExtractorRegistry,
@@ -44,20 +44,20 @@ from components.resource.infrastructure.runtime_store import SQLiteResourceStore
 from components.resource.scheduler.binder import ResourceBinder
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.resource.scheduler.leases import RedisLeaseCoordinator
-from components.marketplace.application.service import MarketplaceService
-from components.marketplace.builtins.catalog import ensure_builtin_catalog
+from components.resource.catalog.application.service import MarketplaceService
+from components.resource.catalog.builtins.catalog import ensure_builtin_catalog
 from components.resource.infrastructure.audit_store import SQLiteResourceAuditStore
-from components.marketplace.infrastructure import DirectoryCatalog, LocalPackageLauncher, LoopbackHttpEndpointProbe, SQLiteInstallationJobStore
-from components.mission_manager.store import WorkflowRegistry
+from components.resource.catalog.infrastructure import DirectoryCatalog, LocalPackageLauncher, LoopbackHttpEndpointProbe, SQLiteInstallationJobStore
+from components.mission.store import WorkflowRegistry
 from runtime import ApplicationSetup, ExecutionRuntime
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.model_runtime import RegisteredModelRuntime
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.model.registered_runtime import RegisteredModelRuntime
 from runtime import (
     AcgIdentityLifecycleService,
     IdentityProjectionReconciler,
     IdentityProjectionBridge,
 )
-from service.agents import AgentRegistry
+from adapters.agent import AgentRegistry
 from support.packs.registry import register_installed_packs
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
@@ -201,7 +201,7 @@ def sync_active_model_profile(runtime: ExecutionRuntime, setup: ApplicationSetup
     """Publish a new default route while preserving every previously frozen version."""
     from time import time_ns
     from uuid import uuid4
-    from runtime.app_setup import ModelSetup
+    from runtime.composition.app_setup import ModelSetup
     from app.llm.capabilities import provider_model_capabilities
 
     if config.provider in {"", "mock", "unavailable"} or not all((config.model, config.base_url, config.api_key)):
@@ -271,8 +271,8 @@ def sync_agent_registry_to_ledger(runtime: ExecutionRuntime) -> None:
 
 def _configure_agent_provisioning(runtime: ExecutionRuntime, jobs) -> None:
     """Approve constructors at startup; requests cannot provide code or profiles."""
-    from adapters.model.native import NativeGeneralAgent
-    from service.agents.provisioning import AgentProvisioner
+    from adapters.agent.native import NativeGeneralAgent
+    from components.resource.agents.provisioning import AgentProvisioner
 
     constructors = {NativeGeneralAgent: NativeGeneralAgent}
     # Pack loading already succeeded. Only this explicitly approved Pack
@@ -546,7 +546,7 @@ def _assemble_default_runtime(
     progress.owned.append(workflow_store)
     semantic_service = None
     if semantic_enabled:
-        from components.mission_manager.semantic_service import MissionSemanticService
+        from components.mission.semantic_service import MissionSemanticService
         # Activation never upgrades the business database. An operator must
         # explicitly install the S00-01 schema before enabling this path.
         workflow_store.enable_existing_mission_semantics()
@@ -680,7 +680,7 @@ def _assemble_default_runtime(
             resource_plane, local_runtime_config
         )
         # hands 是唯一执行后端（DSH 基座）；Local Runtime 仅作为协议/合同层保留。
-        from adapters.hands_http import HandsHttpTransport
+        from adapters.tool.hands_http import HandsHttpTransport
         local_runtime_transport = HandsHttpTransport(
             resource_id=registered_local_runtime.profile.runtime_id,
             address=registered_local_runtime.profile.endpoint.address,
@@ -723,7 +723,7 @@ def _assemble_default_runtime(
 
 def _runtime_close_sequence(runtime: ExecutionRuntime) -> tuple[Any, ...]:
     """Every resource owned by a composed Runtime, in close order."""
-    from runtime.live_events import runtime_event_broker
+    from runtime.events.live_events import runtime_event_broker
     runtime_event_broker.flush()
     resource_plane = getattr(runtime, "resource_plane", None)
     resources = (

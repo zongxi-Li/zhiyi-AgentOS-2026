@@ -16,7 +16,7 @@ from contracts.planner_actions import PlannerActionRequest, PlannerProposalRecei
 from contracts.planning import PlannedTask, TaskPlan, WorksetSpec
 from contracts.runtime_planning import RuntimePlanningState, StepObservation, RuntimeResourceObservation
 from contracts.workflow import WorkflowStatus, StepStatus
-from support.acg.native_capabilities import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 from TEST.tests.components.planner.test_htn import context, runtime_boundary, edge, gateway_at, query_request, selector, method_request
 from TEST.tests.components.planner.test_react_loop import ReActFakeLLM, runtime_at
 

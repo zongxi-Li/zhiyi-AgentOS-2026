@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from storage.v2 import SQLiteV2Storage
+from storage import SQLiteV2Storage
 from support.stores.workspace_projection import (
     WorkspaceConnection, install_revision_triggers, projection_revision, workspace_changes,
 )

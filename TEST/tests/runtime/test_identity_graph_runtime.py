@@ -15,9 +15,9 @@ from runtime import (
     AcgIdentityLifecycleService,
     IdentityProjectionBridge,
 )
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
 
 
 @pytest.fixture

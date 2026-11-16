@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from storage.v2 import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
+from storage import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
 
 
 def test_v2_schema_is_independent_and_complete() -> None:

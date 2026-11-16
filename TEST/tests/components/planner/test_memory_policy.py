@@ -7,11 +7,9 @@ from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.semantic_planner import SemanticPlanner
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from components.executor.compiler import ACGGraphCompiler
-from support.acg.models import (
-    CapabilityCatalog,
-    PlanningCapabilityDescriptor,
-    TaskSemanticProfile,
-)
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
+from contracts.acg.semantic_profile import TaskSemanticProfile
 
 
 def test_lowering_derives_memory_write_policy_from_capability() -> None:

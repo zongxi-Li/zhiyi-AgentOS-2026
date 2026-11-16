@@ -9,7 +9,7 @@ import hashlib
 import json
 from uuid import uuid4
 
-from apps.agentOS.src.components.mission.mission_semantic import (
+from contracts.mission_semantic import (
     EffectiveMissionSnapshot, MissionSemanticAggregate, MissionSemanticOperation,
     SemanticCommit, SemanticOperationReceipt, SemanticOperationResult,
 )

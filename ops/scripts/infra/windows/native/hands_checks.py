@@ -18,7 +18,7 @@ import persistent_runtime as deployment
 
 for folder in ['apps','apps/agent','apps/agentOS','apps/agentOS/src']:
     sys.path.insert(0,str(native.ROOT/folder))
-from adapters.hands_http import HandsHttpTransport, HandsOutcomeUnknown, receipt_checksum
+from adapters.tool.hands_http import HandsHttpTransport, HandsOutcomeUnknown, receipt_checksum
 from contracts.local_runtime import LocalRuntimeExecutionRequest
 
 
@@ -36,9 +36,10 @@ async def check(home, output, port):
         'allowedCallers':['n01a-credential'],'revoked':False}]})
     setup = dict(workspaceRoot=str(workspace),credentialsFile=str(keys),grantsFile=str(case/'grants.json'),
         dataDir=str(case/'ledger'),host='127.0.0.1',port=port,confinement='none')
-    env = dict(os.environ,TSX_TSCONFIG_PATH=str(native.ROOT/'apps/agentOS/src/hands/tsconfig.json'))
-    command = [shutil.which('node'),str(native.ROOT/'apps/agentOS/src/hands/node_modules/tsx/dist/cli.mjs'),
-        '--tsconfig',str(native.ROOT/'apps/agentOS/src/hands/tsconfig.json'),str(native.ROOT/'apps/agentOS/src/hands/hands/service-main.ts'),
+    hands_root = native.ROOT/'apps/agentOS/src/components/environment/hands'
+    env = dict(os.environ,TSX_TSCONFIG_PATH=str(hands_root/'tsconfig.json'))
+    command = [shutil.which('node'),str(hands_root/'node_modules/tsx/dist/cli.mjs'),
+        '--tsconfig',str(hands_root/'tsconfig.json'),str(hands_root/'hands/service-main.ts'),
         '--config',str(config)]
     child = None
     def start(faults=None):

@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.guarded_tool import GuardedToolRuntime, ToolInvocationError
-from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.tool.guarded import GuardedToolRuntime, ToolInvocationError
+from adapters.model.protocols import StructuredGenerationError, StructuredGenerationResult
 from contracts.runtime_events import RuntimeEvent
 
 

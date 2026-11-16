@@ -9,19 +9,19 @@ import pytest
 
 from components.auditor import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.memory.store import SQLiteMemoryStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.planning import PlannedTask, TaskPlanPatch, TaskPlanRelation
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningState, RuntimeWaitCondition
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus, ReviewDecision
 from runtime import ExecutionRuntime
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge
-from service.agents import AgentRegistry
-from service.agents.base import BaseAgent, AgentProfile, AgentOutput
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
+from adapters.agent import AgentRegistry
+from adapters.agent.base import BaseAgent, AgentProfile, AgentOutput
+from storage import SQLiteV2Repositories, SQLiteV2Storage
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
@@ -108,7 +108,7 @@ def test_normal_execution_calls_planner_once_at_exhaustion(tmp_path):
 
 
 def test_two_user_clarifications_survive_restart_before_next_fragment(tmp_path):
-    from runtime.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
+    from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
     runtime, agent, run = prepared(tmp_path, Agent(verify="passed"))
     def choose(o, p):
         if len(o.human_answers) < 2:
@@ -142,8 +142,8 @@ def test_two_user_clarifications_survive_restart_before_next_fragment(tmp_path):
 
 
 def test_clarification_rejects_stale_answer_and_cannot_be_review_approved(tmp_path):
-    from runtime.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
-    from runtime.review import ReviewConflictError
+    from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
+    from runtime.orchestration.review import ReviewConflictError
     runtime, agent, run = prepared(tmp_path)
     attach(runtime, Planner(lambda o, p: RuntimePlanningDecision(observationId=o.fingerprint(), action="wait", reason="clarify", question={"prompt": "你的选择？"})))
     paused = asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -158,8 +158,8 @@ def test_clarification_rejects_stale_answer_and_cannot_be_review_approved(tmp_pa
 
 
 def test_read_only_copilot_is_persistent_idempotent_and_uses_bounded_history(tmp_path):
-    from runtime.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
-    from runtime.review import ReviewConflictError
+    from runtime.orchestration.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
+    from runtime.orchestration.review import ReviewConflictError
     runtime, agent, run = prepared(tmp_path)
     asyncio.run(runtime.execute_prepared_run(run.run_id))
     revision = runtime.get_status(run.run_id).runtime_revision
@@ -186,8 +186,8 @@ def test_read_only_copilot_is_persistent_idempotent_and_uses_bounded_history(tmp
 
 
 def test_copilot_failed_attempt_usage_is_recorded_without_saving_a_reply(tmp_path):
-    from runtime.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
-    from adapters.model_adapter import StructuredGenerationError
+    from runtime.orchestration.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
+    from adapters.model.protocols import StructuredGenerationError
     runtime, _, run = prepared(tmp_path)
     class Model:
         fail = True
@@ -218,8 +218,8 @@ def test_copilot_failed_attempt_usage_is_recorded_without_saving_a_reply(tmp_pat
 
 
 def test_copilot_selection_is_request_scoped_and_enforces_permissions(tmp_path):
-    from runtime.planning_interaction import CopilotMessageRequest, PlannerAnswerRequest, RuntimePlanningInteraction
-    from runtime.review import ReviewConflictError
+    from runtime.orchestration.planning_interaction import CopilotMessageRequest, PlannerAnswerRequest, RuntimePlanningInteraction
+    from runtime.orchestration.review import ReviewConflictError
     runtime, agent, run = prepared(tmp_path)
     class Model:
         provider = "test"
@@ -257,7 +257,7 @@ def test_copilot_selection_is_request_scoped_and_enforces_permissions(tmp_path):
 
 def test_copilot_stream_previews_before_commit_and_passes_effort(tmp_path):
     from threading import Event
-    from runtime.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction, partial_reply
+    from runtime.orchestration.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction, partial_reply
     runtime, _, run = prepared(tmp_path)
     gate = Event()
     class Model:
@@ -321,7 +321,7 @@ def test_copilot_stream_previews_before_commit_and_passes_effort(tmp_path):
 
 
 def test_copilot_stream_failure_never_persists_preview(tmp_path):
-    from runtime.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
+    from runtime.orchestration.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
     runtime, _, run = prepared(tmp_path)
     class Model:
         async def stream_generate_json(self, **kwargs):
@@ -336,7 +336,7 @@ def test_copilot_stream_failure_never_persists_preview(tmp_path):
 
 
 def test_answer_lineage_survives_semantic_replacement(tmp_path):
-    from runtime.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
+    from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, PlannerAnswerRequest
     runtime, agent, run = prepared(tmp_path)
     def choose(o, plan):
         if not o.human_answers:
@@ -371,7 +371,7 @@ def test_failed_verification_does_not_certify_completion(tmp_path):
     assert planner.observations[0].steps[0].verification_report == "failed"
     assert result.execution_state["planningLoop"]["current"]["status"] == "rejected"
     assert result.execution_state["reviewPayload"]["subjectType"] == "planner"
-    from runtime.planning_interaction import RuntimePlanningInteraction
+    from runtime.orchestration.planning_interaction import RuntimePlanningInteraction
     review = RuntimePlanningInteraction(runtime).view(run.run_id)["review"]
     assert review["decisionRejected"] and not review["canApprove"]
     assert review["subjectId"] == result.execution_state["reviewPayload"]["subjectId"]
@@ -707,7 +707,7 @@ def test_artifact_evidence_tracks_reused_output_to_source_commit(tmp_path):
     with pytest.raises(ACGSuperstepError):
         asyncio.run(runtime.execute_prepared_run(run.run_id))
     successor = runtime.prepare_single_step_retry(run.run_id, "C")
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     observation = runtime.runtime_planning_coordinator.observe(successor, acg_execution_state_from_run(successor), "resume")
     evidence = next(s for s in observation.steps if s.step_id == "B").artifact_evidence[0]
     assert evidence.source_run_id == run.run_id and evidence.excerpt == "# Real artifact"
@@ -874,7 +874,7 @@ def test_retry_inherits_admitted_acceptance_and_verifies_original_commit(tmp_pat
     successor = runtime.prepare_single_step_retry(run.run_id, "C")
     assert successor.execution_state["taskAcceptance"] == run.execution_state["taskAcceptance"]
     assert successor.input["taskAcceptance"] == run.input["taskAcceptance"]
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     observation = runtime.runtime_planning_coordinator.observe(successor, acg_execution_state_from_run(successor), "resume")
     assert all(r.outcome == "passed" and r.source_run_id == run.run_id for r in observation.task_acceptance_results)
     assert observation.remaining_step_ids == ("C",)
@@ -883,8 +883,8 @@ def test_retry_inherits_admitted_acceptance_and_verifies_original_commit(tmp_pat
 def test_missing_final_document_does_not_block_resume_of_unfinished_work(tmp_path):
     runtime, agent, run = prepared(tmp_path, ArtifactAgent('{"status":"ready","cost":99}', "application/json"),
         acceptance_workflow(), input=acceptance_input())
-    from runtime.state_persistence import acg_execution_state_from_run
-    from runtime.planning_loop import RuntimePlanningCoordinator
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.planning_loop import RuntimePlanningCoordinator
     observation = runtime.runtime_planning_coordinator.observe(run, acg_execution_state_from_run(run), "resume")
     assert all(r.reason == "artifact_missing" for r in observation.task_acceptance_results)
     assert observation.completion_blockers == ()
@@ -1149,7 +1149,7 @@ def test_many_artifacts_share_one_observation_excerpt_budget(tmp_path):
 
 
 def test_blueprint_review_gate_hides_excerpt_until_human_approval(tmp_path):
-    from runtime.state_persistence import acg_execution_state_from_run
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
     workflow = artifact_workflow()
     workflow = workflow.model_copy(update={"steps": (workflow.steps[0],
         workflow.steps[1].model_copy(update={"review_required": True}))})

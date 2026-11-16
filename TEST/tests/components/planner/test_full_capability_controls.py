@@ -3,12 +3,14 @@ from components.planner.acg_lowerer import ACGLowerer
 from components.planner.lowering_input import build_acg_lowering_input
 from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation, VerificationLoopPolicy
-from support.acg.models import ControlNode, ControlType, TaskSemanticProfile, build_default_capability_catalog
+from contracts.acg.schema import ControlNode, ControlType
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop() -> None:
     from contracts.resource import ModelDemand
-    from support.acg.capabilities import CapabilityCatalog
+    from support.capabilities import CapabilityCatalog
 
     catalog = build_default_capability_catalog()
     demand = ModelDemand(requiredFeatures=["streaming"], minContextTokens=8192)

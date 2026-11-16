@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from components.marketplace.infrastructure import InMemoryInstallationJobs
+from components.resource.catalog.infrastructure import InMemoryInstallationJobs
 from components.resource.application.resource_plane import ResourcePlane
 from components.resource.runtime.embedded_runtime import (
     EMBEDDED_AGENTS_RUNTIME_ID,
@@ -10,9 +10,9 @@ from components.resource.runtime.embedded_runtime import (
     refresh_embedded_agents_runtime,
 )
 from components.resource.scheduler.leases import InMemoryLeaseCoordinator
-from service.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from service.agents.pool import AgentPool
-from service.agents.provisioning import AgentProvisioner
+from adapters.agent import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from components.resource.agents.pool import AgentPool
+from components.resource.agents.provisioning import AgentProvisioner
 
 
 class _Agent(BaseAgent):

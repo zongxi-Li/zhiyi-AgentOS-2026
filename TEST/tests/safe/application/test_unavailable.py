@@ -2,10 +2,10 @@
 
 import pytest
 
-from safe.application.inference import SplitInferenceService
-from safe.application.privacy import PrivacyReleaseService
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.inference import InferenceRequest
+from components.safe.application.inference import SplitInferenceService
+from components.safe.application.privacy import PrivacyReleaseService
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.inference import InferenceRequest
 
 
 def test_model_stub_refuses_execution():

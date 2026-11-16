@@ -1,4 +1,6 @@
 """Real temporary SQLite administrative upgrade, refusal and restart evidence."""
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 from contextlib import closing
 import json
 from pathlib import Path
@@ -12,7 +14,7 @@ import pytest
 from support.stores import c2_schema_upgrade as ops
 
 
-ROOT = Path(__file__).resolve().parents[4]
+ROOT = REPO_ROOT
 CLI = ROOT / "scripts" / "upgrade_agentos_c2_schema.py"
 
 
@@ -474,11 +476,11 @@ def test_c2_assembly_fails_closed_when_schema_is_missing(paths, tmp_path, monkey
 def test_c2_assembly_attaches_authorities_and_close_runtime_is_repeatable(paths, tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "apps" / "agent"))
     from app.execution.wiring import build_default_runtime, close_runtime
-    from runtime.planning_commit import RuntimePlanningCommitAuthority
-    from runtime.graph_materialization import GraphMaterializationAuthority
-    from runtime.graph_activation import GraphActivationAuthority
-    from runtime.graph_handoff import GraphHandoffAuthority
-    from runtime.execution_permit import ExecutionPermitAuthority
+    from runtime.orchestration.planning_commit import RuntimePlanningCommitAuthority
+    from runtime.orchestration.graph_materialization import GraphMaterializationAuthority
+    from runtime.orchestration.graph_activation import GraphActivationAuthority
+    from runtime.orchestration.graph_handoff import GraphHandoffAuthority
+    from runtime.orchestration.execution_permit import ExecutionPermitAuthority
     base(paths)
     assert ops.upgrade_databases(**paths)["status"] == "READY"
     def denied(*args, **kwargs):

@@ -5,7 +5,7 @@ import pytest
 
 from components.executor.graph import ACGSuperstepError
 from runtime import live_events
-from service.agents import AgentOutput
+from adapters.agent import AgentOutput
 from TEST.tests.runtime.test_model_binding_capacity import _Agent, _prepare, _runtime
 
 
@@ -75,8 +75,8 @@ def test_ready_steps_observe_instance_capacity_and_use_a_free_replica(replicas):
     first.run = execute
     run = _prepare(runtime)  # Freeze logical scope before creating a replica.
     if replicas == 2:
-        from components.marketplace.infrastructure import InMemoryInstallationJobs
-        from service.agents.provisioning import AgentProvisioner
+        from components.resource.catalog.infrastructure import InMemoryInstallationJobs
+        from components.resource.agents.provisioning import AgentProvisioner
 
         def factory():
             replica = _Agent(first.profile.model_copy(deep=True), [])
@@ -124,8 +124,8 @@ def test_draining_after_ready_prevents_invocation_and_releases_both_leases(monke
 
 @pytest.mark.parametrize("committed", [True, False])
 def test_resume_replays_committed_results_and_never_reinvokes_unsettled_work(monkeypatch, committed):
-    from adapters.resource_execution import ResourceExecutionError
-    from runtime.state_persistence import acg_execution_state_from_run
+    from adapters.agent.resource_execution import ResourceExecutionError
+    from runtime.orchestration.state_persistence import acg_execution_state_from_run
 
     runtime, _, _ = _runtime()
     first = runtime.agent_registry.resolve_by_id("first")

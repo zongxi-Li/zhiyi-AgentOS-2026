@@ -4,6 +4,8 @@ Importing this module's target (app.lifespan) constructs no runtime, opens no
 database and starts no model adapter: the factory receives the assembly as
 parameters, exactly as app.main passes the real objects.
 """
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[4]
+ROOT = REPO_ROOT
 
 
 @pytest.fixture(autouse=True)

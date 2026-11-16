@@ -5,17 +5,17 @@ from collections import defaultdict
 
 import pytest
 
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
 from components.memory.store import MemoryStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationResponse
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from support.acg.models import ACGBlueprint, StepNode
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+from adapters.agent import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from contracts.acg.schema import ACGBlueprint, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 
@@ -104,7 +104,7 @@ def _prepare(runtime, *, model_demand=None):
         )), edges=[],
     )
     if model_demand is not None:
-        from support.acg.planning import ModelRequirementSpec
+        from contracts.acg.planning import ModelRequirementSpec
         graph.resource_plan.models = tuple(ModelRequirementSpec(stepId=key, demand=model_demand) for key in keys)
     plan = TaskPlan(missionId=task.mission_id, nodes=tuple(
         PlannedTask(key="step:" + key, title=key, objective=key) for key in keys
@@ -205,7 +205,7 @@ def test_resource_model_capacity_follows_the_bound_endpoint(monkeypatch, same_en
 
 def test_declared_model_endpoints_share_quota_across_independent_runtimes():
     from contracts.resource import ModelDemand, ModelQuotaPolicy
-    from runtime.model_quota import ModelCallQuota
+    from components.resource.model_quota import ModelCallQuota
     from TEST.tests.runtime.test_resource_binding import _register_remote
 
     first, provider, _ = _runtime(concurrency=4)
@@ -252,10 +252,10 @@ def test_unsatisfied_compiled_model_demand_never_falls_back_to_agent_profile():
 
 
 def test_provider_failover_settles_each_adapter_attempt_and_releases_capacity():
-    from adapters.openai_runtime import ModelInvocationError
+    from adapters.model.openai_runtime import ModelInvocationError
     from components.resource.scheduler.leases import InMemoryLeaseCoordinator
     from contracts.resource import ModelQuotaPolicy
-    from runtime.model_quota import ModelCallQuota
+    from components.resource.model_quota import ModelCallQuota
 
     class Adapter(_Provider):
         def __init__(self, primary):

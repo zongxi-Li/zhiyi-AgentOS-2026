@@ -64,7 +64,7 @@ def test_compile_window_changes_cannot_publish(ready_boundary, monkeypatch, chan
         elif change == "receipt": runtime.execution_value_store.prepare_node_commit(run_id=run_id, commit_id=f"commit:{run_id}:A:1")
         elif change == "input": run.input["newOperator"] = "preserve"
         elif change == "checkpoint":
-            from runtime.state_persistence import acg_execution_state_from_run
+            from runtime.orchestration.state_persistence import acg_execution_state_from_run
             state = acg_execution_state_from_run(run)
             state.graph_id = run.acg_blueprint["graphId"]
             state.review_payload = {"subjectType": "node", "subjectId": "A"}

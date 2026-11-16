@@ -1,7 +1,7 @@
 """safe 第一阶段功能与数据转换测试，仅使用固定或可复现的合成数据。
 
 从仓库根目录运行：
-    python -B apps/agentOS/evals/safe/test/test_safe_data_flow.py
+    python -B evals/safe/test/test_safe_data_flow.py
 
 链路：合成激活 → FP32编码 → step合同 → JSON/UTF-8字节 → 解析 → 解码。
 此处的字节往返只测试协议数据转换，不代替真实网络、认证、模型或DP验收。
@@ -25,23 +25,23 @@ import sys
 import unittest
 
 # 使用脚本位置定位src，保证从任意工作目录启动，也不会载入整个Agent应用。
-SRC = Path(__file__).resolve().parents[3] / "src"
+SRC = Path(__file__).resolve().parents[3] / "apps/agentOS/src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pydantic import ValidationError  # noqa: E402
 
-from safe.application.inference import SplitInferenceService  # noqa: E402
-from safe.application.privacy import PrivacyReleaseService  # noqa: E402
-from safe.contracts.activation import ActivationEnvelope, MAX_RAW_BYTES  # noqa: E402
-from safe.contracts.errors import ErrorCode, SafeError  # noqa: E402
-from safe.contracts.inference import InferenceRequest  # noqa: E402
-from safe.contracts.session import SessionStatus, StepRequest  # noqa: E402
-from safe.domain.activation_policy import checked_raw_bytes  # noqa: E402
-from safe.domain.idempotency import require_same_request  # noqa: E402
-from safe.domain.session_state import require_next_step, transition  # noqa: E402
-from safe.infrastructure.codecs.fp32 import FP32Codec  # noqa: E402
-from safe.infrastructure.privacy.clipping import clip_global_l2  # noqa: E402
+from components.safe.application.inference import SplitInferenceService  # noqa: E402
+from components.safe.application.privacy import PrivacyReleaseService  # noqa: E402
+from components.safe.contracts.activation import ActivationEnvelope, MAX_RAW_BYTES  # noqa: E402
+from components.safe.contracts.errors import ErrorCode, SafeError  # noqa: E402
+from components.safe.contracts.inference import InferenceRequest  # noqa: E402
+from components.safe.contracts.session import SessionStatus, StepRequest  # noqa: E402
+from components.safe.domain.activation_policy import checked_raw_bytes  # noqa: E402
+from components.safe.domain.idempotency import require_same_request  # noqa: E402
+from components.safe.domain.session_state import require_next_step, transition  # noqa: E402
+from components.safe.infrastructure.codecs.fp32 import FP32Codec  # noqa: E402
+from components.safe.infrastructure.privacy.clipping import clip_global_l2  # noqa: E402
 
 
 class SafeDataFlowTests(unittest.TestCase):

@@ -1,4 +1,6 @@
 """Mapping and fail-closed reporting, without a real 300-second timeout."""
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import hashlib
 import json
 import os
@@ -10,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[4]
+ROOT = REPO_ROOT
 
 
 def load():

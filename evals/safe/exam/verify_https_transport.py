@@ -27,7 +27,9 @@ import tempfile
 import threading
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "apps/agentOS/src"))
 
 from evals.safe.exam.benchmark_local_generation import ObservedTokenizer, run_full, write_csv
 from evals.safe.exam.verify_qwen_kv import PROMPTS
@@ -74,7 +76,7 @@ class TrackedRunner:
 
 
 def credentials(config):
-    from safe.ports.credentials import Credential
+    from components.safe.ports.credentials import Credential
     return [Credential(credential_id=f"eval-credential-{index}", owner_id=f"eval-owner-{index}",
         secret=bytes.fromhex(secret), scopes=frozenset({"safe:infer"}))
         for index, secret in enumerate(config["secrets"])]
@@ -83,10 +85,10 @@ def credentials(config):
 async def serve_worker(config, directory):
     import torch
     import uvicorn
-    from safe.bootstrap.cloud import create_http_cloud_app
-    from safe.infrastructure.codecs.fp32 import FP32Codec
-    from safe.infrastructure.models.qwen import QwenSuffixRunner
-    from safe.infrastructure.models.sampling import GreedySampler
+    from components.safe.bootstrap.cloud import create_http_cloud_app
+    from components.safe.infrastructure.codecs.fp32 import FP32Codec
+    from components.safe.infrastructure.models.qwen import QwenSuffixRunner
+    from components.safe.infrastructure.models.sampling import GreedySampler
 
     torch.set_num_threads(config["threads"])
     torch.set_num_interop_threads(1)
@@ -194,7 +196,7 @@ class MeteredTransport:
 def verify_protocol(transport, origin, context, config, request, receipt):
     """真实 TCP/TLS 上检查幂等、重放、篡改和 owner 隔离，不能多推进一次。"""
     import httpx
-    from safe.infrastructure.security.signing import sign_request
+    from components.safe.infrastructure.security.signing import sign_request
 
     # 实际握手应拒绝未信任的自签服务证书，而非只检查客户端构造参数。
     try:
@@ -232,7 +234,7 @@ def verify_protocol(transport, origin, context, config, request, receipt):
 
 
 def run_https(service, tokenizer, meter, prompt, limit):
-    from safe.contracts.inference import GenerationOptions, InferenceRequest
+    from components.safe.contracts.inference import GenerationOptions, InferenceRequest
 
     meter.received = []
     start = time.perf_counter_ns()
@@ -285,12 +287,12 @@ def main():
         import torch
         import transformers
         from transformers import AutoModelForCausalLM
-        from safe.application.inference import SplitInferenceService
-        from safe.infrastructure.artifacts.local_store import file_digest
-        from safe.infrastructure.codecs.fp32 import FP32Codec
-        from safe.infrastructure.models.qwen import QwenPrefixRunner
-        from safe.infrastructure.models.tokenizer import HuggingFaceTokenizer
-        from safe.infrastructure.transport.http_client import HttpRemoteTransport
+        from components.safe.application.inference import SplitInferenceService
+        from components.safe.infrastructure.artifacts.local_store import file_digest
+        from components.safe.infrastructure.codecs.fp32 import FP32Codec
+        from components.safe.infrastructure.models.qwen import QwenPrefixRunner
+        from components.safe.infrastructure.models.tokenizer import HuggingFaceTokenizer
+        from components.safe.infrastructure.transport.http_client import HttpRemoteTransport
 
         torch.set_num_threads(args.threads)
         torch.set_num_interop_threads(1)
@@ -308,7 +310,7 @@ def main():
             eos_token_ids=sorted(tokenizer.eos_token_ids), source_weights_sha256=file_digest(args.source / "model.safetensors"),
             runtime_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
             script_sha256=file_digest(Path(__file__)),
-            http_lock_sha256=file_digest(Path(__file__).resolve().parents[3] / "requirements.safe.http.lock"))
+            http_lock_sha256=file_digest(Path(__file__).resolve().parents[3] / "apps/agentOS/requirements.safe.http.lock"))
         with tempfile.TemporaryDirectory(prefix="safe-tls-eval-") as temporary:
             directory = Path(temporary)
             make_certificate(directory)

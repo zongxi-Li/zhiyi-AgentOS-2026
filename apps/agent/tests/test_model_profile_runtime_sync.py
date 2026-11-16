@@ -8,11 +8,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from adapters.http_transport import HttpJsonTransport
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
+from adapters.transport.http import HttpJsonTransport
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
 from components.resource.application.resource_plane import ResourcePlane
-from runtime.app_setup import ApplicationSetup
+from runtime.composition.app_setup import ApplicationSetup
 from app.execution.wiring import (
     GatewayIntentLLM, RegisteredPlannerLLM, bind_registered_planner_llm,
     sync_active_model_profile,

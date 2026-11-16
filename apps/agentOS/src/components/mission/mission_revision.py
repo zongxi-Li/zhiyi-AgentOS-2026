@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Literal
 from pydantic import Field, StrictStr, field_validator
-from apps.agentOS.src.components.mission.mission_semantic import SemanticModel, run_intent_basis
+from contracts.mission_semantic import SemanticModel, run_intent_basis
 from contracts.workflow import utc_now
 
 

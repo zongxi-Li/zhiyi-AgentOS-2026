@@ -4,10 +4,10 @@ import asyncio
 
 import pytest
 
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.model_adapter import StructuredGenerationError
-from adapters.prompt_runtime import planner_prompt_metadata
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.protocols import StructuredGenerationError
+from adapters.model.prompt_runtime import planner_prompt_metadata
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest, ModelStreamEvent
 
 
@@ -87,7 +87,7 @@ def test_stream_quota_settles_usage_and_releases_capacity_before_next_call() -> 
 
     from components.resource.scheduler.leases import InMemoryLeaseCoordinator
     from contracts.resource import ModelQuotaPolicy
-    from runtime.model_quota import ModelCallQuota
+    from components.resource.model_quota import ModelCallQuota
 
     class _CompletedAdapter(_ClosingStreamingAdapter):
         def astream(self, request):

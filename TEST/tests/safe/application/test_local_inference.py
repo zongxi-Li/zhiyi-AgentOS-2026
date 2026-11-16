@@ -5,14 +5,14 @@ import threading
 
 import pytest
 
-from safe.application.inference import SplitInferenceService
-from safe.contracts.errors import ErrorCode, SafeError
-from safe.contracts.inference import GenerationOptions, InferenceRequest
-from safe.contracts.manifest import SplitModelManifest
-from safe.contracts.session import SessionStatus, SessionView, StepReceipt, StepRequest
-from safe.domain.compatibility import manifest_digest
-from safe.infrastructure.codecs.fp32 import FP32Codec
-from safe.ports.model_runner import KVHandle
+from components.safe.application.inference import SplitInferenceService
+from components.safe.contracts.errors import ErrorCode, SafeError
+from components.safe.contracts.inference import GenerationOptions, InferenceRequest
+from components.safe.contracts.manifest import SplitModelManifest
+from components.safe.contracts.session import SessionStatus, SessionView, StepReceipt, StepRequest
+from components.safe.domain.compatibility import manifest_digest
+from components.safe.infrastructure.codecs.fp32 import FP32Codec
+from components.safe.ports.model_runner import KVHandle
 
 
 class Tokenizer:

@@ -5,11 +5,11 @@ import json
 
 import pytest
 
-from adapters.model.native import NativeGeneralAgent
+from adapters.agent.native import NativeGeneralAgent
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
 from adapters.model.prompt_context import project_prompt_context
-from adapters.prompt_runtime import serialize_execution_request
-from support.acg.models import build_default_capability_catalog
+from adapters.model.prompt_runtime import serialize_execution_request
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 def envelope(context=None, sources=None, **overrides):

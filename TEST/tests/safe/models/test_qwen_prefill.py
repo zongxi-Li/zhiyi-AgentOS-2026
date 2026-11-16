@@ -11,11 +11,11 @@ pytest.importorskip("safetensors")
 from transformers import PreTrainedTokenizerFast, Qwen2Config, Qwen2ForCausalLM
 from safetensors.torch import save_file
 
-from safe.contracts.errors import SafeError
-from safe.infrastructure.artifacts.export import export_qwen_artifacts
-from safe.infrastructure.artifacts.local_store import LocalArtifactStore
-from safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
-from safe.contracts.errors import ErrorCode
+from components.safe.contracts.errors import SafeError
+from components.safe.infrastructure.artifacts.export import export_qwen_artifacts
+from components.safe.infrastructure.artifacts.local_store import LocalArtifactStore
+from components.safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
+from components.safe.contracts.errors import ErrorCode
 
 
 @pytest.fixture
@@ -211,7 +211,7 @@ def test_close_releases_all_kv_handles_and_rejects_new_sessions(exported):
 @pytest.mark.parametrize("phase", ["prefill", "decode"])
 def test_partial_forward_failure_invalidates_only_affected_cache(exported, monkeypatch, role, failure, phase):
     """实际更新合成模型KV后再注入异常/NaN，失败句柄必须失效且不影响其他会话。"""
-    from safe.infrastructure.models import qwen
+    from components.safe.infrastructure.models import qwen
 
     _, _, root, digest = exported
     prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
@@ -262,13 +262,13 @@ def test_partial_forward_failure_invalidates_only_affected_cache(exported, monke
 
 def test_session_continuation_roundtrip_matches_real_qwen_layers(exported):
     """合成权重使用真实Qwen层，贯通JSON激活、会话KV和greedy回执。"""
-    from safe.application.activation import ActivationService
-    from safe.application.continuation import ContinuationService
-    from safe.application.session import SessionService
-    from safe.contracts.session import ActivationContext, SessionStatus, StepRequest
-    from safe.infrastructure.codecs.fp32 import FP32Codec
-    from safe.infrastructure.models.sampling import GreedySampler
-    from safe.infrastructure.storage.memory_sessions import MemorySessionStore
+    from components.safe.application.activation import ActivationService
+    from components.safe.application.continuation import ContinuationService
+    from components.safe.application.session import SessionService
+    from components.safe.contracts.session import ActivationContext, SessionStatus, StepRequest
+    from components.safe.infrastructure.codecs.fp32 import FP32Codec
+    from components.safe.infrastructure.models.sampling import GreedySampler
+    from components.safe.infrastructure.storage.memory_sessions import MemorySessionStore
 
     oracle, _, root, digest = exported
     prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
@@ -310,12 +310,12 @@ def test_session_continuation_roundtrip_matches_real_qwen_layers(exported):
 
 
 def test_local_generation_uses_real_roles_and_verified_tokenizer(exported):
-    from safe.application.inference import SplitInferenceService
-    from safe.bootstrap import cloud
-    from safe.contracts.inference import GenerationOptions, InferenceRequest
-    from safe.infrastructure.codecs.fp32 import FP32Codec
-    from safe.infrastructure.models import tokenizer as tokenization
-    from safe.infrastructure.models.sampling import GreedySampler
+    from components.safe.application.inference import SplitInferenceService
+    from components.safe.bootstrap import cloud
+    from components.safe.contracts.inference import GenerationOptions, InferenceRequest
+    from components.safe.infrastructure.codecs.fp32 import FP32Codec
+    from components.safe.infrastructure.models import tokenizer as tokenization
+    from components.safe.infrastructure.models.sampling import GreedySampler
 
     oracle, _, root, digest = exported
     prefix = QwenPrefixRunner(root / "prefix", approved_digest=digest)
@@ -353,7 +353,7 @@ def test_local_generation_uses_real_roles_and_verified_tokenizer(exported):
 
 @pytest.mark.parametrize("eos", [[True], [32], [-1], "3"])
 def test_tokenizer_rejects_invalid_eos_even_in_freshly_exported_artifact(exported, tmp_path, eos):
-    from safe.infrastructure.models import tokenizer as tokenization
+    from components.safe.infrastructure.models import tokenizer as tokenization
 
     _, source, _, _ = exported
     (source / "generation_config.json").write_text(json.dumps({"eos_token_id": eos}), encoding="utf-8")

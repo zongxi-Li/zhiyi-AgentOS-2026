@@ -9,9 +9,9 @@ from contracts.runtime_planning import RuntimePlanningDecision
 from contracts.runtime_planning import RuntimeUserInput
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from contracts.workflow import utc_now
-from runtime.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
-from runtime.planning_operations import TaskOperationApplyRequest, TaskOperationPreviewRequest
-from runtime.review import ReviewConflictError
+from runtime.orchestration.planning_interaction import CopilotMessageRequest, RuntimePlanningInteraction
+from runtime.orchestration.planning_operations import TaskOperationApplyRequest, TaskOperationPreviewRequest
+from runtime.orchestration.review import ReviewConflictError
 from TEST.tests.runtime.test_planning_loop import Agent, Planner, attach, prepared, runtime_at
 
 
@@ -140,7 +140,7 @@ def test_environment_drift_rejects_stale_confirmation_and_partial_rerun_before_p
 
 
 def test_task_permission_and_bounded_conversation_survive_successor_and_restart(tmp_path):
-    from runtime.planning_interaction import CopilotPermissionRequest
+    from runtime.orchestration.planning_interaction import CopilotPermissionRequest
     runtime, _, run = prepared(tmp_path, input={"authenticatedUserId": "owner", "authenticatedTenantId": "tenant"})
     attach(runtime, Planner())
     asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -312,7 +312,7 @@ def test_node_rerun_is_not_published_before_reused_results_are_ready(tmp_path, m
 
 
 def test_node_rerun_reenters_settled_verification_region_with_existing_loop_authority(tmp_path):
-    from support.acg.schema import RuntimeBlueprintSpec, ControlNode, ACGEdge
+    from contracts.acg.schema import RuntimeBlueprintSpec, ControlNode, ACGEdge
     class LoopAgent(Agent):
         checks = 0
         async def run(self, context):

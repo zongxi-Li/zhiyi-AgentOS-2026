@@ -6,14 +6,14 @@ import asyncio
 
 import pytest
 
-from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID, register_native_runtime
-from runtime.execution_migration import ExecutionEngineMigratingError
+from adapters.agent.native import GENERAL_EVIDENCE_WORKFLOW_ID, register_native_runtime
+from runtime.compatibility.execution_migration import ExecutionEngineMigratingError
 from runtime.workflow_runtime import ReviewConflictError
 from runtime.workflow_runtime import ExecutionRuntime
-from service.agents import AgentRegistry
-from components.mission_manager.store import WorkflowRegistry
+from adapters.agent import AgentRegistry
+from components.mission.store import WorkflowRegistry
 from support.stores.memory_workflow_store import MemoryWorkflowStore
-from support.acg.models import ACGBlueprint
+from contracts.acg.schema import ACGBlueprint
 
 
 def _prepared_acg_run():

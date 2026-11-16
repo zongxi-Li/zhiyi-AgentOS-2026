@@ -4,7 +4,8 @@ from copy import deepcopy
 import pytest
 
 from components.planner.task_decomposer import TaskDecomposer, TaskDecompositionError
-from support.acg.models import TaskSemanticProfile, build_default_capability_catalog
+from contracts.acg.semantic_profile import TaskSemanticProfile
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 class Model:

@@ -1,20 +1,18 @@
 """Server-owned, immutable graph commitment evidence; never an execution permit."""
-import hashlib
-import json
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from contracts.identity import MissionId
 from contracts.planning import TaskPlan, TaskImplementationBinding
 from contracts.recovery import GraphPatch
-from support.acg.schema import RuntimeBlueprintSpec
+from contracts.acg.schema import RuntimeBlueprintSpec
+from contracts.stable_digest import model_digest
 
 Digest = Annotated[str, Field(strict=True, pattern=r"^[0-9a-f]{64}$")]
 Ref = Annotated[str, Field(strict=True, min_length=1, max_length=256)]
 
 
 def digest_model(model):
-    return hashlib.sha256(json.dumps(model.model_dump(mode="json", by_alias=True),
-        sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return model_digest(model)
 
 
 class GraphContract(BaseModel):

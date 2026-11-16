@@ -6,12 +6,12 @@ import asyncio
 
 import pytest
 
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.model_adapter import StructuredGenerationError
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.openai_runtime import ModelInvocationError
-from adapters.prompt_runtime import planner_prompt_metadata
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.protocols import StructuredGenerationError
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.model.openai_runtime import ModelInvocationError
+from adapters.model.prompt_runtime import planner_prompt_metadata
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,

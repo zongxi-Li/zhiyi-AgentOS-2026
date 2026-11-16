@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from components.planner.lowering_input import _template_blueprint_from_workflow
-from support.acg.schema import ACGEdge, EdgeType
+from contracts.acg.schema import ACGEdge, EdgeType
 
 _PROMOTION_REMOVED = "workflow step promotion was removed"
 

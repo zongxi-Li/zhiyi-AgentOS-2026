@@ -5,11 +5,11 @@ import asyncio
 
 import pytest
 
-from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
+from adapters.agent.invocation import AgentInvocationAdapter, AgentInvocationError
 from components.planner.cognitive_router import CognitiveRouter
-from runtime.acg_execution import ACGExecutionService
-from service.agents import AgentNotFound, AgentOutput, AgentProfile, AgentRegistry, BaseAgent
-from support.acg.capabilities import PlanningCapabilityDescriptor
+from runtime.orchestration.acg_execution import ACGExecutionService
+from adapters.agent import AgentNotFound, AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
 
 
 class _Agent(BaseAgent):

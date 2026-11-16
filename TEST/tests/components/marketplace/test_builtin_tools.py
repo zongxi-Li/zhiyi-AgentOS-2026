@@ -1,7 +1,7 @@
 """本地工具的越界输入、真实转换和输出隔离测试。"""
 import pytest
 from pydantic import ValidationError
-from components.marketplace.builtins.contracts import ConvertRequest, PdfParseRequest
+from components.resource.catalog.builtins.contracts import ConvertRequest, PdfParseRequest
 
 
 @pytest.mark.parametrize("path", ["../secret.txt", "/etc/passwd", "C:/secret.txt", "a\\b.txt", "https://x/y", "", ".", "a/../b"])
@@ -39,8 +39,8 @@ def text_pdf(path):
 
 
 def test_pdf_extracts_real_text_and_rejects_scans(tmp_path):
-    from components.marketplace.builtins.pdf_parser import PdfParser
-    from components.marketplace.builtins.contracts import ToolExecutionError
+    from components.resource.catalog.builtins.pdf_parser import PdfParser
+    from components.resource.catalog.builtins.contracts import ToolExecutionError
     from pypdf import PdfWriter
     text_pdf(tmp_path / "input.pdf")
     result = PdfParser(tmp_path).parse(PdfParseRequest(sourcePath="input.pdf"))
@@ -55,7 +55,7 @@ def test_pdf_extracts_real_text_and_rejects_scans(tmp_path):
 
 
 def test_conversion_is_real_isolated_and_never_overwrites(tmp_path):
-    from components.marketplace.builtins.file_converter import FileConverter
+    from components.resource.catalog.builtins.file_converter import FileConverter
     (tmp_path / "input.md").write_text("# Title\n<script>bad()</script>", encoding="utf-8")
     converter = FileConverter(tmp_path, tmp_path / "out")
     result = converter.convert(ConvertRequest(sourcePath="input.md", targetFormat="html"))
@@ -69,8 +69,8 @@ def test_conversion_is_real_isolated_and_never_overwrites(tmp_path):
 
 
 def test_csv_json_roundtrip_and_unsupported_pair(tmp_path):
-    from components.marketplace.builtins.file_converter import FileConverter
-    from components.marketplace.builtins.contracts import ToolExecutionError
+    from components.resource.catalog.builtins.file_converter import FileConverter
+    from components.resource.catalog.builtins.contracts import ToolExecutionError
     import json
     (tmp_path / "input.csv").write_text('name,value\n中文,42\n', encoding="utf-8")
     converter = FileConverter(tmp_path, tmp_path / "out")
@@ -83,7 +83,7 @@ def test_csv_json_roundtrip_and_unsupported_pair(tmp_path):
 def test_office_files_are_converted_without_calculating_formulas(tmp_path):
     from docx import Document
     from openpyxl import Workbook
-    from components.marketplace.builtins.file_converter import FileConverter
+    from components.resource.catalog.builtins.file_converter import FileConverter
     import json
     document = Document()
     document.add_paragraph("真实文档")
@@ -100,8 +100,8 @@ def test_office_files_are_converted_without_calculating_formulas(tmp_path):
 
 
 def test_duplicate_csv_headers_and_spreadsheet_formula_export(tmp_path):
-    from components.marketplace.builtins.file_converter import FileConverter
-    from components.marketplace.builtins.contracts import ToolExecutionError
+    from components.resource.catalog.builtins.file_converter import FileConverter
+    from components.resource.catalog.builtins.contracts import ToolExecutionError
     converter = FileConverter(tmp_path, tmp_path / "out")
     (tmp_path / "input.csv").write_text("a,a\n1,2", encoding="utf-8")
     with pytest.raises(ToolExecutionError, match="TABLE_SHAPE_INVALID"):

@@ -7,7 +7,7 @@ import json
 
 import httpx
 
-from adapters.resource_model_execution import ResourceModelProviderAdapter, normalize_model_endpoint
+from adapters.model.resource_execution import ResourceModelProviderAdapter, normalize_model_endpoint
 from contracts.capability import ModelInvocationRequest
 from contracts.resource import ModelEndpointProfile, ResourceEndpoint, RuntimeKind, RuntimeProfile
 from contracts.resource_signing import build_resource_signature

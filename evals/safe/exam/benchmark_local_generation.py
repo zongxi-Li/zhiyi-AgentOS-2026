@@ -20,7 +20,9 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "apps/agentOS/src"))
 
 from evals.safe.exam.verify_qwen_kv import PROMPTS
 
@@ -192,7 +194,7 @@ def run_full(model, tokenizer, prompt, limit):
 
 
 def run_split(service, tokenizer, meter, prompt, limit):
-    from safe.contracts.inference import GenerationOptions, InferenceRequest
+    from components.safe.contracts.inference import GenerationOptions, InferenceRequest
 
     request = InferenceRequest(prompt=prompt, generation=GenerationOptions(max_new_tokens=limit))
     meter.reset()
@@ -257,13 +259,13 @@ def main():
         import transformers
         import psutil
         from transformers import AutoModelForCausalLM
-        from safe.application.inference import SplitInferenceService
-        from safe.bootstrap.cloud import InProcessTransport
-        from safe.infrastructure.artifacts.local_store import file_digest
-        from safe.infrastructure.codecs.fp32 import FP32Codec
-        from safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
-        from safe.infrastructure.models.sampling import GreedySampler
-        from safe.infrastructure.models.tokenizer import HuggingFaceTokenizer
+        from components.safe.application.inference import SplitInferenceService
+        from components.safe.bootstrap.cloud import InProcessTransport
+        from components.safe.infrastructure.artifacts.local_store import file_digest
+        from components.safe.infrastructure.codecs.fp32 import FP32Codec
+        from components.safe.infrastructure.models.qwen import QwenPrefixRunner, QwenSuffixRunner
+        from components.safe.infrastructure.models.sampling import GreedySampler
+        from components.safe.infrastructure.models.tokenizer import HuggingFaceTokenizer
 
         torch.set_num_threads(args.threads)
         torch.set_num_interop_threads(1)

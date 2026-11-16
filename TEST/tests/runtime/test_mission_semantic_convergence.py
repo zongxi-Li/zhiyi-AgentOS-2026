@@ -6,20 +6,20 @@ from types import SimpleNamespace
 import pytest
 
 from TEST.tests.runtime.test_planning_loop import runtime_at, Agent, Planner, attach
-from components.mission_manager.semantic_service import MissionSemanticService
+from components.mission.semantic_service import MissionSemanticService
 from contracts.mission_semantic import MissionSemanticRequest, SemanticPrincipal, run_intent_basis
 from contracts.workflow import WorkflowStatus
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from contracts.planning import PlannedTask, TaskPlanPatch, TaskPlanRelation
 from contracts.recovery import SemanticPatchRequest
-from support.acg.models import ACGBlueprint
-from runtime.semantic_revision import SemanticRevisionService
-from runtime.planner_input_adapter import planner_input
-from service.agents.base import AgentRunContext
-from adapters.agent_architecture import FrameworkAgent
-from adapters.resource_execution import build_remote_execution_payload
+from contracts.acg.schema import ACGBlueprint
+from runtime.orchestration.semantic_revision import SemanticRevisionService
+from components.mission.planner_input import planner_input
+from adapters.agent.base import AgentRunContext
+from adapters.agent.architecture import FrameworkAgent
+from adapters.agent.resource_execution import build_remote_execution_payload
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
-from support.acg.models import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 
 
 OWNER = SemanticPrincipal(actorId="owner", tenantId="tenant")

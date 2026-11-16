@@ -17,15 +17,15 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from adapters.agent_tools import AgentToolSession
-from adapters.audited_tool_runtime import AuditedToolRuntime, ToolAuthorizationError
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.guarded_tool import GuardedToolRuntime
-from adapters.hands_http import HandsHttpTransport, receipt_checksum
-from adapters.model.native import NativeGeneralAgent
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.openai_runtime import OpenAICompatibleRuntime
+from adapters.agent.tool_session import AgentToolSession
+from adapters.tool.audited_runtime import AuditedToolRuntime, ToolAuthorizationError
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.tool.guarded import GuardedToolRuntime
+from adapters.tool.hands_http import HandsHttpTransport, receipt_checksum
+from adapters.agent.native import NativeGeneralAgent
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.openai_runtime import OpenAICompatibleRuntime
 from app.tools.formal_workspace import FormalWorkspaceTools
 from app.tools.permissions import ChatPermissionService, PermissionDecision
 from components.communicator import CommunicatorService
@@ -44,7 +44,7 @@ from contracts.local_runtime import LocalRuntimeAuthorizationRef
 from contracts.tools import hands_tools
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 from packs.workspace import WorkspaceDeveloper, OUTPUT as WORKSPACE_OUTPUT
-from service.agents.base import AgentRunContext, AgentProfile
+from adapters.agent.base import AgentRunContext, AgentProfile
 
 
 NAMES = {'fs.read', 'fs.list', 'fs.write', 'fs.patch', 'shell.exec'}
@@ -298,10 +298,10 @@ async def test_direct_final_answer_requires_no_tool_execution(stack):
 
 @pytest.mark.asyncio
 async def test_native_tool_node_streams_before_committing_and_replays_without_new_requests(stack, monkeypatch):
-    from runtime.live_events import RuntimeEventBroker
+    from runtime.events.live_events import RuntimeEventBroker
     broker = RuntimeEventBroker()
-    monkeypatch.setattr('adapters.agent_tools.runtime_event_broker', broker)
-    monkeypatch.setattr('adapters.model.native.runtime_event_broker', broker)
+    monkeypatch.setattr('adapters.agent.tool_session.runtime_event_broker', broker)
+    monkeypatch.setattr('adapters.agent.native.runtime_event_broker', broker)
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.list', {'path': '.'})], {'answer': 'live answer'}])
     release = asyncio.Event()
     async def stream_json(*, payload, **kwargs):
@@ -499,7 +499,7 @@ async def test_frozen_skill_manifest_cannot_hide_hands(stack):
 
 @pytest.mark.asyncio
 async def test_revoked_execution_permit_stops_conversation_before_hands(stack):
-    from runtime.acg_execution import ExecutionRunCancelled
+    from runtime.orchestration.acg_execution import ExecutionRunCancelled
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 'n'})], {'answer': 'never'}])
     checks = []
     def guard(*args):
@@ -615,7 +615,7 @@ async def test_production_model_setup_enables_declared_tool_calling():
 
 @pytest.mark.asyncio
 async def test_remote_payload_does_not_claim_a_tool_gateway(stack):
-    from adapters.resource_execution import build_remote_execution_payload
+    from adapters.agent.resource_execution import build_remote_execution_payload
     runner, _, step, _ = node(stack, GeneralAgent())
     payload = build_remote_execution_payload(context_for(runner, step))
     assert {'toolRuntime', 'tools', 'grantId', 'credential', 'toolGateway'}.isdisjoint(payload)

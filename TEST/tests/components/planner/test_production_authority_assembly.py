@@ -6,6 +6,8 @@ are never wired by hand: only the business workflow/agent registration and
 the trusted-principal seam (in production stamped by the HTTP boundary) are
 installed on top, exactly as the offline example and existing chain tests do.
 """
+
+from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 from pathlib import Path
 import sqlite3
@@ -24,7 +26,7 @@ from support.stores import c2_schema_upgrade as ops
 from TEST.tests.components.planner.test_horizon import ready_resource
 
 
-ROOT = Path(__file__).resolve().parents[5]
+ROOT = REPO_ROOT
 OWNER = SemanticPrincipal(actorId="assembly-owner", tenantId="assembly-tenant")
 
 ENV_KEYS = ("AGENTOS_WORKFLOW_DB_PATH", "AGENTOS_LANGGRAPH_CHECKPOINT_DB", "AGENTOS_EXECUTION_VALUE_DB",

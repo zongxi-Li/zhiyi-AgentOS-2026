@@ -5,13 +5,13 @@ import sqlite3
 
 import pytest
 
-from components.content import ContentWorksetSession, SQLiteContentManifestStore
+from components.environment.content import ContentWorksetSession, SQLiteContentManifestStore
 from contracts.content import ContentKind, WorksetSpec
 
 
 @pytest.mark.parametrize("invalid_kind", ["missing", "unsealed", "output"])
 def test_workset_preflights_all_sources_before_creating_results(tmp_path, invalid_kind):
-    from components.content.workset import MaterialSourceError
+    from components.environment.content.workset import MaterialSourceError
     from components.recovery.failure import failure_event_from_exception
     store = SQLiteContentManifestStore(tmp_path / "invalid.sqlite3")
     valid = store.create_from_bytes(content=b"valid", kind=ContentKind.MATERIAL, owner_type="user", owner_id="u")

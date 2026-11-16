@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from adapters.model.contract_repair import plan_field_repair
+from adapters.model.field_repair import plan_field_repair
 from contracts.communication import ContextContractError, validate_contract_payload
 
 

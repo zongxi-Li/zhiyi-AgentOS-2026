@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import os
 
-from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID
+from adapters.agent.native import GENERAL_EVIDENCE_WORKFLOW_ID
 from app.execution.coordinator import RunExecutionCoordinator
 from app.execution.wiring import build_default_runtime, close_runtime
 from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowStatus

@@ -15,7 +15,8 @@ from contracts.planning import (
     PlannedTask, TaskPlan, TaskPlanPatch, TaskPlanRelation, VerificationLoopPolicy,
 )
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
-from support.acg.models import CapabilityCatalog, PlanningCapabilityDescriptor
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
 
 
 def _task(key: str, capability: str) -> PlannedTask:

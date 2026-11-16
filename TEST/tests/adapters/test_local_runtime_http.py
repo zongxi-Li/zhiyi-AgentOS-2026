@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-from adapters.local_runtime_http import (
+from adapters.transport.local_runtime_http import (
     HttpLocalRuntimeTransport,
     LocalRuntimeTransportError,
 )

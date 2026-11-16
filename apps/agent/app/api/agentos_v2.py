@@ -16,9 +16,9 @@ from fastapi import APIRouter, File, Header, HTTPException, Query, Request, Uplo
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from contracts.mission_semantic import MissionSemanticContent, MissionSemanticEditRequest, MissionSemanticRequest
-from contracts.mission_revision import MissionRevisionDecision, MissionRevisionConflict, revision_observation, revision_successor_key
+from components.mission.mission_revision import MissionRevisionDecision, MissionRevisionConflict, revision_observation, revision_successor_key
 import sqlite3
-from components.mission_manager.semantic_resolver import MissionSemanticResolver
+from components.mission.semantic_resolver import MissionSemanticResolver
 
 from app.execution.coordinator import RunExecutionCoordinator
 from app.execution.run_capabilities import assert_mutable_run, project_run_capabilities
@@ -44,7 +44,7 @@ from contracts.resource import (
     RuntimeProfile,
     RuntimeSnapshot,
 )
-from components.mission_manager.state_machine import InvalidStateTransition
+from components.mission.state_machine import InvalidStateTransition
 from components.resource.infrastructure.runtime_store import StaleResourceObservation
 from app.tools.permissions import normalize_relative_path
 
@@ -58,18 +58,18 @@ class WorkspaceBinaryFallbackNeeded(Exception):
         super().__init__(code)
         self.code = code
 from runtime import ExecutionRuntime
-from runtime.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
-from runtime.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
-from runtime.review import ReviewConflictError
+from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
+from runtime.orchestration.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
+from runtime.orchestration.review import ReviewConflictError
 from runtime import IdentityQueryService
-from runtime.workspace import (
+from runtime.projections.workspace import (
     MissionWorkspaceProjection,
     WorkspaceDiagnostic,
     WorkspaceEntryKind,
     WorkspaceRunSummary,
 )
 from support.stores.workflow_store import RuntimeRunRecordNotTerminalError
-from runtime.live_events import RuntimeEventOverflow, runtime_event_broker
+from runtime.events.live_events import RuntimeEventOverflow, runtime_event_broker
 from contracts.runtime_events import RuntimeEvent
 from support.stores.workspace_projection import workspace_changes
 from components.attachments import AttachmentError
@@ -81,7 +81,7 @@ from app.api.agentos_contracts import (
     RunResponse,
     project_control_run,
 )
-from components.marketplace.contracts import CustomResourceRequest
+from components.resource.catalog.contracts import CustomResourceRequest
 
 
 logger = logging.getLogger(__name__)
@@ -564,7 +564,7 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
         context_window = (
             capability.get("contextWindowTokens") if isinstance(capability, dict) else None
         )
-        from adapters.request_diagnostics import context_usage
+        from adapters.model.request_diagnostics import context_usage
         current_context = context_usage(payload.get("requestDiagnostics") or {}, usage, context_window)
         context_pressure = current_context["ratio"]
         calls.append({
@@ -884,7 +884,7 @@ def create_router(
             if identity_repositories is not None:
                 identity_run = identity_repositories.runs.get(run.run_id)
                 if identity_run is not None:
-                    from runtime.workspace import artifact_is_public
+                    from runtime.projections.workspace import artifact_is_public
                     for binding in identity_repositories.run_artifact_bindings.list_for_run(run.run_id):
                         artifact = identity_repositories.artifacts.get(binding.artifact_id)
                         if artifact is not None and artifact.content_ref == manifest_id:
@@ -2321,7 +2321,7 @@ def create_router(
                     })
         if semantic_view is not None:
             from contracts.mission_semantic import run_intent_basis
-            from runtime.workspace import with_mission_semantics
+            from runtime.projections.workspace import with_mission_semantics
             selected_id = projection.active_run.run_id if projection.active_run is not None else None
             basis = None
             basis_status = "NO_RUN"

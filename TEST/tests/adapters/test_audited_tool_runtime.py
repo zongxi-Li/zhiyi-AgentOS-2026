@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from adapters.audited_tool_runtime import AuditedToolRuntime, ToolAuthorizationError
+from adapters.tool.audited_runtime import AuditedToolRuntime, ToolAuthorizationError
 
 
 class _RecordingToolRuntime:

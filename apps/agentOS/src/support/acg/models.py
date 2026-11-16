@@ -1,29 +1,25 @@
 """Compatibility facade for the historical ``support.acg.models`` API."""
 
-from .capabilities import (
-    CapabilityCatalog, CapabilityPromptProfile, PlanningCapabilityDescriptor,
-    PlanningRiskLevel, highest_planning_risk_level,
-)
-from .graph import (
-    ConditionEvaluationError, detect_cycle, find_dangling_dependencies, ready_steps,
-    topological_order,
-)
-from .native_capabilities import (
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import CapabilityPromptProfile, PlanningCapabilityDescriptor, PlanningRiskLevel, highest_planning_risk_level
+from domain.acg_graph import ConditionEvaluationError, detect_cycle, find_dangling_dependencies, topological_order
+from components.scheduler.blueprint import ready_steps
+from support.packs.native_capabilities import (
     NATIVE_CAPABILITY_IDS, build_default_capability_catalog,
     native_capability_descriptors, register_native_capabilities,
 )
-from .planning import (
+from contracts.acg.planning import (
     ACGResourcePlan, AgentBindingSpec, CommunicationSpec, EvidenceSpec,
     MemoryAccessSpec, ModelRequirementSpec, SkillRequirementSpec,
 )
-from .schema import (
+from contracts.acg.schema import (
     ACGBlueprint, RuntimeBlueprintSpec, ACGEdge, ACGNode, ACGNodeBase,
     BlueprintStatus, ComplexityLevel, ConditionOperator, ConditionSpec,
     ConsensusSpec, ControlNode, ControlType, EdgeActivation, EdgeType,
     LoopSpec, NodeType, ParallelSpec, StepNode, parse_node,
 )
-from .semantic_profile import CapabilityCandidate, ComplexityAssessment, TaskSemanticProfile
-from .validation import ACGValidationError, validate_blueprint
+from contracts.acg.semantic_profile import CapabilityCandidate, ComplexityAssessment, TaskSemanticProfile
+from components.planner.acg_validation import ACGValidationError, validate_blueprint
 
 __all__ = [
     "ACGBlueprint", "RuntimeBlueprintSpec", "ACGEdge", "ACGNode", "ACGNodeBase", "ACGValidationError",

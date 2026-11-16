@@ -57,8 +57,8 @@ def test_completed_without_output_reference_is_unknown(context):
 
 
 def test_runtime_control_condition_is_not_lost_by_task_plan_projection(ready_boundary, monkeypatch):
-    from support.acg.schema import ACGBlueprint, StepNode, ControlNode, ControlType, ConditionSpec, ConditionOperator, ACGEdge, EdgeType
-    from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+    from contracts.acg.schema import ACGBlueprint, StepNode, ControlNode, ControlType, ConditionSpec, ConditionOperator, ACGEdge, EdgeType
+    from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
     from contracts.planning import PlannedTask, TaskImplementationBinding
     from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
     from contracts.runtime_planning import RuntimePlanningState, RuntimePlanningRound

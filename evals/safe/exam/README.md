@@ -9,7 +9,7 @@
 在仓库根目录运行（模型和角色制品须事先显式准备，不自动下载）：
 
 ```powershell
-apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verify_qwen_prefill.py `
+apps/agentOS/.venv-safe/Scripts/python.exe -B evals/safe/exam/verify_qwen_prefill.py `
   --source data/safe/source/qwen2.5-0.5b-instruct `
   --artifacts data/safe/artifacts/qwen2.5-0.5b-k2 `
   --manifest-digest 154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f `
@@ -25,7 +25,7 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 `verify_qwen_kv.py` 支持双角色独立KV逐token对照：使用完整Qwen2的 `DynamicCache` 作为oracle，固定合成输入、最多20条×32步，比较全词表logits和greedy。默认模式直接调用角色runner，不经过JSON或会话服务，固定步数包含EOS之后的续算。
 
 ```powershell
-apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verify_qwen_kv.py `
+apps/agentOS/.venv-safe/Scripts/python.exe -B evals/safe/exam/verify_qwen_kv.py `
   --source data/safe/source/qwen2.5-0.5b-instruct `
   --artifacts data/safe/artifacts/qwen2.5-0.5b-k2 `
   --manifest-digest 154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f `
@@ -58,12 +58,12 @@ apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verif
 
 ```powershell
 apps/agentOS/.venv-safe/Scripts/python.exe -m pip install --require-hashes -r apps/agentOS/requirements.safe.http.lock
-apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/verify_https_transport.py `
+apps/agentOS/.venv-safe/Scripts/python.exe -B evals/safe/exam/verify_https_transport.py `
   --source data/safe/source/qwen2.5-0.5b-instruct `
   --artifacts data/safe/artifacts/qwen2.5-0.5b-k2 `
   --manifest-digest 154770d9c59c47a080def5294976308829bdb0f480afa5efd9ad96cb2fe88f3f `
   --output data/safe/evidence/https-new-run --samples 20 --repeats 3 --max-new-tokens 16 --threads 4
-apps/agentOS/.venv-safe/Scripts/python.exe -B apps/agentOS/evals/safe/exam/gen_fig_https_transport.py `
+apps/agentOS/.venv-safe/Scripts/python.exe -B evals/safe/exam/gen_fig_https_transport.py `
   --input data/safe/evidence/https-new-run
 ```
 

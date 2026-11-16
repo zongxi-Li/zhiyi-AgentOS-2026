@@ -1,9 +1,9 @@
 from copy import deepcopy
 import json
 
-from adapters.execution_prefix import execution_messages
+from adapters.model.execution_prefix import execution_messages
 from adapters.model.prompt_context import project_inline_content
-from adapters.prompt_runtime import trust_envelope, TrustClass
+from adapters.model.prompt_runtime import trust_envelope, TrustClass
 from TEST.tests.adapters.test_prompt_context import envelope
 
 

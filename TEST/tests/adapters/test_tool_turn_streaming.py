@@ -4,11 +4,11 @@ import json
 
 import pytest
 
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.model_adapter import StructuredGenerationError
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
-from adapters.openai_runtime import OpenAICompatibleRuntime
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.model.protocols import StructuredGenerationError
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
+from adapters.model.openai_runtime import OpenAICompatibleRuntime
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest
 
 

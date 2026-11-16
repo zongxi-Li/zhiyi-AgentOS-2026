@@ -5,9 +5,9 @@ import asyncio
 
 import pytest
 
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.executor import InMemoryExecutionValueStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan, TaskPlanRelation
 from contracts.workflow import StepStatus, WorkflowDefinition, WorkflowStatus, WorkflowStepDefinition
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
@@ -18,12 +18,12 @@ from runtime import (
     MissionWorkspaceProjector,
     WorkspaceEntryKind,
 )
-from runtime.resume_projection import build_reused_step_projection_events
-from service.agents import AgentRegistry
-from service.agents.base import AgentOutput, AgentProfile, BaseAgent
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
-from support.acg.models import ACGBlueprint, ACGEdge, EdgeType, StepNode
+from runtime.projections.resume_projection import build_reused_step_projection_events
+from adapters.agent import AgentRegistry
+from adapters.agent.base import AgentOutput, AgentProfile, BaseAgent
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, CommunicationSpec
+from contracts.acg.schema import ACGBlueprint, ACGEdge, EdgeType, StepNode
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
 

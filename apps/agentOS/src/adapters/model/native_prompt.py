@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from apps.agentOS.src.components.mission.mission_semantic import MissionIntentBasis
+from contracts.mission_semantic import MissionIntentBasis
 
 from .prompt_context import project_inline_content, project_prompt_context
 
-from adapters.prompt_runtime import (
+from adapters.model.prompt_runtime import (
     PromptEnvelope,
     TrustClass,
     compose_execution_prompt,

@@ -219,7 +219,7 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
                 pass
         if semantic:
             try:
-                from contracts.mission_revision import revision_observation
+                from components.mission.mission_revision import revision_observation
                 snapshot = semantic.get_effective_snapshot(principal, run.mission_id)
                 choices = semantic.list_run_revision_decisions(principal, run.mission_id, run.run_id)
                 observation = revision_observation(run, snapshot, choices)
