@@ -137,7 +137,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             conn.commit()
 
     def list_run_revision_decisions(self, mission_id, run_id):
-        from contracts.mission_revision import MissionRevisionReceipt
+        from components.mission.mission_revision import MissionRevisionReceipt
         self._require_semantic_schema()
         with self._connect() as conn:
             return [MissionRevisionReceipt.model_validate_json(row[0]) for row in conn.execute(
@@ -145,7 +145,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                 (mission_id, run_id))]
 
     def decide_run_revision(self, principal, mission_id, run_id, request):
-        from contracts.mission_revision import MissionRevisionReceipt, MissionRevisionConflict, prepare_revision_decision
+        from components.mission.mission_revision import MissionRevisionReceipt, MissionRevisionConflict, prepare_revision_decision
         self._require_semantic_schema()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -299,7 +299,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                     raise ValueError("run creation request conflict")
                 return existing
             if run.execution_state.get("missionRevisionDecision"):
-                from contracts.mission_revision import validate_revision_successor, MissionRevisionReceipt, MissionRevisionConflict
+                from components.mission.mission_revision import validate_revision_successor, MissionRevisionReceipt, MissionRevisionConflict
                 mission = conn.execute("SELECT payload FROM tasks WHERE mission_id=?", (run.mission_id,)).fetchone()
                 if not mission or RuntimeMissionRecord.model_validate_json(mission[0]).record_state != MissionRecordState.ACTIVE:
                     raise MissionRevisionConflict("MISSION_NOT_ACTIVE")

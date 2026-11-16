@@ -17,7 +17,7 @@ if Path(__file__).name != "<stdin>":
     sys.path[:0] = [str(agentos / "src"), str(agentos)]
 
 from adapters.model.prompt_context import project_prompt_context
-from adapters.prompt_runtime import TrustClass, trust_envelope
+from adapters.model.prompt_runtime import TrustClass, trust_envelope
 
 
 def audit(database: Path, run_id: str) -> dict:

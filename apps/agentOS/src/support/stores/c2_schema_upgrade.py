@@ -12,8 +12,8 @@ import sqlite3
 from tempfile import TemporaryDirectory
 
 from components.recovery.checkpoint import ACGCheckpointStore
-from storage.v2.sqlite import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
-from storage.v2.schema import SCHEMA_SQL
+from storage.sqlite import CURRENT_SCHEMA_VERSION, SQLiteV2Storage
+from storage.schema import SCHEMA_SQL
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
 from support.stores.planning_commit_store import content_fingerprint

@@ -39,7 +39,7 @@ async def await_settled(future, *, propagate_cancel: bool = True):
 async def cancel_and_wait(tasks, *, reason: str):
     tasks = tuple(tasks)
     for task in tasks:
-        if not task.done() and not task.cancelling():
+        if not task.done() and not getattr(task, "cancelling", lambda: 0)():
             task.cancel(reason)
     if tasks:
         results = await await_settled(asyncio.gather(*tasks, return_exceptions=True))

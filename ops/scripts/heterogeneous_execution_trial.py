@@ -48,7 +48,7 @@ def _arguments() -> argparse.Namespace:
 
 
 def _configuration(args: argparse.Namespace):
-    from runtime.app_setup import ApplicationSetup
+    from runtime.composition.app_setup import ApplicationSetup
 
     values = dict(os.environ)
     if args.env_file:
@@ -79,8 +79,8 @@ def _configuration(args: argparse.Namespace):
 
 def _blueprint(routes, args):
     from contracts.resource import ModelDemand
-    from support.acg.models import ACGBlueprint, StepNode
-    from support.acg.planning import ACGResourcePlan, AgentBindingSpec, ModelRequirementSpec
+    from contracts.acg.schema import ACGBlueprint, StepNode
+    from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec, ModelRequirementSpec
 
     common = {"type": "object", "additionalProperties": False, "required": ["summary", "findings"],
               "properties": {"summary": {"type": "string"}, "findings": {"type": "array", "items": {
@@ -104,7 +104,7 @@ def _blueprint(routes, args):
 
 
 def _agents(calls, max_output_tokens):
-    from service.agents import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
+    from adapters.agent import AgentOutput, AgentProfile, AgentRegistry, BaseAgent
 
     class RequirementsReviewer(BaseAgent):
         instruction = "你是需求评审员。关注范围、可测量的验收标准及责任边界。只返回符合给定 JSON schema 的对象。"
@@ -176,16 +176,16 @@ def _observe_adapters(setup, routes, observations):
 
 
 async def _execute(args, environment, routes, blueprint, quota, output_dir):
-    from adapters.model_compatibility import ModelCompatibilityRegistry
+    from adapters.model.compatibility import ModelCompatibilityRegistry
     from components.memory.store import MemoryStore
-    from components.mission_manager.store import WorkflowRegistry
+    from components.mission.store import WorkflowRegistry
     from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
     from contracts.resource import ModelEndpointProfile
     from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
-    from runtime.app_setup import ApplicationSetup
+    from runtime.composition.app_setup import ApplicationSetup
     from runtime.workflow_runtime import ExecutionRuntime
-    from support.acg.capabilities import PlanningCapabilityDescriptor
-    from support.acg.native_capabilities import build_default_capability_catalog
+    from contracts.acg.capabilities import PlanningCapabilityDescriptor
+    from support.packs.native_capabilities import build_default_capability_catalog
     from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
     output_dir.mkdir(parents=True, exist_ok=False)

@@ -24,18 +24,18 @@ from contracts.planning import (
     TaskPlanPatch,
 )
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation
-from service.agents import AgentRegistry
-from support.acg.schema import ACGBlueprint, ControlNode
-from support.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
+from adapters.agent import AgentRegistry
+from contracts.acg.schema import ACGBlueprint, ControlNode
+from contracts.acg.semantic_profile import CapabilityCandidate, TaskSemanticProfile
 from .acg_lowerer import ACGLowerer
 from .lowering_input import (
     build_acg_lowering_input,
     build_template_lowering_input,
 )
 from .semantic_planner import SemanticPlanner
-from support.acg.capabilities import CapabilityCatalog
+from support.capabilities import CapabilityCatalog
 from .cognitive_router import CognitiveRouter
-from support.acg.native_capabilities import build_default_capability_catalog
+from support.packs.native_capabilities import build_default_capability_catalog
 from .intent_analyzer import IntentLLM, IntentParser
 from .template_matcher import TemplateMatcher
 from .algorithms import (
@@ -46,7 +46,7 @@ from .algorithms import (
 )
 from contracts.artifacts import canonicalize_final_synthesis_nodes
 from .topology import EdgeOrigin, validate_task_plan_for_execution
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 
 
 CapabilityProfile = Literal["auto", "standard", "full"]

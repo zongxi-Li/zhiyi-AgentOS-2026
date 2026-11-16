@@ -65,7 +65,7 @@ from components.planner.horizon import HorizonError, horizon_planning_enabled
 from contracts.horizon import HorizonSelection
 from contracts.runtime_planning import RuntimePlanningState
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
-from support.acg.capabilities import CapabilityCatalog
+from support.capabilities import CapabilityCatalog
 from support.stores.workflow_store import WorkflowStore
 
 

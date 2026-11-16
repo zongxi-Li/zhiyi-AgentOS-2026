@@ -7,7 +7,7 @@ from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from runtime import ExecutionRuntime
-from runtime.compatibility import RunLockManager
+from support.run_locks import RunLockManager
 from components.auditor.governance.trace import TraceStore
 
 

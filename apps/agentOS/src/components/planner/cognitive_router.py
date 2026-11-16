@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from contracts.authority import LogicalAgentId
-from service.agents import AgentRegistry
-from service.agents.base import BaseAgent
-from support.acg.capabilities import CapabilityCatalog, PlanningCapabilityDescriptor
-from support.acg.native_capabilities import build_default_capability_catalog
-from support.acg.semantic_profile import TaskSemanticProfile
+from adapters.agent import AgentRegistry
+from adapters.agent.base import BaseAgent
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
+from support.packs.native_capabilities import build_default_capability_catalog
+from contracts.acg.semantic_profile import TaskSemanticProfile
 
 
 @dataclass

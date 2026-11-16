@@ -303,7 +303,7 @@ def _force_mock_llm(monkeypatch):
     """
     monkeypatch.setenv("AGENTOS_LLM_PROVIDER", "mock")
     from app.llm.gateway import LLMGateway, set_llm_gateway_for_tests
-    from adapters.tool_adapter import (
+    from adapters.tool.protocols import (
         clear_tool_runtime_factory,
         register_tool_runtime_factory,
     )

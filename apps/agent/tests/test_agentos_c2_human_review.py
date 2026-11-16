@@ -143,7 +143,7 @@ def test_old_permit_cannot_be_reinterpreted_as_manual_review(tmp_path):
 
 def test_conflicting_policy_fails_before_formal_acceptance(tmp_path, monkeypatch):
     database(tmp_path)
-    import runtime.human_review_policy as policy
+    import components.auditor.human_review_policy as policy
     monkeypatch.setattr(policy, 'bind_review_policy', lambda plan, mode: plan)
     with server(tmp_path, dispatch=True, setup=final_delivery_setup) as (client, runtime, agent):
         created = create_review_run(client)

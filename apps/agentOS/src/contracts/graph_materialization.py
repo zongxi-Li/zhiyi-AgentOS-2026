@@ -6,7 +6,7 @@ from contracts.compiled_acg import CompiledACGPackage
 from contracts.graph_revision import GraphContract, Digest, Ref
 from contracts.planning_commit import FrozenPlanningSources, PlanningCommitRejectionCode
 from contracts.planning import TaskPlan, TaskImplementationBinding
-from support.acg.schema import ACGBlueprint
+from contracts.acg.schema import ACGBlueprint
 
 
 class InitialGraphContent(GraphContract):

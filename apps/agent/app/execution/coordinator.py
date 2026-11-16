@@ -67,7 +67,7 @@ class RunExecutionCoordinator:
             _trusted_user_context.reset(token)
 
     def _validate_permitted(self, run, command, *, initial=False):
-        from runtime.permit_recovery import assert_settled_operations
+        from runtime.orchestration.permit_recovery import assert_settled_operations
         from support.stores.execution_dispatch_store import DispatchConflict
         if (run is None or run.run_id != command.run_id or run.mission_id != command.mission_id
                 or run.record_state.value != "active" or run.status.value not in {"pending", "planning", "running", "retrying"}

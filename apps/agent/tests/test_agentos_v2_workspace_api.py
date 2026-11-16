@@ -11,16 +11,16 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from contracts.content import ContentKind
 from contracts.planning import PlannedTask, TaskPlan
 from contracts.resource import ExecutionBinding as RuntimeExecutionBinding, RuntimeKind
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
 from domain.models import RunStatus
 from runtime import AcgIdentityLifecycleService, IdentityProjectionBridge, PlannerIdentityBridge
-from storage.v2 import SQLiteV2Repositories, SQLiteV2Storage
-from support.acg.models import ACGBlueprint, StepNode
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+from storage import SQLiteV2Repositories, SQLiteV2Storage
+from contracts.acg.schema import ACGBlueprint, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
 
 
 @pytest.mark.asyncio

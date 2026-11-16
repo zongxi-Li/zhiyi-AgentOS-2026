@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from adapters.model_adapter import StructuredGenerationError
+from adapters.model.protocols import StructuredGenerationError
 from app.execution.model_runtime import GatewayStructuredGenerationRuntime
 
 
@@ -140,7 +140,7 @@ def test_structured_runtime_propagates_stable_commit_id(monkeypatch):
 
 
 def test_structured_runtime_preserves_prompt_contract_through_guard(monkeypatch):
-    from adapters.guarded_model import GuardedModelRuntime
+    from adapters.model.guarded import GuardedModelRuntime
 
     gateway = _Gateway()
     monkeypatch.setattr("app.execution.model_runtime.get_llm_gateway", lambda: gateway)

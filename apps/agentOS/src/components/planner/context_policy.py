@@ -1,7 +1,7 @@
 """Resolve registered consumption contracts without changing existing frozen steps."""
 from __future__ import annotations
 
-from support.acg.capabilities import PlanningCapabilityDescriptor
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
 
 
 # These fields carry boundary/evidence information even when not named by the

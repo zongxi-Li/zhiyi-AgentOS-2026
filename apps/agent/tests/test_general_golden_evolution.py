@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapters.model.native import GENERAL_EVIDENCE_WORKFLOW_ID
+from adapters.agent.native import GENERAL_EVIDENCE_WORKFLOW_ID
 from app.execution.wiring import build_default_runtime, close_runtime
 from contracts.workflow import ReviewDecision, ReviewDecisionType, WorkflowStatus
 

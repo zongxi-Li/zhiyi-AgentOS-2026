@@ -2,6 +2,7 @@
 
 > 视角：一次 ACG 请求从输入、规划、执行到输出与审计的真实主链。
 > 原则：`ExecutionRuntime` 是唯一执行真源；Identity V2 只做身份一致性、投影与查询。
+> 目录核对：2026-11-16。部件、编排和适配器目录见 [AgentOS 结构说明](../../apps/agentOS/README.md)。
 
 ```mermaid
 flowchart TB
@@ -23,7 +24,7 @@ flowchart TB
     end
 
     subgraph Kernel[WKN AgentOS 唯一执行内核 · agentOS/]
-        RT[ExecutionRuntime<br/>唯一编排与执行真源]
+        RT[ExecutionRuntime 公开门面<br/>runtime/orchestration 应用用例]
 
         subgraph Plan[准备阶段]
             PLANNER[Planner<br/>意图与能力规划]
@@ -32,8 +33,9 @@ flowchart TB
         end
 
         subgraph Execute[执行阶段]
-            GRAPH[ACGExecutionGraph<br/>就绪集、并行超步、条件控制]
-            SCHED[Scheduler + Resource<br/>健康过滤、评分、Redis Lease]
+            GRAPH[ACGExecutionGraph<br/>确定性推进、并行超步、条件控制]
+            SCHED[Scheduler<br/>依赖判定与就绪集选择]
+            RESOURCE[Resource<br/>健康过滤、评分、绑定与 Lease]
             NODE[ACGNodeRunner<br/>Context → Agent → Audit → Commit]
         end
 
@@ -64,7 +66,7 @@ flowchart TB
     WIRE -. 注入 .-> EXT
 
     RT --> PLANNER --> BLUEPRINT --> COMPILER --> GRAPH
-    GRAPH --> SCHED --> NODE
+    GRAPH --> SCHED --> RESOURCE --> NODE
     NODE --> PACKS
     NODE --> EXT
 
@@ -73,7 +75,7 @@ flowchart TB
     NODE <--> MEM
     NODE --> AUDIT
     GRAPH <--> RECOVERY
-    SCHED <--> REDIS
+    RESOURCE <--> REDIS
 
     RT <--> WSTORE
     RT <--> CSTORE
@@ -103,8 +105,8 @@ flowchart TB
 1. 用户请求经 Vue、Nginx、Spring Gateway 到达 FastAPI。
 2. FastAPI 的 Coordinator 只管理异步任务生命周期，不承担图执行语义。
 3. 唯一的 `ExecutionRuntime` 创建或读取 Mission/Run，调用 Planner 形成 Blueprint。
-4. Compiler 将 Blueprint 冻结为可执行 Package；ExecutionGraph 决定就绪集与控制流。
-5. Scheduler 分配资源和租约，NodeRunner 装配最小 ContextPack、调用 Agent、审计并提交引用。
+4. Compiler 将 Blueprint 冻结为可执行 Package；ExecutionGraph 按控制流推进，委派 Scheduler 选择依赖已满足的就绪集。
+5. Resource 提供资源绑定和容量租约，NodeRunner 装配最小 ContextPack、调用 Agent、审计并提交引用。当前就绪选择与资源准入分阶段执行。
 6. Workflow、Checkpoint、正文、Memory、Provenance、Decision 分开持久化。
 7. Identity V2 消费生命周期事件并形成稳定查询投影，但绝不调度或执行节点。
 8. 前端查询 Run、图、Trace、血缘和 outputRef，形成最终可视化闭环。
@@ -115,5 +117,7 @@ flowchart TB
 - `backend/`：产品网关、鉴权和业务数据，不执行 ACG。
 - `agent/`：FastAPI 应用、依赖装配和领域 Pack，不应复制内核算法。
 - `agentOS/`：规划、调度、图执行、通信、记忆、审计与恢复的唯一核心。
-- `agentOS/src/runtime/v2/`：身份生命周期和查询投影，不是 V2 执行器。
-- `agentOS/drafts/legacy_execution/`：历史参考，不属于生产调用链。
+- `agentOS/src/runtime/`：composition/orchestration/projections/events/compatibility 五组；公开入口保留在根目录。
+- `agentOS/src/components/mission/identity_lifecycle.py`：身份生命周期；写入协调归 runtime/orchestration，查询投影归 runtime/projections。
+- `agentOS/src/components/environment/`：内容工作区，以及独立的 Hands 工具引擎与 compact 上下文引擎。
+- `agentOS/src/components/safe/`：模型拆分推理与隐私边界；模型分区合同的校验不等于执行能力或差分隐私。

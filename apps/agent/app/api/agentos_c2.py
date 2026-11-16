@@ -14,7 +14,7 @@ from contracts.graph_materialization import GraphMaterializationRecord
 from contracts.graph_handoff import GraphHandoffRecord, GraphHandoffReceipt
 from contracts.initial_planning import InitialPlanningSourceProvenance
 from contracts import stable_checksum
-from runtime.execution_permit import ExecutionPermitError
+from runtime.orchestration.execution_permit import ExecutionPermitError
 from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 from support.stores.graph_activation_store import SQLiteGraphActivationStore, validate_activation_run
 from app.execution.run_capabilities import assert_mutable_run
@@ -216,7 +216,7 @@ def project_initial_control(runtime, run):
             try:
                 with runtime.run_lock_manager.lock_for(current.run_id):
                     authority.assert_dispatchable(current)
-                    from runtime.permit_recovery import assert_settled_operations
+                    from runtime.orchestration.permit_recovery import assert_settled_operations
                     assert_settled_operations(runtime, current)
                     if runtime.workflow_store.get_run(current.run_id) == current:
                         with runtime._execution_slot_guard:

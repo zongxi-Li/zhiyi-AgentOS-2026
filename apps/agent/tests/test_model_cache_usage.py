@@ -66,12 +66,12 @@ async def test_resource_usage_routes_project_reported_and_missing_cache(tmp_path
     from httpx import ASGITransport, AsyncClient
     from app.api.agentos_v2 import create_router
     from app.execution.coordinator import RunExecutionCoordinator
-    from components.content import SQLiteContentManifestStore
-    from components.mission_manager.store import WorkflowRegistry
+    from components.environment.content import SQLiteContentManifestStore
+    from components.mission.store import WorkflowRegistry
     from components.recovery.checkpoint import ACGCheckpointStore
     from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, TraceEvent
     from runtime import ExecutionRuntime
-    from service.agents import AgentRegistry
+    from adapters.agent import AgentRegistry
     from support.stores.memory_workflow_store import MemoryWorkflowStore
 
     store = MemoryWorkflowStore()

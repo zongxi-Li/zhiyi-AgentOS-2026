@@ -10,14 +10,14 @@ import pytest
 
 
 def _hands_transport(monkeypatch, call):
-    from adapters.hands_http import HandsHttpTransport
+    from adapters.tool.hands_http import HandsHttpTransport
     transport = HandsHttpTransport.__new__(HandsHttpTransport)
     monkeypatch.setattr(transport, '_call', call)
     return transport
 
 
 def _receipt(wire, status='completed', output=None, error=None):
-    from adapters.hands_http import receipt_checksum
+    from adapters.tool.hands_http import receipt_checksum
     receipt = {key: wire[key] for key in ('requestId', 'invocationId', 'capabilityId', 'idempotencyKey')}
     receipt.update(identity={}, grantId='grant', status=status,
                    startedAt='2026-11-01T00:00:00Z', completedAt='2026-11-01T00:00:01Z',
@@ -109,8 +109,8 @@ async def test_events_require_correlation_ids(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stream_events_via_client_correlation(monkeypatch):
-    from adapters.hands_http import HandsHttpTransport
-    from adapters.local_runtime import LocalRuntimeClient
+    from adapters.tool.hands_http import HandsHttpTransport
+    from adapters.transport.local_runtime import LocalRuntimeClient
     from contracts.local_runtime import LocalRuntimeExecutionEvent
 
     def _event(seq, event_type, data):
@@ -146,7 +146,7 @@ async def test_cancel_returns_state_and_treats_settled_as_state(monkeypatch, set
         calls.append((method, suffix))
         if suffix == '/execution/cancel':
             if settled:
-                from adapters.hands_http import HandsAdmissionRejected
+                from adapters.tool.hands_http import HandsAdmissionRejected
                 raise HandsAdmissionRejected(409, 'EXECUTION_ALREADY_SETTLED')
             return {'executionId': 'execution', 'cancelRequested': True, 'state': 'CANCELLING'}
         if suffix == '/execution':
@@ -162,7 +162,7 @@ async def test_cancel_returns_state_and_treats_settled_as_state(monkeypatch, set
 
 @pytest.mark.asyncio
 async def test_cancel_reraises_other_conflicts(monkeypatch):
-    from adapters.hands_http import HandsAdmissionRejected
+    from adapters.tool.hands_http import HandsAdmissionRejected
 
     async def call(method, suffix='', payload=None, key=None):
         raise HandsAdmissionRejected(409, 'REPLAY_REJECTED')
@@ -179,7 +179,7 @@ async def test_cancel_reraises_other_conflicts(monkeypatch):
     ('shell.exec', {'command': 'dir', 'cwd': 'sub'}, ['cwd'], {'workdir': 'sub'}),
 ])
 async def test_execute_remaps_chat_input_fields(monkeypatch, capability, payload, expect_absent, expect_present):
-    from adapters.hands_http import HandsHttpTransport
+    from adapters.tool.hands_http import HandsHttpTransport
     request = _request(capability, payload)
     transport = HandsHttpTransport.__new__(HandsHttpTransport)
     wire_seen = {}
@@ -208,7 +208,7 @@ async def test_execute_remaps_chat_input_fields(monkeypatch, capability, payload
 @pytest.mark.asyncio
 async def test_chat_patch_diff_runs_as_read_modify_write(monkeypatch):
     """chat 的 unified diff 在 hands 上按 读->内存应用->写 两张收据执行。"""
-    from adapters.hands_http import HandsHttpTransport, HandsAdmissionRejected
+    from adapters.tool.hands_http import HandsHttpTransport, HandsAdmissionRejected
     request = _request('fs.patch', {
         'path': 'hello.txt',
         'patch': '@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n',
@@ -252,7 +252,7 @@ async def test_chat_patch_diff_runs_as_read_modify_write(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_patch_conflict_is_definite_rejection(monkeypatch):
-    from adapters.hands_http import HandsHttpTransport, HandsAdmissionRejected
+    from adapters.tool.hands_http import HandsHttpTransport, HandsAdmissionRejected
     request = _request('fs.patch', {'path': 'hello.txt', 'patch': '@@ -9,1 +9,1 @@\n-missing\n+nope\n'})
     transport = HandsHttpTransport.__new__(HandsHttpTransport)
     executed = []
@@ -279,7 +279,7 @@ async def test_chat_patch_conflict_is_definite_rejection(monkeypatch):
 @pytest.mark.asyncio
 async def test_shell_exec_returns_accepted_at_admission(monkeypatch):
     """chat run_command 依赖「admission 即返回 + 事件流推进终态」模型。"""
-    from adapters.hands_http import HandsHttpTransport
+    from adapters.tool.hands_http import HandsHttpTransport
     request = _request('shell.exec', {'command': 'echo hi'})
     transport = HandsHttpTransport.__new__(HandsHttpTransport)
     calls = []
@@ -300,7 +300,7 @@ async def test_shell_exec_returns_accepted_at_admission(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_entries_are_mapped_to_runtime_shape(monkeypatch):
-    from adapters.hands_http import HandsHttpTransport
+    from adapters.tool.hands_http import HandsHttpTransport
     request = _request('fs.list', {'path': '.'})
     transport = HandsHttpTransport.__new__(HandsHttpTransport)
 

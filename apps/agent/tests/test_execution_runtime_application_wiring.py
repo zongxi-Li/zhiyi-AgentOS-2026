@@ -7,7 +7,7 @@ from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
 from components.evolution.store import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
-from components.content import SQLiteContentManifestStore
+from components.environment.content import SQLiteContentManifestStore
 from components.resource.runtime.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
 from components.resource.infrastructure.runtime_store import SQLiteResourceStore
 from components.resource.infrastructure.health_store import SQLiteResourceHealthStore
@@ -15,8 +15,8 @@ from components.resource.infrastructure.node_store import SQLiteNodeStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.resource.scheduler.binder import ResourceBinder
 from components.resource.scheduler.leases import RedisLeaseCoordinator
-from adapters.guarded_model import GuardedModelRuntime
-from adapters.model_compatibility import ModelCompatibilityRegistry
+from adapters.model.guarded import GuardedModelRuntime
+from adapters.model.compatibility import ModelCompatibilityRegistry
 from runtime import ExecutionRuntime
 from contracts.resource import NodeProfile, NodeSnapshot, Placement
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore

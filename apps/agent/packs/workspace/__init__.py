@@ -1,10 +1,10 @@
 """AgentOS owns this bounded loop; Hands is only a signed capability service."""
 import json
-from adapters.model_runtime import StructuredGenerationError
-from adapters.agent_tools import AgentToolSession, supports_agent_tools
+from adapters.model.registered_runtime import StructuredGenerationError
+from adapters.agent.tool_session import AgentToolSession, supports_agent_tools
 
-from service.agents.base import BaseAgent, AgentProfile, AgentOutput
-from support.acg.capabilities import PlanningCapabilityDescriptor, CapabilityPromptProfile
+from adapters.agent.base import BaseAgent, AgentProfile, AgentOutput
+from contracts.acg.capabilities import PlanningCapabilityDescriptor, CapabilityPromptProfile
 
 TOOLS = ['read_file','list_files','write_file','patch_file','run_tests']
 OUTPUT = {'type':'object','properties':{'workspace_changes':{'type':'array','items':{'type':'object'}},

@@ -19,7 +19,7 @@ import urllib.request
 
 root = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(root / "apps/agentOS/src"), str(root / "apps/agentOS")]
-from adapters.http_transport import HttpJsonTransport
+from adapters.transport.http import HttpJsonTransport
 
 
 def profile(samples=5):

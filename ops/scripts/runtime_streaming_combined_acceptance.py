@@ -45,14 +45,14 @@ from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from app.execution.wiring import aclose_runtime
 from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
-from runtime.live_events import RuntimeEventBroker
-from support.acg.models import ACGBlueprint, StepNode
-from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+from runtime.events.live_events import RuntimeEventBroker
+from contracts.acg.schema import ACGBlueprint, StepNode
+from contracts.acg.planning import ACGResourcePlan, AgentBindingSpec
 
 import app.api.agentos_v2 as agentos_v2
 import components.executor.node_runner as node_runner
-import runtime.live_events as live_events
-import adapters.model.native as native_module
+import runtime.events.live_events as live_events
+import adapters.agent.native as native_module
 
 production_e2e = importlib.import_module("test_runtime_streaming_production_e2e")
 _StreamingProviderHandler = production_e2e._StreamingProviderHandler

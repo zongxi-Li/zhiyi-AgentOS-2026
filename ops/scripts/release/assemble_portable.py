@@ -262,8 +262,7 @@ def copy_application_code(target: Path) -> None:
         exclude = skip if keep_node_modules else skip + ("node_modules",)
         robocopy(source, target / "apps" / name, exclude_dirs=exclude)
 
-    # hands 已并入 agentOS（apps/agentOS/src/hands），随 agentOS 一并复制；
-    # 其 node_modules 仍在此处按需扁平安装。terminal 本身就是 npm 布局。
+    # Hands is bundled under AgentOS environment; install its own Node dependencies.
     copy_app("agent")
     copy_app("agentOS")
     copy_app("terminal", keep_node_modules=True)
@@ -275,7 +274,7 @@ def copy_application_code(target: Path) -> None:
             shutil.rmtree(stale, ignore_errors=True)
             log(f"应用代码: 排除开发运行数据 {relative}")
 
-    install_hands_dependencies(target / "apps/agentOS/src/hands")
+    install_hands_dependencies(target / "apps/agentOS/src/components/environment/hands")
 
     rebuilt = relink_junctions(REPO / "apps/terminal/node_modules",
                               target / "apps/terminal/node_modules")
@@ -491,7 +490,7 @@ def validate(target: Path) -> list[str]:
         "apps/backend-ts/migrations/V13__drop_user_feedback.sql",
         "apps/agent/app/main.py",
         "apps/agentOS/src/runtime/workflow_runtime.py",
-        "apps/agentOS/src/hands/node_modules/tsx/dist/cli.mjs",
+        "apps/agentOS/src/components/environment/hands/node_modules/tsx/dist/cli.mjs",
         "apps/terminal/node_modules/node-pty/package.json",
         "scripts/prepare_agentos_runtime.py",
         "ops/scripts/infra/windows/native/persistent_runtime.py",

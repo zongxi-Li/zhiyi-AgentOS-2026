@@ -11,8 +11,8 @@ from contracts.planning import (
     TaskImplementationBinding,
     TaskPlan,
 )
-from support.acg.capabilities import CapabilityCatalog
-from support.acg.planning import (
+from support.capabilities import CapabilityCatalog
+from contracts.acg.planning import (
     ACGResourcePlan,
     AgentBindingSpec,
     ModelRequirementSpec,
@@ -20,7 +20,7 @@ from support.acg.planning import (
     EvidenceSpec,
     MemoryAccessSpec,
 )
-from support.acg.schema import ACGBlueprint
+from contracts.acg.schema import ACGBlueprint
 
 from .acg_lowerer import ACGLoweringInput, ACGLoweringStep
 from .cognitive_router import CognitiveRouter

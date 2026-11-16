@@ -463,8 +463,8 @@ async def test_timeout_over_real_hands_http_terminates_process(monkeypatch, tmp_
     import subprocess
     import time
     from pathlib import Path
-    from adapters.hands_http import HandsHttpTransport
-    from adapters.local_runtime import LocalRuntimeClient
+    from adapters.tool.hands_http import HandsHttpTransport
+    from adapters.transport.local_runtime import LocalRuntimeClient
     hands = Path(__file__).resolve().parents[2] / 'agentOS' / 'src' / 'hands'
     node = shutil.which('node')
     tsx = hands / 'node_modules' / 'tsx' / 'dist' / 'cli.mjs'

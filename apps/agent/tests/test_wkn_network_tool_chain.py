@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from adapters.audited_tool_runtime import AuditedToolRuntime, ToolAuthorizationError
+from adapters.tool.audited_runtime import AuditedToolRuntime, ToolAuthorizationError
 from app.execution.tool_calls import execute_read_only_tool, network_tools_enabled
 from app.tools.contracts import SourceReference, ToolPayload
 from app.tools.runtime import AgentsToolRuntime

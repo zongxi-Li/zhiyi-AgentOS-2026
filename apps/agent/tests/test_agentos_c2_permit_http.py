@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context
-from runtime.execution_permit import ExecutionPermitError
+from runtime.orchestration.execution_permit import ExecutionPermitError
 from test_agentos_c2_http import (
     PREFIX, accepted, activation_body, base, create, materialize, prepare, server,
 )

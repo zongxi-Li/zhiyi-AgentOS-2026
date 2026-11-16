@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from typing import Any, Dict
 
-from adapters.model_adapter import (
+from adapters.model.protocols import (
     StructuredGenerationError,
     StructuredGenerationResult,
 )

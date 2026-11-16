@@ -11,8 +11,8 @@ from contracts.planning import (
     TaskImplementationBinding,
     TaskPlan,
 )
-from support.acg.planning import ACGResourcePlan
-from support.acg.schema import (
+from contracts.acg.planning import ACGResourcePlan
+from contracts.acg.schema import (
     ACGBlueprint,
     ACGEdge,
     BlueprintStatus,
@@ -25,7 +25,7 @@ from support.acg.schema import (
     LoopSpec,
     StepNode,
 )
-from support.acg.validation import validate_blueprint
+from components.planner.acg_validation import validate_blueprint
 from .acg_semantic_validator import (
     validate_acg_semantic_preservation,
     validate_bound_acg_semantics,

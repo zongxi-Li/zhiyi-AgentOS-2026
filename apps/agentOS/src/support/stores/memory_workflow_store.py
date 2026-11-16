@@ -103,7 +103,7 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
 
     @_mission_locked
     def decide_run_revision(self, principal, mission_id, run_id, request):
-        from contracts.mission_revision import MissionRevisionConflict, prepare_revision_decision
+        from components.mission.mission_revision import MissionRevisionConflict, prepare_revision_decision
         run = self.get_run(run_id)
         if run.mission_id != mission_id or self.get_mission(mission_id).record_state != MissionRecordState.ACTIVE:
             raise MissionRevisionConflict("MISSION_SCOPE_CONFLICT")
@@ -216,9 +216,9 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
                 raise ValueError("run creation request conflict")
             return existing.model_copy(deep=True)
         runs, terminal, outbox = dict(self._runs), dict(self._terminal_run_statuses), deepcopy(self._lifecycle_outbox)
-        from contracts.mission_revision import validate_revision_successor
+        from components.mission.mission_revision import validate_revision_successor
         if run.execution_state.get("missionRevisionDecision"):
-            from contracts.mission_revision import MissionRevisionConflict
+            from components.mission.mission_revision import MissionRevisionConflict
             if self.get_mission(run.mission_id).record_state != MissionRecordState.ACTIVE:
                 raise MissionRevisionConflict("MISSION_NOT_ACTIVE")
             validate_revision_successor(run, self._runs.get(run.execution_state.get("parentRunId")),

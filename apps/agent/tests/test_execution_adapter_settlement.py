@@ -66,7 +66,7 @@ async def test_gateway_cancellation_waits_for_actual_pool_thread(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('stream_open', [False, True])
 async def test_http_thread_cancellation_drains_and_closes_acquired_response(monkeypatch, stream_open):
-    from adapters.http_transport import HttpJsonTransport
+    from adapters.transport.http import HttpJsonTransport
     loop = asyncio.get_running_loop()
     started, finish, closed, ended = asyncio.Event(), Event(), Event(), Event()
     response = SimpleNamespace(close=closed.set)
@@ -98,7 +98,7 @@ async def test_http_thread_cancellation_drains_and_closes_acquired_response(monk
 @pytest.mark.asyncio
 @pytest.mark.parametrize('status', [200, 202, 503])
 async def test_remote_cancel_waits_for_response_or_reports_unknown(status):
-    from adapters.resource_execution import HttpResourceExecutionAdapter, ResourceExecutionError
+    from adapters.agent.resource_execution import HttpResourceExecutionAdapter, ResourceExecutionError
     context = SimpleNamespace(task=SimpleNamespace(mission_id='mission'), run=SimpleNamespace(run_id='run'),
         step=SimpleNamespace(step_id='A', agent_name='agent', capability=None, goal='test'),
         context_pack=SimpleNamespace(data={}, evidence_refs=[], attempt_id='attempt'), commit_id='commit')
@@ -128,7 +128,7 @@ async def test_remote_cancel_waits_for_response_or_reports_unknown(status):
 @pytest.mark.parametrize('repeated', [False, True])
 @pytest.mark.parametrize('admission_blocked,unknown', [(False, False), (True, False), (False, True)])
 async def test_hands_cancel_ack_is_not_a_terminal_receipt(monkeypatch, admission_blocked, unknown, repeated):
-    from adapters.hands_http import HandsHttpTransport, HandsExecutionCancelled, HandsOutcomeUnknown, receipt_checksum
+    from adapters.tool.hands_http import HandsHttpTransport, HandsExecutionCancelled, HandsOutcomeUnknown, receipt_checksum
     from contracts.local_runtime import LocalRuntimeExecutionRequest
     request = LocalRuntimeExecutionRequest(protocolVersion='1', requestId='request', invocationId='invocation', resourceId='hands',
         capabilityId='shell.exec', authorization={'workspaceId': 'workspace', 'grantId': 'grant'},
@@ -215,7 +215,7 @@ async def test_closing_graph_stream_settles_siblings_and_preserves_completed_out
 @pytest.mark.parametrize('unknown', [False, True])
 async def test_formal_tool_keeps_nested_lease_until_receipt_or_quarantines_unknown(tmp_path, monkeypatch, unknown):
     import app.tools.formal_workspace as module
-    from adapters.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown, receipt_checksum
+    from adapters.tool.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown, receipt_checksum
     from components.executor.value_store import SQLiteExecutionValueStore
     from components.resource.scheduler.leases import InMemoryLeaseCoordinator
     from contracts.local_runtime import LocalRuntimeExecutionResult, LocalRuntimeExecutionError, LocalRuntimeAuthorizationRef

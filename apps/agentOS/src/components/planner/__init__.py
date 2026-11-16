@@ -10,6 +10,9 @@ from importlib import import_module
 from .acg_lowerer import ACGLoweringInput, ACGLoweringStep, ACGLowerer
 
 _LAZY_EXPORTS = {
+    "ACGPackageCompiler": (".package_compiler", "ACGPackageCompiler"),
+    "IncompleteACGCompilationError": (".package_compiler", "IncompleteACGCompilationError"),
+    "UnsupportedCommunicationModeError": (".package_compiler", "UnsupportedCommunicationModeError"),
     "ACGPlanningError": (".service", "ACGPlanningError"),
     "PlannerService": (".service", "PlannerService"),
     "SemanticPlanner": (".semantic_planner", "SemanticPlanner"),
@@ -29,6 +32,9 @@ def __getattr__(name: str):
     return value
 
 __all__ = [
+    "ACGPackageCompiler",
+    "IncompleteACGCompilationError",
+    "UnsupportedCommunicationModeError",
     "ACGLoweringInput",
     "ACGLoweringStep",
     "ACGLowerer",

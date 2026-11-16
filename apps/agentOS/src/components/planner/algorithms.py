@@ -8,13 +8,13 @@ import json
 import random
 from typing import Literal
 
-from support.acg.capabilities import CapabilityCatalog
+from support.capabilities import CapabilityCatalog
 from .cognitive_router import (
     CapabilityBinding,
     CognitiveRouter,
     CollaborationNetwork,
 )
-from support.acg.semantic_profile import TaskSemanticProfile
+from contracts.acg.semantic_profile import TaskSemanticProfile
 
 
 PlanningDiversity = Literal["stable", "balanced", "exploratory"]

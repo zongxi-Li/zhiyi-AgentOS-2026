@@ -8,8 +8,9 @@ from contracts.identity import MissionId
 from contracts.mission_semantic import MissionIntentBasis
 from contracts.planning import TaskPlan
 from contracts.workflow import RunExecutionScope, WorkflowDefinition
-from support.acg.capabilities import CapabilityCatalog, PlanningCapabilityDescriptor
-from support.acg.semantic_profile import TaskSemanticProfile
+from support.capabilities import CapabilityCatalog
+from contracts.acg.capabilities import PlanningCapabilityDescriptor
+from contracts.acg.semantic_profile import TaskSemanticProfile
 
 
 class InitialCompilationPolicy(GraphContract):

@@ -14,13 +14,13 @@ from fastapi import FastAPI
 
 import app.api.agentos_v2 as agentos_v2
 import components.executor.node_runner as node_runner
-import runtime.live_events as live_events
-from adapters.model_compatibility import ModelCompatibilityRegistry
-from adapters.model_runtime import RegisteredModelRuntime
+import runtime.events.live_events as live_events
+from adapters.model.compatibility import ModelCompatibilityRegistry
+from adapters.model.registered_runtime import RegisteredModelRuntime
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from components.executor import InMemoryExecutionValueStore
-from components.mission_manager.store import WorkflowRegistry
+from components.mission.store import WorkflowRegistry
 from components.recovery.checkpoint import ACGCheckpointStore
 from contracts.planning import PlannedTask, TaskPlan, TaskImplementationBinding
 from components.planner.lowering_input import _template_blueprint_from_workflow
@@ -31,10 +31,10 @@ from contracts.workflow import (
     WorkflowStepDefinition,
 )
 from runtime import ExecutionRuntime
-from runtime.app_setup import ApplicationSetup
-from runtime.live_events import RuntimeEventBroker
-from service.agents import AgentRegistry
-from adapters.model.native import NativeGeneralAgent
+from runtime.composition.app_setup import ApplicationSetup
+from runtime.events.live_events import RuntimeEventBroker
+from adapters.agent import AgentRegistry
+from adapters.agent.native import NativeGeneralAgent
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 
 
@@ -321,7 +321,7 @@ async def _test_native_http_provider_to_fastapi_sse_streams_before_node_completi
     monkeypatch.setattr(live_events, "runtime_event_broker", broker)
     monkeypatch.setattr(node_runner, "runtime_event_broker", broker)
     monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
-    import adapters.model.native as native_module
+    import adapters.agent.native as native_module
 
     monkeypatch.setattr(native_module, "runtime_event_broker", broker)
 
@@ -436,7 +436,7 @@ async def _test_planner_http_provider_to_fastapi_sse_precedes_planner_completion
     monkeypatch.setattr(live_events, "runtime_event_broker", broker)
     monkeypatch.setattr(node_runner, "runtime_event_broker", broker)
     monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
-    import adapters.model.native as native_module
+    import adapters.agent.native as native_module
 
     monkeypatch.setattr(native_module, "runtime_event_broker", broker)
     task = runtime.create_mission(

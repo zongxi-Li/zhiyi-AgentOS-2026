@@ -14,7 +14,7 @@ from app.execution.wiring import build_default_runtime, aclose_runtime
 from app.security.internal_auth import InternalServiceAuthMiddleware
 from examples.contract_review import CONTRACT, WORKFLOW_ID, ContractReviewAgent, workflow
 from support.stores import c2_schema_upgrade as ops
-from runtime.execution_permit import ExecutionPermitError
+from runtime.orchestration.execution_permit import ExecutionPermitError
 
 
 TOKEN = "c2-http-test-service-token-32-characters"

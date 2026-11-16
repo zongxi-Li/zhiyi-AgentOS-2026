@@ -16,7 +16,16 @@ import shutil
 import time
 
 logger = logging.getLogger(__name__)
-WORKER = Path(__file__).resolve().parents[3] / "agentOS" / "src" / "oscode-context" / "src" / "worker.ts"
+WORKER = (
+    Path(__file__).resolve().parents[3]
+    / "agentOS"
+    / "src"
+    / "components"
+    / "environment"
+    / "compact"
+    / "src"
+    / "worker.ts"
+)
 
 
 class CompactionBridgeError(RuntimeError):

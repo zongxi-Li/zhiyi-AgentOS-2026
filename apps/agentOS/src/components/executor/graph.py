@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from support.async_tasks import cancel_and_wait
+from components.scheduler import dependency_status, select_ready_steps
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -271,28 +272,19 @@ class ACGExecutionGraph:
             self._join_groups.setdefault(join, []).append(inputs)
 
     def _dependency_status(self, node_id: str, completed: set[str], skipped: set[str]) -> str:
-        predecessors = self._predecessors[node_id]
-        groups = self._join_groups.get(node_id, ())
-        waived = set().union(*groups) if groups else set()
-        if (predecessors & skipped) - waived or any(group <= skipped for group in groups):
-            return "skip"
-        if not predecessors <= (completed | skipped):
-            return "wait"
-        return "ready"
+        return dependency_status(self._predecessors[node_id], self._join_groups.get(node_id, ()), completed, skipped)
 
     def ready_steps(self, state: ACGExecutionState) -> tuple[str, ...]:
-        """返回当前超步可并发执行的 Step，排除控制节点和未选择的分支。"""
-        completed = set(state.completed_step_ids)
-        skipped = set(state.skipped_step_ids)
-        inactive = set(state.active_step_ids) | skipped
-        ready: list[str] = []
-        for node_id in self.nodes:
-            spec = self.node_specs[node_id]
-            if node_id in completed or node_id in inactive or spec.kind != "step":
-                continue
-            if self._dependency_status(node_id, completed, skipped) == "ready":
-                ready.append(node_id)
-        return tuple(ready)
+        """Delegate dependency-ready selection to the scheduler's single authority."""
+        return select_ready_steps(
+            self.nodes,
+            step_ids={node_id for node_id, spec in self.node_specs.items() if spec.kind == "step"},
+            predecessors=self._predecessors,
+            completed=state.completed_step_ids,
+            active=state.active_step_ids,
+            skipped=state.skipped_step_ids,
+            join_groups=self._join_groups,
+        )
 
     def select_routes(self, control_id: str, source_value: dict[str, Any]) -> tuple[str, ...]:
         """供调试和编译测试读取某个条件控制节点的目标分支。"""

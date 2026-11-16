@@ -285,6 +285,7 @@ def start_redis(home: Path, info: dict, creds: dict, session: str, state: dict) 
 
 
 def start_hands(home: Path, info: dict, creds: dict, session: str, state: dict, env: dict) -> None:
+    hands_root = PRODUCT_ROOT / "apps/agentOS/src/components/environment/hands"
     grants = home / "hands-grants.json"
     keys = home / "temp/hands-keys.json"
     native.write_json(keys, {"credentials": [{"credentialId": "n01a-credential", "secret": creds["hmac"]}]})
@@ -293,13 +294,13 @@ def start_hands(home: Path, info: dict, creds: dict, session: str, state: dict, 
         "workspaceRoot": info["workspace"], "credentialsFile": str(keys), "grantsFile": str(grants),
         "dataDir": str(home / "hands-ledger"), "host": "127.0.0.1",
         "port": persistent.ports(info)["host"], "confinement": "none", "dynamicWorkspaces": True})
-    node_env = dict(env, TSX_TSCONFIG_PATH=str(PRODUCT_ROOT / "apps/agentOS/src/hands/tsconfig.json"))
+    node_env = dict(env, TSX_TSCONFIG_PATH=str(hands_root / "tsconfig.json"))
     try:
         record = start_service(home, session, state, "host", [
             str(PATHS["node"]),
-            str(PRODUCT_ROOT / "apps/agentOS/src/hands/node_modules/tsx/dist/cli.mjs"),
-            "--tsconfig", str(PRODUCT_ROOT / "apps/agentOS/src/hands/tsconfig.json"),
-            str(PRODUCT_ROOT / "apps/agentOS/src/hands/hands/service-main.ts"),
+            str(hands_root / "node_modules/tsx/dist/cli.mjs"),
+            "--tsconfig", str(hands_root / "tsconfig.json"),
+            str(hands_root / "hands/service-main.ts"),
             "--config", str(config)], node_env)
         desktop.wait_until(lambda: native.health(persistent.ports(info)["host"], "/v1/health").get("ok"),
                            record, 90)
