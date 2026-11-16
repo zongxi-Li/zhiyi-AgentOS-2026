@@ -42,6 +42,7 @@ def compilation_policy():
     groups = {name: [root / path] for name, path in paths.items()}
     groups["topology"] = sorted((root / "components/planner/topology").rglob("*.py"))
     groups["graphCompiler"].append(root / "contracts/compiled_acg.py")
+    groups["graphCompiler"].append(root / "components/planner/package_compiler.py")
     groups["lowerer"].extend([root / "contracts/acg/schema.py", root / "contracts/acg/planning.py"])
     groups["routing"].extend([root / "components/planner/algorithms.py", root / "contracts/acg/semantic_profile.py"])
     identities = {name: digest({path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()

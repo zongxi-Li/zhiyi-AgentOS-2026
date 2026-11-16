@@ -166,6 +166,78 @@ SOURCE_TEST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("src/contracts/graph_activation.py", ("tests/components/planner/test_execution_permit.py",)),
 )
 
+# Current module locations supplement the immutable historical-baseline rules.
+SOURCE_TEST_RULES += (
+    ('src/runtime/orchestration/acg_execution.py', ('tests/runtime/test_resource_binding.py', '../agent/tests/test_managed_execution_settlement.py')),
+    ('src/adapters/tool/audited_runtime.py', ('tests/adapters/test_audited_tool_runtime.py', 'tests/adapters/test_hands_integration.py')),
+    ('src/adapters/tool/guarded.py', ('tests/adapters/test_guarded_runtime.py', 'tests/adapters/test_hands_integration.py')),
+    ('src/adapters/tool/hands_http.py', ('tests/adapters/test_hands_integration.py', '../agent/tests/test_execution_adapter_settlement.py')),
+    ('src/adapters/transport/http.py', ('tests/adapters/test_http_transport.py', '../agent/tests/test_execution_adapter_settlement.py')),
+    ('src/adapters/agent/native.py', ('tests/adapters/test_native_agent.py', 'tests/adapters/test_model_audit_metadata.py', '../agent/tests/test_runtime_streaming_production_e2e.py')),
+    ('src/adapters/model/openai_runtime.py', ('tests/adapters/test_model_runtime.py', 'tests/adapters/test_model_runtime_streaming.py')),
+    ('src/adapters/agent/resource_execution.py', ('tests/adapters/test_resource_execution.py', '../agent/tests/test_execution_adapter_settlement.py')),
+    ('src/components/mission/service.py', ('tests/support/test_branch_safe_mission_projection.py', 'tests/runtime/test_mission_semantic_convergence.py')),
+    ('src/support/capabilities.py', ('tests/adapters/test_native_agent.py', 'tests/components/executor/test_advanced_acg_capabilities.py')),
+    ('src/components/auditor/human_review_policy.py', ('tests/components/planner/test_human_review_policy.py',)),
+    ('src/runtime/projections/queries.py', ('tests/runtime/v2/test_artifact_identity.py', 'tests/runtime/v2/test_workspace_projection.py')),
+    ('src/runtime/projections/workspace.py', ('tests/runtime/v2/test_artifact_identity.py', 'tests/runtime/v2/test_workspace_projection.py')),
+    ('src/runtime/orchestration/initial_execution.py', ('tests/components/planner/test_initial_execution_permit.py', 'tests/architecture/test_capability_upgrade_gates.py')),
+    ('src/runtime/orchestration/graph_handoff.py', ('tests/components/planner/test_initial_execution_permit.py', 'tests/components/planner/test_graph_handoff.py::test_real_prefix_handoff_preserves_all_existing_facts', 'tests/components/planner/test_graph_handoff.py::test_restart_reconstructs_same_preparation_but_cannot_execute')),
+    ('src/runtime/orchestration/execution_permit.py', ('tests/components/planner/test_initial_execution_permit.py', 'tests/components/planner/test_execution_permit_audit.py')),
+    ('src/components/planner/initial_graph_compilation.py', ('tests/components/planner/test_initial_graph_materialization.py', 'tests/contracts/test_compiled_acg.py', 'tests/contracts/test_binding_authority.py', 'tests/architecture/test_capability_upgrade_gates.py')),
+    ('src/runtime/orchestration/graph_materialization.py', ('tests/components/planner/test_initial_graph_materialization.py', 'tests/components/planner/test_graph_revision_commit.py::test_completed_prefix_pending_suffix_replacement', 'tests/components/planner/test_graph_revision_commit.py::test_checkpoint_identity_and_control_evidence_are_required', 'tests/components/planner/test_graph_materialization.py::test_inactive_package_is_complete_read_only_and_restartable', 'tests/components/planner/test_graph_materialization.py::test_compile_window_changes_cannot_publish', 'tests/components/planner/test_graph_materialization.py::test_atomic_faults_reconcile_original_key')),
+    ('src/runtime/orchestration/graph_activation.py', ('tests/components/planner/test_initial_graph_materialization.py', 'tests/components/planner/test_graph_activation.py::test_commit_switches_head_and_projection_atomically', 'tests/components/planner/test_graph_activation.py::test_stale_sources_are_rejected_before_and_after_preparation', 'tests/components/planner/test_graph_activation.py::test_activation_transaction_failure_rolls_back_completely', 'tests/components/planner/test_graph_activation.py::test_scheduler_entries_refuse_the_paused_graph')),
+    ('src/runtime/orchestration/planning_commit.py', ('tests/components/planner/test_initial_planning_sources.py', 'tests/components/planner/test_planning_commit_runtime.py', 'tests/components/planner/test_graph_revision_commit.py')),
+    ('src/runtime/orchestration/initial_planning_sources.py', ('tests/components/planner/test_initial_planning_sources.py', 'tests/components/planner/test_planning_commit_runtime.py')),
+    ('src/runtime/orchestration/planning_loop.py', ('tests/runtime/test_kernel_vertical_slice.py',)),
+    ('src/adapters/agent/invocation.py', ('tests/components/planner/test_permit_recovery.py',)),
+    ('src/runtime/orchestration/permit_recovery.py', ('tests/components/planner/test_permit_recovery.py',)),
+    ('src/runtime/orchestration/graph_handoff.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/orchestration/graph_activation.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/orchestration/binding.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/composition/ports.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/orchestration/acg_execution.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/orchestration/runtime_recovery.py', ('tests/components/planner/test_permit_recovery.py',)),
+    ('src/runtime/orchestration/state_persistence.py', ('tests/runtime/test_checkpoint_promotion.py',)),
+    ('src/runtime/orchestration/identity_projection.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/orchestration/execution_permit.py', ('tests/components/planner/test_execution_permit.py',)),
+    ('src/runtime/orchestration/workflow.py', ('tests/runtime/test_acg_run.py', 'tests/runtime/test_review_recovery_extraction.py', 'tests/test_runtime_import_boundary.py')),
+)
+
+# A directory migration changes complete ownership areas, including package
+# entrypoints. Keep their existing test modules in the selection as well as the
+# narrower critical mappings above; unknown ownership areas still fail closed.
+_OWNERSHIP_TEST_AREAS = {
+    "src/adapters/": ("adapters",),
+    "src/contracts/": ("contracts",),
+    "src/domain/": ("domain", "storage/v2"),
+    "src/storage/": ("storage/v2",),
+    "src/runtime/": ("runtime",),
+    "src/support/": ("support",),
+    "src/tools/": ("support",),
+    "src/safe/": ("safe",),
+    "src/components/content/": ("components/content",),
+    "src/components/environment/": ("components/content",),
+    "src/components/mission/": ("runtime",),
+    "src/components/mission_manager/": ("runtime",),
+    "src/components/model_partition/": ("components/test_model_partition.py",),
+    "src/components/marketplace/": ("components/marketplace",),
+    "src/components/resource/": ("components/resource", "components/marketplace", "components/scheduler"),
+    **{f"src/components/{owner}/": (f"components/{owner}",) for owner in (
+        "attachments", "auditor", "communicator", "executor", "evolution",
+        "memory", "planner", "recovery", "scheduler",
+    )},
+    "src/components/safe/": ("safe", "components/test_model_partition.py"),
+}
+for _source_area, _test_areas in _OWNERSHIP_TEST_AREAS.items():
+    _tests = []
+    for _test_area in _test_areas:
+        _target = ROOT / "TEST/tests" / _test_area
+        _files = [_target] if _target.is_file() else sorted(_target.rglob("test_*.py"))
+        _tests.extend("../../" + _file.relative_to(ROOT).as_posix() for _file in _files)
+    if _tests:
+        SOURCE_TEST_RULES += ((_source_area, tuple(_tests)),)
+
 # Accepted INT-1 entry content, never HEAD. API uses that Windows checkout's
 # raw CRLF digest; the gate used LF. CLI did not exist at the accepted entry.
 EXTERNAL_BASELINE = {
@@ -264,8 +336,8 @@ def utc_now() -> str:
 
 def source_snapshot() -> dict[str, object]:
     files: dict[str, str] = {}
-    for folder in ("src", "tests"):
-        for path in sorted((AGENTOS / folder).rglob("*.py")):
+    for folder in (AGENTOS / "src", ROOT / "TEST" / "tests"):
+        for path in sorted(folder.rglob("*.py")):
             relative = path.relative_to(ROOT).as_posix()
             files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     manifest = "\n".join(f"{path} {digest}" for path, digest in sorted(files.items()))
@@ -296,6 +368,8 @@ def resolve_tests(changed_paths: list[str]) -> tuple[list[str], list[str]]:
         for path in changed_paths
         if path.startswith("apps/agentOS/tests/") and path.endswith(".py")
     ]
+    changed_tests.extend("../../" + path for path in changed_paths
+                         if path.startswith("TEST/tests/") and path.endswith(".py"))
     changed_tests.extend("../agent/tests/" + Path(path).name for path in changed_paths
                          if path in APP_TEST_INPUTS and Path(path).name.startswith("test_"))
     if "apps/agent/tests/conftest.py" in changed_paths:
@@ -310,7 +384,22 @@ def resolve_tests(changed_paths: list[str]) -> tuple[list[str], list[str]]:
             uncovered.append(source)
             continue
         selected.update(mapped)
-    return sorted(selected), uncovered
+    return sorted({_current_test_path(path) for path in selected}), uncovered
+
+
+def _current_test_path(path: str) -> str:
+    """Resolve historical selection labels without rewriting accepted manifests."""
+    if path.startswith("tests/"):
+        path = "../../TEST/" + path
+    if path == "../../TEST/tests/runtime/test_checkpoint_promotion.py":
+        # The maintained checkpoint-promotion regressions live with handoff.
+        return "../../TEST/tests/components/planner/test_execution_permit.py"
+    flattened = path.replace("TEST/tests/runtime/v2/", "TEST/tests/runtime/")
+    if not (AGENTOS / path.split("::", 1)[0]).is_file() and (
+        AGENTOS / flattened.split("::", 1)[0]
+    ).is_file():
+        return flattened
+    return path
 
 
 def parse_pytest_counts(output: str) -> dict[str, int | None]:
@@ -534,8 +623,7 @@ def _load_complete_estimate(source_sha, node_ids):
         return {**unknown, 'reason': 'INVALID_OR_UNREADABLE_PROFILE'}
 def pytest_environment():
     env = os.environ.copy()
-    roots = (AGENTOS / "src", AGENTOS, ROOT / "apps/agent", AGENTOS / "tests/runtime",
-             AGENTOS / "tests/components/planner", ROOT / "apps/agent/tests")
+    roots = (AGENTOS / "src", AGENTOS, ROOT / "apps/agent", ROOT, ROOT / "apps/agent/tests")
     prior = env.get("PYTHONPATH")
     env["PYTHONPATH"] = PYTHONPATH_SEPARATOR.join([*(str(path) for path in roots), *([prior] if prior else [])])
     env["PYTHONUTF8"] = "1"
@@ -554,7 +642,7 @@ def collect_node_ids(paths: list[str], timeout: float) -> tuple[list[str], int, 
     node_ids = sorted({
         line.strip().replace("\\", "/")
         for line in completed.stdout.splitlines()
-        if line.strip().replace("\\", "/").startswith(("tests/", "apps/agentOS/tests/", "apps/agent/tests/")) and "::" in line
+        if line.strip().replace("\\", "/").startswith(("TEST/tests/", "apps/agent/tests/")) and "::" in line
     })
     return node_ids, completed.returncode, completed.stdout + completed.stderr
 

@@ -1,4 +1,6 @@
 """Independent S02-03 adversarial checks against real Runtime and SQLite."""
+from TEST.tests._paths import AGENTOS_ROOT, TEST_ROOT
+
 import json
 import os
 from pathlib import Path
@@ -361,10 +363,10 @@ def test_fresh_processes_reconstruct_identical_candidates(ready_boundary, tmp_pa
     script = '''
 import json, sys
 from pathlib import Path
-from test_react_loop import runtime_at
+from TEST.tests.components.planner.test_react_loop import runtime_at
 from contracts.workflow import WorkflowDefinition
 from contracts.mission_semantic import SemanticPrincipal
-from components.mission_manager.semantic_service import MissionSemanticService
+from components.mission.semantic_service import MissionSemanticService
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
 data=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 runtime,store,_=runtime_at(Path(data["directory"]))
@@ -382,7 +384,7 @@ print("CANDIDATE:"+runtime.planning_commit_authority.store.get(receipt.commit_id
 '''
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
-    env["PYTHONPATH"] = os.pathsep.join([str(Path("src").resolve()), str(Path("tests/components/planner").resolve()), env.get("PYTHONPATH", "")])
+    env["PYTHONPATH"] = os.pathsep.join([str(AGENTOS_ROOT / "src"), str(TEST_ROOT.parent.parent), env.get("PYTHONPATH", "")])
     for i in range(2):
         directory = tmp_path / f"restart-{i}"
         directory.mkdir()

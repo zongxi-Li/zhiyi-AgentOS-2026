@@ -1,6 +1,6 @@
 """Shared Memory/SQLite contracts: Mission is a summary of independent Runs."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import json
 import os
 import subprocess

@@ -1,6 +1,6 @@
 """C1 audit regressions using real native execution and the production router."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 from contextlib import closing
 import hashlib

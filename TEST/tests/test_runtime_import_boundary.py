@@ -1,6 +1,6 @@
 """Regression tests for imports required by the default runtime path."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 
 import ast
 import importlib

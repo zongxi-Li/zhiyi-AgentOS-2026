@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 
 import ast
 import re
@@ -69,7 +69,7 @@ def _assert_python_process_boundary(source: str, relative_path: str) -> None:
     # Installation control plane and its packaged fixed worker are reviewed
     # exceptions; neither may become a general Agent/Step execution backend.
     assert relative_path in {
-        "components/marketplace/infrastructure.py", "components/marketplace/builtins/server.py",
+        "components/resource/catalog/infrastructure.py", "components/resource/catalog/builtins/server.py",
     }, relative_path
     tree = ast.parse(source)
     allowed_calls = set()
@@ -174,7 +174,7 @@ def test_resource_plane_is_the_only_resource_state_authority() -> None:
 
 def test_local_runtime_is_only_a_contract_and_transport_boundary() -> None:
     """Host tools must not create a parallel authority or execute inside AgentOS."""
-    local_files = (SRC / "contracts" / "local_runtime.py", SRC / "adapters" / "local_runtime.py")
+    local_files = (SRC / "contracts" / "local_runtime.py", SRC / "adapters" / "transport" / "local_runtime.py")
     forbidden_classes = {"CapabilityRegistry", "ResourceRegistry", "RuntimeEventBroker"}
     forbidden_imports = {
         "adapters.agent.base", "app.tools.terminal", "app.tools.chat_catalog",
@@ -203,7 +203,7 @@ def test_local_runtime_is_only_a_contract_and_transport_boundary() -> None:
 
 def test_local_runtime_http_transport_keeps_the_low_level_boundary() -> None:
     """HTTP Local Runtime transport must not become the AgentRun adapter."""
-    path = SRC / "adapters" / "local_runtime_http.py"
+    path = SRC / "adapters" / "transport" / "local_runtime_http.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
@@ -219,13 +219,13 @@ def test_native_process_execution_stays_in_the_hands_backend() -> None:
     """原生进程宿主的唯一归属是 Hands；它不内嵌 AgentOS 权威，Python 侧不得复活 Local Runtime。
 
     ``225d1934`` 退役了 ``apps/local-runtime``（Python 执行宿主），执行改由
-    ``apps/agentOS/src/hands``（TS，逐字复用 DSH 执行基座）承载。门禁随主体迁移，
+    ``apps/agentOS/src/components/environment/hands``（TS，逐字复用 DSH 执行基座）承载。门禁随主体迁移，
     但两条纪律不变：① 退役的 Python 宿主不能悄悄回来；② 原生执行只能待在 Hands 树内。
     """
     apps = SRC.parents[1]
     _assert_retired_runtime_has_no_implementation(apps / "local-runtime")
 
-    hands_root = SRC / "hands"
+    hands_root = SRC / "components" / "environment" / "hands"
     supervisor_sources = [
         path for path in hands_root.rglob("*.ts")
         if "node_modules" not in path.parts and "windows-job" in path.name
@@ -300,7 +300,7 @@ def test_process_gate_rejects_aliased_imports_in_other_components(source):
 
 @pytest.mark.parametrize("mutation", ["shell", "argv", "extra_launcher", "alias", "stored_launcher", "getattr"])
 def test_marketplace_process_exception_remains_narrow(mutation):
-    path = SRC / "components" / "marketplace" / "infrastructure.py"
+    path = SRC / "components" / "resource" / "catalog" / "infrastructure.py"
     source = path.read_text(encoding="utf-8")
     if mutation == "shell":
         source = source.replace("shell=False", "shell=True", 1)
@@ -315,12 +315,12 @@ def test_marketplace_process_exception_remains_narrow(mutation):
     else:
         source += "\ngetattr(subprocess, 'Popen')(['arbitrary'], shell=False)\n"
     with pytest.raises(AssertionError):
-        _assert_python_process_boundary(source, "components/marketplace/infrastructure.py")
+        _assert_python_process_boundary(source, "components/resource/catalog/infrastructure.py")
 
 
 @pytest.mark.parametrize("mutation", ["module", "timeout", "shell", "authority", "executable", "positional", "member_import"])
 def test_packaged_worker_exception_remains_narrow(mutation):
-    relative_path = "components/marketplace/builtins/server.py"
+    relative_path = "components/resource/catalog/builtins/server.py"
     source = (SRC / relative_path).read_text(encoding="utf-8")
     if mutation == "module":
         source = source.replace('"agentos_local_tools.worker"', '"arbitrary.worker"')
@@ -357,7 +357,7 @@ def test_windows_isolation_stays_inside_the_hands_backend() -> None:
 
     hands_source = "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (SRC / "hands").rglob("*.ts")
+        for path in (SRC / "components" / "environment" / "hands").rglob("*.ts")
         if "node_modules" not in path.parts
     )
     assert "SetNamedSecurityInfoW" in hands_source, "ACL 隔离实现必须留在 Hands 执行基座内"

@@ -1,6 +1,6 @@
 """Instance facts do not introduce another execution or allocation authority."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 
 import ast
 from pathlib import Path
@@ -15,7 +15,11 @@ ROOT = AGENTOS_ROOT
 
 
 def test_agent_fact_and_lifecycle_modules_do_not_depend_on_execution_or_scheduling():
-    paths = [ROOT / "src/contracts/agents.py", ROOT / "service/agents/registry.py", ROOT / "service/agents/pool.py"]
+    paths = [
+        ROOT / "src/contracts/agents.py",
+        ROOT / "src/adapters/agent/registry.py",
+        ROOT / "src/components/resource/agents/pool.py",
+    ]
     forbidden = ("runtime.workflow_runtime", "runtime.orchestration.acg_execution", "components.executor", "components.resource.scheduler")
     for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"))

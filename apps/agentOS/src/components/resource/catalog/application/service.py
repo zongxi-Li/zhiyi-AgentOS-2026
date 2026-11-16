@@ -56,6 +56,7 @@ class MarketplaceService:
         self._lifecycle_lock = RLock()
         self._stop_monitor = Event()
         self._monitor: Thread | None = None
+        self._closed = False
 
     @_serialized_lifecycle
     def refresh_managed_health(self):
@@ -93,8 +94,12 @@ class MarketplaceService:
         self._stop_monitor.set()
         if self._monitor is not None:
             self._monitor.join(timeout=10)
-        self.launcher.close()
-        self.refresh_managed_health()
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            self.launcher.close()
+            self.refresh_managed_health()
+            self._closed = True
 
     def list_catalog(self) -> list[CatalogItem]:
         return self.catalog.list_items()

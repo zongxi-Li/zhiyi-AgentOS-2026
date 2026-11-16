@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { defineConfig, type Plugin } from 'vitest/config.js'
+import { defineConfig, type Plugin } from 'vitest/config'
 
 /**
  * Explicit alias table built from tsconfig.json paths. Deterministic for the

@@ -5,7 +5,7 @@ temporary databases. No implicit C2 schema DDL, no fake lock release, and
 the original assembly error always survives the cleanup.
 """
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 from contextlib import closing
 import asyncio
 import os
@@ -385,12 +385,13 @@ def test_adversarial_partial_construction_closes_actual_connections(tmp_path, mo
 def test_adversarial_local_transport_client_closed_on_shutdown_and_failure(tmp_path, monkeypatch, failure):
     from app.execution import wiring
     transports = []
-    original = wiring.HttpLocalRuntimeTransport
+    from adapters.tool import hands_http
+    original = hands_http.HandsHttpTransport
     def record(**kwargs):
         transport = original(**kwargs)
         transports.append(transport)
         return transport
-    monkeypatch.setattr(wiring, "HttpLocalRuntimeTransport", record)
+    monkeypatch.setattr(hands_http, "HandsHttpTransport", record)
     env = assembly_env(tmp_path, semantic=False, c2=False)
     env["AGENTOS_LOCAL_RUNTIME_ENDPOINT"] = "http://127.0.0.1:12345/v1/executions"
     if failure:
@@ -434,7 +435,8 @@ def test_adversarial_async_shutdown_closes_transport_in_owning_loop(tmp_path):
     runtime = build(assembly_env(tmp_path, semantic=False, c2=False))
     async def exercise():
         loop = asyncio.get_running_loop()
-        transport = wiring.HttpLocalRuntimeTransport(resource_id="test", address="http://localhost:12345",
+        from adapters.tool.hands_http import HandsHttpTransport
+        transport = HandsHttpTransport(resource_id="test", address="http://localhost:12345",
                                                      credential_provider=runtime.resource_plane)
         original = transport.aclose
         closed = []
@@ -449,8 +451,8 @@ def test_adversarial_async_shutdown_closes_transport_in_owning_loop(tmp_path):
         assert transport._client.is_closed
         # Injected clients belong to their caller, not the transport.
         async with httpx.AsyncClient() as borrowed:
-            transport = wiring.HttpLocalRuntimeTransport(resource_id="test", address="http://localhost:12345",
-                                                         credential_provider=runtime.resource_plane, client=borrowed)
+            transport = HandsHttpTransport(resource_id="test", address="http://localhost:12345",
+                                           credential_provider=runtime.resource_plane, client=borrowed)
             await transport.aclose()
             assert not borrowed.is_closed
     asyncio.run(exercise())

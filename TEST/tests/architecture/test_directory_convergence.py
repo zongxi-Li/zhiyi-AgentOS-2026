@@ -111,6 +111,16 @@ def test_components_do_not_depend_on_top_level_runtime():
     assert not violations, "Component depends on the application runtime:\n" + "\n".join(violations)
 
 
+def test_blueprint_package_compilation_is_a_planner_rule():
+    from components.executor.compiler import ACGGraphCompiler
+    from components.planner.package_compiler import ACGPackageCompiler
+
+    assert issubclass(ACGGraphCompiler, ACGPackageCompiler)
+    assert ACGGraphCompiler.compile_package is ACGPackageCompiler.compile_package
+    imports = list(_imports(SRC / "components/planner/package_compiler.py"))
+    assert not any(module.startswith("components.executor") for _, module in imports)
+
+
 def test_retired_service_and_safe_roots_do_not_keep_second_implementations():
     implementations = [
         str(path.relative_to(AGENTOS_ROOT))

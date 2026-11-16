@@ -1,6 +1,6 @@
 """Real temporary SQLite administrative upgrade, refusal and restart evidence."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 from contextlib import closing
 import json
 from pathlib import Path
@@ -183,8 +183,11 @@ def test_check_literal_case_is_not_normalized_into_false_compatibility(paths):
     base(paths)
     w = paths["workflow"]
     ddl = sql(w, "SELECT sql FROM sqlite_master WHERE name='task_copilot_permissions'")[0][0]
+    triggers = sql(w, "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name='task_copilot_permissions'")
     sql(w, "DROP TABLE task_copilot_permissions")
     sql(w, ddl.replace("'read_only'", "'READ_ONLY'"))
+    for (trigger,) in triggers:
+        sql(w, trigger)
     before = contents(paths)
     with pytest.raises(ops.SchemaUpgradeError, match="incompatible definition"):
         ops.upgrade_databases(**paths)
@@ -368,7 +371,7 @@ def test_gate_mapping_includes_upgrade_module_and_cli():
     sources = ["apps/agentOS/src/support/stores/c2_schema_upgrade.py", "scripts/upgrade_agentos_c2_schema.py"]
     selected, uncovered = gate["resolve_tests"](sources)
     assert uncovered == []
-    assert "tests/storage/test_c2_schema_upgrade.py" in selected
+    assert "../../TEST/tests/storage/test_c2_schema_upgrade.py" in selected
 
 
 def test_default_application_construction_does_not_upgrade_c2(tmp_path, monkeypatch):

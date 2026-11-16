@@ -297,12 +297,11 @@ async def test_direct_final_answer_requires_no_tool_execution(stack):
 
 
 @pytest.mark.asyncio
-async def test_native_tool_node_streams_before_committing_and_replays_without_new_requests(stack, monkeypatch):
+async def test_native_tool_node_streams_before_committing_and_replays_without_new_requests(stack):
     from runtime.events.live_events import RuntimeEventBroker
     broker = RuntimeEventBroker()
-    monkeypatch.setattr('adapters.agent.tool_session.runtime_event_broker', broker)
-    monkeypatch.setattr('adapters.agent.native.runtime_event_broker', broker)
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.list', {'path': '.'})], {'answer': 'live answer'}])
+    runner.runtime_event_publisher = broker
     release = asyncio.Event()
     async def stream_json(*, payload, **kwargs):
         raw = await http.post_json(payload=payload, **kwargs)

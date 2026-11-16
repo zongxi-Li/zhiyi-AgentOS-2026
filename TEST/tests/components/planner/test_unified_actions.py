@@ -11,7 +11,7 @@
 - 新路径默认关闭：生产源码除自身两模块外无人引用。
 """
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 
 import asyncio
 import json

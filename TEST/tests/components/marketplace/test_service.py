@@ -114,6 +114,19 @@ def test_installation_job_survives_store_reopen_and_is_tenant_scoped(tmp_path):
         reopened.close()
 
 
+def test_repeated_close_does_not_query_an_already_closed_job_store(tmp_path, monkeypatch):
+    service, _, launcher = _service(tmp_path)
+    service.jobs = SQLiteInstallationJobStore(tmp_path / "jobs.sqlite3")
+    closed = []
+    monkeypatch.setattr(launcher, "close", lambda: closed.append(True), raising=False)
+    service.close()
+    service.jobs.close()
+
+    service.close()
+
+    assert closed == [True]
+
+
 def test_custom_local_service_rejects_shell_command():
     from pydantic import ValidationError
     import pytest

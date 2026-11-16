@@ -1,6 +1,6 @@
 """Keep the real Permit-only bypass counterexample in the native freeze gate."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 from pathlib import Path
 
 

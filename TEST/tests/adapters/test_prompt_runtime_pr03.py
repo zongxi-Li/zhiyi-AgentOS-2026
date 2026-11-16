@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 
 import json
 from pathlib import Path

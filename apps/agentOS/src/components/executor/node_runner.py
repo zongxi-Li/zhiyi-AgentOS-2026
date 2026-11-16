@@ -418,7 +418,7 @@ class ACGNodeRunner:
             commitId=commit_id,
             attemptId=execution_record.attempt_id,
             agentRegistration=self.agent_registrations.get(step_id),
-            runtime_event_publisher=self.runtime_event_publisher,
+            runtimeEventPublisher=self.runtime_event_publisher,
         )
         if hasattr(step_tool_runtime, 'bind_context'):
             guard = (lambda: self.invocation_guard(step_id, state)) if self.invocation_guard else None

@@ -6,7 +6,7 @@ agentOS's own pytest pythonpath only exposes agentOS/src, so add apps/agent
 here — scoped to this directory only — without changing the global root.
 """
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 
 import sys
 from pathlib import Path

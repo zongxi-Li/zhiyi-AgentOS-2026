@@ -7,7 +7,7 @@ the trusted-principal seam (in production stamped by the HTTP boundary) are
 installed on top, exactly as the offline example and existing chain tests do.
 """
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 from pathlib import Path
 import sqlite3

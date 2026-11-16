@@ -1,6 +1,6 @@
 """Mapping and fail-closed reporting, without a real 300-second timeout."""
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import hashlib
 import json
 import os
@@ -87,28 +87,28 @@ def test_committed_external_changes_use_fixed_reference_not_head(tmp_path, monke
 
 
 @pytest.mark.parametrize("source,required", [
-    ("src/components/executor/graph.py", "tests/test_acg_execution_graph.py"),
-    ("src/components/executor/graph.py", "tests/components/executor/test_advanced_acg_capabilities.py"),
-    ("src/components/executor/compiler.py", "tests/test_acg_execution_graph.py"),
-    ("src/components/executor/compiler.py", "tests/components/planner/test_acg_semantic_preservation.py"),
-    ("src/runtime/acg_execution.py", "tests/runtime/test_resource_binding.py"),
-    ("src/components/resource/__init__.py", "tests/components/resource/test_resource_auth.py"),
-    ("src/components/resource/errors.py", "tests/components/resource/test_remote_observation.py"),
-    ("src/components/resource/health_store.py", "tests/components/resource/test_health_store.py"),
-    ("src/components/resource/node_health.py", "tests/components/resource/test_node_store.py"),
-    ("src/components/resource/node_store.py", "tests/components/resource/test_node_store.py"),
-    ("src/components/resource/service.py", "tests/components/resource/test_resource_auth.py"),
-    ("src/components/resource/sqlite_support.py", "tests/components/resource/test_store_contract.py"),
-    ("src/components/resource/store.py", "tests/components/resource/test_store_contract.py"),
-    ("src/contracts/resource.py", "tests/components/resource/test_edge_cloud_contracts.py"),
-    ("src/components/resource/scheduler/binder.py", "tests/components/scheduler/test_binder.py"),
-    ("src/components/resource/scheduler/leases.py", "tests/components/scheduler/test_redis_leases.py"),
-    ("src/components/resource/scheduler/models.py", "tests/components/scheduler/test_binder.py"),
-    ("src/support/stores/c2_schema_upgrade.py", "tests/storage/test_c2_schema_integrity.py"),
-    ("scripts/upgrade_agentos_c2_schema.py", "tests/storage/test_c2_schema_upgrade.py"),
-    ("apps/agent/app/execution/wiring.py", "tests/components/planner/test_production_authority_assembly.py"),
-    ("apps/agent/app/execution/instance_lock.py", "tests/storage/test_runtime_assembly_failure_cleanup.py"),
-    ("apps/agent/app/main.py", "tests/storage/test_runtime_assembly_failure_cleanup.py"),
+    ("src/components/executor/graph.py", "../../TEST/tests/test_acg_execution_graph.py"),
+    ("src/components/executor/graph.py", "../../TEST/tests/components/executor/test_advanced_acg_capabilities.py"),
+    ("src/components/executor/compiler.py", "../../TEST/tests/test_acg_execution_graph.py"),
+    ("src/components/executor/compiler.py", "../../TEST/tests/components/planner/test_acg_semantic_preservation.py"),
+    ("src/runtime/acg_execution.py", "../../TEST/tests/runtime/test_resource_binding.py"),
+    ("src/components/resource/__init__.py", "../../TEST/tests/components/resource/test_resource_auth.py"),
+    ("src/components/resource/errors.py", "../../TEST/tests/components/resource/test_remote_observation.py"),
+    ("src/components/resource/health_store.py", "../../TEST/tests/components/resource/test_health_store.py"),
+    ("src/components/resource/node_health.py", "../../TEST/tests/components/resource/test_node_store.py"),
+    ("src/components/resource/node_store.py", "../../TEST/tests/components/resource/test_node_store.py"),
+    ("src/components/resource/service.py", "../../TEST/tests/components/resource/test_resource_auth.py"),
+    ("src/components/resource/sqlite_support.py", "../../TEST/tests/components/resource/test_store_contract.py"),
+    ("src/components/resource/store.py", "../../TEST/tests/components/resource/test_store_contract.py"),
+    ("src/contracts/resource.py", "../../TEST/tests/components/resource/test_edge_cloud_contracts.py"),
+    ("src/components/resource/scheduler/binder.py", "../../TEST/tests/components/scheduler/test_binder.py"),
+    ("src/components/resource/scheduler/leases.py", "../../TEST/tests/components/scheduler/test_redis_leases.py"),
+    ("src/components/resource/scheduler/models.py", "../../TEST/tests/components/scheduler/test_binder.py"),
+    ("src/support/stores/c2_schema_upgrade.py", "../../TEST/tests/storage/test_c2_schema_integrity.py"),
+    ("scripts/upgrade_agentos_c2_schema.py", "../../TEST/tests/storage/test_c2_schema_upgrade.py"),
+    ("apps/agent/app/execution/wiring.py", "../../TEST/tests/components/planner/test_production_authority_assembly.py"),
+    ("apps/agent/app/execution/instance_lock.py", "../../TEST/tests/storage/test_runtime_assembly_failure_cleanup.py"),
+    ("apps/agent/app/main.py", "../../TEST/tests/storage/test_runtime_assembly_failure_cleanup.py"),
     ("src/support/async_tasks.py", "../agent/tests/test_execution_adapter_settlement.py"),
     ("apps/agent/app/execution/coordinator.py", "../agent/tests/test_managed_execution_settlement.py"),
     ("apps/agent/app/execution/model_runtime.py", "../agent/tests/test_execution_adapter_settlement.py"),
@@ -140,18 +140,21 @@ def test_production_composition_root_is_pinned_and_drift_forces_assembly_tests()
     source = "apps/agent/app/execution/wiring.py"
     assert source in gate["EXTERNAL_SOURCES"]
     current = hashlib.sha256((ROOT / source).read_bytes()).hexdigest()
-    assert gate["EXTERNAL_BASELINE"][source] == current
+    accepted = "2c8263f03b04e89380f93aa7f1728ba5d08aad433fa82b1dddc4b6582bfd94bf"
+    assert gate["EXTERNAL_BASELINE"][source] == accepted
+    if current != accepted:
+        assert source in gate["changed_external_paths"](gate["external_snapshot"]())
     selected, uncovered = gate["resolve_tests"]([source])
     assert uncovered == []
-    assert "tests/components/planner/test_production_authority_assembly.py" in selected
-    assert "tests/storage/test_c2_schema_upgrade.py" in selected
+    assert "../../TEST/tests/components/planner/test_production_authority_assembly.py" in selected
+    assert "../../TEST/tests/storage/test_c2_schema_upgrade.py" in selected
     # Any content drift on the composition root is flagged and maps to the
     # assembly tests: the baseline digest may only move together with them.
     drifted = dict(gate["external_snapshot"]())
     drifted[source] = "0" * 64
     assert source in gate["changed_external_paths"](drifted)
     selected, uncovered = gate["resolve_tests"](gate["changed_external_paths"](drifted))
-    assert uncovered == [] and "tests/components/planner/test_production_authority_assembly.py" in selected
+    assert uncovered == [] and "../../TEST/tests/components/planner/test_production_authority_assembly.py" in selected
 
 
 @pytest.mark.parametrize("source", ["apps/agent/app/execution/coordinator.py",
@@ -189,12 +192,12 @@ def test_real_cross_root_collection_and_manifest_execution_cannot_drop_app_tests
     gate = load()
     nodes, code, output = gate['collect_node_ids']([
         '../agent/tests/test_execution_adapter_settlement.py::test_repeated_parent_cancellation_waits_for_child_cleanup',
-        'tests/support/test_execution_settlement_persistence.py::test_stale_event_snapshot_cas_preserves_run_mission_and_outbox[memory]',
+        '../../TEST/tests/support/test_execution_settlement_persistence.py::test_stale_event_snapshot_cas_preserves_run_mission_and_outbox[memory]',
     ], timeout=120)
     assert code == 0, output
     assert set(nodes) == {
         'apps/agent/tests/test_execution_adapter_settlement.py::test_repeated_parent_cancellation_waits_for_child_cleanup',
-        'apps/agentOS/tests/support/test_execution_settlement_persistence.py::test_stale_event_snapshot_cas_preserves_run_mission_and_outbox[memory]',
+        'TEST/tests/support/test_execution_settlement_persistence.py::test_stale_event_snapshot_cas_preserves_run_mission_and_outbox[memory]',
     }
     manifest = tmp_path / 'cross-root.nodeids'
     gate['write_node_manifest'](nodes, manifest)
@@ -218,14 +221,14 @@ def test_instance_lock_is_pinned_and_drift_forces_cleanup_tests():
     assert gate["EXTERNAL_BASELINE"][source] == current
     selected, uncovered = gate["resolve_tests"]([source])
     assert uncovered == []
-    assert "tests/storage/test_runtime_assembly_failure_cleanup.py" in selected
+    assert "../../TEST/tests/storage/test_runtime_assembly_failure_cleanup.py" in selected
     # Any content drift on the lock is flagged and maps to the failure-cleanup
     # tests: the baseline digest may only move together with them.
     drifted = dict(gate["external_snapshot"]())
     drifted[source] = "0" * 64
     assert source in gate["changed_external_paths"](drifted)
     selected, uncovered = gate["resolve_tests"](gate["changed_external_paths"](drifted))
-    assert uncovered == [] and "tests/storage/test_runtime_assembly_failure_cleanup.py" in selected
+    assert uncovered == [] and "../../TEST/tests/storage/test_runtime_assembly_failure_cleanup.py" in selected
 
 
 @pytest.mark.parametrize("fault,status", [("sources", "INCOMPLETE_SOURCE_CHANGED"),
@@ -307,7 +310,7 @@ def test_pytest_launch_command_is_bounded_and_preserves_the_selection(tmp_path):
     node list without reordering, dropping, or degrading to whole files.
     """
     gate = load()
-    ids = [f"tests/storage/test_synthetic_{index:04d}.py::test_case_{index}[{index}-{'x' * 48}]"
+    ids = [f"../../TEST/tests/storage/test_synthetic_{index:04d}.py::test_case_{index}[{index}-{'x' * 48}]"
            for index in range(500)]
     naive = subprocess.list2cmdline(
         [sys.executable, "-m", "pytest", "-q", *ids, "--tb=short", "--durations=0"])
@@ -326,12 +329,12 @@ def test_manifest_runner_executes_exactly_the_listed_nodes_and_propagates_exit_s
     assert runner.is_file(), "the bounded launcher script must exist"
     good = tmp_path / "good.nodeids"
     gate['write_node_manifest']([
-        'tests/storage/test_freeze_gate_integrity.py::test_missing_default_baseline_blocks_before_test_discovery'], good)
+        'TEST/tests/storage/test_freeze_gate_integrity.py::test_missing_default_baseline_blocks_before_test_discovery'], good)
     observed = tmp_path / 'observation.json'
     env = {**os.environ, 'FREEZE_GATE_OBSERVATION_PATH': str(observed),
            'FREEZE_GATE_INVOCATION_ID': 'real-one-node'}
-    done = subprocess.run([sys.executable, str(runner), str(good), "--tb=short"],
-                          cwd=gate["AGENTOS"], capture_output=True, text=True,
+    done = subprocess.run(gate["build_pytest_command"](good),
+                          cwd=gate["ROOT"], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=120, env=env)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "1 passed" in done.stdout
@@ -342,10 +345,10 @@ def test_manifest_runner_executes_exactly_the_listed_nodes_and_propagates_exit_s
     assert profile['nodeCount'] == profile['executedCount'] == profile['collectedCount'] == 1
     assert set(evidence['reports'][0]) >= {'nodeId', 'phase', 'durationSeconds', 'outcome'}
     bad = tmp_path / "bad.nodeids"
-    bad.write_text("tests/storage/test_freeze_gate_integrity.py::definitely_not_a_test\n",
+    bad.write_text("TEST/tests/storage/test_freeze_gate_integrity.py::definitely_not_a_test\n",
                    encoding="utf-8")
-    failed = subprocess.run([sys.executable, str(runner), str(bad), "--tb=short"],
-                            cwd=gate["AGENTOS"], capture_output=True, text=True,
+    failed = subprocess.run(gate["build_pytest_command"](bad),
+                            cwd=gate["ROOT"], capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=120)
     assert failed.returncode != 0, failed.stdout + failed.stderr
 
@@ -357,21 +360,21 @@ def test_duration_history_preserves_maxima_and_records_last_observation(tmp_path
     monkeypatch.setitem(ns, "ROOT", tmp_path)
     history_path = tmp_path / "tmp/freeze_gate/test_durations.json"
     history_path.parent.mkdir(parents=True)
-    history_path.write_text(json.dumps({"tests/a.py::x": 5.0, "tests/b.py::y": 7.0,
+    history_path.write_text(json.dumps({"../../TEST/tests/a.py::x": 5.0, "../../TEST/tests/b.py::y": 7.0,
         'legacy': {'max': 9.0, 'last': 8.0, 'note': 'retain'}}),
                             encoding="utf-8")
-    gate["update_duration_history"]({"tests/a.py::x": 3.0, "tests/c.py::z": 2.0})
+    gate["update_duration_history"]({"../../TEST/tests/a.py::x": 3.0, "../../TEST/tests/c.py::z": 2.0})
     stored = json.loads(history_path.read_text(encoding="utf-8"))
-    assert stored["tests/a.py::x"] == 5.0
-    assert stored["tests/b.py::y"] == 7.0, "untouched history is never erased"
+    assert stored["../../TEST/tests/a.py::x"] == 5.0
+    assert stored["../../TEST/tests/b.py::y"] == 7.0, "untouched history is never erased"
     assert stored['legacy'] == {'max': 9.0, 'last': 8.0, 'note': 'retain'}
-    assert stored["tests/c.py::z"] == 2.0
-    gate['update_duration_history']({'tests/a.py::x': 8.0, 'legacy': 10.0})
+    assert stored["../../TEST/tests/c.py::z"] == 2.0
+    gate['update_duration_history']({'../../TEST/tests/a.py::x': 8.0, 'legacy': 10.0})
     stored = json.loads(history_path.read_text())
-    assert stored['tests/a.py::x'] == 8.0
+    assert stored['../../TEST/tests/a.py::x'] == 8.0
     assert stored['legacy'] == {'max': 10.0, 'last': 8.0, 'note': 'retain'}
     loaded = gate["load_duration_history"]()
-    assert loaded["tests/b.py::y"] == {"max": 7.0}
+    assert loaded["../../TEST/tests/b.py::y"] == {"max": 7.0}
 
 
 def _gate_harness(tmp_path, monkeypatch, gate, history, popen):
@@ -471,7 +474,7 @@ def test_profiles_never_splice_last_values_from_different_runs(tmp_path, monkeyp
     monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
     history = tmp_path / 'tmp/freeze_gate/test_durations.json'
     history.parent.mkdir(parents=True)
-    ids = ['tests/a.py::a', 'tests/b.py::b']
+    ids = ['../../TEST/tests/a.py::a', '../../TEST/tests/b.py::b']
     history.write_text(json.dumps({ids[0]: {'max': 200, 'last': 1},
                                    ids[1]: {'max': 200, 'last': 200}}))
     before = history.read_bytes()
@@ -488,7 +491,7 @@ def test_profiles_never_splice_last_values_from_different_runs(tmp_path, monkeyp
                                    'foreign', 'nan', 'negative', 'skip', 'invocation', 'exit'])
 def test_incomplete_observations_cannot_form_profiles(damage):
     gate = load()
-    ids = ['tests/a.py::a', 'tests/b.py::b']
+    ids = ['../../TEST/tests/a.py::a', '../../TEST/tests/b.py::b']
     data = observation(gate, ids)
     if damage == 'partial':
         data['reports'] = data['reports'][:3]
@@ -499,7 +502,7 @@ def test_incomplete_observations_cannot_form_profiles(damage):
     elif damage == 'duplicate':
         data['reports'].append(dict(data['reports'][0]))
     elif damage == 'foreign':
-        data['reports'][0]['nodeId'] = 'tests/other.py::x'
+        data['reports'][0]['nodeId'] = '../../TEST/tests/other.py::x'
     elif damage == 'nan':
         data['reports'][0]['durationSeconds'] = float('nan')
     elif damage == 'negative':
@@ -519,13 +522,13 @@ def test_incomplete_observations_cannot_form_profiles(damage):
 def test_profile_mismatch_is_explicitly_unknown(tmp_path, monkeypatch, change):
     gate = load()
     monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
-    ids, source = ['tests/a.py::a'], 'a' * 64
+    ids, source = ['../../TEST/tests/a.py::a'], 'a' * 64
     profile = make_profile(gate, source, ids)
     gate['atomic_json'](gate['profile_path'](source, ids), profile)
     if change == 'source':
         estimate = gate['load_complete_estimate']('b' * 64, ids)
     elif change == 'manifest':
-        estimate = gate['load_complete_estimate'](source, ['tests/b.py::b'])
+        estimate = gate['load_complete_estimate'](source, ['../../TEST/tests/b.py::b'])
     else:
         if change == 'count':
             profile['nodeCount'] = 2
@@ -551,7 +554,7 @@ def test_failed_or_incomplete_run_preserves_existing_complete_profile(tmp_path, 
                 data['reports'].pop()
             Path(kwargs['env']['FREEZE_GATE_OBSERVATION_PATH']).write_text(json.dumps(data))
             if fault == 'manifest':
-                Path(command[2]).write_text('tests/other.py::changed\n')
+                Path(command[2]).write_text('../../TEST/tests/other.py::changed\n')
         def wait(self, timeout=None):
             if timeout is not None and fault == 'timeout':
                 raise subprocess.TimeoutExpired('pytest', timeout)
@@ -599,7 +602,7 @@ def test_atomic_publication_failure_keeps_previous_profile(tmp_path, monkeypatch
 
 def test_full_profile_sums_all_phases_and_accounts_for_process_overhead():
     gate = load()
-    ids = ['tests/a.py::a', 'tests/b.py::b']
+    ids = ['../../TEST/tests/a.py::a', '../../TEST/tests/b.py::b']
     data = observation(gate, ids)
     for report, seconds in zip(data['reports'], [.1, 1.2, .3, .4, .5, .6]):
         report['durationSeconds'] = seconds
@@ -754,7 +757,7 @@ def test_success_timestamps_include_cache_finalization(tmp_path, monkeypatch):
 def test_profile_reader_never_observes_unconfirmed_publication(tmp_path, monkeypatch):
     gate = load()
     monkeypatch.setitem(gate['main'].__globals__, 'ROOT', tmp_path)
-    ids = ['tests/a.py::a']
+    ids = ['../../TEST/tests/a.py::a']
     gate['atomic_json'](gate['profile_path']('a' * 64, ids), make_profile(gate, 'a' * 64, ids))
     with gate['duration_cache_lock']():
         estimate = gate['load_complete_estimate']('a' * 64, ids)

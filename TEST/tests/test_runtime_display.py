@@ -1,5 +1,5 @@
 
-from _paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
+from TEST.tests._paths import REPO_ROOT, AGENTOS_ROOT, TEST_ROOT
 import asyncio
 import json
 import os
@@ -22,8 +22,8 @@ def event(kind, payload=None, attempt="a1", node="node"):
 
 
 @pytest.mark.parametrize("modules", [
-    "import components.planner.complexity; import runtime.live_events",
-    "import runtime.live_events; import components.planner.complexity",
+    "import components.planner.complexity; import runtime.events.live_events",
+    "import runtime.events.live_events; import components.planner.complexity",
 ])
 def test_planner_and_display_can_be_imported_independently(modules):
     root = AGENTOS_ROOT
@@ -169,7 +169,7 @@ def test_display_checkpoint_does_not_wake_mission_projection_readers(tmp_path, m
 
 
 def test_small_chunks_fold_in_bounded_batches_and_terminal_flushes_the_tail(monkeypatch):
-    from runtime import runtime_display
+    from runtime.projections import runtime_display
     monkeypatch.setattr(runtime_display, 'monotonic', lambda: 1.0)
     original = runtime_display.public_narrative
     folds = []

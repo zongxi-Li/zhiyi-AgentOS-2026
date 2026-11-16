@@ -15,6 +15,29 @@ from runtime.orchestration.planning_commit import RuntimePlanningCommitAuthority
 from support.stores.planning_commit_store import SQLitePlanningCommitStore
 
 
+def test_package_compiler_is_included_in_initial_implementation_identity(monkeypatch):
+    from pathlib import Path
+    from runtime.orchestration.initial_planning_sources import compilation_policy
+
+    before = compilation_policy()
+    read_bytes = Path.read_bytes
+
+    def changed_compiler(path):
+        content = read_bytes(path)
+        if path.name == "package_compiler.py" and path.parent.name == "planner":
+            return content + b"\n# different compiler implementation\n"
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", changed_compiler)
+    after = compilation_policy()
+
+    assert before.versions == after.versions
+    assert before.implementations["graphCompiler"] != after.implementations["graphCompiler"]
+    assert {key: value for key, value in before.implementations.items() if key != "graphCompiler"} == {
+        key: value for key, value in after.implementations.items() if key != "graphCompiler"
+    }
+
+
 @pytest.fixture
 def initial_run(ready_boundary):
     runtime, store, agent, source_id, _ = ready_boundary
