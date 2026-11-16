@@ -28,6 +28,8 @@
 
 已完成20条输入×3轮真实HTTPS配对：60/60组、792/792 token一致，62个后段KV全部回收；独立规格/质量审查通过，362项回归与18项数据转换通过。输出两组中文300 DPI PNG与矢量PDF，数据、统计口径及复现命令见[HTTPS回环实验](../../../../../docs/superpowers/reports/safe/experiments/2026-11-15-https-loopback/README.md)。回环仍比完整本地模型慢，不作公网或DP结论。
 
+2026-11-16持久防重放更新：新增SQLite nonce适配器。它以独立版本化文件保存消费记录和UTC高水位，支持同机多进程争用及重启保留；认证存储和模型同步在线程池执行。84项适配器、9项独立进程/双HTTP实例集成、59项认证IO/HTTP/生命周期测试及Safe全回归457项通过。数据库缺失、结构损坏、时钟回拨及锁超时按固定认证错误拒绝。合法数据库备份被回滚无法仅靠文件内高水位检测，恢复时须轮换凭据或引入外部可信状态；本实现只保证可信本机共享文件，不提供跨主机、网络文件系统一致性或DP保证。
+
 | 内容 | 当前状态 | 说明 |
 | --- | --- | --- |
 | 旧 `encryptionservice.py` | 已删除 | 新拆分推理路径不依赖旧参数扰动或同态加密占位。 |
@@ -48,10 +50,10 @@
 
 ## 认证传输的装配与边界
 
-HTTP依赖单独安装，不改变默认Agent安装包：
+模型、HTTP/TLS、绘图和本地工具均已整合至 AgentOS 唯一 Python 环境入口。以下命令从仓库根目录执行（Windows x64 / Python3.10 / CPU）：
 
 ```powershell
-apps/agentOS/.venv-safe/Scripts/python.exe -m pip install --require-hashes -r apps/agentOS/requirements.safe.http.lock
+apps/agentOS/.venv/Scripts/python.exe -m pip install --require-hashes -r apps/agentOS/requirements.txt
 ```
 
 调用 `components.safe.bootstrap.cloud.create_http_cloud_app` 时显式注入批准的 suffix runner、FP32 codec、greedy sampler、manifest、批准摘要和 `CredentialSource`。返回 ASGI 应用，须使用 lifespan 启停，并在服务器上配置 TLS；工厂不监听端口，也不关闭调用者的模型。客户端使用 `components.safe.infrastructure.transport.http_client.HttpRemoteTransport`，注入批准的 HTTPS origin、凭据及可选的受信 CA 上下文。临时证书仅由实验脚本生成。
@@ -68,7 +70,7 @@ apps/agentOS/.venv-safe/Scripts/python.exe -m pip install --require-hashes -r ap
 
 云端工厂默认最多128条会话记录、每owner一个活跃会话、8个在途请求。终态回执保留到会话绝对TTL（默认300秒）再回收，空闲TTL默认60秒；容量不足直接拒绝。维护失败撤销就绪；停机先关闭准入、等待已准入请求及同步计算交还执行权，最后释放KV。同步runner永久阻塞时，应用不能保证有界停机；部署侧需隔离进程，不能直接释放在用KV。
 
-nonce存储默认仅在当前进程内，认证时窗为±60秒；时钟回拨期间拒绝认证直到恢复。重启或多worker部署须使用共享持久原子nonce存储，或轮换实验凭据，不能将内存防重放承诺扩展到进程重启。凭据由调用者安全保存并注入，每次请求读取撤销状态；浏览器不持有长期密钥。直接TLS运行时禁用反向代理scheme伪装；若未来部署代理，须另立可信边界配置与验收。
+nonce存储默认仅在当前进程内，认证时窗为±60秒；时钟回拨期间拒绝认证直到恢复。需要重启保留或同机多worker共享防重放时，使用 `components.safe.infrastructure.storage.sqlite_nonces.SqliteNonceStore`：先用 `SqliteNonceStore.create(path)` 初始化一次，再由每个实例以同一容量配置打开已有文件。它只接受专用版本化结构，文件丢失、结构损坏、锁超时、时钟回拨或配置不一致均固定拒绝，不自动重建；高水位和消费在SQLite事务中持久化。合法备份回滚无法仅靠该文件检测；数据库替换或回滚后须轮换凭据或引入外部可信状态。该适配器只保证可信单机共享文件，不保证跨主机/网络文件系统一致性。凭据由调用者安全保存并注入，每次请求读取撤销状态；浏览器不持有长期密钥。直接TLS运行时禁用反向代理scheme伪装；若未来部署代理，须另立可信边界配置与验收。
 
 HMAC依据 [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104)，HTTP消息长度约束参考 [RFC 9112 §6.3](https://www.rfc-editor.org/rfc/rfc9112#section-6.3)；具体协议由本模块实现，不从论文复制未审查的服务代码。TLS保护链路，激活仍可能被受信后段分析；DP、反演评估和持久隐私账本均未因此实现。
 
@@ -301,7 +303,7 @@ flowchart TD
 - 配置、manifest、wire protocol、privacy profile 和预算 schema 分别有版本，不能用单一“模块版本”代替兼容检查。
 - 数据目录由 `bootstrap.settings` 注入，默认位于应用数据根的 `safe/`：`artifacts/`、`privacy/budget.sqlite3`；临时会话只在内存。代码目录不存权重、数据库、激活或真实密钥。
 - 新模型新增 `infrastructure/models/<architecture>.py`，新编码新增 `infrastructure/codecs/<format>.py`，新存储新增 `infrastructure/storage/<backend>.py`；由 manifest/capability 白名单明确启用，不按请求动态 import。
-- DP库仍为待选的可选依赖；Torch/Transformers是模型角色的可选依赖。`apps/agentOS/requirements.safe.in` 已固定CPU参考依赖，`requirements.safe.lock` 已从实际wheel生成SHA256平台锁并在全新环境验证。仅支持本轮验收的Windows x64/Python3.10；新平台/后端须单独锁定。轻量门面导入仍不要求模型依赖，文件放在应用根而非 `src/components/safe` 内。
+- DP库仍待选择与验证，尚未加入安装清单；Torch/Transformers及HTTP/绘图依赖已包含在统一 `apps/agentOS/requirements.txt` 中，直接和传递版本均固定并带实际wheel的SHA256。已验收平台限定为Windows x64/Python3.10/CPU；其他平台与后端须重新解析并验收。轻量门面仍保持按需导入，不会因安装完整依赖而自动创建模型或连接。安装、离线复现与历史锁说明见[环境配置](../../../docs/环境配置.md)。
 - CLI 由 `bootstrap.cli` 显式注入制品/推理用例；`interfaces.cli` 只解析参数、调用注入用例和输出报告，不绕过 application 直接操作模型或数据库。配置拒绝任意网络下载地址与可执行模型代码。
 - 批处理、动态切分、跨设备调度、联合训练和权重聚合需要独立能力协议；不能通过任意 `metadata` 或额外 JSON 字段绕开协议演进。
 

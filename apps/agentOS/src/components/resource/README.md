@@ -196,7 +196,7 @@ CatalogItem / CustomResourceRequest
 
 DOCX 转换为文字及表格内容，XLSX 读取活动工作表和公式缓存值，不执行公式；转换为 Markdown 时采用纯文本转义，HTML 转 Markdown 不保留原页面版式。转换不是高保真 Office 排版引擎。扫描 PDF 返回 `OCR_NOT_AVAILABLE`，加密 PDF 被拒绝；不生成 PDF、DOCX 或 XLSX，不隐式下载 OCR、Pandoc 或 LibreOffice。
 
-平台部署时，在运行 AgentOS 的同一 Python 环境安装 `apps/agentOS/requirements-local-tools.txt`（pypdf、python-docx、openpyxl、Markdown）。目录 ZIP 包含平台工具代码，**不包含 Python 解释器和第三方依赖**；缺依赖时安装失败，不在安装请求中执行 pip 或联网下载。平台默认装配会生成本地目录和包，可通过 `AGENTOS_MARKETPLACE_CATALOG_DIR`、`AGENTOS_MARKETPLACE_PACKAGE_DIR`、`AGENTOS_MARKETPLACE_INSTALL_DIR` 覆盖数据目录。当前为平台维护的本地分发，尚未接外部仓库。
+平台部署时，在运行 AgentOS 的同一 Python 环境安装 `apps/agentOS/requirements.txt`（pypdf、python-docx、openpyxl、Markdown）。目录 ZIP 包含平台工具代码，**不包含 Python 解释器和第三方依赖**；缺依赖时安装失败，不在安装请求中执行 pip 或联网下载。平台默认装配会生成本地目录和包，可通过 `AGENTOS_MARKETPLACE_CATALOG_DIR`、`AGENTOS_MARKETPLACE_PACKAGE_DIR`、`AGENTOS_MARKETPLACE_INSTALL_DIR` 覆盖数据目录。当前为平台维护的本地分发，尚未接外部仓库。
 
 ### 一次工具请求的数据变化
 

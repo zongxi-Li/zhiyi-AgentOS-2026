@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-httpx = pytest.importorskip("httpx", reason="需要独立 requirements.safe.http.lock 环境")
+httpx = pytest.importorskip("httpx", reason="需要安装 apps/agentOS/requirements.txt")
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
@@ -211,14 +211,17 @@ def test_startup_purge_failure_never_marks_application_ready(monkeypatch):
 
 def test_shutdown_waits_for_inflight_purge_before_finishing(monkeypatch):
     purge_started, allow_purge, leave_lifespan, stopped = (threading.Event() for _ in range(4))
+    session_created = threading.Event()
     original = cloud.MemorySessionStore.purge_expired
     calls = []
     failures = []
     def blocking_purge(store):
         calls.append(True)
         if len(calls) > 1:
+            # 后台维护可以先于会话创建运行；显式同步被测KV，避免靠线程调度顺序。
+            assert session_created.wait(timeout=10)
             purge_started.set()
-            assert allow_purge.wait(timeout=2)
+            assert allow_purge.wait(timeout=10)
         return original(store)
     monkeypatch.setattr(cloud.MemorySessionStore, "purge_expired", blocking_purge)
     app, runner, _, digest = make_app(purge_interval=0.01)
@@ -226,7 +229,8 @@ def test_shutdown_waits_for_inflight_purge_before_finishing(monkeypatch):
         try:
             with TestClient(app, base_url="https://testserver") as client:
                 assert create(client, digest).status_code == 200
-                assert leave_lifespan.wait(timeout=2)
+                session_created.set()
+                assert leave_lifespan.wait(timeout=10)
         except BaseException as exc:
             failures.append(exc)
         finally:
@@ -234,14 +238,15 @@ def test_shutdown_waits_for_inflight_purge_before_finishing(monkeypatch):
     worker = threading.Thread(target=serve)
     worker.start()
     try:
-        assert purge_started.wait(timeout=2)
+        assert purge_started.wait(timeout=10)
         leave_lifespan.set()
         assert not stopped.wait(timeout=0.05)
         assert runner.handles
     finally:
         allow_purge.set()
+        session_created.set()
         leave_lifespan.set()
-        worker.join(timeout=2)
+        worker.join(timeout=10)
     assert stopped.is_set()
     assert not failures
     assert not runner.handles

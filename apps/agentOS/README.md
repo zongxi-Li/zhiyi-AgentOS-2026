@@ -8,6 +8,15 @@
 [模型运行时装配](docs/模型运行时接入方案.md)。Gitee 分叉提交的迁移判定见
 [Gitee 模型运行时迁移检查](docs/Gitee模型运行时迁移评估.md)。
 
+## Python 环境
+
+统一使用 `requirements.txt` 安装基础运行、本地工具、Safe 模型、HTTP/TLS、绘图和测试依赖。
+Windows x64 / Python3.10 / CPU 的安装、离线复现和版本维护方法见[环境配置](docs/环境配置.md)。
+
+```powershell
+python -m pip install --require-hashes -r apps/agentOS/requirements.txt
+```
+
 ## 目标目录
 
 ```text
@@ -77,7 +86,7 @@ agentOS/
 └─ data/                                 本地运行/实验数据与制品
 ```
 
-`runtime/` 和 `adapters/` 的分组目录是目标结构，当前多数文件仍平铺。各部件只按实际复杂度设立 `models.py`、`service.py`、`algorithms.py`、`store.py`，或细分为 `application/`、`domain/`、`ports/`、`infrastructure/`；不为目录对称创建空层。`safe` 的细分结构继续遵循其[模块设计](src/safe/README.md)，迁移时整体保留内部边界。
+`runtime/` 和 `adapters/` 的分组目录是目标结构，当前多数文件仍平铺。各部件只按实际复杂度设立 `models.py`、`service.py`、`algorithms.py`、`store.py`，或细分为 `application/`、`domain/`、`ports/`、`infrastructure/`；不为目录对称创建空层。`safe` 的细分结构继续遵循其[模块设计](src/components/safe/README.md)，迁移时整体保留内部边界。
 
 ## 分层与依赖规则
 
@@ -164,7 +173,7 @@ runtime 可以协调跨部件事务、补偿和投影更新，但业务状态是
 | `src/svolve/` 当前为空目录 | 不纳入目标层次；后续进化能力归 evolution，清理须与实际迁移一起处理 |
 | runtime 仍平铺且混合编排、规则与投影；adapters 多数文件也平铺 | 按上表逐项拆分职责，再建立目标子包并迁移调用方 |
 | `storage` 已平铺，`support/acg` 和历史 `support/stores` 仍存在 | 保持存储边界，逐步收敛 ACG 合同与兼容入口 |
-| safe 已有进程内拆分生成用例；认证网络服务、DP 发布与持久预算尚未完成 | 以[模块状态与验证报告](src/safe/README.md)为能力依据，不以目录名称宣称安全或性能收益 |
+| safe 已有进程内拆分生成用例；认证网络服务、DP 发布与持久预算尚未完成 | 以[模块状态与验证报告](src/components/safe/README.md)为能力依据，不以目录名称宣称安全或性能收益 |
 
 迁移顺序：先稳定公开合同与部件门面，再归位 runtime 中的业务规则，随后移动目录并同步调用、配置与测试，最后缩减兼容入口。每步保持旧行为可验证，不能仅靠新增目录宣称已完成分层。
 

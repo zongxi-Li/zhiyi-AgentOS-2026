@@ -1,12 +1,13 @@
 *.sh text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+apps/agentOS/requirements.txt text eol=lf
 
 # 固定 Safe 实验脚本换行，保证跨平台检出后源码指纹保持一致。
-apps/agentOS/evals/safe/exam/analyze_network_sensitivity.py text eol=lf
-apps/agentOS/evals/safe/exam/gen_fig_network_sensitivity.py text eol=lf
-apps/agentOS/evals/safe/exam/verify_https_transport.py text eol=lf
-apps/agentOS/evals/safe/exam/gen_fig_https_transport.py text eol=lf
+evals/safe/exam/analyze_network_sensitivity.py text eol=lf
+evals/safe/exam/gen_fig_network_sensitivity.py text eol=lf
+evals/safe/exam/verify_https_transport.py text eol=lf
+evals/safe/exam/gen_fig_https_transport.py text eol=lf
 # HTTP实验报告记录该锁文件的原始字节摘要，保留已核验文件的换行。
-apps/agentOS/requirements.safe.http.lock -text whitespace=trailing-space,space-before-tab,cr-at-eol
-apps/agentOS/src/safe/infrastructure/experiments/*.py text eol=lf
+docs/superpowers/reports/safe/dependencies/2026-11-15/*.lock -text whitespace=trailing-space,space-before-tab,cr-at-eol
+apps/agentOS/src/components/safe/infrastructure/experiments/*.py text eol=lf
