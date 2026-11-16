@@ -1,4 +1,0 @@
-# -*- coding: utf-8 -*-
-# 仅显式实验绘图需要，不加入默认Agent依赖。
--r requirements.safe.in
-matplotlib==3.10.7
