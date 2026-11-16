@@ -310,7 +310,8 @@ def main():
             eos_token_ids=sorted(tokenizer.eos_token_ids), source_weights_sha256=file_digest(args.source / "model.safetensors"),
             runtime_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
             script_sha256=file_digest(Path(__file__)),
-            http_lock_sha256=file_digest(Path(__file__).resolve().parents[3] / "apps/agentOS/requirements.safe.http.lock"))
+            dependency_file="apps/agentOS/requirements.txt",
+            dependencies_sha256=file_digest(PROJECT_ROOT / "apps/agentOS/requirements.txt"))
         with tempfile.TemporaryDirectory(prefix="safe-tls-eval-") as temporary:
             directory = Path(temporary)
             make_certificate(directory)

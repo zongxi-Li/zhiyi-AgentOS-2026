@@ -8,6 +8,17 @@
 [模型运行时装配](docs/模型运行时接入方案.md)。Gitee 分叉提交的迁移判定见
 [Gitee 模型运行时迁移检查](docs/Gitee模型运行时迁移评估.md)。
 
+## Python 环境
+
+Python 依赖入口统一为 `requirements.txt`，已整合本地工具及 Safe 模型、HTTP/TLS、绘图和测试依赖。
+当前带哈希的平台锁验收范围为 Windows x64 / Python3.10 / CPU 的 Safe 与本地工具；
+完整 AgentOS 核心使用 Python3.11+ 接口，本轮在 Python3.13 隔离环境中另行验证。
+该锁尚不能作为全应用跨 Python 版本的验收证明，详见[环境配置](docs/环境配置.md)。
+
+```powershell
+python -m pip install --require-hashes -r apps/agentOS/requirements.txt
+```
+
 ## 目录结构
 
 ```text

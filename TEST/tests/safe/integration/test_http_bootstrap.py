@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-httpx = pytest.importorskip("httpx", reason="需要独立 requirements.safe.http.lock 环境")
+httpx = pytest.importorskip("httpx", reason="需要安装 apps/agentOS/requirements.txt")
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 

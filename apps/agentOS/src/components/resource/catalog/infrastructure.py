@@ -141,7 +141,7 @@ class LocalPackageLauncher:
         if module != "agentos_local_tools.server" or item.startup.get("capability") not in {"pdf.parse", "file.convert"}:
             raise ValueError("unsupported platform Python module")
         if any(importlib.util.find_spec(name) is None for name in ("pypdf", "docx", "openpyxl", "markdown")):
-            raise ValueError("local tool dependencies missing; install requirements-local-tools.txt")
+            raise ValueError("local tool dependencies missing; install apps/agentOS/requirements.txt")
         token = uuid.uuid4().hex
         runtime_id = declared.runtime_id + ":installation:" + token
         destination = self.install_root / token

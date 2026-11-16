@@ -219,7 +219,7 @@ sequenceDiagram
 | `apps/frontend/src/services/api/splitInference.ts` | 真实状态、生成事件、取消与错误合同 |
 | `apps/frontend/src/platform/api.ts`、`apps/frontend/src/platform/api.spec.ts` | 专用本机 origin 校验及桌面 bridge/开发代理回归 |
 | `apps/frontend/src/components/resource-center/SplitInferencePanel.vue` | 实验入口，展示模型/本机就绪/云端就绪/隐私事实 |
-| `apps/agentOS/requirements.safe.in`、`apps/agentOS/requirements.safe.lock` | 独立模型执行依赖与受控版本 |
+| `apps/agentOS/requirements.txt` | 统一运行、模型、HTTP、工具、绘图与测试依赖，固定版本和wheel哈希 |
 | `ops/scripts/safe/export_model.py`、`verify_split.py`、`benchmark.py` | 调用 safe CLI 的薄脚本，制品生成、正确性与性能证据入口 |
 | `docs/superpowers/reports/safe/` | 后续每阶段证据、配置与运行环境，不存用户输入 |
 
