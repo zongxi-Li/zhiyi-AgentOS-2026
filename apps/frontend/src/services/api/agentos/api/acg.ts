@@ -1,4 +1,5 @@
 import { agentosRequest } from '../client'
+import type { GraphVersionHistory } from '../types'
 import type { GraphProjection, AcgDeliverable, AcgFinalArtifact, AcgStepState, AcgView, NodeExecutionPhase, ProvenanceConsumption, ProvenanceProduction, RunExecutionNode, RunExecutionTree, RuntimeInteraction, StepStatus, WorkflowRun, WorkflowTraceExport } from '../types'
 import { runPath } from '../paths'
 import axios from 'axios'
@@ -147,6 +148,16 @@ export const stepStatesFromRun = (
 }
 
 export const createAcgApi = (getApi: () => AcgApiDependencies) => ({
+  async getGraphVersions(runId: string, options: { signal?: AbortSignal } = {}): Promise<GraphVersionHistory> {
+    const response = await agentosRequest.get<GraphVersionHistory>(`${runPath(runId)}/graph/versions`, { ...options, timeout: 15000 })
+    return response.data
+  },
+  async getGraphSnapshot(runId: string, blueprintId: string | null, options: { signal?: AbortSignal } = {}): Promise<GraphProjection> {
+    const response = await agentosRequest.get<GraphProjection>(`${runPath(runId)}/graph`, {
+      ...options, timeout: 15000, params: blueprintId ? { blueprintId } : undefined
+    })
+    return response.data
+  },
   async getAcgView(runId: string, options: { signal?: AbortSignal; run?: WorkflowRun | Promise<WorkflowRun> } = {}): Promise<AcgView> {
     const coreRequests = [
       options.run || getApi().getWorkflowRun(runId, options),

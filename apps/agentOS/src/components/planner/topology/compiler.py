@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contracts.artifacts import is_final_synthesis_role
 from contracts.planning import PlannedTask, SemanticTaskRelationType, TaskPlanRelation, VerificationLoopPolicy
 
 from .model import (CandidateTopology, CapabilityRequirement, EdgeMutationPolicy, EdgeOrigin,
@@ -10,7 +11,7 @@ from .validator import validate_candidate
 
 
 class TaskPlanTopologyCompiler:
-    def __init__(self, capability_catalog, *, max_search_states: int = 512) -> None:
+    def __init__(self, capability_catalog, *, max_search_states: int | None = None) -> None:
         self.capability_catalog = capability_catalog
         self.binding_solver = CapabilityBindingSolver(max_search_states=max_search_states)
 
@@ -146,7 +147,19 @@ class TaskPlanTopologyCompiler:
         )
         for edge in binding_audit.selected_bindings:
             self._append(edges, seen, edge)
-        sinks = [node for node in nodes if capabilities[node.key] in {"verification", "artifact_generation"}]
+        final_sinks = [node for node in nodes
+                       if capabilities[node.key] == "artifact_generation"
+                       and is_final_synthesis_role(node.logical_role)]
+        if len(final_sinks) > 1:
+            raise TopologyCompileError(
+                TopologyConflict(code=TopologyConflictCode.TERMINAL_CONNECTION_CONFLICT,
+                                 phase="terminal_completion"),
+                "candidate topology declares multiple final synthesis tasks",
+            )
+        # Once a final deliverable is declared, verification is an upstream
+        # result, not an alternative sink that may finish beside the deliverable.
+        sinks = final_sinks or [node for node in nodes
+                                if capabilities[node.key] in {"verification", "artifact_generation"}]
         outgoing = {edge.source_key for edge in edges if edge.relation_type == SemanticTaskRelationType.DEPENDS_ON.value}
         for leaf in nodes:
             if leaf.key in outgoing or leaf in sinks:
@@ -177,6 +190,11 @@ class TaskPlanTopologyCompiler:
                         ),
                         f"terminal task {leaf.key} cannot reach a verification or artifact sink",
                     )
+        if final_sinks:
+            self._connect_final_artifact_inputs(
+                nodes=nodes, capabilities=capabilities, edges=edges, seen=seen,
+                final_key=final_sinks[0].key,
+            )
         candidate = CandidateTopology(
             tuple(node.key for node in nodes), tuple(edges), tuple(requirements),
             control_policies, binding_audit.selected_bindings,
@@ -196,6 +214,32 @@ class TaskPlanTopologyCompiler:
         return TopologyCompileResult(
             candidate, tuple(edge.to_relation() for edge in edges), control_policies, audit
         )
+
+    def _connect_final_artifact_inputs(self, *, nodes, capabilities, edges, seen, final_key):
+        """Carry report bodies as well as their terminal verification results.
+
+        A dependency is also the existing lowering contract's data channel. A
+        verifier alone cannot supply a report body. Prefer the last producer on
+        each refinement path; retain earlier explicitly distinct deliverables.
+        Loop exit dependencies above remain the scheduling barrier, so adding a
+        report data channel does not bypass bounded verification controls.
+        """
+        producers = [node for node in nodes
+                     if node.key != final_key and capabilities[node.key] == "artifact_generation"]
+        for producer in producers:
+            later = [node for node in producers
+                     if node.key != producer.key and self._has_path(edges, producer.key, node.key)]
+            if producer.produced_artifacts:
+                covered = {artifact for node in later for artifact in node.produced_artifacts}
+                if set(producer.produced_artifacts) <= covered:
+                    continue
+            elif later:
+                continue
+            self._append(edges, seen, TopologyEdge(
+                producer.key, final_key, SemanticTaskRelationType.DEPENDS_ON.value,
+                EdgeOrigin.TERMINAL_CONNECTOR, EdgeMutationPolicy.REGENERABLE,
+                reason="carry upstream artifact content into final synthesis",
+            ))
 
     @staticmethod
     def _append(edges, seen, edge):

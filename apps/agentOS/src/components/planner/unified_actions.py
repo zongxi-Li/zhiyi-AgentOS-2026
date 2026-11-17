@@ -17,7 +17,7 @@
 2. 载荷严格校验 → ``INVALID_PAYLOAD``
 3. 会话存在 → ``UNKNOWN_SESSION``
 4. 会话未撤销 → ``SESSION_REVOKED``
-5. 预算（动作数/截止期）→ ``BUDGET_EXHAUSTED``
+5. 会话截止期 → ``BUDGET_EXHAUSTED``
 6. 重复 request_ref：同指纹幂等重放，异指纹 → ``DUPLICATE_ACTION``
 7. 持久绑定 CAS（Run 存在、Mission 一致、非终态、observationId、planVersion）
    → ``BINDING_MISMATCH`` / ``PLAN_VERSION_MISMATCH`` / ``STALE_OBSERVATION``
@@ -25,7 +25,7 @@
 9. 执行（超出单动作时限 → ``TOOL_TIMEOUT``，结果丢弃）
 
 步骤 7 发现的世界变化会顺带撤销会话；其后提交统一得到 ``SESSION_REVOKED``。
-预算按“每个非重放提交计一次”扣减，拒绝同样计数。
+每个非重放提交计入审计，拒绝同样计数；计数不终止会话。
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ class PlannerActionSession:
         plan_version: int,
         observation_id: str,
         allowed_reads: frozenset[str],
-        max_actions: int,
+        max_actions: int | None,
         expires_at_monotonic: float,
     ):
         self.session_id = session_id
@@ -125,7 +125,7 @@ class PlannerActionSession:
         self.plan_version = plan_version
         self.observation_id = observation_id
         self.allowed_reads = allowed_reads
-        self.max_actions = max_actions
+        self.max_actions = None
         self.expires_at_monotonic = expires_at_monotonic
         self.actions_used = 0
         self.revoked = False
@@ -157,7 +157,7 @@ class PlannerActionGateway:
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
         monotonic_clock: Callable[[], float] = default_monotonic,
         per_action_timeout_seconds: float = 5.0,
-        default_max_actions: int = 16,
+        default_max_actions: int | None = None,
         default_ttl_seconds: float = 600.0,
         htn_selector: Any = None,
         horizon_selector: Any = None,
@@ -168,7 +168,8 @@ class PlannerActionGateway:
         self.audit_sink = audit_sink
         self.monotonic = monotonic_clock
         self.per_action_timeout_seconds = max(0.0, float(per_action_timeout_seconds))
-        self.default_max_actions = max(1, int(default_max_actions))
+        # Compatibility for persisted callers; action counts remain telemetry.
+        self.default_max_actions = None
         self.default_ttl_seconds = max(0.001, float(default_ttl_seconds))
         self._sessions: dict[str, PlannerActionSession] = {}
         self._registry_lock = Lock()
@@ -211,7 +212,7 @@ class PlannerActionGateway:
             plan_version=loop.current.observation.plan_version,
             observation_id=loop.current.observation_id,
             allowed_reads=targets,
-            max_actions=self.default_max_actions if max_actions is None else max(1, int(max_actions)),
+            max_actions=None,
             expires_at_monotonic=self.monotonic() + (
                 self.default_ttl_seconds if ttl_seconds is None else max(0.001, float(ttl_seconds))
             ),
@@ -344,17 +345,10 @@ class PlannerActionGateway:
             outcome = reject("SESSION_REVOKED", f"session revoked: {session.revoke_reason}", retryable=False)
             self._finish(action_id, session, "rejected", outcome, started)
             return outcome
-        # 5. budget (count + deadline): once exhausted the session is closed,
-        #    idempotent replays included; replays themselves never consume budget
+        # 5. Live deadline; action counts cannot revoke an otherwise valid session.
         fingerprint = self._request_fingerprint(request)
         recorded = session.journal.get(request.request_ref)
         replay = recorded is not None and recorded[0] == fingerprint
-        if session.actions_used >= session.max_actions:
-            outcome = reject("BUDGET_EXHAUSTED",
-                             f"action budget exhausted: {session.actions_used}/{session.max_actions}",
-                             retryable=False)
-            self._finish(action_id, session, "rejected", outcome, started)
-            return outcome
         if self.monotonic() > session.expires_at_monotonic:
             self._revoke(session, "session deadline exceeded")
             outcome = reject("BUDGET_EXHAUSTED", "session deadline exceeded", retryable=False)

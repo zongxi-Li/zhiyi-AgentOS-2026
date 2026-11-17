@@ -12,7 +12,7 @@ const { networks, flowCalls } = vi.hoisted(() => ({
 vi.mock('./AcgExecutionFlow.vue', async () => {
   const { defineComponent, h } = await import('vue')
   return { default: defineComponent({
-    props: ['blueprint', 'selectedId', 'anchorId', 'statuses', 'positions'],
+    props: ['blueprint', 'selectedId', 'anchorId', 'statuses', 'positions', 'difference', 'historical'],
     emits: ['select', 'doubleClick', 'zoom'],
     setup(props, { emit, slots, expose }) {
       expose({ ...flowCalls, close: () => emit('select', '') })
@@ -110,6 +110,37 @@ describe('execution flow integration', () => {
     expect(wrapper.get('[data-node="n2"]').text()).toContain('\u5df2\u5b8c\u6210')
     expect(flowCalls.actualSize).not.toHaveBeenCalled()
   })
+  it.each([
+    ['completed', '已完成'], ['skipped_by_condition', '已跳过'], ['cancelled', '已取消'], ['pending', '已完成']
+  ])('preserves the durable %s outcome when an earlier attempt still has a FAILED stream phase', async (status, label) => {
+    const wrapper = await setup({ observeResize: false, completedStepIds: ['n3'], runtimePhases: { n3: 'FAILED' },
+      stepStates: [{ stepId: 'n3', status, agentName: 'worker', attempt: 1, retryCount: 1,
+        errorSummary: 'Earlier attempt failed' }] })
+    expect(wrapper.get('[data-node="n3"]').text()).toContain(label)
+    expect(wrapper.get('[data-node="n3"]').text()).not.toContain('失败')
+    await wrapper.get('[data-node="n3"]').trigger('click')
+    expect(wrapper.get('.uml-card__status').text()).toBe(label)
+    if (status === 'completed') {
+      await click(wrapper, '异常路径')
+      expect(wrapper.text()).toContain('当前运行没有异常路径')
+    }
+  })
+  it('anchors the durable running supplemental read before old stream activity and earlier retry states', async () => {
+    const revised: GraphProjection = { ...blueprint, graphVersion: 2,
+      nodes: Array.from({ length: 10 }, (_, index) => ({ nodeId: `n${index + 1}`, nodeType: 'step' as const, name: `Task ${index + 1}` })),
+      edges: Array.from({ length: 9 }, (_, index) => ({ edgeId: `e${index + 1}`, sourceId: `n${index + 1}`,
+        targetId: `n${index + 2}`, edgeType: 'dependency' as const })) }
+    const wrapper = await setup({ blueprint: revised, completedStepIds: ['n2'],
+      runtimePhases: { n1: 'STREAMING', n2: 'FAILED', n3: 'FAILED', n9: 'FAILED' },
+      stepStates: [{ stepId: 'n2', status: 'completed', agentName: 'worker', attempt: 1, retryCount: 1 },
+        { stepId: 'n3', status: 'retrying', agentName: 'worker', attempt: 1, retryCount: 1 },
+        { stepId: 'n9', status: 'running', agentName: 'worker', attempt: 1, retryCount: 0 }] })
+    expect(ids(wrapper)).toEqual(['n8', 'n9', 'n10'])
+    const flow = wrapper.findComponent('.mock-execution-flow')
+    expect(flow.props('anchorId')).toBe('n9')
+    expect(flow.props('statuses')).toMatchObject({ n2: { status: 'completed' }, n3: { status: 'retrying' }, n9: { status: 'running' } })
+    expect(wrapper.get('[data-node="n9"]').text()).toContain('运行中')
+  })
   it('follows an external selection outside the current neighborhood', async () => {
     const wrapper = await setup()
     await wrapper.setProps({ focusNodeId: 'n5' })
@@ -117,6 +148,28 @@ describe('execution flow integration', () => {
     expect(ids(wrapper)).toEqual(['n4', 'n5'])
     expect(flowCalls.actualSize).toHaveBeenCalledWith('n5')
     expect(wrapper.emitted('nodeSelected')).toContainEqual(['n5'])
+  })
+  it('recenters an explicitly located node repeatedly without animating its selection echo', async () => {
+    const wrapper = await setup()
+    await wrapper.vm.focusNode('n5')
+    expect(flowCalls.actualSize.mock.calls).toEqual([['n5']])
+    await wrapper.setProps({ focusNodeId: 'n5' })
+    await flushPromises()
+    expect(flowCalls.actualSize).toHaveBeenCalledTimes(1)
+    await wrapper.vm.focusNode('n5')
+    expect(flowCalls.actualSize.mock.calls).toEqual([['n5'], ['n5']])
+    expect(ids(wrapper)).toEqual(['n4', 'n5'])
+  })
+  it('returns from an abnormal path to the current execution and can locate it repeatedly', async () => {
+    const wrapper = await setup({ stepStates: failedStepStates })
+    await click(wrapper, '异常路径')
+    expect(networks).toHaveLength(1)
+    await wrapper.vm.locateCurrentTask()
+    expect(networks[0].destroy).toHaveBeenCalledTimes(1)
+    expect(ids(wrapper)).toEqual(['n2', 'n3', 'n4'])
+    expect(flowCalls.actualSize.mock.calls).toEqual([['n3', 240]])
+    await wrapper.vm.locateCurrentTask()
+    expect(flowCalls.actualSize.mock.calls).toEqual([['n3', 240], ['n3', 240]])
   })
   it('puts token usage and dependency navigation inside the expanded node', async () => {
     const wrapper = await setup({ runId: 'run-flow' })
@@ -156,5 +209,31 @@ describe('execution flow integration', () => {
     await wrapper.get('.node-detail > header button').trigger('click')
     expect(wrapper.find('.node-detail').exists()).toBe(false)
     expect(wrapper.find('.uml-card').exists()).toBe(false)
+  })
+  it('shows historical structure without current execution status or live detail records', async () => {
+    const wrapper = await setup({ historical: true, runId: 'live-run', stepStates: failedStepStates })
+    expect(ids(wrapper)).toHaveLength(5)
+    expect(wrapper.text()).toContain('历史结构快照')
+    expect(wrapper.findAll('button').some(button => button.text() === '异常路径')).toBe(false)
+    expect(wrapper.get('[data-node="n3"]').text()).toContain('快照')
+    expect(wrapper.get('[data-node="n3"]').text()).not.toContain('运行中')
+    await wrapper.get('[data-node="n3"]').trigger('click')
+    expect(wrapper.get('.uml-card').text()).not.toContain('Token 消耗')
+    expect(wrapper.get('.uml-card').text()).not.toContain('尚未产出')
+    expect(wrapper.find('.uml-card__more').exists()).toBe(false)
+  })
+  it('clears selection when switching versions of the same graph and passes structural differences', async () => {
+    const wrapper = await setup({ blueprint: { ...blueprint, graphVersion: 1 } })
+    await wrapper.get('[data-node="n3"]').trigger('click')
+    expect(wrapper.find('.uml-card').exists()).toBe(true)
+    await wrapper.setProps({ runtimePhases: { n3: 'completed' } })
+    expect(wrapper.find('.uml-card').exists()).toBe(true)
+    const difference = { addedNodeIds: ['n5'], updatedNodeIds: ['n3'], removedNodeIds: ['n1'],
+      addedEdgeIds: ['e4'], updatedEdgeIds: [], removedEdgeIds: ['e1'] }
+    await wrapper.setProps({ blueprint: { ...blueprint, graphVersion: 2 }, difference })
+    expect(wrapper.find('.uml-card').exists()).toBe(false)
+    expect(ids(wrapper)).toHaveLength(5)
+    expect(wrapper.find('[aria-label="图结构变更图例"]').text()).toBe('新增调整移除')
+    expect(wrapper.findComponent('.mock-execution-flow').props('difference')).toEqual(difference)
   })
 })

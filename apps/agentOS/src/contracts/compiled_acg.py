@@ -180,7 +180,7 @@ class LoopControlSpec(FrozenContract):
     body_entry_id: StrictStr = Field(alias="bodyEntryId", min_length=1)
     body_exit_id: StrictStr = Field(alias="bodyExitId", min_length=1)
     condition: ConditionalControlSpec
-    max_iterations: int = Field(alias="maxIterations", ge=1)
+    max_iterations: int | None = Field(default=None, alias="maxIterations", ge=1)
     on_limit: Literal["review", "fail"] = Field(default="review", alias="onLimit")
 
 

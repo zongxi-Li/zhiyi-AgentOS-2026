@@ -193,6 +193,7 @@ def build_acg_lowering_input(
         "expectedArtifacts": list(task_plan.expected_artifacts),
         "evidenceScope": profile.evidence_scope,
         "webExtraction": profile.web_extraction,
+        "workspaceObservations": [r.model_dump(by_alias=True, mode="json") for r in profile.workspace_observations],
     }
     if variant_id is not None:
         metadata["planningVariantId"] = variant_id

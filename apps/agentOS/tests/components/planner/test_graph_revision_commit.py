@@ -50,6 +50,35 @@ def test_graph_acceptance_is_read_only_deterministic_and_restartable(ready_bound
     assert conflicting.status == "REJECTED"
 
 
+def test_growing_semantic_and_graph_candidates_have_no_total_node_edge_or_byte_ceiling(ready_boundary):
+    runtime, store, agent, run_id, _ = ready_boundary
+    ledger = attach(runtime, store)
+    run = store.get_run(run_id)
+    keys = tuple(f"additional:{index:04}" for index in range(513))
+    candidate = TaskPlanPatch(missionId=run.mission_id,
+        basePlanVersion=run.execution_state["taskPlanVersion"],
+        planVersion=run.execution_state["taskPlanVersion"] + 1,
+        addNodes=tuple(PlannedTask(key=key, title=key, objective="Inspect authorized source facts. " + "x" * 2000,
+            capabilityRequirements=("task_understanding",)) for key in keys),
+        relations=tuple(TaskPlanRelation(sourceKey=source, targetKey=target, relationType="depends_on")
+            for source, target in ([('step:A', key) for key in keys] + list(zip(keys, keys[1:])))))
+    assert len(candidate.add_nodes) > 512 and len(candidate.relations) > 1024
+    assert len(candidate.model_dump_json()) > 300_000
+    with runtime.run_lock_manager.lock_for(run_id):
+        semantic = runtime.planning_commit_authority.accept_patch_locked(run_id, candidate,
+            proposal_id="large-source-page-history", idempotency_key="large-semantic")
+    assert semantic.status == "ACCEPTED", semantic.model_dump()
+    graph = runtime.accept_graph_revision(run_id, semantic.commit_id, idempotency_key="large-graph")
+    assert graph.status == "ACCEPTED", graph.model_dump()
+    record = ledger.get(graph.commit_id)
+    proposal = record.proposal_payload
+    assert len(proposal.next_plan.nodes) == 514 and len(proposal.next_plan.relations) > 1024
+    assert len(proposal.model_dump_json()) > 2_000_000
+    assert len(record.requested_scope) == 514 and proposal.safe_cut.result == "PROVEN"
+    # Acceptance still grants no execution and does not mutate the live graph.
+    assert not agent.calls and store.get_run(run_id).acg_blueprint["version"] == 1
+
+
 @pytest.mark.parametrize("mutation,code", [("mission", Code.STALE_MISSION), ("plan", Code.STALE_STRATEGY),
     ("graph", Code.STALE_STRATEGY), ("input", Code.STALE_STRATEGY), ("scope", Code.STALE_STRATEGY),
     ("receipt", Code.STALE_STRATEGY), ("control", Code.STALE_STRATEGY), ("review", Code.STALE_STRATEGY),

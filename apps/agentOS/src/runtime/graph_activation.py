@@ -29,14 +29,16 @@ from contracts.planning_commit import PlanningCommitRejectionCode as Code
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus, utc_now
 from contracts.execution import WorkflowProgressPhase
 from runtime.graph_revision import GraphRevisionError
+from runtime.permit_recovery import assert_replay_safe_operations
+from runtime.graph_step_projection import project_frozen_graph_steps
 from runtime.semantic_revision import SemanticRevisionService
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from support.stores.planning_commit_store import content_fingerprint
 from support.run_execution_fence import acquire_run_fence, RunFenceBusy
 
 
-def rejected(code, reason):
-    return GraphActivationReceipt(status="REJECTED", code=code, reason=reason)
+def rejected(code, reason, *, retryable=False):
+    return GraphActivationReceipt(status="REJECTED", code=code, reason=reason, retryable=retryable)
 
 
 def _run_from_ledger(store, run_id):
@@ -104,7 +106,12 @@ class GraphActivationAuthority:
         graph, caller = runtime.graph_materialization_authority._validate(
             materialization.source_commit_id, expected=expected, principal=principal)
         if any(receipt.get("stage") != "committed" for receipt in receipts):
-            raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "unsettled work receipts cannot prove an activation cut")
+            try:
+                if assert_replay_safe_operations(runtime, run) != receipts:
+                    raise ValueError("execution receipts changed while verifying the activation cut")
+            except (ValueError, AttributeError, KeyError, TypeError) as exc:
+                raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED,
+                    "unsettled work receipts cannot prove an activation cut") from exc
         proposal = graph.proposal_payload
         if (materialization.commitment_fingerprint != content_fingerprint(graph)
                 or materialization.proof_fingerprint != content_fingerprint(proposal.safe_cut)
@@ -140,8 +147,10 @@ class GraphActivationAuthority:
             raise GraphRevisionError(Code.DUPLICATE_CONFLICT,
                                      "materialization already prepared; replay its original key")
         head = self.store.head(materialization.source_run_id)
-        if head is not None:
-            raise GraphRevisionError(Code.STALE_GRAPH, "Run already has a formal activated graph head")
+        if head is not None and (materialization.source_kind == "initial_plan"
+                or head.graph_id != materialization.graph_id
+                or head.active_graph_version != materialization.source_graph_version):
+            raise GraphRevisionError(Code.STALE_GRAPH, "formal head is not the materialization's source graph")
         return None
 
     def prepare(self, materialization_id, *, idempotency_key):
@@ -192,7 +201,7 @@ class GraphActivationAuthority:
         except GraphRevisionError as exc:
             return rejected(exc.code, exc.reason)
         except RunFenceBusy:
-            return rejected(Code.CONTROL_BARRIER_BLOCKED, "execution or activation occupies the cut")
+            return rejected(Code.CONTROL_BARRIER_BLOCKED, "execution or activation occupies the cut", retryable=True)
         except (ValueError, KeyError, TypeError):
             return rejected(Code.INVALID_PROPOSAL, "invalid activation evidence")
         except (sqlite3.Error, RuntimeError):
@@ -242,7 +251,7 @@ class GraphActivationAuthority:
         except GraphRevisionError as exc:
             return rejected(exc.code, exc.reason)
         except RunFenceBusy:
-            return rejected(Code.CONTROL_BARRIER_BLOCKED, "execution or activation occupies the cut")
+            return rejected(Code.CONTROL_BARRIER_BLOCKED, "execution or activation occupies the cut", retryable=True)
         except (ValueError, KeyError, TypeError):
             return rejected(Code.INVALID_PROPOSAL, "invalid activation evidence")
         except (sqlite3.Error, RuntimeError):
@@ -314,6 +323,10 @@ class GraphActivationAuthority:
                 prepared, superseded_checkpoint_id=activated.execution_state.get("checkpointId")),
         })
         if initial:
+            from contracts.execution_evidence import freeze_workspace_observations
+            freeze_workspace_observations(activated, run.input.get("workspaceObservations",
+                blueprint.metadata.get("workspaceObservations", ())))
+            self.runtime.runtime_planning_coordinator.initialize(activated)
             activated.execution_state["planningDeferred"] = False
             activated.lifecycle_message = "Initial graph activated paused; no execution permit."
         activated.active_step_ids = []
@@ -327,16 +340,21 @@ class GraphActivationAuthority:
             activated.lifecycle_message = "Graph activated; awaiting verified execution handoff."
         activated.runtime_revision += 1
         activated.updated_at = utc_now()
-        if initial:
-            # The legacy projector optionally overlays Run.input reasoning and
-            # mutable evolution policy. Neither is a frozen initial compilation
-            # input. Project only the sealed blueprint; preserve the real Run's
-            # business input verbatim without using it to supplement the graph.
-            projection = activated.model_copy(update={"input": {}, "execution_state": {}})
-            self.runtime._sync_run_steps_to_acg(projection, blueprint)
-            activated.steps, activated.current_step_id = projection.steps, projection.current_step_id
-        else:
-            self.runtime._sync_run_steps_to_acg(activated, blueprint)
+        projection = project_frozen_graph_steps(self.runtime, activated, blueprint)
+        if not initial:
+            # Existing unchanged nodes retain their exact frozen inputs and
+            # execution history, including legacy compilation preferences.
+            from support.acg.schema import RuntimeBlueprintSpec
+            previous_graph = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
+            previous = {node.node_id: node for node in previous_graph.step_nodes()}
+            previous_bindings = {binding.step_id: binding for binding in previous_graph.resource_plan.bindings}
+            next_bindings = {binding.step_id: binding for binding in blueprint.resource_plan.bindings}
+            unchanged = {node.node_id for node in blueprint.step_nodes() if previous.get(node.node_id) == node
+                and previous_bindings.get(node.node_id) == next_bindings.get(node.node_id)}
+            prior_steps = {step.step_id: step for step in run.steps}
+            projection.steps = [prior_steps[step.step_id].model_copy(deep=True)
+                if step.step_id in unchanged else step for step in projection.steps]
+        activated.steps, activated.current_step_id = projection.steps, projection.current_step_id
         # Candidate package additions (for example a newly accepted Step D)
         # must carry their compiled eligibility requirements before the
         # separate Permit allows the Scheduler to inspect the graph. This is

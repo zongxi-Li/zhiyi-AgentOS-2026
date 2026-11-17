@@ -20,7 +20,7 @@ from contracts.identity import (
     new_step_execution_id,
     validate_logical_key,
 )
-from contracts.planning import TaskPlan, PlannedTask, TaskPlanRelation
+from contracts.planning import TaskPlan
 from contracts.attachments import InputAttachment, InputAttachmentStatus
 from domain.models import (
     AcgBlueprint,
@@ -41,7 +41,6 @@ from domain.identity_graph.bindings import (
     ProvenanceLink,
     ResourceUsageRecord,
     RunArtifactBinding,
-    RunArtifactDisposition,
     TaskBinding,
 )
 from domain.lifecycle_projection import LifecycleProjectionEvent
@@ -543,14 +542,25 @@ class SQLiteRunRepository(_SQLiteRepository):
         return result
 
     def update_blueprint(
-        self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int
+        self, run_id: RunId, blueprint_id: BlueprintId, graph_version: int,
+        *, planning_metadata: dict[str, Any] | None = None,
     ) -> WorkflowRun:
+        """Promote graph identity and its version-owned planning facts together."""
+        if planning_metadata is not None and set(planning_metadata) - {
+            "runtimeGraphId", "taskPlanVersion", "compiledPackageId", "compiledPackageChecksum",
+            "compiledPackageVersion", "compiledPackageBlueprintHash",
+        }:
+            raise IdentityConflictError("blueprint promotion accepts only graph planning metadata")
         with self.storage.transaction() as conn:
+            row = conn.execute("SELECT metadata_json FROM workflow_runs_v2 WHERE run_id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise EntityNotFoundError(f"WorkflowRunV2 not found: {run_id}")
+            metadata = {**_load_json(row["metadata_json"], {}), **(planning_metadata or {})}
             cursor = conn.execute(
                 """UPDATE workflow_runs_v2
-                   SET blueprint_id = ?, graph_version = ?, updated_at = ?
+                   SET blueprint_id = ?, graph_version = ?, metadata_json = ?, updated_at = ?
                    WHERE run_id = ?""",
-                (blueprint_id, graph_version, _iso(_now()), run_id),
+                (blueprint_id, graph_version, _json(metadata), _iso(_now()), run_id),
             )
             if cursor.rowcount != 1:
                 raise EntityNotFoundError(f"WorkflowRunV2 not found: {run_id}")

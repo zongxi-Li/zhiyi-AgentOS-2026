@@ -1,17 +1,21 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { defineComponent } from 'vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import GraphEditor from './GraphEditor.vue'
+import GraphVersionToolbar from './GraphVersionToolbar.vue'
 import type { GraphProjection, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 
 const graph: GraphProjection = { graphId: 'graph_1', nodes: [{ nodeId: 'node_1', nodeType: 'step', name: 'Capacity' }], edges: [] }
 const graphNodes: WorkspaceGraphNode[] = [{ acgNodeId: 'node_1', nodeType: 'step', name: 'Capacity', semanticTaskKey: 'capacity', taskId: 'task_1', identityQuality: 'canonical', displayOrder: 0 }]
 
-const topologyStub = {
+const topologyCalls = { focusNode: vi.fn(), locateCurrentTask: vi.fn() }
+const topologyStub = defineComponent({
   props: ['blueprint', 'focusNodeId', 'workbench', 'runtimePhases', 'stepStates', 'completedStepIds', 'runId'],
   emits: ['nodeSelected', 'nodeDoubleClicked'],
+  setup(_props, { expose }) { expose(topologyCalls) },
   template: '<div class="topology-stub"><button @click="$emit(\'nodeSelected\', \'node_1\')">select</button><button @click="$emit(\'nodeDoubleClicked\', \'node_1\')">open</button><button @click="$emit(\'nodeDoubleClicked\', \'unknown\')">unknown</button></div>'
-}
+})
 
 const observation = (run: Record<string, unknown> | null, runId = 'run_1'): RuntimeObservation => ({
   runId, run: run as RuntimeObservation['run'], runStatus: run ? 'running' : null,
@@ -35,7 +39,43 @@ const mountEditor = (extraProps: Record<string, unknown> = {}) => mount(GraphEdi
   global: { stubs: { AcgTopologyGraph: topologyStub } }
 })
 
+beforeEach(() => { vi.clearAllMocks() })
+
 describe('GraphEditor', () => {
+  it('locates the active execution on every click even when external selection stays unchanged', async () => {
+    const wrapper = mountEditor({ runId: 'run_1', focusNodeId: 'node_1',
+      graph: { ...graph, nodes: [...graph.nodes, { nodeId: 'node_2', nodeType: 'step', name: '补读剩余范围' }] },
+      runtimeObservation: observation(observedRun) })
+    expect(wrapper.get('.graph-editor__runtime').text()).toContain('补读剩余范围')
+    await wrapper.get('.graph-editor__runtime button').trigger('click')
+    await wrapper.get('.graph-editor__runtime button').trigger('click')
+    expect(topologyCalls.locateCurrentTask).toHaveBeenCalledTimes(2)
+    expect(wrapper.findComponent(topologyStub).props('focusNodeId')).toBe('node_1')
+  })
+  it('locates a comparison node again when the same change is clicked repeatedly', async () => {
+    const wrapper = mountEditor()
+    const toolbar = wrapper.findComponent(GraphVersionToolbar)
+    toolbar.vm.$emit('locateNode', 'node_1')
+    toolbar.vm.$emit('locateNode', 'node_1')
+    expect(topologyCalls.focusNode.mock.calls).toEqual([['node_1'], ['node_1']])
+    expect(wrapper.findComponent(topologyStub).props('focusNodeId')).toBeNull()
+  })
+  it('keeps the failed current step visible when execution stops and clears it for a different run', async () => {
+    const currentGraph = { ...graph, nodes: [...graph.nodes, { nodeId: 'node_2', nodeType: 'step', name: '审查读取证据' }] }
+    const wrapper = mountEditor({ graph: currentGraph, runId: 'run_1', runtimeObservation: observation(observedRun) })
+    expect(wrapper.get('.graph-editor__runtime').text()).toContain('当前执行 · 审查读取证据')
+    await wrapper.setProps({ runtimeObservation: observation({ ...observedRun, status: 'failed',
+      activeStepIds: [], currentStepId: 'node_2',
+      steps: observedRun.steps.map(step => ({ ...step, status: 'failed' })) }) })
+    expect(wrapper.get('.graph-editor__runtime').classes()).toContain('is-failed')
+    expect(wrapper.get('.graph-editor__runtime').text()).toContain('执行受阻 · 审查读取证据')
+    expect(wrapper.get('.graph-editor__runtime button').text()).toBe('定位失败节点')
+    await wrapper.get('.graph-editor__runtime button').trigger('click')
+    expect(topologyCalls.focusNode).toHaveBeenCalledWith('node_2')
+    expect(topologyCalls.locateCurrentTask).not.toHaveBeenCalled()
+    await wrapper.setProps({ runId: 'run_other' })
+    expect(wrapper.find('.graph-editor__runtime').exists()).toBe(false)
+  })
   it('maps node selection to semanticTaskKey', async () => {
     const wrapper = mountEditor()
     await wrapper.find('button').trigger('click')

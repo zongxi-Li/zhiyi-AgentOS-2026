@@ -21,7 +21,10 @@ from components.communicator.contracts import ContextPack
 from components.communicator.provenance import provenance_checksum
 from domain.identity_graph.resolver import IdentityResolver
 from runtime.graph_revision import GraphProvider, source_provenance, safe_cut
+from runtime.graph_materialization import validate_acceptance_ancestry
+from runtime.graph_step_projection import restore_initial_source_steps
 from runtime.planning_commit import fingerprint, fingerprint_observation
+from runtime.permit_recovery import assert_replay_safe_operations
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.semantic_revision import SemanticRevisionService
 from support.acg.schema import RuntimeBlueprintSpec
@@ -30,8 +33,8 @@ from support.stores.graph_activation_store import validate_activation_run
 from support.stores.planning_commit_store import content_fingerprint
 
 
-def rejected(code, reason):
-    return GraphHandoffReceipt(status="REJECTED", code=code, reason=reason)
+def rejected(code, reason, *, retryable=False):
+    return GraphHandoffReceipt(status="REJECTED", code=code, reason=reason, retryable=retryable)
 
 
 class HandoffEvidenceError(ValueError):
@@ -69,8 +72,6 @@ class GraphHandoffAuthority:
             revision = conn.execute("SELECT revision FROM mission_semantic_state WHERE mission_id=?", (run.mission_id,)).fetchone()
         if run.execution_state.get("checkpointId") is not None:
             raise HandoffEvidenceError("paused Run must not have a v2 recovery head")
-        if len(run.steps) > 256 or len(run.model_dump_json()) > 2_000_000:
-            raise HandoffEvidenceError("handoff source exceeds bounded graph policy")
         with rt._execution_slot_guard:
             if run.run_id in rt._active_execution_slots:
                 raise HandoffEvidenceError("live execution occupies handoff")
@@ -100,17 +101,10 @@ class GraphHandoffAuthority:
                 or mat.sources.mission_revision != source.sources.mission_revision
                 or revision is None or revision[0] != graph.source_revision):
             raise HandoffEvidenceError("acceptance chain or current Mission revision changed")
-        ancestor, seen = source, set()
-        while ancestor.parent_commit_id is not None:
-            if ancestor.commit_id in seen or len(seen) >= 256:
-                raise HandoffEvidenceError("invalid acceptance ancestry")
-            seen.add(ancestor.commit_id)
-            parent = store.get(ancestor.parent_commit_id)
-            if parent is None or parent.mission_id != run.mission_id or parent.commitment_revision + 1 != ancestor.commitment_revision:
-                raise HandoffEvidenceError("missing acceptance ancestor")
-            ancestor = parent
-        if ancestor.commitment_revision != 1:
-            raise HandoffEvidenceError("invalid acceptance root")
+        try:
+            validate_acceptance_ancestry(store, source, mission_id=run.mission_id)
+        except ValueError as exc:
+            raise HandoffEvidenceError(str(exc)) from exc
         if (run.execution_state.get("taskPlan") != proposal.next_plan.model_dump(mode="json", by_alias=True)
                 or run.execution_state.get("taskBindings") != [b.model_dump(mode="json", by_alias=True) for b in proposal.next_bindings]
                 or run.acg_blueprint != proposal.candidate_graph.model_dump(mode="json", by_alias=True)
@@ -125,7 +119,7 @@ class GraphHandoffAuthority:
         repos = rt.identity_lifecycle.repositories
         identity = repos.runs.get(run.run_id)
         mission_identity = repos.missions.get(run.mission_id)
-        if identity is None or identity.mission_id != run.mission_id or identity.graph_version != activation.source_graph_version:
+        if identity is None or identity.mission_id != run.mission_id:
             raise HandoffEvidenceError("existing source Identity required")
         if mission_identity is None or mission_identity.mission_id != run.mission_id:
             raise HandoffEvidenceError("source Mission Identity missing")
@@ -136,7 +130,7 @@ class GraphHandoffAuthority:
         old = RuntimeBlueprintSpec.model_validate(identity_graph.graph)
         original_plan = TaskPlan.model_validate(original_plan.model_dump(mode="json", by_alias=True))
         if (identity_graph.blueprint_id != identity.blueprint_id or identity_graph.mission_id != run.mission_id
-                or identity_graph.graph_id != old.graph_id or identity_graph.version != old.version
+                or identity_graph.graph_id != old.graph_id or identity_graph.version != identity.graph_version
                 or old.graph_id != activation.graph_id or old.version != activation.source_graph_version
                 or original_plan.plan_version != source.sources.plan_version):
             raise HandoffEvidenceError("source Identity version mismatch")
@@ -183,6 +177,7 @@ class GraphHandoffAuthority:
         source_run.execution_state.update(taskPlan=original_plan.model_dump(mode="json", by_alias=True),
             taskPlanVersion=original_plan.plan_version, compiledACGPackage=old_package.model_dump(mode="json", by_alias=True),
             taskBindings=[b.model_dump(mode="json", by_alias=True) for b in proposal.next_bindings if b.acg_node_id in {s.step_id for s in source_run.steps}])
+        restore_initial_source_steps(rt, source_run, old)
         source_nodes = {n.key: n for n in original_plan.nodes}
         source_bindings = {b["planNodeKey"]: b["acgNodeId"] for b in source_run.execution_state["taskBindings"]}
         with repos.storage.read() as conn:
@@ -233,26 +228,86 @@ class GraphHandoffAuthority:
         if any(e.target_id in completed and e.source_id not in completed for e in mat.package.edges):
             raise HandoffEvidenceError("completed prefix is not dependency closed")
         receipts = provider.node_commits(run)
-        expected_receipts = {f"commit:{run.run_id}:{s.step_id}:{s.attempt}" for s in run.steps if s.step_id in completed}
-        if {r.get("commitId") for r in receipts} != expected_receipts or any(r.get("stage") != "committed" for r in receipts):
+        if state.execution_generation is not None:
+            authority = rt.execution_permit_authority
+            permit = authority.store.get_permit(state.execution_permit_id) if authority is not None else None
+            if (permit is None or permit.status != "ISSUED" or permit.run_id != run.run_id
+                    or permit.mission_id != run.mission_id or permit.graph_id != old.graph_id
+                    or permit.graph_version != old.version or permit.attempt_generation != state.execution_generation):
+                raise HandoffEvidenceError("source execution generation lacks its issued Permit")
+        elif state.execution_permit_id is not None:
+            raise HandoffEvidenceError("source execution Permit has no generation")
+        readonly_proofs = []
+        replay_safe = sorted(assert_replay_safe_operations(rt, run, readonly_proofs=readonly_proofs),
+                             key=lambda receipt: str(receipt.get("commitId", "")))
+        if replay_safe != receipts:
+            raise HandoffEvidenceError("source execution receipts changed during validation")
+        # Completed references identify the immutable receipt across generations.
+        # The promoted checkpoint seals inherited work; Permit recovery verifies
+        # current-generation operation identities without renaming old evidence.
+        prefix_receipts = {}
+        for step_id in completed:
+            matches = [r for r in receipts if r.get("stage") == "committed"
+                       and (r.get("nodeExecution") or {}).get("stepId") == step_id
+                       and r.get("outputRef") == state.output_refs[step_id]]
+            if len(matches) != 1:
+                raise HandoffEvidenceError("completed output must identify exactly one committed receipt")
+            prefix_receipts[step_id] = matches[0]
+        expected_receipts = {r.get("commitId") for r in prefix_receipts.values()}
+        retained_receipts = [r for r in receipts if r.get("commitId") not in expected_receipts]
+        if (None in expected_receipts or len(expected_receipts) != len(completed)
+                or any(r.get("stage") == "committed" for r in retained_receipts)):
             raise HandoffEvidenceError("unsettled or unexplained receipts")
-        attempts, evidence = [], []
+        attempts, evidence, retained_attempts, retained_evidence = [], [], [], []
+        retained_counters = {}
         # The independent node-execution table and Identity Attempt must agree
         # with the immutable receipt; never manufacture an execution fact.
         with sqlite3.connect(rt.execution_value_store.db_path.resolve().as_uri() + "?mode=ro", uri=True) as values:
             operations = values.execute("SELECT operation_id FROM acg_node_executions WHERE run_id=?", (run.run_id,)).fetchall()
-            if {r[0] for r in operations} != expected_receipts:
+            if {r[0] for r in operations} != {r.get("commitId") for r in receipts}:
                 raise HandoffEvidenceError("unexplained execution operation")
+            proofs = {proof["operationId"]: proof for proof in readonly_proofs}
+            for receipt in retained_receipts:
+                row = values.execute("SELECT payload_json FROM acg_node_executions WHERE run_id=? AND operation_id=?",
+                                     (run.run_id, receipt["commitId"])).fetchone()
+                node = NodeExecutionRecord.model_validate_json(row[0])
+                attempt = repos.attempts.get(node.attempt_id)
+                executions = repos.step_executions.list_for_attempt(node.attempt_id)
+                binding = repos.execution_bindings.get_for_attempt(node.attempt_id)
+                task = IdentityResolver(repos).resolve_semantic_task(
+                    blueprint_id=identity.blueprint_id, acg_node_id=node.step_id)
+                terminal_proven = attempt is not None and (attempt.status.value == "failed"
+                    or (attempt.status.value == "cancelled" and node.operation_id in proofs))
+                if (attempt is None or attempt.run_id != run.run_id or attempt.task_id != task.task_id
+                        or not terminal_proven or len(executions) != 1
+                        or executions[0].run_id != run.run_id or executions[0].task_id != task.task_id
+                        or executions[0].status.value != attempt.status.value
+                        or binding is None or binding.attempt_id != node.attempt_id
+                        or binding.acg_node_id != node.step_id):
+                    raise HandoffEvidenceError("retained operation lacks its proven terminal Identity execution")
+                retained_attempts.append(node.attempt_id)
+                retained_counters[node.step_id] = max(retained_counters.get(node.step_id, 0), attempt.attempt_number)
+                retained_evidence.append(dict(receipt=receipt, execution=node.model_dump(mode="json"),
+                    attempt=attempt.model_dump(mode="json"), binding=binding.model_dump(mode="json"),
+                    executions=[item.model_dump(mode="json") for item in executions],
+                    settlement=(run.execution_state.get("taskSettlement") or {}).get(node.attempt_id),
+                    readonlyProof=proofs.get(node.operation_id)))
             for step in run.steps:
                 if step.step_id not in completed:
-                    if (step.status.value != "pending" or step.attempt or step.retry_count or step.output
+                    if (step.status.value != "pending"
+                            or step.attempt != retained_counters.get(step.step_id, 0)
+                            or step.retry_count > step.attempt or step.output
                             or step.resolved_input or step.started_at or step.completed_at):
-                        raise HandoffEvidenceError("unfinished node is not pristine pending")
+                        raise HandoffEvidenceError("unfinished node is not pending with verified retry history")
                     continue
                 if step.status.value != "completed":
                     raise HandoffEvidenceError("completed node status mismatch")
-                r = next(r for r in receipts if r["commitId"] == f"commit:{run.run_id}:{step.step_id}:{step.attempt}")
+                r = prefix_receipts[step.step_id]
                 node = NodeExecutionRecord.model_validate(r["nodeExecution"])
+                if (state.execution_generation is None
+                        and (r["commitId"] != f"commit:{run.run_id}:{step.step_id}:{step.attempt}"
+                             or node.execution_instance_id != f"{run.run_id}:{step.step_id}:{step.attempt}:root")):
+                    raise HandoffEvidenceError("legacy receipt and execution identity mismatch")
                 row = values.execute("SELECT run_id,payload_json,phase FROM acg_node_executions WHERE operation_id=?", (r["commitId"],)).fetchone()
                 commit_row = values.execute("SELECT stage FROM acg_node_commits WHERE commit_id=? AND run_id=?", (r["commitId"],run.run_id)).fetchone()
                 if (row is None or row[0] != run.run_id or row[2] != "committed" or node != NodeExecutionRecord.model_validate_json(row[1])
@@ -260,10 +315,13 @@ class GraphHandoffAuthority:
                         or node.run_id != run.run_id or node.step_id != step.step_id or node.operation_id != r["commitId"]
                         or node.commit_id != r["commitId"] or node.loop_path or r.get("reviewRequired") or r.get("auditOutcome") != "allow"
                         or node.audit_ref != r.get("auditDecisionRef")
-                        or node.execution_instance_id != f"{run.run_id}:{step.step_id}:{step.attempt}:root"
                         or node.artifact_refs.get("output") != r.get("outputRef")
                         or node.artifact_refs.get("context") != r.get("contextRef")):
                     raise HandoffEvidenceError("receipt and execution identity mismatch")
+                if not any(event.event_type == TraceEventType.STEP_SUCCEEDED and event.step_id == step.step_id
+                           and event.run_id == run.run_id and event.payload.get("commitId") == r["commitId"]
+                           for event in run.trace):
+                    raise HandoffEvidenceError("completed Trace does not confirm its committed receipt")
                 attempt = repos.attempts.get(node.attempt_id)
                 executions = repos.step_executions.list_for_attempt(node.attempt_id) if attempt else ()
                 bindings = repos.task_bindings.find_for_acg_node(acg_node_id=step.step_id, blueprint_id=identity.blueprint_id)
@@ -348,9 +406,11 @@ class GraphHandoffAuthority:
         basis = run_intent_basis(run)
         if basis is None or basis.source_revision != revision[0]:
             raise HandoffEvidenceError("frozen Basis mismatch")
-        if {a.attempt_id for a in repos.attempts.list_for_run(run.run_id)} != set(attempts):
-            raise HandoffEvidenceError("unexplained pending or historical attempt requires separate recovery")
-        if set(run.execution_state.get("attemptIds", {}).values()) != set(attempts):
+        explained_attempts = set(attempts) | set(retained_attempts)
+        if {a.attempt_id for a in repos.attempts.list_for_run(run.run_id)} != explained_attempts:
+            raise HandoffEvidenceError("unexplained historical Attempt requires separate recovery")
+        cached_attempts = set(run.execution_state.get("attemptIds", {}).values())
+        if not set(attempts) <= cached_attempts or not cached_attempts <= explained_attempts:
             raise HandoffEvidenceError("cached Attempt identities differ from confirmed prefix")
         # Source callbacks may have changed the Workflow projection while the
         # initial verification was outside a write transaction. Never publish
@@ -365,8 +425,12 @@ class GraphHandoffAuthority:
             sourceIdentityFingerprint=fingerprint(dict(run=identity.model_dump(mode="json"),
                 blueprint=identity_graph.model_dump(mode="json"), mission=mission_identity.model_dump(mode="json"),
                 sourceNodes=source_identity_nodes)),
-            candidatePackageChecksum=mat.package_checksum, prefixAttemptIds=tuple(sorted(attempts)))
-        prefix_hash = fingerprint(dict(state=cp, checkpointVersion=cp_version, evidence=evidence))
+            candidatePackageChecksum=mat.package_checksum, prefixAttemptIds=tuple(sorted(attempts)),
+            retainedAttemptIds=tuple(sorted(retained_attempts)))
+        prefix_evidence = dict(state=cp, checkpointVersion=cp_version, evidence=evidence)
+        if retained_evidence:
+            prefix_evidence["retainedEvidence"] = retained_evidence
+        prefix_hash = fingerprint(prefix_evidence)
         sources_hash = fingerprint(dict(run=run.model_dump(mode="json"), graph=content_fingerprint(graph),
             identity=identity_link.model_dump(mode="json"), origin=proposal.source_provenance.model_dump(mode="json"), principal=principal.model_dump(mode="json")))
         handoff_id = "gho_" + stable_checksum(dict(activation=activation_id, prefix=prefix_hash, sources=sources_hash))[:40]
@@ -428,7 +492,7 @@ class GraphHandoffAuthority:
                 return GraphHandoffReceipt(status="IDEMPOTENT_REPLAY" if old and old.status == "STATE_PREPARED" else "STATE_PREPARED",
                     handoffId=candidate.handoff_id)
         except RunFenceBusy:
-            return rejected("CONTROL_BARRIER_BLOCKED", "execution or handoff occupies the Run")
+            return rejected("CONTROL_BARRIER_BLOCKED", "execution or handoff occupies the Run", retryable=True)
         except HandoffEvidenceError as exc:
             return rejected("INVALID_PROPOSAL", str(exc))
         except (ValueError, LookupError, TypeError, AttributeError):
