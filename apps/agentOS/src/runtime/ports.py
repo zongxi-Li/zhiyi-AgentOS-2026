@@ -63,6 +63,9 @@ class RuntimeCollaborators:
     default_model_binding: dict[str, str] | None
     fault_hook: Callable[[str], None] | None
     execution_permit_authority: object | None = None
+    # Installed only by application composition for its known write-ahead tool
+    # adapter. A plugin tool runtime cannot self-declare replay safety.
+    tool_non_invocation_prover: Callable[..., dict] | None = None
 
 
 class CollaboratorAccess:
@@ -216,6 +219,14 @@ class CollaboratorAccess:
     @tool_runtime.setter
     def tool_runtime(self, value: object | None) -> None:
         self.ports.tool_runtime = value
+
+    @property
+    def tool_non_invocation_prover(self) -> Callable[..., dict] | None:
+        return self.ports.tool_non_invocation_prover
+
+    @tool_non_invocation_prover.setter
+    def tool_non_invocation_prover(self, value: Callable[..., dict] | None) -> None:
+        self.ports.tool_non_invocation_prover = value
 
     @property
     def model_registry(self) -> ModelCompatibilityRegistry:

@@ -198,7 +198,7 @@ def test_real_multi_round_feedback_drives_final_decision(waiting_boundary):
     assert session.actions_used == 2
 
 
-def test_duplicate_tool_request_replays_without_extra_budget(waiting_boundary):
+def test_duplicate_tool_request_replays_then_waits_for_new_information(waiting_boundary):
     _, store, _, run_id = waiting_boundary
     observation, task_plan = persisted_facts(store, run_id)
 
@@ -210,17 +210,13 @@ def test_duplicate_tool_request_replays_without_extra_budget(waiting_boundary):
         require(first["outcome"] == "read", "first read must be present")
         return use_tool("dup", "run_state")  # 原样重发：应当幂等重放
 
-    def turn3(payload):
-        second = payload["toolFeedback"][1]
-        require(second["replayed"] is True and second["outcome"] == "read",
-                "duplicate request must replay the recorded result")
-        return decide_payload(payload["observationId"])
-
-    llm = ReActFakeLLM([turn1, turn2, turn3])
+    llm = ReActFakeLLM([turn1, turn2])
     events = []
     loop = make_loop(store, llm, events)
     decision = loop.decide(observation=observation, task_plan=task_plan)
-    assert decision.reason == "model decided"
+    assert decision.action == "wait" and "no progress" in decision.reason
+    assert len(llm.prompts) == 2
+    assert any(event.get("replayed") for event in events if event.get("runtimeEvent") == "planner.action")
     session = loop.gateway.get_session(
         next(e["sessionId"] for e in events if e.get("runtimeEvent") == "planner.react.session_opened"))
     assert session.actions_used == 1
@@ -425,29 +421,34 @@ def test_hand_off_rejects_expired_or_foreign_session(waiting_boundary):
     assert decision.action == "wait" and "BUDGET_EXHAUSTED" in decision.reason
 
 
-def test_model_budget_exhaustion_converges(waiting_boundary):
+def test_model_and_action_counts_do_not_block_distinct_planning_work(waiting_boundary):
     _, store, _, run_id = waiting_boundary
     observation, task_plan = persisted_facts(store, run_id)
-    turns = [lambda p, i=i: use_tool(f"r{i}", "run_state") for i in range(3)]
+    turns = [lambda p, i=i: {"turnKind": "use_tool", "actionRequest": {
+        "requestRef": f"p{i}", "proposal": {"kind": "candidate_tasks", "tasks": [{
+            "title": f"Read partition {i}", "objective": f"Inspect source partition {i}",
+            "capabilityId": "verification"}]}}} for i in range(20)]
+    turns.append(lambda p: decide_payload(p["observationId"], reason="all partitions proposed"))
     llm = ReActFakeLLM(turns)
     loop = make_loop(store, llm, [], budget=ReActPlanningBudget(max_model_calls=3, max_actions=6))
     decision = loop.decide(observation=observation, task_plan=task_plan)
-    assert decision.action == "wait" and "model call budget exhausted" in decision.reason
-    assert len(llm.prompts) == 3
+    assert decision.action == "wait" and decision.reason == "all partitions proposed"
+    assert len(llm.prompts) == 21 and loop.last_audit["toolActions"] == 20
+    assert all(prompt["actionSession"]["remainingModelCalls"] is None for prompt in llm.prompts)
 
 
-def test_action_budget_rejection_is_feedback_not_fatal(waiting_boundary):
+def test_legacy_action_budget_does_not_reject_additional_distinct_queries(waiting_boundary):
     _, store, _, run_id = waiting_boundary
     observation, task_plan = persisted_facts(store, run_id)
 
     def turn3(payload):
         second = payload["toolFeedback"][1]
-        require(second["outcome"] == "rejected" and second["rejectionCode"] == "BUDGET_EXHAUSTED",
-                "budget rejection must be visible as feedback")
+        require(second["outcome"] == "read" and second["target"] == "capability_catalog",
+                "a valid additional query must execute regardless of legacy count")
         return decide_payload(payload["observationId"], reason="decided after budget")
 
     llm = ReActFakeLLM([lambda p: use_tool("a1", "run_state"),
-                        lambda p: use_tool("a2", "run_state"),
+                        lambda p: use_tool("a2", "capability_catalog"),
                         turn3])
     loop = make_loop(store, llm, [],
                      budget=ReActPlanningBudget(max_model_calls=4, max_actions=1))

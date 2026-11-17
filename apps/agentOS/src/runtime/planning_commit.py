@@ -5,6 +5,7 @@ import json
 import logging
 from time import monotonic
 
+from pydantic import ValidationError
 from adapters.model_adapter import StructuredGenerationError
 from components.planner.complexity import transport_error_code
 from components.planner.planning_commit import PlanningCommitService
@@ -93,13 +94,17 @@ class RuntimePlanningCommitProvider:
 
     def authorize(self, request=None):
         run = self.run()
+        if self.runtime._run_cancellation_requested(run.run_id) or run.status in {
+                WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}:
+            return False
+        return self._authorize_mission_scope(run, request)
+
+    def _authorize_mission_scope(self, run, request=None):
+        """Current Mission grants are independent of a command's lifecycle cut."""
         if self.initial and (self.runtime.semantic_principal_provider is None
                 or self.runtime.semantic_principal_provider() != self.principal):
             return False
         if (request is not None and run.mission_id != request.sources.mission_id) or self.principal is None:
-            return False
-        if self.runtime._run_cancellation_requested(run.run_id) or run.status in {
-                WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}:
             return False
         service = self.runtime.mission_semantic_service
         if service is None or service.store is not self.runtime.workflow_store:
@@ -226,8 +231,6 @@ class RuntimePlanningCommitProvider:
         self._validated_catalog = catalog
         if RuntimePlanningCommitProvider.get_current_sources(self, run.mission_id, catalog_snapshot=catalog) != request.sources:
             return reject(Code.STALE_STRATEGY, "semantic validation inputs do not match frozen sources")
-        if len(self.payload.model_dump_json(by_alias=True)) > 300_000:
-            return reject(Code.INVALID_PROPOSAL, "candidate content exceeds acceptance bounds")
         if run.active_step_ids or any(s.status.value in {"running", "retrying"} for s in run.steps):
             return reject(Code.CONTROL_BARRIER_BLOCKED, "active work cannot be revised")
         review = run.execution_state.get("reviewPayload")
@@ -268,8 +271,6 @@ class RuntimePlanningCommitProvider:
                     or not set(bound_tasks) <= {n.key for n in current.nodes}
                     or not {n.key for n in current.nodes if n.capability_requirements} <= set(bound_tasks)):
                 return reject(Code.INVALID_PROPOSAL, "formal task bindings are inconsistent")
-            if len(current.nodes) + len(self.payload.add_nodes) > 512 or len(self.payload.relations) > 1024:
-                return reject(Code.INVALID_PROPOSAL, "revision input exceeds acceptance bounds")
             protected = {b["planNodeKey"] for b in run.execution_state.get("taskBindings", ())
                 if any(s.step_id == b["acgNodeId"] and (s.status.value != "pending" or s.output
                        or s.resolved_input or s.started_at or s.completed_at or s.attempt > 0
@@ -306,8 +307,6 @@ class RuntimePlanningCommitProvider:
                         or not set(prior.capability_requirements) <= set(node.capability_requirements)
                         or not {fingerprint(c) for c in prior.constraints} <= {fingerprint(c) for c in node.constraints}):
                     return reject(Code.INVALID_PROPOSAL, "replacement weakens existing task obligations")
-        if len(next_plan.nodes) > 256 or len(next_plan.relations) > 1024:
-            return reject(Code.INVALID_PROPOSAL, "candidate exceeds acceptance bounds")
         if next_plan.control_policies:
             return reject(Code.CONTROL_BARRIER_BLOCKED, "control policies require later safe-cut support")
         validated = validate_task_plan_for_execution(capability_catalog=catalog,
@@ -387,7 +386,12 @@ class RuntimePlanningCommitAuthority:
             scope = tuple(n.key for n in payload.nodes)
         else:
             keys = {n["key"] for n in run.execution_state["taskPlan"]["nodes"]} - set(payload.retire_keys)
-            scope = tuple(keys | {n.key for n in payload.add_nodes})
+            candidate_keys = keys | {n.key for n in payload.add_nodes}
+            # A pure-retire proposal may remove the last candidate key. Keep
+            # its touched semantic scope representable so the formal validator
+            # can explain immutable work or an invalid empty candidate instead
+            # of leaking a request-shape exception before validation.
+            scope = tuple(candidate_keys or set(payload.retire_keys) | set(payload.replace_keys))
         parent = self.store.latest(run.mission_id)
         return PlanningCommitRequest(proposalId=self.proposal_identity(provider.run_id, proposal_id),
             proposalType="initial_plan" if provider.initial else "plan_revision",
@@ -407,7 +411,10 @@ class RuntimePlanningCommitAuthority:
 
     def accept_patch_locked(self, run_id, patch, *, proposal_id, idempotency_key, graph_id=None, graph_version=None):
         """Called with Runtime Run lock held; no nested RunLock acquisition."""
-        patch = TaskPlanPatch.model_validate(patch.model_dump(mode="json", by_alias=True))
+        try:
+            patch = TaskPlanPatch.model_validate(patch.model_dump(mode="json", by_alias=True))
+        except ValidationError:
+            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="semantic revision patch is invalid")
         provider = self._provider(run_id, patch, False)
         service = PlanningCommitService(current_state_provider=provider, store=self.store)
         if provider.authorize() is not True:
@@ -419,12 +426,20 @@ class RuntimePlanningCommitAuthority:
         if existing:
             if graph_version is not None and graph_version != existing.sources.graph_version:
                 return PlanningCommitRejection(code=Code.STALE_GRAPH, reason="idempotent semantic request graph version changed")
-            return service.accept(self.replay_request(existing, idempotency_key, content_fingerprint(patch),
-                self.proposal_identity(run_id, proposal_id)))
+            try:
+                replay = self.replay_request(existing, idempotency_key, content_fingerprint(patch),
+                    self.proposal_identity(run_id, proposal_id))
+            except ValidationError:
+                return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="semantic revision request is invalid")
+            return service.accept(replay)
         if (graph_id is not None and graph_id != run.acg_blueprint["graphId"]
                 or graph_version is not None and graph_version != run.acg_blueprint["version"]):
             return PlanningCommitRejection(code=Code.STALE_GRAPH, reason="semantic request graph changed")
-        return service.accept(self._request(provider, patch, proposal_id, idempotency_key))
+        try:
+            request = self._request(provider, patch, proposal_id, idempotency_key)
+        except ValidationError:
+            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="semantic revision request is invalid")
+        return service.accept(request)
 
     def accept_initial(self, run_id, *, progress_callback=None):
         stage = "sources"

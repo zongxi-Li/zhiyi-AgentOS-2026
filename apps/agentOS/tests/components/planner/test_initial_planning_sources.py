@@ -125,6 +125,37 @@ def test_complete_sources_are_embedded_and_acceptance_has_no_other_writes(initia
     assert not agent.calls and not runtime.execution_value_store.list_node_commits(run_id=run.run_id)
 
 
+def test_initial_capture_retains_large_material_history_and_seal(initial_run):
+    runtime, store, _, run, _ = initial_run
+    run.input["materialRefs"] = [f"material:{index}:" + "x" * 8200 for index in range(257)]
+    store.save_run(run)
+    provider = runtime.planning_commit_authority._provider(run.run_id, None, True)
+    origin = provider.capture_initial_provenance()
+    assert len(origin.material_refs) == 257 and len(origin.model_dump_json()) > 2_000_000
+    assert InitialPlanningSourceProvenance.model_validate_json(origin.model_dump_json()) == origin
+
+
+def test_initial_provenance_has_no_total_agent_or_catalog_size_ceiling(initial_run):
+    from support.acg.capabilities import PlanningCapabilityDescriptor
+
+    origin = accept(initial_run).source_provenance
+    profiles = tuple({**origin.agent_profiles[0], "agentId": f"agent:{index}", "agentName": f"reader:{index}"}
+                     for index in range(257))
+    catalog = tuple(PlanningCapabilityDescriptor(capabilityId=f"capability:{index}", displayName=f"Read {index}")
+                    for index in range(513))
+    changed = origin.model_copy(update={"agent_profiles": profiles, "catalog": catalog,
+        "validation_catalog": catalog, "scope": origin.scope.model_copy(update={
+            "agent_ids": tuple(profile["agentId"] for profile in profiles),
+            "capability_ids": tuple(descriptor.capability_id for descriptor in catalog)})})
+    body = changed.model_dump(mode="json", by_alias=True)
+    body["staticFingerprint"] = changed.content_fingerprint()
+    restored = InitialPlanningSourceProvenance.model_validate(body)
+    assert len(restored.agent_profiles) == 257 and len(restored.catalog) == len(restored.validation_catalog) == 513
+    body["scope"]["agentIds"] = []
+    with pytest.raises(ValidationError, match="profiles do not cover frozen scope"):
+        InitialPlanningSourceProvenance.model_validate(body)
+
+
 @pytest.mark.parametrize("fault", ["unknown", "missing", "checksum", "rebound"])
 def test_corrupt_or_unbound_origin_is_rejected(initial_run, fault):
     record = accept(initial_run)

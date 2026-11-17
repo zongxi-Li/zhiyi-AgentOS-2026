@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from contracts.execution_evidence import WorkspaceObservationRequirement
 
 from .schema import ComplexityLevel
 
@@ -47,6 +48,9 @@ class TaskSemanticProfile(BaseModel):
     )
     web_extraction: Literal["snippets", "full_text"] = Field(
         default="snippets", alias="webExtraction"
+    )
+    workspace_observations: List[WorkspaceObservationRequirement] = Field(
+        default_factory=list, alias="workspaceObservations"
     )
     key_constraints: List[str] = Field(default_factory=list, alias="keyConstraints")
     required_capabilities: List[str] = Field(default_factory=list, alias="requiredCapabilities")

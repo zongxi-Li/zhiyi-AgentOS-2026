@@ -15,6 +15,10 @@ SCHEMA = "CREATE TABLE execution_dispatch_schema(version INTEGER PRIMARY KEY)"
 TABLE = """CREATE TABLE execution_dispatch_commands(
 run_id TEXT PRIMARY KEY, operation_key TEXT NOT NULL UNIQUE,
 payload TEXT NOT NULL, checksum TEXT NOT NULL)"""
+CONTINUATIONS = """CREATE TABLE execution_dispatch_continuations(
+run_id TEXT NOT NULL, graph_version INTEGER NOT NULL,
+operation_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, checksum TEXT NOT NULL,
+PRIMARY KEY(run_id, graph_version))"""
 
 
 class DispatchConflict(ValueError):
@@ -43,7 +47,7 @@ class DispatchCommand(BaseModel):
 
 
 class SQLiteExecutionDispatchStore:
-    """Explicitly upgraded Workflow DB; one immutable execution command per Run."""
+    """Immutable initial admission and its formally permitted graph continuations."""
     def __init__(self, db_path):
         self.db_path = Path(db_path).resolve()
         SQLiteExecutionPermitStore(self.db_path)
@@ -63,6 +67,9 @@ class SQLiteExecutionDispatchStore:
             row = conn.execute("SELECT sql FROM sqlite_master WHERE name=?", (name,)).fetchone()
             if not row or "".join(row[0].lower().split()) != "".join(sql.lower().split()):
                 raise RuntimeError("Dispatch schema definition mismatch")
+        continuation = conn.execute("SELECT sql FROM sqlite_master WHERE name='execution_dispatch_continuations'").fetchone()
+        if continuation and "".join(continuation[0].lower().split()) != "".join(CONTINUATIONS.lower().split()):
+            raise RuntimeError("Dispatch continuation schema definition mismatch")
 
     @staticmethod
     def upgrade_schema(db_path):
@@ -74,6 +81,8 @@ class SQLiteExecutionDispatchStore:
             for name, sql in (("execution_dispatch_schema", SCHEMA), ("execution_dispatch_commands", TABLE)):
                 if not conn.execute("SELECT 1 FROM sqlite_master WHERE name=?", (name,)).fetchone():
                     conn.execute(sql)
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_dispatch_continuations'").fetchone():
+                conn.execute(CONTINUATIONS)
             conn.execute("INSERT OR IGNORE INTO execution_dispatch_schema VALUES(1)")
             SQLiteExecutionDispatchStore.check_schema(conn)
 
@@ -90,12 +99,23 @@ class SQLiteExecutionDispatchStore:
     def get(self, run_id):
         with self.connection() as conn:
             self.check_schema(conn)
-            return self.decode(conn.execute("SELECT * FROM execution_dispatch_commands WHERE run_id=?", (run_id,)).fetchone())
+            return self._latest(conn, run_id)
+
+    @classmethod
+    def _latest(cls, conn, run_id):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_dispatch_continuations'").fetchone():
+            row = conn.execute("SELECT * FROM execution_dispatch_continuations WHERE run_id=? ORDER BY graph_version DESC LIMIT 1", (run_id,)).fetchone()
+            if row is not None:
+                command = cls.decode(row)
+                if command.graph_version != row["graph_version"]:
+                    raise ValueError("Dispatch continuation graph integrity failure")
+                return command
+        return cls.decode(conn.execute("SELECT * FROM execution_dispatch_commands WHERE run_id=?", (run_id,)).fetchone())
 
     def assert_admitted(self, conn, run, principal):
         """Bind an accepted fact to the caller's fenced Workflow snapshot."""
         self.check_schema(conn)
-        command = self.decode(conn.execute("SELECT * FROM execution_dispatch_commands WHERE run_id=?", (run.run_id,)).fetchone())
+        command = self._latest(conn, run.run_id)
         state = run.execution_state
         if (command is None or principal is None or command.mission_id != run.mission_id
                 or command.permit_id != state.get("executionPermitId")
@@ -108,7 +128,46 @@ class SQLiteExecutionDispatchStore:
     def commands(self):
         with self.connection() as conn:
             self.check_schema(conn)
-            return [self.decode(row) for row in conn.execute("SELECT * FROM execution_dispatch_commands ORDER BY rowid")]
+            return [self._latest(conn, row[0]) for row in conn.execute("SELECT run_id FROM execution_dispatch_commands ORDER BY rowid")]
+
+    def accept_continuation(self, command, parent, validate):
+        """Append admission for one next graph; retain the original task authorization.
+
+        The caller holds the same Run/OS fence as initial admission. A current
+        formal Permit and live semantic authorization are checked by validate.
+        No checkpoint, graph, permission or execution result is created here.
+        """
+        with self.connection() as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self.check_schema(conn)
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_dispatch_continuations'").fetchone():
+                raise DispatchConflict("Explicit Dispatch continuation schema upgrade required")
+            latest = self._latest(conn, command.run_id)
+            if latest is not None and latest.graph_version == command.graph_version:
+                if any(getattr(latest, key) != getattr(command, key) for key in (
+                        "dispatch_id", "operation_key", "request_fingerprint", "mission_id", "run_id", "permit_id",
+                        "graph_id", "graph_version", "runtime_revision", "actor_id", "tenant_id")):
+                    raise DispatchConflict("Graph already has another Dispatch continuation")
+                return latest, True
+            if (latest != parent or parent is None
+                    or command.graph_version != parent.graph_version + 1
+                    or command.permit_id == parent.permit_id
+                    or any(getattr(command, key) != getattr(parent, key)
+                           for key in ("mission_id", "run_id", "graph_id", "actor_id", "tenant_id"))):
+                raise DispatchConflict("Dispatch continuation does not extend the authorized graph lineage")
+            row = conn.execute("SELECT payload FROM runs WHERE run_id=?", (command.run_id,)).fetchone()
+            run = RuntimeRunRecord.model_validate_json(row[0]) if row else None
+            if (run is None or run.mission_id != command.mission_id
+                    or run.execution_state.get("graphId") != command.graph_id
+                    or run.execution_state.get("graphVersion") != command.graph_version
+                    or run.execution_state.get("executionPermitId") != command.permit_id
+                    or run.runtime_revision != command.runtime_revision):
+                raise DispatchConflict("Dispatch continuation differs from the formal Run/Permit")
+            validate(run)
+            conn.execute("INSERT INTO execution_dispatch_continuations VALUES(?,?,?,?,?)", (
+                command.run_id, command.graph_version, command.operation_key,
+                command.model_dump_json(), stable_checksum(command)))
+            return command, False
 
     def accept(self, command, validate):
         with self.connection() as conn, conn:

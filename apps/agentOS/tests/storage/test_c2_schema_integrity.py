@@ -17,6 +17,72 @@ from test_initial_planning_sources import initial_run
 
 
 @pytest.fixture
+def historical_graph(ready_handoff):
+    from test_graph_handoff_generation import next_activation
+    result = next_activation(ready_handoff)
+    runtime, workflow, _, _, _, _, _, permit = result
+    return result, database_paths((runtime, workflow)), permit
+
+
+def test_preflight_retains_issued_history_through_paused_and_permitted_graphs(historical_graph):
+    import asyncio
+    from contracts.runtime_planning import RuntimePlanningDecision
+    from test_graph_handoff_generation import activate_next_graph
+
+    result, dbs, old_permit = historical_graph
+    runtime, workflow, _, run_id, activation_id, _, _, _ = result
+
+    def ready_without_writes():
+        before = contents(dbs)
+        inspection = ops.inspect_databases(**dbs)
+        assert {value["status"] for value in inspection.values()} == {"READY"}, inspection
+        assert contents(dbs) == before
+
+    paused = workflow.get_run(run_id)
+    assert paused.execution_state["graphVersion"] == old_permit.graph_version + 1
+    assert paused.execution_state["graphActivation"]["executionPermit"] is None
+    ready_without_writes()
+    handoff = runtime.prepare_graph_handoff(activation_id, idempotency_key="schema-next-handoff")
+    assert handoff.status == "STATE_PREPARED", handoff
+    issued = runtime.issue_execution_permit(handoff.handoff_id, idempotency_key="schema-next-permit")
+    assert issued.status == "ISSUED", issued
+    ready_without_writes()
+
+    class Pause:
+        def decide_runtime(self, *, observation, task_plan):
+            return RuntimePlanningDecision(observationId=observation.fingerprint(),
+                action="wait" if any(step.step_id == "C" and step.status == "completed"
+                                     for step in observation.steps) else "continue",
+                reason="Inspect multiple historical permit generations")
+
+    runtime.runtime_planning_coordinator.planner_for_run = lambda _: Pause()
+    boundary = asyncio.run(runtime.execute_prepared_run(run_id))
+    assert boundary.completed_step_ids == ["A", "B", "C"]
+    activate_next_graph(runtime, boundary, key="schema-fourth-graph", node="F", predecessor="E")
+    assert workflow.get_run(run_id).execution_state["graphVersion"] == old_permit.graph_version + 2
+    ready_without_writes()
+
+
+@pytest.mark.parametrize("damage", ["missing_activation", "foreign_activation"])
+def test_historical_permit_requires_intact_same_run_activation_ancestry(historical_graph, damage):
+    result, dbs, permit = historical_graph
+    runtime = result[0]
+    if damage == "missing_activation":
+        sql(dbs["workflow"], "DELETE FROM graph_activations WHERE activation_id=?", (permit.activation_id,))
+    else:
+        activation = runtime.graph_activation_authority.store.get_activation(permit.activation_id)
+        changed = activation.model_copy(update={"mission_id": "mission:unrelated"})
+        sql(dbs["workflow"], "UPDATE graph_activations SET payload=?,checksum=? WHERE activation_id=?",
+            (changed.model_dump_json(by_alias=True), stable_checksum(changed), permit.activation_id))
+    before = contents(dbs)
+    assert ops.inspect_databases(**dbs)["workflow"]["status"] == "INVALID"
+    assert contents(dbs) == before
+    with pytest.raises(ops.SchemaUpgradeError, match="preflight rejected"):
+        ops.upgrade_databases(**dbs)
+    assert contents(dbs) == before
+
+
+@pytest.fixture
 def two_permits(initial_run):
     """Two real Initial authority chains, different Missions, one Workflow DB."""
     from contracts.mission_semantic import MissionSemanticRequest

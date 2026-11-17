@@ -201,15 +201,25 @@ def test_pure_input_binding_changes_reject_stale_selection(context, mutation):
         s.propose(**data, selected_keys=p.candidate_keys, input_fingerprint=p.frontier.input_fingerprint)
 
 
-def test_input_depth_edge_count_and_deadline_bounds(context):
+def test_deadline_still_bounds_each_frontier_selection(context):
     s = engine(monotonic_clock=lambda: 10)
     with pytest.raises(HorizonError, match="DEADLINE"):
         s.propose(**inputs(context), deadline=9)
-    with pytest.raises(HorizonError, match="INPUT_BUDGET"):
-        s.propose(**inputs(context, keys=tuple(f"k:{i}" for i in range(257))))
-    with pytest.raises(HorizonError, match="INPUT_BUDGET"):
-        s.propose(**inputs(context, keys=tuple(f"k:{i}" for i in range(65)),
-            relations=tuple(edge(f"k:{i}", f"k:{j}") for i in range(32) for j in range(32,65))))
+
+
+def test_growing_snapshot_preserves_all_dependencies_with_a_bounded_working_window(context):
+    from contracts.horizon import HorizonProposal
+
+    keys = tuple(f"k:{i:04}" for i in range(600))
+    relations = tuple(edge(source, target) for source in keys[:8] for target in keys[8:])
+    data = inputs(context, keys=keys, relations=relations)
+    assert len(data["plan"].model_dump_json()) + len(data["observation"].model_dump_json()) > 300_000
+    proposal = engine().propose(**data)
+    assert len(proposal.frontier.tasks) == 600 and len(proposal.frontier.dependencies) == len(relations) > 4096
+    assert set(proposal.candidate_keys) == set(proposal.ready_keys) == set(keys[:8])
+    assert len(proposal.deferred) == 592 and len(proposal.cross_window_dependencies) == len(relations)
+    assert len(proposal.candidate_keys) <= proposal.frontier.budget.max_candidates
+    assert HorizonProposal.model_validate_json(proposal.model_dump_json()) == proposal
 
 
 def test_shared_compiler_is_required_and_no_invalid_topology_fallback(context):

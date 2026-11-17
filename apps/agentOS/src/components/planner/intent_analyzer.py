@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Optional, Protocol
 
@@ -19,9 +20,10 @@ from .complexity import (
     transport_error_code,
 )
 from adapters.prompt_runtime import planner_prompt_metadata, schema_hash, serialize_planning_request
+from contracts.execution_evidence import WorkspaceObservationRequirement, workspace_observation_requirements
 
 
-INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v3"
+INTENT_PROFILE_PROMPT_VERSION = "intent-profile.v4"
 
 
 class IntentLLM(Protocol):
@@ -44,6 +46,19 @@ _PROFILE_SCHEMA = {
             "type": "string", "enum": ["snippets", "full_text"],
             "description": "Use snippets for discovery or when supplied data suffices. Select full_text only when the mission requires reading source documents in detail. Do not extract full pages automatically for every search.",
         },
+        "workspaceObservations": {
+            "type": "array",
+            "items": WorkspaceObservationRequirement.model_json_schema(),
+            "description": "Extract explicit requests to inspect actual files or folders in the authorized workspace. "
+                "Use a literal workspace-relative path ('.' for the selected folder), kind=file or directory. "
+                "operation=read requires full source text; for a directory it requires listing it and reading its files. "
+                "operation=list only requires directory enumeration. Set recursive=true only for a requested tree/codebase scan. "
+                 "Code/repository review or a request to read file contents requires operation=read, not list; "
+                 "a repository-wide review also requires recursive=true. Use list only for a requested names/tree-only view. "
+                "Preserve every explicitly requested scope, do not shrink it or add exclusions to save work. "
+                "Use [] for reasoning over supplied text/materials without actual workspace inspection. "
+                "This declares evidence obligations, never tool permissions; do not invent absolute host paths.",
+        },
         "keyConstraints": {"type": "array", "items": {"type": "string"}},
         "requiredCapabilities": {"type": "array", "items": {"type": "string"}},
         "expectedArtifacts": {"type": "array", "items": {"type": "string"}},
@@ -57,10 +72,26 @@ _PROFILE_SCHEMA = {
         "implicitRequirements": {"type": "array", "items": {"type": "string"}},
         "riskLevel": {"type": "string"},
     },
-    "required": ["primaryGoal", "requiredCapabilities", "estimatedComplexity", "evidenceScope", "webExtraction"],
+    "required": ["primaryGoal", "requiredCapabilities", "estimatedComplexity", "evidenceScope", "webExtraction", "workspaceObservations"],
 }
 
 _NATIVE_FALLBACK = ["task_understanding", "analysis", "artifact_generation"]
+
+
+def _workspace_read_intent(intent: str) -> tuple[bool, bool]:
+    """Preserve explicit source-reading intent before the initial scope freezes."""
+    text = " ".join(intent.lower().split())
+    if (any(term in text for term in ("只列出", "仅列出", "仅查看目录", "不读取", "不要读取", "不用读取", "目录结构即可"))
+            or re.search(r"\b(?:only\s+(?:list|enumerate)|(?:do\s+not|don't)\s+read)\b", text)):
+        return False, False
+    repository_review = bool(re.search(
+        r"(?:审查|审计).{0,16}(?:仓库|代码|源码|项目)|(?:仓库|代码|源码|项目).{0,16}(?:审查|审计)"
+        r"|\b(?:review|audit)\b.{0,32}\b(?:repository|repo|codebase|source\s+code)\b"
+        r"|\b(?:repository|repo|codebase|source\s+code)\b.{0,32}\b(?:review|audit)\b", text))
+    reading = bool(re.search(
+        r"(?:读取|阅读|读完).{0,16}(?:文件|内容|代码|源码|仓库|项目)"
+        r"|\bread\b.{0,32}\b(?:files?|contents?|source|code|repository|codebase)\b", text))
+    return repository_review or reading, repository_review
 
 
 class IntentParser:
@@ -313,6 +344,30 @@ class IntentParser:
         task_type: str,
         task_input: Mapping[str, Any] | None = None,
     ) -> TaskSemanticProfile:
+        contract = self._planning_contract(intent, task_input)
+        # Caller-owned scope cannot be weakened by semantic inference.
+        if "workspaceObservations" in contract:
+            profile.workspace_observations = list(workspace_observation_requirements(contract["workspaceObservations"]))
+        else:
+            requires_read, repository_review = _workspace_read_intent(intent)
+            if requires_read:
+                inferred = profile.workspace_observations
+                binding = (task_input or {}).get("workspaceBinding")
+                if (not inferred and isinstance(binding, Mapping) and binding.get("workspaceId")
+                        and binding.get("grantId") and not binding.get("revoked", False)):
+                    inferred = [WorkspaceObservationRequirement(kind="directory", path=".",
+                        operation="read", recursive=repository_review)]
+                profile.workspace_observations = [WorkspaceObservationRequirement(
+                    path=item.path, kind=item.kind, operation="read",
+                    recursive=item.recursive or (repository_review and item.kind == "directory"))
+                    for item in inferred]
+        if profile.workspace_observations:
+            if profile.evidence_scope == "task_input_only":
+                raise ValueError("workspace inspection conflicts with task_input_only evidence scope")
+            acquisition = self._normalize_capabilities(["information_extraction"], domain=domain)
+            if not acquisition:
+                raise ValueError("workspace inspection requires a registered acquisition capability")
+            profile.required_capabilities = list(dict.fromkeys([*profile.required_capabilities, *acquisition]))
         normalized = self._normalize_capabilities(profile.required_capabilities, domain=domain)
         if not normalized:
             normalized = list(_NATIVE_FALLBACK)
@@ -350,7 +405,6 @@ class IntentParser:
         profile.domain_hint = profile.domain_hint or domain
         profile.task_type_hint = profile.task_type_hint or task_type
         profile.raw_intent = profile.raw_intent or intent
-        contract = self._planning_contract(intent, task_input)
         if not profile.key_constraints:
             profile.key_constraints = [str(item) for item in contract.get("constraints", [])]
         if not profile.expected_artifacts:
@@ -372,6 +426,8 @@ class IntentParser:
             "constraints": payload.get("constraints") or [],
             "expectedArtifacts": payload.get("expectedArtifacts") or [],
         }
+        if "workspaceObservations" in payload:
+            contract["workspaceObservations"] = payload["workspaceObservations"]
         for key in ("materials", "sourceMaterials", "materialRefs", "attachmentContext", "materialText", "contractText"):
             value = payload.get(key)
             if value not in (None, "", [], {}):

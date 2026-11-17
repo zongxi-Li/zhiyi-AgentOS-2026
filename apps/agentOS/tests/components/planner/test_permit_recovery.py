@@ -172,7 +172,8 @@ def test_uncertain_or_damaged_recovery_has_no_execution_right(ready_handoff, mon
 
 @pytest.mark.freeze_gate
 @pytest.mark.parametrize("revoked", [False, True])
-def test_permit_failure_review_retry_uses_new_attempt_after_reopen(ready_handoff, monkeypatch, revoked):
+@pytest.mark.parametrize("planner_barrier", [False, True])
+def test_permit_failure_review_retry_uses_new_attempt_after_reopen(ready_handoff, monkeypatch, revoked, planner_barrier):
     from adapters.agent_invocation import AgentInvocationAdapter
     from service.agents.registry import AgentNotFound
     from contracts.workflow import ReviewDecision
@@ -218,14 +219,21 @@ def test_permit_failure_review_retry_uses_new_attempt_after_reopen(ready_handoff
     failed_operation = NodeExecutionRecord.model_validate_json(row[0])
     # Reject the failed strategic barrier; retry is a separate existing operator
     # command, not a Review approval that grants another Permit.
-    rejected = asyncio.run(rt.apply_review(ReviewDecision(runId=run_id, stepId=paused.current_step_id,
-                                                       decision="rejected", operationId="reject-failed-plan")))
-    assert rejected.status == WorkflowStatus.FAILED
+    if not planner_barrier:
+        rejected = asyncio.run(rt.apply_review(ReviewDecision(runId=run_id, stepId=paused.current_step_id,
+                                                           decision="rejected", operationId="reject-failed-plan")))
+        assert rejected.status == WorkflowStatus.FAILED
+    else:
+        assert not paused.active_step_ids
+        rt.execution_permit_authority.assert_recoverable(paused)
     assert permits.get_permit(issued.permit_id) == record
     retry = rt.prepare_single_step_retry(run_id, "B", reuse_source_run=True,
                                         idempotency_key="operator-retry", idempotency_fingerprint="retry-B")
     assert retry.execution_state["executionPermitId"] == record.permit_id
     assert retry.execution_state["executionGeneration"] == record.attempt_generation
+    assert retry.execution_state.get("reviewPayload") is None
+    if planner_barrier:
+        assert not any(event.event_type.value == "review_decided" for event in retry.trace)
     definition = rt._workflow_for_run(retry).model_dump(mode="json", by_alias=True)
     reopened, saved, new_agent = _open(workflow.db_path.parent, definition)
     if revoked:

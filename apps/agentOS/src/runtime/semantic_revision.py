@@ -429,6 +429,7 @@ class SemanticRevisionService(CollaboratorAccess):
             "evolutionPolicyVersion",
             "evolutionPolicy",
             "taskAcceptance",
+            "workspaceObservations",
         )
         fresh: dict[str, Any] = {"engineMigration": "langgraph_pending"}
         for key in inherited_planning_context:

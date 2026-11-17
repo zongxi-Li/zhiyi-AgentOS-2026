@@ -1,4 +1,4 @@
-"""Bounded, read-only capture of initial compiler inputs; no registry authority."""
+"""Read-only capture of initial compiler inputs; no registry authority."""
 import hashlib
 import json
 from pathlib import Path
@@ -30,7 +30,6 @@ def _check_snapshot_content(value):
 def compilation_policy():
     # Version labels plus implementation identities: a forgotten version bump
     # must not make changed compiler code equivalent to accepted input.
-    from components.planner.topology.binding_solver import CapabilityBindingSolver
     root = Path(__file__).resolve().parents[1]
     paths = {"topology": "components/planner/topology/compiler.py",
         "bindingSolver": "components/planner/topology/binding_solver.py",
@@ -46,13 +45,13 @@ def compilation_policy():
     identities = {name: digest({path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                               for path in files}) for name, files in groups.items()}
     return InitialCompilationPolicy(versions={"topology": TOPOLOGY_COMPILER_VERSION,
-        "bindingSolver": f"capability-binding-v1:{CapabilityBindingSolver().max_search_states}",
+        "bindingSolver": "capability-binding-v2:finite-search",
         "lowerer": "taskplan-lowering-v1", "graphCompiler": str(ACGGraphCompiler.package_version),
         "routing": "cognitive-routing-v1", "acceptance": "initial-acceptance-v1"},
         implementations=identities)
 
 
-def capture_initial_sources(provider, runtime_fingerprint):
+def capture_initial_sources(provider, runtime_fingerprint, *, frozen_policy=None):
     runtime, run = provider.runtime, provider.run()
     basis, scope = run_intent_basis(run), run.execution_scope
     if basis is None or scope is None or basis.source_type != "SEMANTIC":
@@ -83,7 +82,7 @@ def capture_initial_sources(provider, runtime_fingerprint):
         loweringOptions={"planningSeed": run.planning_seed, "planningDiversity": run.planning_diversity,
                          "capabilityProfile": run.execution_state.get("requestedCapabilityProfile"),
                          **({'reviewPolicy': review} if review else {})},
-        policy=compilation_policy(), staticFingerprint="0" * 64)
+        policy=frozen_policy if frozen_policy is not None else compilation_policy(), staticFingerprint="0" * 64)
     # Compute over the canonical typed representation, then validate the seal.
     # model_construct is never returned and never crosses the service boundary.
     from pydantic import TypeAdapter
@@ -91,8 +90,6 @@ def capture_initial_sources(provider, runtime_fingerprint):
               for name, field in InitialPlanningSourceProvenance.model_fields.items() if name != "version"}
     provisional = InitialPlanningSourceProvenance.model_construct(**fields)
     serialized = provisional.model_dump(mode="json", by_alias=True)
-    if len(json.dumps(serialized, ensure_ascii=False)) > 2_000_000:
-        raise ValueError("initial source exceeds bounded snapshot policy")
     _check_snapshot_content(serialized)
     return InitialPlanningSourceProvenance.model_validate({**serialized,
         "staticFingerprint": provisional.content_fingerprint()})

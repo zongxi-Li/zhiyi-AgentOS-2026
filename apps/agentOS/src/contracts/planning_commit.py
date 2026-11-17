@@ -63,7 +63,7 @@ class PlanningCommitRequest(PlanningCommitContract):
     proposal_fingerprint: Fingerprint = Field(alias="proposalFingerprint")
     sources: FrozenPlanningSources
     requested_scope: tuple[SemanticTaskKey, ...] = Field(
-        min_length=1, max_length=256, alias="requestedScope")
+        min_length=1, alias="requestedScope")
     idempotency_key: Reference = Field(alias="idempotencyKey")
     expected_commitment_revision: int | None = Field(default=None, strict=True, ge=0,
                                                     alias="expectedCommitmentRevision")
@@ -126,7 +126,7 @@ class PlanningCommitRecord(PlanningCommitContract):
     status: Literal["ACCEPTED"] = "ACCEPTED"
     sources: FrozenPlanningSources
     requested_scope: tuple[SemanticTaskKey, ...] = Field(
-        min_length=1, max_length=256, alias="requestedScope")
+        min_length=1, alias="requestedScope")
     request_fingerprint: Fingerprint = Field(alias="requestFingerprint")
     expected_commitment_revision: int | None = Field(default=None, strict=True, ge=0,
                                                     alias="expectedCommitmentRevision")

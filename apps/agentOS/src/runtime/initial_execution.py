@@ -4,7 +4,7 @@ import sqlite3
 from contracts import stable_checksum
 from contracts.initial_planning import InitialPlanningSourceProvenance
 from contracts.graph_handoff import GraphHandoffRecord, GraphVersionIdentityLink, StagedGraphCheckpoint
-from contracts.workflow import GraphRef
+from contracts.workflow import GraphRef, WorkflowStatus
 from components.executor import ACGExecutionState
 from runtime.initial_planning_sources import capture_initial_sources
 from runtime.initial_graph_compilation import initial_recipe_fingerprint, INITIAL_MATERIALIZATION_POLICY
@@ -13,7 +13,7 @@ from runtime.state_persistence import acg_execution_state_from_run
 from support.stores.planning_commit_store import content_fingerprint
 
 
-def initial_content(store, activation):
+def initial_content(store, activation, *, allow_historical_recipe=False):
     record = store.get(activation.source_commit_id)
     mat = store.get_materialization(activation.materialization_id)
     if (activation.source_kind != "initial_plan" or record is None or record.proposal_type != "initial_plan"
@@ -26,13 +26,14 @@ def initial_content(store, activation):
             or mat.initial_content.plan != record.proposal_payload):
         raise ValueError("complete accepted Initial materialization required")
     content = mat.initial_content
-    if (content.blueprint.metadata.get("initialCompilationRecipe") != initial_recipe_fingerprint()
+    if (not allow_historical_recipe and content.blueprint.metadata.get("initialCompilationRecipe") != initial_recipe_fingerprint()
             or content.blueprint.metadata.get("initialMaterializationPolicy") != INITIAL_MATERIALIZATION_POLICY):
         raise ValueError("Initial compiler policy changed")
     return record, mat, content
 
 
-def assert_initial_sources(rt, store, run, record, *, allow_candidate_identity=False, principal_fingerprint=None):
+def assert_initial_sources(rt, store, run, record, *, allow_candidate_identity=False, principal_fingerprint=None,
+                           failed_recovery=False, issued_permit=False):
     """Revalidate static inputs without inventing a pre-activation Run snapshot.
 
     runtimeFingerprint remains the sealed historical value. Current execution
@@ -54,21 +55,30 @@ def assert_initial_sources(rt, store, run, record, *, allow_candidate_identity=F
     provider = rt.planning_commit_authority._provider(run.run_id, record.proposal_payload, True)
     provider.store = store
     provider.initial_provenance = record.source_provenance
-    if principal is None or not provider.authorize():
+    def authorized():
+        if failed_recovery:
+            return (run.status == WorkflowStatus.FAILED and not rt._run_cancellation_requested(run.run_id)
+                    and provider._authorize_mission_scope(run))
+        return provider.authorize()
+    if principal is None or not authorized():
         raise ValueError("Initial execution authorization denied")
     with store.connection() as conn:
         revision = conn.execute("SELECT revision FROM mission_semantic_state WHERE mission_id=?", (run.mission_id,)).fetchone()
     if revision is None or revision[0] != record.source_revision:
         raise ValueError("Initial Mission revision changed")
     origin = record.source_provenance
-    current = capture_initial_sources(provider, origin.runtime_fingerprint)
+    # Compilation policy identifies how this graph was derived. Once Permit
+    # has admitted that immutable package, use its sealed derivation policy
+    # while still rechecking today's inputs, scope, grants and registry facts.
+    current = (capture_initial_sources(provider, origin.runtime_fingerprint, frozen_policy=origin.policy)
+        if issued_permit else capture_initial_sources(provider, origin.runtime_fingerprint))
     excluded = {"identity_snapshot", "identity_fingerprint", "static_fingerprint"}
     if current.model_dump(exclude=excluded) != origin.model_dump(exclude=excluded):
         raise ValueError("Initial static sources changed")
     if (current.identity_snapshot != origin.identity_snapshot
             and not (allow_candidate_identity and current.identity_snapshot == record.proposal_payload)):
         raise ValueError("Initial Identity planning source changed")
-    if (rt.semantic_principal_provider() != principal or not provider.authorize()
+    if (rt.semantic_principal_provider() != principal or not authorized()
             or rt.semantic_principal_provider() != principal
             or authorities != (rt.planning_commit_authority, rt.graph_activation_authority,
                                rt.graph_materialization_authority, rt.identity_lifecycle)):

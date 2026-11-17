@@ -38,12 +38,12 @@ class InitialPlanningSourceProvenance(GraphContract):
     run_domain: str = Field(alias="runDomain")
     # Exact JSON projections of the existing AgentProfile/Identity contracts.
     # Capture revalidates them through their owning models; no runtime instances.
-    agent_profiles: tuple[dict[str, JsonValue], ...] = Field(max_length=256, alias="agentProfiles")
-    catalog: tuple[PlanningCapabilityDescriptor, ...] = Field(min_length=1, max_length=512)
-    validation_catalog: tuple[PlanningCapabilityDescriptor, ...] = Field(min_length=1, max_length=512, alias="validationCatalog")
+    agent_profiles: tuple[dict[str, JsonValue], ...] = Field(alias="agentProfiles")
+    catalog: tuple[PlanningCapabilityDescriptor, ...] = Field(min_length=1)
+    validation_catalog: tuple[PlanningCapabilityDescriptor, ...] = Field(min_length=1, alias="validationCatalog")
     identity_snapshot: TaskPlan | None = Field(alias="identitySnapshot")
     identity_fingerprint: Digest = Field(alias="identityFingerprint")
-    material_refs: tuple[JsonValue, ...] = Field(max_length=256, alias="materialRefs")
+    material_refs: tuple[JsonValue, ...] = Field(alias="materialRefs")
     lowering_options: dict[str, JsonValue] = Field(alias="loweringOptions")
     input_fingerprint: Digest = Field(alias="inputFingerprint")
     runtime_fingerprint: Digest = Field(alias="runtimeFingerprint")

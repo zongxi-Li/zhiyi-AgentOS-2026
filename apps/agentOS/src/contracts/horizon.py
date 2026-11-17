@@ -48,8 +48,10 @@ class PlanningFrontier(HorizonContract):
     control_barrier: bool = Field(default=False, alias="controlBarrier")
     policy_revision: str = Field(min_length=64, max_length=64, alias="policyRevision")
     input_fingerprint: str = Field(min_length=64, max_length=64, alias="inputFingerprint")
-    tasks: tuple[FrontierTask, ...] = Field(max_length=256)
-    dependencies: tuple[TaskPlanRelation, ...] = Field(max_length=4096)
+    # The snapshot accounts for the complete graph; only the selected working
+    # window below is bounded by HorizonBudget.
+    tasks: tuple[FrontierTask, ...]
+    dependencies: tuple[TaskPlanRelation, ...]
     budget: HorizonBudget
     validation_scope: Literal["task_plan_snapshot_only"] = Field(default="task_plan_snapshot_only", alias="validationScope")
 
@@ -87,9 +89,9 @@ class HorizonProposal(HorizonContract):
     frontier: PlanningFrontier
     candidate_keys: tuple[SemanticTaskKey, ...] = Field(max_length=64, alias="candidateKeys")
     ready_keys: tuple[SemanticTaskKey, ...] = Field(max_length=64, alias="readyKeys")
-    deferred: tuple[DeferredWork, ...] = Field(max_length=256)
-    internal_dependencies: tuple[TaskPlanRelation, ...] = Field(max_length=4096, alias="internalDependencies")
-    cross_window_dependencies: tuple[HorizonBoundary, ...] = Field(max_length=4096, alias="crossWindowDependencies")
+    deferred: tuple[DeferredWork, ...]
+    internal_dependencies: tuple[TaskPlanRelation, ...] = Field(alias="internalDependencies")
+    cross_window_dependencies: tuple[HorizonBoundary, ...] = Field(alias="crossWindowDependencies")
     used_cost_units: int = Field(ge=0, alias="usedCostUnits")
     used_risk_units: int = Field(ge=0, alias="usedRiskUnits")
     selection_basis: Literal["risk_then_unblocking_then_cost", "bounded_model_subset"] = Field(alias="selectionBasis")

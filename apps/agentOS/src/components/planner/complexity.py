@@ -218,6 +218,7 @@ def _stream_planning_call(
             "idle_timeout": min(60.0, timeout),
             "total_timeout": timeout,
             "emit_output_deltas": True,
+            "emit_reasoning_deltas": True,
         })
         async for event in streamer(**stream_kwargs):
             event_type = str(
@@ -229,13 +230,12 @@ def _stream_planning_call(
             if not isinstance(payload, Mapping) and isinstance(event, Mapping):
                 payload = event.get("payload")
             payload = dict(payload) if isinstance(payload, Mapping) else {}
-            if event_type in {"model.output.delta", "planner.model.output.delta"}:
-                # Planner output is transient UI evidence. It is never persisted
-                # to Trace, and reasoning remains mapped to activity upstream.
+            if event_type in {"model.output.delta", "planner.model.output.delta", "model.reasoning.delta", "planner.model.reasoning.delta"}:
+                # Both channels are transient UI data, never persisted to Trace.
                 delta = payload.get("delta")
                 if isinstance(delta, str) and delta and progress_callback:
                     progress_callback({
-                        "eventType": "planner.model.output.delta",
+                        "eventType": "planner.model.reasoning.delta" if "reasoning" in event_type else "planner.model.output.delta",
                         "stage": stage,
                         "callKey": call_key,
                         "retryIndex": retry_index,

@@ -10,7 +10,7 @@ from components.planner.planning_commit import PlanningCommitService
 from contracts.planning import TaskPlan, PlannedTask, TaskPlanPatch, TaskPlanRelation, VerificationLoopPolicy
 from contracts.planning_commit import PlanningCommitRequest, PlanningCommitRejectionCode as Code
 from contracts.runtime_planning import RuntimePlanningDecision, RuntimePlanningObservation, RuntimePlanningState
-from contracts.workflow import WorkflowStatus
+from contracts.workflow import StepStatus, WorkflowStatus, utc_now
 from contracts.mission_semantic import run_intent_basis
 from runtime.planning_commit import RuntimePlanningCommitProvider
 from support.stores.planning_commit_store import SQLitePlanningCommitStore, content_fingerprint
@@ -255,6 +255,8 @@ def test_react_revision_becomes_wait_and_restart_does_not_replace_run(ready_boun
     assert result == "stop"
     held = store.get_run(run_id)
     assert held.status == WorkflowStatus.WAITING_REVIEW
+    assert held.execution_state["reviewPayload"]["reasonCode"] == "PLANNER_WAIT"
+    assert not held.execution_state.get("planningCommitRejection")
     assert held.execution_state["planningLoop"]["current"]["decision"]["action"] == "wait"
     assert held.execution_state["taskPlan"] == before_plan and held.acg_blueprint == before_graph
     assert len(ledger.pending_events()) == 1 and not agent.calls
@@ -263,6 +265,227 @@ def test_react_revision_becomes_wait_and_restart_does_not_replace_run(ready_boun
     asyncio.run(runtime._recover_pending_planning_transitions(limit=10))
     assert store.get_run(run_id).acg_blueprint == before_graph
     assert not agent.calls
+
+
+@pytest.mark.parametrize("claimed_source", [None, "workspace_review"])
+def test_auto_workspace_queues_model_revision_for_formal_settled_acceptance(ready_boundary, claimed_source):
+    runtime, store, agent, run_id, _ = ready_boundary
+    ledger = attach(runtime, store)
+    run = store.get_run(run_id)
+    run.review_mode = "auto"
+    run.input["workspaceBinding"] = {"workspaceId": "workspace", "grantId": "grant"}
+    run.execution_state["workspaceObservations"] = [{"path": ".", "missingReads": ["source.py"]}]
+    observation = RuntimePlanningObservation.model_validate(run.execution_state["planningLoop"]["current"]["observation"])
+    proposal = patch(run)
+    if claimed_source is not None:
+        proposal = proposal.model_copy(update={"metadata": {"source": claimed_source}})
+    store.save_run(run)
+    before_plan, before_graph = run.execution_state["taskPlan"], run.acg_blueprint
+    decision = RuntimePlanningDecision(observationId=observation.fingerprint(), action="revise",
+        reason="model proposed work", taskPlanPatch=proposal)
+    converted = asyncio.run(runtime._gate_planning_commit_decision(run, observation, decision))
+    assert converted.action == "wait" and "revision queued" in converted.reason
+    assert run.execution_state["workspaceReviewContinuation"]["patch"] == proposal.model_dump(mode="json", by_alias=True)
+    assert not run.execution_state.get("planningCommitRejection")
+    assert not ledger.pending_events() and not agent.calls
+    assert run.execution_state["taskPlan"] == before_plan and run.acg_blueprint == before_graph
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+def test_workspace_model_patch_is_not_required_to_equal_the_deterministic_page(ready_boundary, monkeypatch, tampered):
+    from components.planner.workspace_review import workspace_review_decision
+    from contracts.planning_commit import PlanningCommitRejection
+    runtime, store, _, run_id, _ = ready_boundary
+    attach(runtime, store)
+    run = store.get_run(run_id)
+    run.review_mode = "auto"
+    run.input["workspaceBinding"] = {"workspaceId": "workspace", "grantId": "grant"}
+    progress = ({"path": ".", "complete": False, "missingReads": ["source.py"]},)
+    run.execution_state["workspaceObservations"] = [{"path": ".", "operation": "read"}]
+    current = RuntimePlanningState.model_validate(run.execution_state["planningLoop"]).current
+    observation = current.observation.model_copy(update={
+        "steps": tuple(step.model_copy(update={"status": "completed", "output_ref": "output:verified"})
+                       for step in current.observation.steps),
+        "remaining_step_ids": (), "workspace_observations": progress,
+    })
+    decision = workspace_review_decision(observation=observation,
+        task_plan=TaskPlan.model_validate(run.execution_state["taskPlan"]))
+    assert decision is not None and decision.action == "revise"
+    if tampered:
+        proposal = decision.task_plan_patch
+        decision = decision.model_copy(update={"task_plan_patch": proposal.model_copy(update={"add_nodes": (
+            proposal.add_nodes[0].model_copy(update={"objective": "Read a different unverified scope"}),
+            *proposal.add_nodes[1:])})})
+    accepted = []
+    def accept(*args, **kwargs):
+        accepted.append((args, kwargs))
+        return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="formal validation rejected unrelated work")
+    monkeypatch.setattr(runtime.planning_commit_authority, "accept_patch_locked", accept)
+    converted = asyncio.run(runtime._gate_planning_commit_decision(run, observation, decision))
+    assert not accepted
+    assert run.execution_state["workspaceReviewContinuation"]["patch"] == decision.task_plan_patch.model_dump(mode="json", by_alias=True)
+    assert "queued" in converted.reason
+
+
+@pytest.mark.parametrize("status", [StepStatus.FAILED, StepStatus.COMPLETED, StepStatus.PENDING])
+@pytest.mark.parametrize("pure_retire", [False, True])
+def test_revision_rejection_preserves_started_work_and_prepares_fresh_feedback(ready_boundary, status, pure_retire):
+    runtime, store, agent, run_id, state = ready_boundary
+    ledger = attach(runtime, store)
+    run = store.get_run(run_id)
+    runtime.mission_manager.mark_running(runtime.mission_manager.get_mission(run.mission_id))
+    run.review_mode = "auto"
+    run.execution_state["workspaceObservations"] = [{"path": ".", "missingReads": ["source.py"]}]
+    run.steps[0].status = status
+    run.steps[0].started_at = utc_now()
+    run.steps[0].attempt = 1
+    loop = RuntimePlanningState.model_validate(run.execution_state["planningLoop"])
+    observation = loop.current.observation.model_copy(update={
+        "wake_reason": "failure" if status == StepStatus.FAILED else "resume",
+        "failed_step_ids": (run.steps[0].step_id,) if status == StepStatus.FAILED else (),
+        "steps": tuple(step.model_copy(update={"status": status.value}) for step in loop.current.observation.steps),
+        "workspace_observations": tuple(run.execution_state["workspaceObservations"]),
+    })
+    loop = loop.model_copy(update={"current": loop.current.model_copy(update={
+        "observation_id": observation.fingerprint(), "observation": observation})})
+    run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
+    store.save_run(run)
+    before_plan, before_graph = run.execution_state["taskPlan"], run.acg_blueprint
+    proposal = patch(run).model_copy(update={"retire_keys": ("step:A",), "metadata": {"source": "workspace_review"}})
+    if pure_retire:
+        proposal = proposal.model_copy(update={"add_nodes": (), "relations": ()})
+    decision = RuntimePlanningDecision(observationId=observation.fingerprint(), action="revise",
+        reason="retire failed inventory work", taskPlanPatch=proposal)
+    converted = asyncio.run(runtime._gate_planning_commit_decision(run, observation, decision))
+    assert converted.action == "wait" and "INVALID_PROPOSAL: started or settled work cannot be changed" in converted.reason
+    feedback = run.execution_state["planningCommitRejection"]
+    assert feedback["observationId"] == observation.fingerprint() and feedback["code"] == "INVALID_PROPOSAL"
+    assert feedback["reason"] == "started or settled work cannot be changed" and feedback["proposalRef"]
+    assert not run.execution_state.get("workspaceReviewContinuation") and not ledger.pending_events()
+    loop = loop.model_copy(update={"current": loop.current.model_copy(update={"decision": converted, "status": "applied"})})
+    assert asyncio.run(runtime._apply_runtime_planning_decision(run, state, observation, converted, loop)) == "replan"
+    held = store.get_run(run_id)
+    assert held.execution_state.get("reviewPayload") is None
+    assert held.execution_state["planningLoop"]["current"] is None
+    assert held.execution_state["planningLoop"]["parentObservationId"] == observation.fingerprint()
+    assert held.execution_state["planningCommitRejection"] == feedback
+    assert held.execution_state["taskPlan"] == before_plan and held.acg_blueprint == before_graph and not agent.calls
+
+
+@pytest.mark.parametrize("entry", ["gate", "application"])
+def test_new_planning_decision_clears_previous_commit_rejection(ready_boundary, entry):
+    runtime, store, _, run_id, state = ready_boundary
+    run = store.get_run(run_id)
+    observation = RuntimePlanningObservation.model_validate(run.execution_state["planningLoop"]["current"]["observation"])
+    run.execution_state["planningCommitRejection"] = {"observationId": "old", "code": "INVALID_PROPOSAL", "reason": "old rejection"}
+    decision = RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait", reason="explicit wait")
+    if entry == "gate":
+        assert asyncio.run(runtime._gate_planning_commit_decision(run, observation, decision)) == decision
+    else:
+        runtime.mission_manager.mark_running(runtime.mission_manager.get_mission(run.mission_id))
+        loop = RuntimePlanningState.model_validate(run.execution_state["planningLoop"])
+        loop = loop.model_copy(update={"current": loop.current.model_copy(update={"decision": decision, "status": "applied"})})
+        assert asyncio.run(runtime._apply_runtime_planning_decision(run, state, observation, decision, loop)) == "stop"
+        assert run.execution_state["reviewPayload"]["reasonCode"] == "PLANNER_WAIT"
+        assert run.execution_state["planningLoop"]["current"]["rejection"] is None
+    assert "planningCommitRejection" not in run.execution_state
+
+
+def test_revision_validation_exception_keeps_the_specific_authority_reason(ready_boundary, monkeypatch):
+    runtime, store, _, run_id, _ = ready_boundary
+    attach(runtime, store)
+    run = store.get_run(run_id)
+    observation = RuntimePlanningObservation.model_validate(run.execution_state["planningLoop"]["current"]["observation"])
+    def reject(*args, **kwargs):
+        raise PermissionError("write access was revoked")
+    monkeypatch.setattr(runtime.planning_commit_authority, "accept_patch_locked", reject)
+    decision = RuntimePlanningDecision(observationId=observation.fingerprint(), action="revise",
+        reason="candidate", taskPlanPatch=patch(run))
+    converted = asyncio.run(runtime._gate_planning_commit_decision(run, observation, decision))
+    assert converted.reason == "Planning Commit rejected: PermissionError: write access was revoked"
+    assert run.execution_state["planningCommitRejection"]["code"] == "PermissionError"
+    assert run.execution_state["planningCommitRejection"]["reason"] == "write access was revoked"
+
+
+def test_formal_rejection_reobserves_and_asks_planner_without_a_round_limit(ready_boundary, monkeypatch):
+    runtime, store, agent, run_id, state = ready_boundary
+    ledger = attach(runtime, store)
+    run = store.get_run(run_id)
+    runtime.mission_manager.mark_running(runtime.mission_manager.get_mission(run.mission_id))
+    run.steps[0].started_at = utc_now()
+    run.steps[0].attempt = 1
+    loop = RuntimePlanningState.model_validate(run.execution_state["planningLoop"])
+    loop = loop.model_copy(update={"rounds_used": 99, "max_rounds": 1})
+    run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
+    store.save_run(run)
+    observations = []
+    class RepairingPlanner:
+        def decide_runtime(self, *, observation, task_plan):
+            observations.append(observation)
+            if len(observations) <= 2:
+                return RuntimePlanningDecision(observationId=observation.fingerprint(), action="revise",
+                    reason="propose a semantic repair", taskPlanPatch=patch(run).model_copy(update={"retire_keys": ("step:A",)}))
+            assert observation.planning_commit_rejection["code"] == "INVALID_PROPOSAL"
+            assert observation.planning_commit_rejection["reason"] == "started or settled work cannot be changed"
+            return RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait",
+                reason="The original work remains immutable; request missing external evidence")
+    monkeypatch.setattr(runtime.runtime_planning_coordinator, "planner_for_run", lambda _: RepairingPlanner())
+    before_plan, before_graph = run.execution_state["taskPlan"], run.acg_blueprint
+    assert asyncio.run(runtime.runtime_planning_coordinator.boundary(run, state, "resume")) == "stop"
+    assert len(observations) == 3 and observations[0].planning_commit_rejection is None
+    assert observations[1].planning_commit_rejection["observationId"] == observations[0].fingerprint()
+    assert observations[2].planning_commit_rejection["observationId"] == observations[1].fingerprint()
+    assert len({observation.fingerprint() for observation in observations}) == 3
+    held = store.get_run(run_id)
+    assert held.status == WorkflowStatus.WAITING_REVIEW
+    assert held.execution_state["planningLoop"]["roundsUsed"] == 102
+    assert held.execution_state["reviewPayload"]["reasonCode"] == "PLANNER_WAIT"
+    assert held.execution_state["taskPlan"] == before_plan and held.acg_blueprint == before_graph
+    assert not ledger.pending_events() and not agent.calls
+
+
+@pytest.mark.parametrize("blocker", ["active", "node_review", "stale"])
+def test_rejection_feedback_does_not_clear_an_unrelated_execution_barrier(ready_boundary, blocker):
+    runtime, store, _, run_id, state = ready_boundary
+    run = store.get_run(run_id)
+    observation_id = run.execution_state["planningLoop"]["current"]["observationId"]
+    if blocker == "active":
+        state.active_step_ids = [run.steps[0].step_id]
+    elif blocker == "node_review":
+        state.review_payload = {"subjectType": "node", "subjectId": run.steps[0].step_id}
+    else:
+        observation_id = "different-observation"
+    original = run.model_copy(deep=True)
+    with pytest.raises(ValueError):
+        runtime.prepare_planning_commit_rejection_feedback(run, state, code="INVALID_PROPOSAL",
+            reason="started work cannot be replaced", source_observation_id=observation_id)
+    assert run == original
+
+
+@pytest.mark.parametrize("proof", ["safe", "unproven", "policy"])
+def test_native_readonly_proof_projects_recovery_option_without_retrying_work(ready_boundary, monkeypatch, proof):
+    import runtime.permit_recovery as module
+    runtime, store, agent, run_id, state = ready_boundary
+    run = store.get_run(run_id)
+    run.steps[0].status = StepStatus.FAILED
+    run.execution_state["failureEvents"] = [{"failureId": "failure", "failureType": "policy" if proof == "policy" else "system",
+        "source": "agent", "reasonCode": "AGENT_WORK_TIMEOUT", "details": {"stepId": run.steps[0].step_id}}]
+    run.execution_state["recoveryOutcome"] = {"action": "abort"}
+    readonly = {"stepId": run.steps[0].step_id, "attemptId": "attempt", "operationId": "operation", "retrySafe": True,
+        "readRequestCount": 1, "confirmedReadCount": 0, "unconfirmedReadCount": 1}
+    calls = []
+    def validate(services, current, step_id):
+        calls.append((current.run_id, step_id))
+        if proof == "unproven":
+            raise ValueError("native session contains an unproven operation")
+        return readonly
+    monkeypatch.setattr(module, "run_step_readonly_retry_proof", validate)
+    original = run.model_copy(deep=True)
+    observation = runtime.runtime_planning_coordinator.observe(run, state, "failure")
+    assert observation.recovery_action == ("retry" if proof == "safe" else "abort")
+    assert observation.readonly_recovery_proof == (readonly if proof == "safe" else None)
+    assert bool(calls) == (proof != "policy")
+    assert run == original and not agent.calls
 
 
 def test_unconfigured_runtime_preserves_existing_execution(runtime_boundary):

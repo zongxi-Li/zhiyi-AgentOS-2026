@@ -1,4 +1,4 @@
-"""Read-only task conversation and bounded, durable Planner clarification."""
+"""Read-only task conversation and durable Planner clarification."""
 
 import asyncio
 import json
@@ -7,17 +7,17 @@ from time import monotonic
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from components.planner.complexity import call_planning_model, PLANNING_MODEL_TIMEOUT_SECONDS
-from contracts.execution import WorkflowProgressPhase
 from contracts.runtime_planning import RuntimeHumanAnswer, RuntimePlanningState
+from contracts.task_operator_policy import TaskOperatorPolicy, task_operator_policy_projection
 from contracts.workflow import TraceEventType, WorkflowStatus, utc_now
 from runtime.review import ReviewConflictError
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.planning_operations import RuntimeTaskOperations, TaskOperationIntent
-from runtime.copilot_projection import initial_plan_summary
-from support.stores._policy import acg_review_subject
+from runtime.copilot_projection import initial_plan_summary, planning_progress, review_summary
+from runtime.workspace_review_display import workspace_review_projection, workspace_transition_failure
 
 
 class CopilotMessageRequest(BaseModel):
@@ -45,8 +45,18 @@ class CopilotReply(BaseModel):
 
 
 class CopilotPermissionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
     permission: Literal["read_only", "task_collaboration"]
+    approval_mode: Literal["ask", "full"] = Field(default="ask", alias="approvalMode")
+    expected_policy_revision: int | None = Field(default=None, alias="expectedPolicyRevision", ge=0)
+    operation_id: str | None = Field(default=None, alias="operationId", min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_approval_selection(self):
+        if self.approval_mode == "full" and (self.permission != "task_collaboration"
+                or self.expected_policy_revision is None or not self.operation_id):
+            raise ValueError("automatic approval requires collaboration, operationId and expectedPolicyRevision")
+        return self
 
 
 class _CopilotProgress:
@@ -139,25 +149,29 @@ class RuntimePlanningInteraction:
         latest = store.list_mission_run_summaries([run.mission_id],
             owner_user_id=run.input.get("authenticatedUserId"),
             owner_tenant_id=run.input.get("authenticatedTenantId"))[run.mission_id].latest_run
-        review = None
-        payload = run.execution_state.get("reviewPayload") or {}
-        if run.status == WorkflowStatus.WAITING_REVIEW and payload and not question:
-            subject_type, subject_id = acg_review_subject(payload)
-            rejected = bool(current and current.status == "rejected" and payload.get("subjectType") == "planner")
-            review = {
-                "subjectId": subject_id, "subjectType": subject_type,
-                "reason": payload.get("reason", ""), "reasonCode": payload.get("reasonCode", ""),
-                "canApprove": not rejected, "decisionRejected": rejected,
-                "expectedRunUpdatedAt": run.updated_at.isoformat(),
-            }
+        review = None if question else review_summary(run, current)
+        progress = planning_progress(run)
+        display_reader = getattr(store, "get_runtime_display", None)
+        if callable(display_reader):
+            progress = workspace_transition_failure(run, display_reader(run_id)) or progress
+        policy_reader = getattr(store, "get_task_operator_policy", None)
+        policy = (policy_reader(run.mission_id) if callable(policy_reader)
+            else TaskOperatorPolicy(mission_id=run.mission_id,
+                permission=store.get_task_copilot_permission(run.mission_id)))
+        binding = run.input.get("workspaceBinding")
+        if isinstance(binding, dict) and not binding.get("resourceId"):
+            profile = getattr(getattr(self.runtime, "local_runtime_resource", None), "profile", None)
+            binding = {**binding, "resourceId": getattr(profile, "runtime_id", None)}
         return {"runId": run_id, "missionId": run.mission_id,
             "latestRunId": latest.run_id if latest else run_id,
-            "taskPermission": store.get_task_copilot_permission(run.mission_id),
+            **task_operator_policy_projection(policy, binding),
             "status": run.status.value, "revision": run.runtime_revision,
             "question": question, "humanAnswers": [a.model_dump(by_alias=True, mode="json") for a in loop.human_answers],
             "review": review,
+            "planningProgress": progress,
             "initialPlan": initial_plan_summary(self.runtime, run),
             "toolActivity": getattr(getattr(self.runtime, "execution_value_store", None), "list_tool_activity", lambda **_: [])(run_id=run_id),
+            "workspaceReview": workspace_review_projection(run),
             "exchanges": store.list_task_copilot_exchanges(run.mission_id),
             "decision": current.decision.model_dump(by_alias=True, mode="json") if current and current.decision else None,
             "steps": [{"stepId": s.step_id, "name": s.name, "status": s.status.value} for s in run.steps],
@@ -165,6 +179,8 @@ class RuntimePlanningInteraction:
             "permissions": ["read_only", "task_collaboration"]}
 
     def set_permission(self, run_id, request):
+        if request.approval_mode != "ask":
+            raise ValueError("automatic approval must be coordinated with trusted workspace authority")
         store = self.runtime.workflow_store
         run = store.get_run(run_id)
         store.set_task_copilot_permission(run.mission_id, request.permission)
@@ -350,24 +366,14 @@ class RuntimePlanningInteraction:
                     or not current or current.status != "applied" or current.observation_id != request.question_id
                     or not current.decision or current.decision.action != "wait" or not current.decision.question):
                 raise ReviewConflictError("question is no longer awaiting this answer")
-            if len(loop.human_answers) >= 32:
-                raise ReviewConflictError("clarification budget exhausted")
             state = runtime.runtime_planning_wait_service.restore_barrier(run, request.question_id)
             answer = RuntimeHumanAnswer(questionId=request.question_id, sourceRunId=run_id,
                 prompt=current.decision.question.prompt, answer=request.answer,
                 operationId=request.operation_id, answeredAt=utc_now())
             loop = loop.model_copy(update={"human_answers": (*loop.human_answers, answer),
                 "user_input_pending": True, "waiting": None})
-            state.review_payload = None
-            state.current_step_id = None
-            run.execution_state.update(state.model_dump(by_alias=True, mode="json"))
-            run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
-            run.current_step_id = None
-            run.status = runtime.state_machine.transition(run.status, WorkflowStatus.RETRYING)
-            run.lifecycle_phase = WorkflowProgressPhase.RECOVERY
-            run.lifecycle_message = "已收到你的回答，准备继续规划"
-            run.runtime_revision += 1
-            run.updated_at = utc_now()
+            runtime.runtime_planning_wait_service.release_barrier(run, state, loop,
+                message="已收到你的回答，准备继续规划")
             runtime.trace_store.append(run, TraceEventType.RUNTIME_EVENT_CLASSIFIED,
                 observation="Planner clarification answered", payload={"runtimeEvent": "planner.runtime.answered",
                     "questionId": request.question_id, "operationId": request.operation_id})

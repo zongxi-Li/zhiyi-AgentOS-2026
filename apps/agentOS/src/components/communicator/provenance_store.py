@@ -7,6 +7,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from support.sqlite_connections import ThreadLocalSQLiteConnections
+
 from .provenance import ProvenanceIntegrityError, ProvenanceLedger, _Event
 
 
@@ -21,7 +23,7 @@ class SQLiteProvenanceStore:
     def __init__(self, *, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.db_path)
+        self._connections = ThreadLocalSQLiteConnections(self.db_path)
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS acg_provenance_events (
                 run_id TEXT NOT NULL,
@@ -31,6 +33,10 @@ class SQLiteProvenanceStore:
             )"""
         )
         self._connection.commit()
+
+    @property
+    def _connection(self) -> sqlite3.Connection:
+        return self._connections.connection()
 
     def append(self, event: _Event) -> None:
         """追加一个已封存事件；重复标识只接受完全相同的不可变 JSON。"""
@@ -71,8 +77,8 @@ class SQLiteProvenanceStore:
         )
 
     def close(self) -> None:
-        """关闭数据库连接。"""
-        self._connection.close()
+        """工作线程结清后关闭全部数据库连接。"""
+        self._connections.close()
 
 
 __all__ = ["SQLiteProvenanceStore"]

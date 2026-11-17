@@ -430,7 +430,7 @@ def test_cancel_while_planner_decides_cannot_commit_stale_decision(tmp_path):
     assert runtime.get_status(run.run_id).status == WorkflowStatus.CANCELLED
 
 
-def test_planner_budget_waits_instead_of_spinning(tmp_path):
+def test_legacy_planner_round_budget_does_not_stop_new_evidence(tmp_path):
     runtime, agent, run = prepared(tmp_path)
     loop = RuntimePlanningState(roundsUsed=1, maxRounds=1)
     run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
@@ -438,8 +438,9 @@ def test_planner_budget_waits_instead_of_spinning(tmp_path):
     planner = Planner()
     attach(runtime, planner)
     result = asyncio.run(runtime.execute_prepared_run(run.run_id))
-    assert result.status == WorkflowStatus.WAITING_REVIEW
-    assert planner.observations == []
+    assert result.status == WorkflowStatus.COMPLETED
+    assert planner.observations
+    assert result.execution_state["planningLoop"]["roundsUsed"] > 1
 
 
 def test_transient_failure_recovers_without_replaying_completed_work(tmp_path):
@@ -727,8 +728,12 @@ def test_reference_only_round_fingerprint_remains_backward_compatible():
     old_payload.pop("userInputs")
     for key in ("failureReason", "failureMessage", "failureSource", "failureStepId", "resourceRequirements", "resourceFailovers"):
         old_payload.pop(key)
+    old_payload.pop("workspaceObservations")
+    old_payload.pop("planningCommitRejection")
+    old_payload.pop("readonlyRecoveryProof")
     for step in old_payload["steps"]:
         step.pop("artifactEvidence")
+        step.pop("toolOutcomes")
     digest = hashlib.sha256(json.dumps(old_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     assert observation.fingerprint() == digest
 
@@ -852,18 +857,26 @@ def test_task_acceptance_tampering_prevents_executor_calls(tmp_path):
 
 
 def test_retry_inherits_admitted_acceptance_and_verifies_original_commit(tmp_path):
-    workflow = acceptance_workflow().model_copy(update={
-        "planning_nodes": (*acceptance_workflow().planning_nodes, PlannedTask(key="step:C", title="C", objective="later work", capabilityRequirements=("verification",))),
-        "planning_relations": (*acceptance_workflow().planning_relations, TaskPlanRelation(sourceKey="step:B", targetKey="step:C", relationType="depends_on")),
-        "steps": (*acceptance_workflow().steps, WorkflowStepDefinition(stepId="C", name="C", agentName="runner", capability="verification")),
+    base = acceptance_workflow()
+    # B is a supporting artifact used by the final synthesis C. The retry
+    # assertion concerns B's original commit, not a final-before-check graph.
+    workflow = base.model_copy(update={
+        "planning_nodes": (base.planning_nodes[0], base.planning_nodes[1].model_copy(update={"logical_role": "supporting_artifact"}),
+            PlannedTask(key="step:C", title="C", objective="final synthesis", capabilityRequirements=("artifact_generation",), logicalRole="final_synthesis")),
+        "planning_relations": (*base.planning_relations, TaskPlanRelation(sourceKey="step:B", targetKey="step:C", relationType="depends_on")),
+        "steps": (base.steps[0], base.steps[1].model_copy(update={"logical_role": "supporting_artifact"}),
+            WorkflowStepDefinition(stepId="C", name="C", agentName="runner", capability="artifact_generation", logicalRole="final_synthesis")),
     })
+    caller_acceptance = acceptance_input()
+    for criterion in caller_acceptance["taskAcceptance"]["criteria"]:
+        criterion["artifactKey"] = "primary"
     class FailLater(ArtifactAgent):
         async def run(self, context):
             if context.step.step_id == "C":
                 raise TimeoutError("later failure")
             return await super().run(context)
     runtime, agent, run = prepared(tmp_path, FailLater('{"status":"ready","cost":99}', "application/json"),
-        workflow, input=acceptance_input())
+        workflow, input=caller_acceptance)
     attach(runtime, Planner(lambda o, p: RuntimePlanningDecision(observationId=o.fingerprint(), action="abort", reason="stop after failure")))
     from components.executor.graph import ACGSuperstepError
     with pytest.raises(ACGSuperstepError):
@@ -1110,7 +1123,7 @@ def test_condition_round_replays_after_crash_without_repeating_wake(tmp_path, st
     assert sum(e.payload.get("runtimeEvent") == "planner.runtime.woken" for e in result.trace) == 1
 
 
-def test_unobserved_node_and_exhausted_budget_require_external_resolution(tmp_path):
+def test_unobserved_node_requires_resolution_and_legacy_budget_does_not_block_wake(tmp_path):
     runtime, _, run = prepared(tmp_path)
     attach(runtime, wait_planner({"kind": "node_available", "nodeId": "invented-node"}))
     rejected = asyncio.run(runtime.execute_prepared_run(run.run_id))
@@ -1124,7 +1137,7 @@ def test_unobserved_node_and_exhausted_budget_require_external_resolution(tmp_pa
     asyncio.run(other.execute_prepared_run(run2.run_id))
     assert asyncio.run(other.prepare_planning_wakeups()) == [run2.run_id]
     result = asyncio.run(other.execute_prepared_run(run2.run_id))
-    assert result.status == WorkflowStatus.WAITING_REVIEW and len(planner.observations) == 1
+    assert result.status == WorkflowStatus.COMPLETED and len(planner.observations) == 2
     assert result.execution_state["planningLoop"]["waiting"] is None
 
 
