@@ -102,6 +102,15 @@ class RuntimeHumanAnswer(PlanningContract):
     answered_at: AwareDatetime = Field(alias="answeredAt")
 
 
+class RuntimeToolOutcome(PlanningContract):
+    """Safe committed call metadata, never proof supplied by an Agent itself."""
+
+    tool: str = Field(min_length=1, max_length=128)
+    status: str = Field(max_length=64)
+    error_code: str | None = Field(default=None, alias="errorCode", max_length=128)
+    receipt_ref: str | None = Field(default=None, alias="receiptRef", max_length=256)
+
+
 class StepObservation(PlanningContract):
     step_id: str = Field(alias="stepId")
     task_key: str = Field(alias="taskKey")
@@ -116,6 +125,9 @@ class StepObservation(PlanningContract):
     )
     artifact_refs: tuple[str, ...] = Field(default=(), alias="artifactRefs")
     artifact_evidence: tuple[ArtifactEvidence, ...] = Field(default=(), alias="artifactEvidence")
+    # Reports can request review/replanning; only independently checked receipts
+    # satisfy an execution-evidence requirement. No arguments/body enter here.
+    tool_outcomes: tuple[RuntimeToolOutcome, ...] = Field(default=(), alias="toolOutcomes", max_length=64)
 
 
 class RuntimeUserInput(PlanningContract):
@@ -184,9 +196,42 @@ class RuntimePlanningObservation(PlanningContract):
     resource_failovers: tuple[RuntimeResourceFailover, ...] = Field(default=(), alias="resourceFailovers", max_length=16)
     task_acceptance: TaskAcceptanceSpec | None = Field(default=None, alias="taskAcceptance")
     task_acceptance_results: tuple[TaskAcceptanceResult, ...] = Field(default=(), alias="taskAcceptanceResults")
+    # Host-generated bounded progress; paths are workspace-relative and bodies
+    # never enter the strategic planning snapshot.
+    workspace_observations: tuple[dict, ...] = Field(default=(), alias="workspaceObservations")
+    # Host-owned feedback from a rejected semantic revision.  This is a fact
+    # for the next Planner round, never an execution or approval instruction.
+    planning_commit_rejection: dict | None = Field(default=None, alias="planningCommitRejection")
+    readonly_recovery_proof: dict | None = Field(default=None, alias="readonlyRecoveryProof")
     condition_wake: RuntimeConditionWake | None = Field(default=None, alias="conditionWake")
-    human_answers: tuple[RuntimeHumanAnswer, ...] = Field(default=(), alias="humanAnswers", max_length=32)
-    user_inputs: tuple[RuntimeUserInput, ...] = Field(default=(), alias="userInputs", max_length=32)
+    human_answers: tuple[RuntimeHumanAnswer, ...] = Field(default=(), alias="humanAnswers")
+    user_inputs: tuple[RuntimeUserInput, ...] = Field(default=(), alias="userInputs")
+
+    def continuation_error(self) -> str | None:
+        """Keep scheduled corrective work separate from terminal acceptance.
+
+        A failed verification report can be repaired by an already-declared
+        downstream task. Integrity, review and failed execution still require
+        their existing authorities before the graph can advance.
+        """
+        if self.wake_reason == "failure" or not self.remaining_step_ids:
+            return "Planner cannot continue an exhausted or invalid execution"
+        if self.failed_step_ids:
+            return "Planner must use Recovery for failed steps"
+        if self.failure_type in {"policy", "storage"}:
+            return "Planner cannot continue integrity or policy failures"
+        if any(blocker.startswith("review_unresolved:") for blocker in self.completion_blockers):
+            return "Planner cannot continue unresolved review"
+        if any(blocker.startswith(("artifact_unsealed:", "artifact_content_integrity:"))
+               for blocker in self.completion_blockers):
+            return "Planner cannot continue untrusted artifact evidence"
+        repairable = ("verification_failed:", "verification_partial:", "verification_unverified:", "artifact_missing:",
+            "artifact_nonempty_content:", "artifact_utf8_text:", "artifact_json_syntax:",
+            "expected_artifact_missing:", "task_acceptance_failed:", "task_acceptance_unverified:",
+            "workspace_observation_incomplete:")
+        if any(not blocker.startswith(repairable) for blocker in self.completion_blockers):
+            return "Planner cannot continue unresolved execution evidence"
+        return None
 
     def fingerprint(self) -> str:
         payload = self.model_dump(by_alias=True, mode="json")
@@ -210,10 +255,18 @@ class RuntimePlanningObservation(PlanningContract):
             del payload["taskAcceptance"]
         if not payload["taskAcceptanceResults"]:
             del payload["taskAcceptanceResults"]
+        if not payload["workspaceObservations"]:
+            del payload["workspaceObservations"]
+        if payload["planningCommitRejection"] is None:
+            del payload["planningCommitRejection"]
+        if payload["readonlyRecoveryProof"] is None:
+            del payload["readonlyRecoveryProof"]
         # Preserve fingerprints of existing reference-only rounds on restart.
         for step in payload["steps"]:
             if not step["artifactEvidence"]:
                 del step["artifactEvidence"]
+            if not step["toolOutcomes"]:
+                del step["toolOutcomes"]
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
@@ -246,17 +299,17 @@ class RuntimePlanningRound(PlanningContract):
 
 class RuntimePlanningState(PlanningContract):
     version: Literal[1] = 1
-    # Mission lineage budget: inherited on both semantic replacement and retry.
+    # Counters are execution history, never a task-completion condition.
     rounds_used: int = Field(default=0, alias="roundsUsed", ge=0)
-    max_rounds: int = Field(default=12, alias="maxRounds", ge=1, le=32)
+    max_rounds: int | None = Field(default=None, alias="maxRounds", ge=1)
     current: RuntimePlanningRound | None = None
     last_verification_refs: tuple[str, ...] = Field(default=(), alias="lastVerificationRefs")
     restart_pending: bool = Field(default=False, alias="restartPending")
     parent_observation_id: str | None = Field(default=None, alias="parentObservationId")
     waiting: RuntimePlanningWait | None = None
-    human_answers: tuple[RuntimeHumanAnswer, ...] = Field(default=(), alias="humanAnswers", max_length=32)
+    human_answers: tuple[RuntimeHumanAnswer, ...] = Field(default=(), alias="humanAnswers")
     user_input_pending: bool = Field(default=False, alias="userInputPending")
-    user_inputs: tuple[RuntimeUserInput, ...] = Field(default=(), alias="userInputs", max_length=32)
+    user_inputs: tuple[RuntimeUserInput, ...] = Field(default=(), alias="userInputs")
 
 
 def successor_planning_state(raw: dict, pending_inputs: tuple | list = ()) -> dict:

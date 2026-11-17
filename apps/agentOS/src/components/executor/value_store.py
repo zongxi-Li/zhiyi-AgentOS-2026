@@ -23,6 +23,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+from support.sqlite_connections import ThreadLocalSQLiteConnections
 
 
 _NODE_PHASE_ORDER = {
@@ -376,7 +377,7 @@ class SQLiteExecutionValueStore:
         """打开独立数据文件并建立引用记录表，不接管 WorkflowStore 连接。"""
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.db_path)
+        self._connections = ThreadLocalSQLiteConnections(self.db_path)
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS execution_values (
                 reference TEXT PRIMARY KEY,
@@ -431,12 +432,17 @@ class SQLiteExecutionValueStore:
             )
         self._connection.commit()
 
+    @property
+    def _connection(self) -> sqlite3.Connection:
+        return self._connections.connection()
+
     def list_tool_activity(self, *, run_id: str) -> list[dict[str, Any]]:
         """Read committed tool receipts, including nodes that have not completed.
 
         The conversation receives identifiers and status, never cached model
         messages, file bodies, provider reasoning or arbitrary tool output.
         """
+        from contracts.task_operator_policy import public_approval_decision
         rows = self._connection.execute(
             "SELECT payload_json, created_at FROM execution_values WHERE run_id=? "
             "AND reference LIKE 'tool:%' AND json_type(payload_json, '$.record.executionId')='text' "
@@ -446,8 +452,11 @@ class SQLiteExecutionValueStore:
         activity = []
         for payload, created_at in reversed(rows):
             record = json.loads(payload)["record"]
-            activity.append({**{key: record.get(key) for key in fields},
-                             "createdAt": datetime.fromtimestamp(created_at, timezone.utc).isoformat()})
+            item = {**{key: record.get(key) for key in fields},
+                    "createdAt": datetime.fromtimestamp(created_at, timezone.utc).isoformat()}
+            if approval := public_approval_decision(record.get("approvalDecision")):
+                item["approvalDecision"] = approval
+            activity.append(item)
         return activity
 
     def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
@@ -673,8 +682,8 @@ class SQLiteExecutionValueStore:
         return deleted
 
     def close(self) -> None:
-        """关闭当前 SQLite 连接；运行时退出时由装配层负责调用。"""
-        self._connection.close()
+        """工作线程结清后关闭全部 SQLite 连接；运行时装配层负责调用。"""
+        self._connections.close()
 
     def _put(self, kind: str, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         reference = self._new_reference(kind, run_id, step_id)

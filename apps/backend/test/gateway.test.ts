@@ -8,8 +8,48 @@ import { projectAgentOsResponse } from '../src/gateway-projections.js';
 
 const identity = { actorId: '11111111-1111-4111-8111-111111111111', tenantId: null } as const;
 const token = 'gateway-test-service-authentication-token';
+const capabilityModes = ['planning', 'current_run', 'successor_run', 'denied'] as const;
+type CapabilityMode = typeof capabilityModes[number];
+const reviewCases = [
+  { kind: 'workspace_revision_pending', reasonCode: 'WORKSPACE_REVIEW_REVISION_PENDING', canApprove: false,
+    decisionRejected: false, displayReason: '系统正在处理审查计划的自动修订，完成正式校验后会继续执行。' },
+  { kind: 'workspace_revision_blocked', reasonCode: 'WORKSPACE_REVIEW_REVISION_BLOCKED', canApprove: false,
+    decisionRejected: true, displayReason: '修订方案试图更改已开始或已有最终结果的步骤，正式校验已拒绝该方案。',
+    errorCode: 'INVALID_PROPOSAL', errorType: '_TransitionRejected' },
+  { kind: 'planner_rejected', reasonCode: 'PLANNING_COMMIT_REJECTED', canApprove: false,
+    decisionRejected: true, displayReason: '计划修订未通过正式校验，任务仍处于暂停状态。', errorCode: 'INVALID_PROPOSAL' },
+  { kind: 'planner_wait', reasonCode: 'PLANNER_WAIT', canApprove: true,
+    decisionRejected: false, displayReason: '等待外部材料' },
+] as const;
+
+function capabilityFixture(mode: CapabilityMode) {
+  const recovery = mode === 'current_run' || mode === 'successor_run';
+  return {
+    schemaVersion: 1, missionId: `capabilities-${mode}`, runId: `capabilities-${mode}`,
+    runtimeRevision: 7, status: recovery ? 'failed' : 'planning',
+    isExecutionActive: !recovery, isSuperseded: false,
+    lineage: { parentRunId: null, sourceRunId: null, rerunReason: null, supersedesRunId: null, supersededByRunId: null },
+    canInspect: true, canDiscuss: true, canCancel: mode === 'planning', canReview: false,
+    canExecuteFormalAction: mode === 'planning', formalActions: mode === 'planning' ? ['materialize'] : [],
+    canResolveToolApproval: false, canAnswerPlanner: false, canCollaborate: mode === 'planning',
+    canSetPermission: mode !== 'denied',
+    canRetrySuccessor: mode === 'successor_run', canRecoverCurrentRun: mode === 'current_run',
+    retryMode: recovery ? mode : null, retryStepId: recovery ? 'failed-step' : null,
+    canRerunSuccessor: recovery, canDecideRevision: false, canApplyRevision: false, canDelete: recovery,
+    unavailableReasons: mode === 'denied' ? [{ action: 'canExecuteFormalAction', code: 'AUTHORITY_DENIED' }] : [],
+  };
+}
 
 describe('Python gateway transport contracts', () => {
+  it('retains a safe graph transition diagnostic without exposing its frozen source', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', { planningProgress: {
+      kind: 'blocked', status: 'blocked', message: '图交接受阻', observationId: 'observation', errorCode: 'GRAPH_TRANSITION_REJECTED',
+      reason: 'source fingerprint differs', errorType: 'TransitionRejected', canApprove: false,
+      sourceRun: { secret: 'PRIVATE' }
+    } }) as { planningProgress: Record<string, unknown> };
+    expect(result.planningProgress).toMatchObject({ kind: 'blocked', reason: 'source fingerprint differs', errorType: 'TransitionRejected', canApprove: false });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
   it('keeps a planner failure code in the public trace without exposing model text', () => {
     const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/trace', { runId: 'run', events: [{
       eventId: 'planning-failed', runId: 'run', eventType: 'task_status_changed',
@@ -22,7 +62,50 @@ describe('Python gateway transport contracts', () => {
   let server: Server;
   let baseUrl: string;
   beforeAll(async () => {
+    const capabilityResponses = new Map<string, unknown>();
+    for (const mode of capabilityModes) {
+      const actionCapabilities = { ...capabilityFixture(mode), internalDecision: 'PRIVATE' };
+      const run = { runId: actionCapabilities.runId, missionId: actionCapabilities.missionId,
+        status: actionCapabilities.status, runtimeRevision: actionCapabilities.runtimeRevision, actionCapabilities };
+      capabilityResponses.set(`/ai/agentos/v2/runs/${run.runId}`, run);
+      capabilityResponses.set(`/ai/agentos/v2/runs?capabilityMode=${mode}`, { items: [run], total: 1, page: 1, pageSize: 20 });
+      capabilityResponses.set(`/ai/agentos/v2/missions/${run.missionId}/workspace`, {
+        mission: { missionId: run.missionId }, activeRun: run, runs: [run], entries: [], graphNodes: [], diagnostics: [],
+      });
+    }
+    capabilityResponses.set('/ai/agentos/v2/runs/capabilities-current_run/copilot', {
+      review: { subjectId: 'graph', subjectType: 'planner', kind: 'workspace_revision_blocked',
+        reason: 'Workspace review graph transition rejected: INVALID_PROPOSAL: started or settled work cannot be changed',
+        reasonCode: 'WORKSPACE_REVIEW_REVISION_BLOCKED',
+        displayReason: '修订方案试图更改已开始或已有最终结果的步骤，正式校验已拒绝该方案。',
+        errorCode: 'INVALID_PROPOSAL', errorType: '_TransitionRejected', canApprove: false,
+        decisionRejected: true, expectedRunUpdatedAt: '2026-11-16T12:00:00Z', secret: 'PRIVATE' },
+      workspaceReview: { schemaVersion: 1, round: 2, graphVersion: 3, status: 'blocked',
+        gaps: { missingReadCount: 1, missingListingCount: 0, unsupportedEntryCount: 0,
+          missingReads: ['src/main.py'], missingListings: [], unsupportedEntries: [] }, rounds: [], private: 'PRIVATE' },
+      exchanges: [{ operationId: 'recover-operation', action: { kind: 'recover', stepId: 'failed-step',
+        expectedRevision: 7, retryMode: 'current_run', executeStepIds: ['failed-step'], reusedStepIds: [],
+        content: '', internalDecision: 'PRIVATE' } }],
+    });
+    capabilityResponses.set('/ai/agentos/v2/runs/repair-progress/copilot', {
+      runId: 'repair-progress', status: 'retrying', review: null,
+      planningProgress: { kind: 'repairing', status: 'retrying',
+        message: '正在根据审查反馈自动修正计划', observationId: 'denied-observation',
+        errorCode: 'INVALID_PROPOSAL', rejectedPatch: 'PRIVATE' },
+    });
+    for (const review of reviewCases) {
+      capabilityResponses.set(`/ai/agentos/v2/runs/review-${review.kind}/copilot`, {
+        runId: `review-${review.kind}`, status: 'waiting_review',
+        review: { subjectId: 'graph', subjectType: 'planner', reason: 'current diagnostic',
+          expectedRunUpdatedAt: '2026-11-16T12:00:00Z', ...review, continuationPatch: { private: 'PRIVATE' } },
+      });
+    }
     server = createServer(async (request, reply) => {
+      if (capabilityResponses.has(request.url ?? '')) {
+        reply.setHeader('content-type', 'application/json');
+        reply.end(JSON.stringify(capabilityResponses.get(request.url!)));
+        return;
+      }
       if (request.url === '/ai/slow') {
         setTimeout(() => reply.end('late'), 200).unref();
         return;
@@ -66,6 +149,80 @@ describe('Python gateway transport contracts', () => {
   afterAll(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
 
   const gateway = () => new PythonGateway({ pythonBaseUrl: baseUrl, internalServiceToken: token });
+
+  it.each(capabilityModes)('retains the complete %s capability snapshot through public Run and workspace HTTP responses', async mode => {
+    const app = Fastify();
+    app.decorateRequest('localIdentity', null);
+    app.addHook('onRequest', async request => { request.localIdentity = identity; });
+    registerGateway(app, gateway());
+    try {
+      const expected = capabilityFixture(mode);
+      const run = await app.inject(`/api/agentos/v2/runs/${expected.runId}`);
+      const list = await app.inject(`/api/agentos/v2/runs?capabilityMode=${mode}`);
+      const workspace = await app.inject(`/api/agentos/v2/missions/${expected.missionId}/workspace`);
+      for (const response of [run, list, workspace]) expect(response.statusCode).toBe(200);
+      for (const actual of [run.json().actionCapabilities, list.json().items[0].actionCapabilities,
+        workspace.json().activeRun.actionCapabilities, workspace.json().runs[0].actionCapabilities]) {
+        expect(actual).toEqual(expected);
+      }
+      expect(JSON.stringify([run.json(), list.json(), workspace.json()])).not.toContain('PRIVATE');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('retains the current Run recovery mode in public Copilot HTTP responses', async () => {
+    const app = Fastify();
+    app.decorateRequest('localIdentity', null);
+    app.addHook('onRequest', async request => { request.localIdentity = identity; });
+    registerGateway(app, gateway());
+    try {
+      const response = await app.inject('/api/agentos/v2/runs/capabilities-current_run/copilot');
+      expect(response.statusCode).toBe(200);
+      expect(response.json().review).toMatchObject({ kind: 'workspace_revision_blocked',
+        displayReason: '修订方案试图更改已开始或已有最终结果的步骤，正式校验已拒绝该方案。',
+        errorCode: 'INVALID_PROPOSAL', errorType: '_TransitionRejected', canApprove: false });
+      expect(response.json().workspaceReview).toMatchObject({ schemaVersion: 1, status: 'blocked', graphVersion: 3,
+        gaps: { missingReadCount: 1, missingReads: ['src/main.py'] } });
+      expect(response.json().exchanges[0].action).toMatchObject({ kind: 'recover', stepId: 'failed-step', retryMode: 'current_run' });
+      expect(response.body).not.toContain('PRIVATE');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each(reviewCases)('retains the $kind review cause and approval flag through public HTTP responses', async expected => {
+    const app = Fastify();
+    app.decorateRequest('localIdentity', null);
+    app.addHook('onRequest', async request => { request.localIdentity = identity; });
+    registerGateway(app, gateway());
+    try {
+      const response = await app.inject(`/api/agentos/v2/runs/review-${expected.kind}/copilot`);
+      expect(response.statusCode).toBe(200);
+      expect(response.json().review).toMatchObject(expected);
+      expect(response.body).not.toContain('PRIVATE');
+      expect(response.json().review).not.toHaveProperty('continuationPatch');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('retains active planning repair progress through public HTTP without inventing a review', async () => {
+    const app = Fastify();
+    app.decorateRequest('localIdentity', null);
+    app.addHook('onRequest', async request => { request.localIdentity = identity; });
+    registerGateway(app, gateway());
+    try {
+      const response = await app.inject('/api/agentos/v2/runs/repair-progress/copilot');
+      expect(response.statusCode).toBe(200);
+      expect(response.json().planningProgress).toEqual({ kind: 'repairing', status: 'retrying',
+        message: '正在根据审查反馈自动修正计划', observationId: 'denied-observation', errorCode: 'INVALID_PROPOSAL' });
+      expect(response.json().review).toBeNull();
+      expect(response.body).not.toContain('PRIVATE');
+    } finally {
+      await app.close();
+    }
+  });
 
   it('rebuilds trusted identity and service authentication, stripping supplied authority and cookie headers', async () => {
     const client = gateway();
@@ -164,6 +321,20 @@ describe('Python gateway transport contracts', () => {
 });
 
 describe('workbench response compatibility', () => {
+  it('preserves effective task policy and approval provenance through the query gateway', () => {
+    const actor = { userId: 'operator', tenantId: null };
+    const policy = { missionId: 'mission', permission: 'task_collaboration', approvalMode: 'full', policyRevision: 4,
+      updatedAt: '2026-11-17T06:00:00Z', operationId: 'change', effectiveApprovalMode: 'full', effectiveScopeMatch: true,
+      workspaceScope: { workspaceId: 'workspace', grantId: 'grant', resourceId: 'hands' }, updatedBy: actor };
+    const decision = { source: 'policy', policyRevision: 4, decidedAt: '2026-11-17T06:00:01Z', actor };
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', {
+      approvalMode: 'full', policyRevision: 4, approvalPolicy: { ...policy, secret: 'PRIVATE' },
+      toolActivity: [{ executionId: 'execution', approvalDecision: { ...decision, command: 'PRIVATE' } }],
+    }) as Record<string, any>;
+    expect(result).toMatchObject({ approvalMode: 'full', policyRevision: 4, approvalPolicy: policy });
+    expect(result.toolActivity[0].approvalDecision).toEqual(decision);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
   it('projects the public initial plan and tool receipts without exposing runtime bodies', () => {
     const plan = { planVersion: 3, commitId: 'commit', commitmentRevision: 2,
       objective: 'Inspect the project', constraints: ['Keep existing behavior'], expectedArtifacts: ['report'],
@@ -183,6 +354,18 @@ describe('workbench response compatibility', () => {
     expect(JSON.stringify(result)).not.toContain('PRIVATE');
     expect(result).not.toHaveProperty('executionState');
     expect(source).toEqual(snapshot);
+  });
+
+  it('keeps Copilot review diagnostics through the HTTP projection whitelist', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/copilot', { review: {
+      subjectId: 'graph', subjectType: 'planner', reason: 'technical rejection', reasonCode: 'PLANNING_COMMIT_REJECTED',
+      kind: 'planner_rejected', displayReason: '计划修订未通过正式校验', errorCode: 'INVALID_PROPOSAL',
+      errorType: '_TransitionRejected', canApprove: false, decisionRejected: true,
+      expectedRunUpdatedAt: '2026-11-16T12:00:00Z', private: 'PRIVATE' },
+    }) as Record<string, any>;
+    expect(result.review).toMatchObject({ kind: 'planner_rejected', displayReason: '计划修订未通过正式校验',
+      errorCode: 'INVALID_PROPOSAL', errorType: '_TransitionRejected', canApprove: false });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
   });
 
   it('keeps absent Copilot plan data compatible and rejects nested values in public scalar fields', () => {
@@ -219,7 +402,47 @@ describe('workbench response compatibility', () => {
   it('retains the workbench graph, execution resource and node health field names', () => {
     expect(projectAgentOsResponse('/ai/agentos/v2/missions/mission', { mission: {}, tasks: [], blueprints: [{ graphId: 'graph', version: 1 }], runs: [] })).toHaveProperty('graphs', [{ graphId: 'graph', version: 1, createdAt: null }]);
     expect(projectAgentOsResponse('/ai/agentos/v2/nodes', { items: [{ profile: { nodeId: 'node' }, health: { status: 'healthy' }, snapshotVersion: 2 }], total: 1 })).toMatchObject({ items: [{ healthStatus: 'healthy' }] });
+    expect(projectAgentOsResponse('/ai/agentos/v2/runs/run/graph', { graphId: 'graph', version: 3,
+      nodes: [], edges: [], workspaceReview: { schemaVersion: 1, round: 1, graphVersion: 3, status: 'blocked',
+        gaps: { missingReadCount: 0, missingListingCount: 0, unsupportedEntryCount: 0 }, rounds: [], private: 'PRIVATE' } }))
+      .toMatchObject({ workspaceReview: { schemaVersion: 1, graphVersion: 3, status: 'blocked', gaps: { missingReadCount: 0 } } });
     expect(projectAgentOsResponse('/ai/agentos/v2/runs/run/execution-tree', { run: {}, blueprint: { graphId: 'graph', version: 1, graph: { nodes: [], edges: [] } }, nodes: [{ task: { taskId: 'task', constraints: [] }, attempts: [{ attempt: {}, executions: [], executionBinding: { resourceId: 'resource' } }] }] })).toMatchObject({ graph: { graphId: 'graph' }, lifecycles: [], nodes: [{ attempts: [{ resourceUse: { resourceId: 'resource' } }] }] });
+  });
+  it('projects graph history as reference-only version facts', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/graph/versions', {
+      runId: 'run', graphId: 'graph', currentBlueprintId: null, currentGraphVersion: 2,
+      executionState: 'PRIVATE-RUNTIME', proposals: [{ candidateGraph: 'PRIVATE-PROPOSAL' }],
+      items: [{ blueprintId: null, graphId: 'graph', graphVersion: 2, taskPlanVersion: 2,
+        current: true, status: 'active', createdAt: null, predecessorBlueprintId: 'blueprint:1', reason: 'Read another page',
+        activationId: 'activation:2', handoffId: null, nodes: 'PRIVATE-NODES', executionPermit: 'PRIVATE-PERMIT',
+        patch: { patchId: 'patch:2', addedNodeIds: ['read:2'], updatedNodeIds: [], removedNodeIds: [],
+          addedEdgeCount: 1, removedEdgeCount: 0, addedNodes: 'PRIVATE-BODY' },
+        inherited: { completedStepIds: ['read:1'], skippedStepIds: [], attemptIds: ['attempt:1'],
+          outputRefs: { 'read:1': 'output:1', secret: { body: 'PRIVATE-OUTPUT' } }, pendingMemory: 'PRIVATE-MEMORY' } }],
+    });
+    expect(result).toEqual({ runId: 'run', graphId: 'graph', currentBlueprintId: null, currentGraphVersion: 2,
+      items: [{ blueprintId: null, graphId: 'graph', graphVersion: 2, taskPlanVersion: 2, current: true,
+        status: 'active', createdAt: null, predecessorBlueprintId: 'blueprint:1', reason: 'Read another page',
+        activationId: 'activation:2', handoffId: null,
+        patch: { patchId: 'patch:2', addedNodeIds: ['read:2'], updatedNodeIds: [], removedNodeIds: [], addedEdgeCount: 1, removedEdgeCount: 0 },
+        inherited: { completedStepIds: ['read:1'], skippedStepIds: [], attemptIds: ['attempt:1'], outputRefs: { 'read:1': 'output:1' } } }],
+      proposals: [] });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+  it('preserves historical graph identity and edge conditions without runtime overlays', () => {
+    const result = projectAgentOsResponse('/ai/agentos/v2/runs/run/graph', {
+      runId: 'run', graphId: 'graph', blueprintId: 'blueprint:1', graphVersion: 1, taskPlanVersion: 4, historical: true,
+      nodes: [{ nodeId: 'read:1', metadata: { semanticTaskKey: 'read', private: 'PRIVATE-NODE' } }],
+      edges: [{ edgeId: 'edge:1', sourceId: 'read:1', targetId: 'review', condition: 'evidence_ready', metadata: {} }],
+      completedStepIds: ['future'], activeStepIds: ['future'], skippedStepIds: ['future'], workspaceReview: { round: 9 },
+      resourceBindings: 'PRIVATE-RESOURCES', executionState: 'PRIVATE-RUNTIME',
+    });
+    expect(result).toMatchObject({ blueprintId: 'blueprint:1', historical: true, graphVersion: 1, taskPlanVersion: 4,
+      nodes: [{ display: { semanticTaskKey: 'read' } }], edges: [{ condition: 'evidence_ready' }] });
+    for (const field of ['completedStepIds', 'activeStepIds', 'skippedStepIds', 'workspaceReview', 'resourceBindings', 'executionState']) {
+      expect(result).not.toHaveProperty(field);
+    }
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
   });
   it('projects review, lineage and output references without exposing execution snapshots', () => {
     const result = projectAgentOsResponse('/ai/agentos/v2/runs/run', { runId: 'run', missionId: 'mission', status: 'waiting_review',

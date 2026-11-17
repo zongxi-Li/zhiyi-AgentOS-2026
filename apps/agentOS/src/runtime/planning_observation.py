@@ -10,6 +10,8 @@ from contracts.workflow import StepStatus, TraceEventType
 from contracts.task_acceptance import frozen_task_acceptance
 from runtime.ports import CollaboratorAccess
 from contracts.mission_semantic import run_intent_basis
+from contracts.artifacts import is_final_synthesis_role
+from runtime.binding import assess_run_requirement
 
 
 class RuntimePlanningObservationBuilder(CollaboratorAccess):
@@ -41,9 +43,13 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
         basis = run_intent_basis(run)
         self.validate_references(run=run, state=state)
         acceptance = frozen_task_acceptance(run)
-        plan = TaskPlan.model_validate(run.execution_state["taskPlan"])
-        bindings = [TaskImplementationBinding.model_validate(b) for b in run.execution_state["taskBindings"]]
-        task_by_step = {b.acg_node_id: b.plan_node_key for b in bindings}
+        raw_plan = run.execution_state.get("taskPlan")
+        plan = TaskPlan.model_validate(raw_plan) if raw_plan is not None else None
+        bindings = [TaskImplementationBinding.model_validate(b) for b in run.execution_state["taskBindings"]] if plan else ()
+        # Legacy executable graphs still need the same deterministic completion
+        # checks. Observing their real step identities does not invent a plan.
+        task_by_step = ({b.acg_node_id: b.plan_node_key for b in bindings}
+                        if plan else {step.step_id: step.step_id for step in run.steps})
         blockers, facts = [], []
         acceptance_candidates = []
         excerpt_budget = OBSERVATION_EXCERPT_BYTES
@@ -66,8 +72,6 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
                 report = verification.get("status") if isinstance(verification, dict) else None
                 if report not in {None, "passed", "partial", "failed"}:
                     raise ValueError("unknown persisted verification status")
-                if report in {"partial", "failed"}:
-                    blockers.append(f"verification_{report}:{step.step_id}")
                 artifacts, evidence = [], []
                 for artifact in commit.get("artifacts") or []:
                     manifest_id = artifact.get("manifestId")
@@ -86,21 +90,39 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
                     blockers.extend(f"artifact_{check.check}:{manifest_id}"
                         for check in inspected.checks if check.outcome == "failed")
                     artifacts.append(manifest_id)
-                semantic = next(t for t in plan.nodes if t.key == data["taskKey"])
-                if semantic.produced_artifacts and not artifacts:
+                semantic = next(t for t in plan.nodes if t.key == data["taskKey"]) if plan else None
+                if ((semantic is not None and semantic.produced_artifacts)
+                        or is_final_synthesis_role(step.logical_role)) and not artifacts:
                     blockers.append(f"artifact_missing:{step.step_id}")
+                tool_outcomes = []
+                for call in (commit.get("toolCalls") or ())[:64]:
+                    if not isinstance(call, dict):
+                        continue
+                    tool = call.get("tool") or call.get("name")
+                    if not isinstance(tool, str) or not tool:
+                        continue
+                    status, error, receipt = call.get("status"), call.get("errorCode"), call.get("receiptRef")
+                    tool_outcomes.append({"tool": tool[:128],
+                        "status": status[:64] if isinstance(status, str) else "unknown",
+                        "errorCode": error[:128] if isinstance(error, str) else None,
+                        "receiptRef": receipt if isinstance(receipt, str) and len(receipt) <= 256 else None})
                 data.update(outputRef=output_ref, commitId=commit["commitId"], auditRef=audit.decision_id,
                     auditOutcome=audit.outcome, verificationReport=report, artifactRefs=tuple(artifacts),
-                    artifactEvidence=tuple(evidence))
+                    artifactEvidence=tuple(evidence), toolOutcomes=tuple(tool_outcomes))
             facts.append(StepObservation(**data))
         settled = set(state.completed_step_ids) | set(state.skipped_step_ids)
         remaining = tuple(s.step_id for s in run.steps if s.step_id not in settled)
+        blockers.extend(self._verification_blockers(run, facts, exhausted=not remaining))
         acceptance_results = evaluate_task_acceptance(store=self.content_manifest_store,
             spec=acceptance, candidates=acceptance_candidates) if acceptance else ()
+        from contracts.execution_evidence import (evaluate_run_workspace_observations,
+                                                  workspace_observation_progress)
+        workspace_progress = workspace_observation_progress(run, self.execution_value_store)
         if not remaining:
             blockers.extend(f"task_acceptance_{r.outcome}:{r.criterion_id}"
                 for r in acceptance_results if r.outcome != "passed")
-        if not remaining and plan.expected_artifacts:
+            blockers.extend(evaluate_run_workspace_observations(run, self.execution_value_store))
+        if not remaining and plan is not None and plan.expected_artifacts:
             delivered = {
                 artifact for task in plan.nodes
                 if any(f.task_key == task.key and f.artifact_refs for f in facts)
@@ -109,10 +131,20 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             blockers.extend(f"expected_artifact_missing:{a}" for a in plan.expected_artifacts if a not in delivered)
         failures = run.execution_state.get("failureEvents") or []
         failure = failures[-1] if reason in {"failure", "condition", "user_input"} and failures else {}
-        resources = tuple(
-            (p.node_id, self.resource_plane.node_health(p.node_id).status.value)
-            for p in self.resource_plane.nodes()
-        )
+        failed_steps = tuple(s.step_id for s in run.steps if s.status == StepStatus.FAILED)
+        recovery_action = (run.execution_state.get("recoveryOutcome") or {}).get("action") if failure else None
+        readonly_recovery_proof = None
+        if (failure and len(failed_steps) == 1 and recovery_action not in {"retry", "rebind"}
+                and failure.get("failureType") not in {"policy", "storage"}):
+            from runtime.permit_recovery import run_step_readonly_retry_proof
+            try:
+                readonly_recovery_proof = run_step_readonly_retry_proof(self, run, failed_steps[0])
+            except ValueError:
+                # Failed proof preserves the existing Recovery classification.
+                # Error text or an Agent's own claim is never a grant.
+                pass
+            else:
+                recovery_action = "retry"
         planning = RuntimePlanningState.model_validate(run.execution_state.get("planningLoop") or {})
         requirements = run.execution_state.get("bindingRequirements") or {}
         # Prefer failed steps; cap the observation rather than exporting the registry.
@@ -123,7 +155,7 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             if step_id not in requirements:
                 continue
             requirement = ExecutionRequirement.model_validate(requirements[step_id])
-            readiness = self.resource_binder.assess(requirement)
+            readiness = assess_run_requirement(self, run, requirement)
             candidates = readiness.candidates[:16]
             nodes = {self.resource_plane.runtime(c.resource_id).node_id for c in candidates}
             resource_facts.append(RuntimeResourceObservation(
@@ -144,9 +176,13 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
         failovers = tuple(RuntimeResourceFailover(stepId=item["stepId"], runtimeId=item["resourceId"])
             for item in (run.execution_state.get("resourceFailoverHistory") or [])[-16:]
             if isinstance(item, dict) and item.get("stepId") and item.get("resourceId"))
+        resources = tuple(
+            (p.node_id, self.resource_plane.node_health(p.node_id).status.value)
+            for p in self.resource_plane.nodes()
+        )
         return RuntimePlanningObservation(
             missionId=run.mission_id, runId=run.run_id, graphId=state.graph_id,
-            graphVersion=state.graph_version, planVersion=plan.plan_version,
+            graphVersion=state.graph_version, planVersion=plan.plan_version if plan else state.graph_version,
             checkpointId=state.checkpoint_id, wakeReason=reason,
             goal=basis.objective if basis is not None else self.load_goal(run.mission_id),
             missionIntentBasisRef=basis.reference() if basis is not None else None,
@@ -155,12 +191,75 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             failureReason=failure.get("reasonCode"), failureSource=failure.get("source"),
             failureMessage=str(failure["message"])[:500] if failure.get("message") else None,
             failureStepId=(failure.get("details") or {}).get("stepId"),
-            recoveryAction=(run.execution_state.get("recoveryOutcome") or {}).get("action") if failure else None,
-            failedStepIds=tuple(s.step_id for s in run.steps if s.status == StepStatus.FAILED),
+            recoveryAction=recovery_action, readonlyRecoveryProof=readonly_recovery_proof,
+            failedStepIds=failed_steps,
             completionBlockers=tuple(blockers), resources=resources,
             resourceRequirements=tuple(resource_facts), resourceFailovers=failovers,
             taskAcceptance=acceptance, taskAcceptanceResults=acceptance_results,
+            workspaceObservations=workspace_progress,
+            planningCommitRejection=run.execution_state.get("planningCommitRejection"),
             conditionWake=planning.waiting.wake if reason == "condition" and planning.waiting else None,
             humanAnswers=planning.human_answers,
             userInputs=planning.user_inputs,
         )
+
+    @staticmethod
+    def _verification_blockers(run, facts, *, exhausted):
+        """Check the current causal frontier, not an accumulating failure log.
+
+        A later passed verifier may supersede an earlier report only when the
+        executable graph proves the dependency. An unrelated passed report or
+        a final synthesizer's own assertion cannot clear a failed check.
+        """
+        successors = {}
+        for edge in (run.acg_blueprint or {}).get("edges", ()):
+            if edge.get("activation") == "terminated":
+                continue
+            successors.setdefault(edge["sourceId"], set()).add(edge["targetId"])
+        reachable = {}
+        def descendants(step_id):
+            if step_id not in reachable:
+                pending, seen = list(successors.get(step_id, ())), set()
+                while pending:
+                    current = pending.pop()
+                    if current in seen:
+                        continue
+                    seen.add(current)
+                    pending.extend(successors.get(current, ()))
+                reachable[step_id] = seen
+            return reachable[step_id]
+        by_id = {fact.step_id: fact for fact in facts}
+        verifiers = {step.step_id for step in run.steps if step.capability == "verification"}
+        passed = {step_id for step_id in verifiers
+                  if by_id[step_id].output_ref and by_id[step_id].verification_report == "passed"}
+        blockers = []
+        for step_id in sorted(verifiers):
+            report = by_id[step_id].verification_report
+            if (by_id[step_id].output_ref and report in {None, "partial", "failed"}
+                    and not (descendants(step_id) & passed)):
+                blockers.append(f"verification_{report or 'unverified'}:{step_id}")
+        if not exhausted:
+            return blockers
+        finals = [step.step_id for step in run.steps if step.capability == "artifact_generation"
+                  and is_final_synthesis_role(step.logical_role)]
+        if len(finals) > 1:
+            blockers.append("final_synthesis_ambiguous")
+        producers = {step.step_id for step in run.steps
+                     if step.capability == "artifact_generation" and step.step_id not in finals
+                     and by_id[step.step_id].output_ref}
+        for final_id in finals:
+            if not by_id[final_id].output_ref:
+                blockers.append(f"final_output_missing:{final_id}")
+            upstream = {step.step_id for step in run.steps if final_id in descendants(step.step_id)}
+            latest_producers = {step_id for step_id in producers & upstream
+                                if not (descendants(step_id) & producers & upstream)}
+            # Do not impose a new verifier on old single-step artifact graphs.
+            # Once independent verification/refinement is declared, its actual
+            # passed report must cover each current producer before synthesis.
+            if latest_producers:
+                for producer_id in sorted(latest_producers):
+                    if not (descendants(producer_id) & passed & upstream):
+                        blockers.append(f"final_verification_missing:{final_id}:{producer_id}")
+            elif verifiers and not (passed & upstream):
+                blockers.append(f"final_verification_missing:{final_id}")
+        return blockers

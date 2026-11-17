@@ -189,6 +189,27 @@ def test_debate_coordinator_is_bounded_and_requires_quorum() -> None:
     assert coordinator.advance() == (1, "critique")
 
 
+@pytest.mark.parametrize("max_rounds", [None, 0, True, "1"])
+def test_debate_session_never_silently_defaults_to_one_round(max_rounds) -> None:
+    state = ACGExecutionState(runId="run", debateSessions={
+        "step": {"phase": "vote", "round": 1, "maxRounds": max_rounds, "appliedCommitIds": []}})
+    before = state.model_dump()
+    with pytest.raises(ValueError, match="explicit positive maxRounds"):
+        ACGNodeRunner._advance_debate_session(state=state, step_id="step", output_ref="output", commit_id="commit")
+    assert state.model_dump() == before
+
+
+def test_debate_session_preserves_the_callers_explicit_business_stop() -> None:
+    state = ACGExecutionState(runId="run", debateSessions={
+        "step": {"phase": "vote", "round": 34, "maxRounds": 35, "appliedCommitIds": []}})
+    ACGNodeRunner._advance_debate_session(state=state, step_id="step", output_ref="output", commit_id="vote:34")
+    assert state.debate_sessions["step"]["round"] == 35 and state.debate_sessions["step"]["phase"] == "propose"
+    state.debate_sessions["step"]["phase"] = "vote"
+    ACGNodeRunner._advance_debate_session(state=state, step_id="step", output_ref="final", commit_id="vote:35")
+    assert state.debate_sessions["step"]["phase"] == "complete"
+    assert state.debate_sessions["step"]["resultArtifactRef"] == "final"
+
+
 def test_blackboard_snapshot_is_frozen_before_sibling_writes(tmp_path) -> None:
     blueprint = ACGBlueprint(
         graphId="blackboard",

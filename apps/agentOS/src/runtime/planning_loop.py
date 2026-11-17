@@ -21,6 +21,9 @@ from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 from runtime.planning_observation import RuntimePlanningObservationBuilder
 
 
+REPAIRABLE_PLANNING_REJECTIONS = frozenset({"INVALID_PROPOSAL", "DEPENDENCY_NOT_CLOSED"})
+
+
 class RuntimePlanningCoordinator(CollaboratorAccess):
     def __init__(
         self, *, collaborators: RuntimeCollaborators, load_goal: Callable[[str], str],
@@ -38,7 +41,7 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         self.decision_gate = decision_gate
         self.pending_commit_wait = pending_commit_wait
         # Optional trusted host policy. It requests an observation only; all
-        # budgets, persisted decisions and application authorities still apply.
+        # persisted decisions and application authorities still apply.
         self.observe_progress: Callable[[RuntimeRunRecord, ACGExecutionState], bool] | None = None
         self.observation_builder = RuntimePlanningObservationBuilder(
             collaborators=collaborators, load_goal=load_goal, validate_references=validate_references,
@@ -49,8 +52,61 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         if isinstance(run.execution_state.get("taskPlan"), dict):
             run.execution_state.setdefault("planningLoop", RuntimePlanningState().model_dump(by_alias=True, mode="json"))
 
+    @staticmethod
+    def prepare_rejection_feedback(run: RuntimeRunRecord, state: ACGExecutionState, *,
+                                   code: str, reason: str, source_observation_id: str | None = None,
+                                   proposal_ref: str | None = None) -> RuntimePlanningState:
+        """Turn a formal revision denial into the next Planner round's fact.
+
+        The caller owns the Run lock, execution fence and durable save. This
+        helper only clears the stale planning/review barrier and prepares a
+        fresh observation boundary; it never authorizes, retries or mutates a
+        graph. A rejection is retained in the observation so the next Planner
+        can repair its semantic proposal with the exact authority feedback.
+        """
+        loop = RuntimePlanningState.model_validate(run.execution_state.get("planningLoop") or {})
+        current = loop.current
+        if state.active_step_ids or run.active_step_ids or state.control_frames:
+            raise ValueError("planning rejection feedback requires a quiescent planning boundary")
+        if ((state.review_payload is not None and state.review_payload.get("subjectType") != "planner")
+                or any(step.status in {StepStatus.RUNNING, StepStatus.RETRYING, StepStatus.WAITING_REVIEW}
+                       for step in run.steps)):
+            raise ValueError("planning rejection feedback cannot resolve active work or node/control review")
+        observed_id = source_observation_id or (current.observation_id if current else None)
+        if not observed_id:
+            raise ValueError("planning rejection feedback requires an observation boundary")
+        if current is not None and source_observation_id is not None and current.observation_id != source_observation_id:
+            raise ValueError("planning rejection feedback targets a stale observation")
+        if not isinstance(code, str) or not code.strip() or not isinstance(reason, str) or not reason.strip():
+            raise ValueError("planning rejection feedback requires a code and reason")
+        feedback = {"observationId": observed_id, "code": code.strip()[:128], "reason": reason.strip()[:800]}
+        if proposal_ref:
+            feedback["proposalRef"] = str(proposal_ref)[:256]
+        run.execution_state["planningCommitRejection"] = feedback
+        run.execution_state.pop("workspaceReviewContinuation", None)
+        run.execution_state.pop("reviewPayload", None)
+        state.review_payload = None
+        state.current_step_id = None
+        state.active_step_ids = []
+        fresh = loop.model_copy(update={"current": None, "waiting": None,
+            "restart_pending": True, "parent_observation_id": observed_id})
+        run.execution_state["planningLoop"] = fresh.model_dump(by_alias=True, mode="json")
+        run.execution_state.update(state.model_dump(by_alias=True, mode="json"))
+        return fresh
+
     async def boundary(self, run: RuntimeRunRecord, state: ACGExecutionState, reason: str) -> str:
         """Return continue, complete or stop; invoked only with no active workers."""
+        while True:
+            outcome = await self._boundary_once(run, state, reason)
+            if outcome != "replan":
+                return outcome
+            # A durable formal rejection is new planning evidence, not an
+            # external approval requirement. Reuse the same observe/decide/apply
+            # loop and let Planner select its next action from current facts.
+            reason = "resume"
+            await asyncio.sleep(0)
+
+    async def _boundary_once(self, run: RuntimeRunRecord, state: ACGExecutionState, reason: str) -> str:
         raw = run.execution_state.get("planningLoop")
         if not isinstance(raw, dict):
             return "complete" if reason == "exhausted" else "continue"
@@ -89,12 +145,20 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             if all(s.step_id in settled for s in run.steps):
                 return "continue"
             refs = self._verification_refs(run, state)
-            if not set(refs) - set(loop.last_verification_refs):
+            verified_progress = bool(set(refs) - set(loop.last_verification_refs))
+            observed_refs = {
+                step.output_ref for step in loop.current.observation.steps
+                if step.output_ref is not None
+            } if loop.current is not None else set()
+            tool_progress = bool(self._tool_output_refs(run, state) - observed_refs)
+            if not verified_progress and not tool_progress:
                 return "continue"
-            # Bounded verification controls retain local revision authority.
+            # Explicit verification controls retain local revision authority.
             if state.control_frames:
                 return "continue"
-            reason = "verification"
+            # A tool outcome (including a failed/denied call) is a fresh fact,
+            # not permission for the Agent to mutate its own ACG fragment.
+            reason = "verification" if verified_progress else "resume"
             loop = loop.model_copy(update={"last_verification_refs": refs})
         if reason in {"resume", "restart"} and any(s.status == StepStatus.FAILED for s in run.steps):
             reason = "failure"
@@ -122,22 +186,21 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             return "complete" if current.decision.action == "complete" else "stop" if current.decision.action in {"wait", "abort", "revise", "recover"} else "continue"
 
         if current.decision is None:
-            if loop.rounds_used >= loop.max_rounds:
-                decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason="Runtime planning budget exhausted")
-            else:
-                loop = loop.model_copy(update={"rounds_used": loop.rounds_used + 1})
-                self._save(run, loop, "requested")
-                try:
-                    planner = self.planner_for_run(run)
-                    decision = await asyncio.to_thread(
-                        planner.decide_runtime, observation=observation,
-                        task_plan=TaskPlan.model_validate(run.execution_state["taskPlan"]),
-                    )
-                    decision = RuntimePlanningDecision.model_validate(decision)
-                except Exception as exc:
-                    # Persist a safe wait, not a speculative fallback plan or raw model text.
-                    decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=f"Runtime Planner unavailable: {type(exc).__name__}")
+            loop = loop.model_copy(update={"rounds_used": loop.rounds_used + 1})
+            self._save(run, loop, "requested")
+            try:
+                planner = self.planner_for_run(run)
+                decision = await asyncio.to_thread(
+                    planner.decide_runtime, observation=observation,
+                    task_plan=TaskPlan.model_validate(run.execution_state["taskPlan"]),
+                )
+                decision = RuntimePlanningDecision.model_validate(decision)
+            except Exception as exc:
+                # Persist a safe wait, not a speculative fallback plan or raw model text.
+                decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=f"Runtime Planner unavailable: {type(exc).__name__}")
             if self.decision_gate is not None:
+                from runtime.workspace_review_execution import record_workspace_review
+                record_workspace_review(run, observation, decision, loop)
                 decision = await self.decision_gate(run, observation, decision)
             current = current.model_copy(update={"decision": decision, "status": "decided"})
             loop = loop.model_copy(update={"current": current})
@@ -187,10 +250,10 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             if any(c.criterion_id not in results or results[c.criterion_id].outcome != "passed"
                    for c in observation.task_acceptance.criteria):
                 raise ValueError("Planner cannot complete unverified task acceptance requirements")
-        if decision.action == "continue" and (observation.wake_reason == "failure" or not observation.remaining_step_ids or observation.completion_blockers):
-            raise ValueError("Planner cannot continue an exhausted or invalid execution")
-        if decision.action == "continue" and observation.failed_step_ids:
-            raise ValueError("Planner must use Recovery for failed steps")
+        if decision.action == "continue":
+            error = observation.continuation_error()
+            if error is not None:
+                raise ValueError(error)
         if decision.wait_for is not None and decision.wait_for.kind == "node_available":
             if decision.wait_for.node_id not in {node_id for node_id, _ in observation.resources}:
                 raise ValueError("Planner wait targets an unobserved node")
@@ -218,6 +281,17 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
     def _verification_refs(self, run, state) -> tuple[str, ...]:
         return tuple(sorted(state.output_refs[s.step_id] for s in run.steps
             if s.capability == "verification" and s.step_id in state.output_refs))
+
+    def _tool_output_refs(self, run, state) -> set[str]:
+        """Observe only this node frontier's immutable commits, never tool WAL."""
+        output_refs = set(state.output_refs.values())
+        return {
+            commit["outputRef"]
+            for commit in self.execution_value_store.list_node_commits(run_id=run.run_id)
+            if commit.get("stage") == "committed"
+            and commit.get("outputRef") in output_refs
+            and commit.get("toolCalls")
+        }
 
     def observe(self, run, state, reason) -> RuntimePlanningObservation:
         return self.observation_builder.observe(run, state, reason)
