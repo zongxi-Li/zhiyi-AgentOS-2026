@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Generic, Sequence, TypeVar
 
+from contracts.task_operator_policy import TaskOperatorPolicy
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus
 
 
@@ -231,6 +232,23 @@ def lifecycle_run_event_type(run: RuntimeRunRecord) -> str | None:
 
 class WorkflowStore(ABC):
     """RuntimeMissionRecord 和 RuntimeRunRecord 状态的持久化边界。"""
+    def task_operator_policy_lock(self, mission_id: str):
+        """Serialize policy change and dispatch admission; do not span await."""
+        from pathlib import Path
+        from support.stores.task_operator_policy import policy_lock
+        db_path = getattr(self, "db_path", None)
+        namespace = ("sqlite", str(Path(db_path).resolve()).casefold()) if db_path is not None else ("memory", id(self))
+        return policy_lock(namespace, mission_id)
+
+    @abstractmethod
+    def get_task_operator_policy(self, mission_id: str) -> TaskOperatorPolicy:
+        """Read the sole Mission-level collaboration and approval policy."""
+
+    @abstractmethod
+    def set_task_operator_policy(self, mission_id: str, *, permission, approval_mode="ask",
+            workspace_scope=None, actor=None, operation_id=None, expected_policy_revision=None) -> TaskOperatorPolicy:
+        """Atomically change policy with independent CAS and operation replay."""
+
     @abstractmethod
     def get_task_copilot_permission(self, mission_id: str) -> str:
         """Return the task-wide operator policy, independently of Run snapshots."""
@@ -392,6 +410,16 @@ class WorkflowStore(ABC):
         page_size: int = 20,
     ) -> WorkflowStorePage[RuntimeRunOverview]:
         """与 ``list_runs`` 同筛选/排序/分页，但返回不载入 payload 的轻量行投影。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_planning_wakeup_candidates(self, *, page: int = 1, page_size: int = 200) -> WorkflowStorePage[RuntimeRunRecord]:
+        """Internal background scan of waiting/retrying Runs across all owners.
+
+        Exclude deleted Run records, filter before loading payloads and page in
+        stable oldest-first order. This is recovery discovery, never a user
+        visibility API or authorization to resume a discovered Run.
+        """
         raise NotImplementedError
 
     @abstractmethod

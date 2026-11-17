@@ -18,6 +18,8 @@ from support.stores.mission_semantic_store import (
     MissionSemanticStore, prepare_commit, replay, request_fingerprint, semantic_outbox, snapshot,
 )
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
+from contracts.task_operator_policy import TaskOperatorPolicy, TaskOperatorPolicyChange
+from support.stores.task_operator_policy import prepare_policy, policy_receipt
 from support.stores._policy import (
     TERMINAL_RUN_STATUSES,
     matches_run,
@@ -67,7 +69,8 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         self._lifecycle_outbox: Dict[str, dict] = {}
         self._copilot_exchanges: dict[tuple[str, str], dict] = {}
         self._planning_inputs: dict[tuple[str, str], dict] = {}
-        self._task_copilot_permissions: dict[str, str] = {}
+        self._task_operator_policies: dict[str, TaskOperatorPolicy] = {}
+        self._task_operator_policy_receipts: dict[tuple[str, str], dict] = {}
 
     @_mission_locked
     def commit_semantics(self, operation: MissionSemanticOperation) -> SemanticOperationResult:
@@ -131,14 +134,31 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         return deepcopy(self._semantic_outbox.get(mission_id, []))
 
     def get_task_copilot_permission(self, mission_id: str) -> str:
-        self.get_mission(mission_id)
-        return self._task_copilot_permissions.get(mission_id, "task_collaboration")
+        return self.get_task_operator_policy(mission_id).permission
 
     def set_task_copilot_permission(self, mission_id: str, permission: str) -> None:
-        self.get_mission(mission_id)
-        if permission not in {"read_only", "task_collaboration"}:
-            raise ValueError("invalid task Copilot permission")
-        self._task_copilot_permissions[mission_id] = permission
+        self.set_task_operator_policy(mission_id, permission=permission)
+
+    def get_task_operator_policy(self, mission_id: str) -> TaskOperatorPolicy:
+        with self.task_operator_policy_lock(mission_id):
+            self.get_mission(mission_id)
+            policy = self._task_operator_policies.get(mission_id)
+            return policy.model_copy(deep=True) if policy else TaskOperatorPolicy(mission_id=mission_id)
+
+    def set_task_operator_policy(self, mission_id: str, *, permission, approval_mode="ask",
+            workspace_scope=None, actor=None, operation_id=None, expected_policy_revision=None) -> TaskOperatorPolicy:
+        change = TaskOperatorPolicyChange(permission=permission, approval_mode=approval_mode,
+            workspace_scope=workspace_scope, actor=actor, operation_id=operation_id,
+            expected_policy_revision=expected_policy_revision)
+        with self.task_operator_policy_lock(mission_id):
+            current = self.get_task_operator_policy(mission_id)
+            key = (mission_id, change.operation_id)
+            policy, replayed = prepare_policy(current, change, self._task_operator_policy_receipts.get(key))
+            if not replayed:
+                self._task_operator_policies[mission_id] = policy
+                if change.operation_id:
+                    self._task_operator_policy_receipts[key] = policy_receipt(change, policy)
+            return policy.model_copy(deep=True)
 
     def list_task_copilot_exchanges(self, mission_id: str, *, limit: int = 30) -> list[dict]:
         rows = [{**deepcopy(payload), "sourceRunId": owner}
@@ -156,8 +176,6 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
             if existing["content"] != payload["content"]:
                 raise ValueError("planning input operation conflict")
             return
-        if len(self.list_planning_inputs(run_id)) >= 32:
-            raise ValueError("planning input budget exhausted")
         self._planning_inputs[key] = deepcopy(payload)
 
     def list_copilot_exchanges(self, run_id: str, *, limit: int = 30) -> list[dict]:
@@ -433,7 +451,8 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         terminals = dict(self._terminal_run_statuses)
         terminals.pop(run_id, None)
         tasks = dict(self._tasks)
-        permissions = dict(self._task_copilot_permissions)
+        permissions = dict(self._task_operator_policies)
+        policy_receipts = dict(self._task_operator_policy_receipts)
         states = dict(self._semantic_states)
         commits = dict(self._semantic_commits)
         receipts = dict(self._semantic_receipts)
@@ -442,6 +461,7 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
         if delete_orphan_mission and not any(item.mission_id == run.mission_id for item in runs.values()):
             mission_deleted = tasks.pop(run.mission_id, None) is not None
             permissions.pop(run.mission_id, None)
+            policy_receipts = {key: value for key, value in policy_receipts.items() if key[0] != run.mission_id}
             states.pop(run.mission_id, None)
             commits.pop(run.mission_id, None)
             outbox.pop(run.mission_id, None)
@@ -452,11 +472,12 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
             mission_deleted=mission_deleted,
         )
         (self._runs, self._copilot_exchanges, self._planning_inputs,
-         self._terminal_run_statuses, self._tasks, self._task_copilot_permissions,
+         self._terminal_run_statuses, self._tasks, self._task_operator_policies,
          self._semantic_states, self._semantic_commits, self._semantic_receipts,
          self._semantic_outbox) = (runs, exchanges, inputs, terminals, tasks, permissions,
                                   states, commits, receipts, outbox)
         self._revision_decisions = revision_decisions
+        self._task_operator_policy_receipts = policy_receipts
         return result
 
     @_mission_locked
@@ -697,6 +718,13 @@ class MemoryWorkflowStore(WorkflowStore, MissionSemanticStore):
             page=result.page,
             page_size=result.page_size,
         )
+
+    def list_planning_wakeup_candidates(self, *, page: int = 1, page_size: int = 200) -> WorkflowStorePage[RuntimeRunRecord]:
+        runs = [run.model_copy(deep=True) for run in self._runs.values()
+            if run.status in {WorkflowStatus.WAITING_REVIEW, WorkflowStatus.RETRYING}
+            and run.record_state is not RunRecordState.DELETED]
+        runs.sort(key=lambda run: (run.updated_at, run.run_id))
+        return paginate_items(runs, page=page, page_size=page_size)
 
     def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """返回最新优先的未终态运行深复制，数量下限为 1，复杂度 ``O(R log R)``。"""

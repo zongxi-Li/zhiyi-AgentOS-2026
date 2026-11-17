@@ -383,6 +383,70 @@ def test_list_runs_filter_matrix_matches_owner_scope_and_pagination(store_factor
     "store_factory",
     [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
 )
+def test_background_planning_scan_pages_all_owners_without_changing_user_visibility(store_factory, tmp_path):
+    store = store_factory(tmp_path)
+    mission = RuntimeMissionRecord(title="Background wakeups")
+    store.save_mission(mission)
+    base = utc_now()
+    owned = [("reviewer", "tenant-a"), ("reviewer", "tenant-b"), ("other", "tenant-a")]
+    candidates = []
+    for index, (user, tenant) in enumerate(owned):
+        run = RuntimeRunRecord(runId=f"run-owned-{index}", missionId=mission.mission_id,
+            workflowId="workflow", domain="general", runtimeEngine="acg", status=WorkflowStatus.RETRYING,
+            input={"authenticatedUserId": user, "authenticatedTenantId": tenant},
+            updatedAt=base + timedelta(seconds=index))
+        store.save_run(run)
+        candidates.append(run)
+    # A real Planner barrier participates alongside retrying Runs.
+    waiting = RuntimeRunRecord(runId="run-waiting", missionId=mission.mission_id,
+        workflowId="workflow", domain="general", runtimeEngine="acg", status=WorkflowStatus.WAITING_REVIEW,
+        currentStepId="graph", acgBlueprint={"graphId": "graph"},
+        executionState={"checkpointId": "checkpoint", "planningLoop": {},
+            "reviewPayload": {"subjectType": "planner", "subjectId": "graph"}},
+        updatedAt=base + timedelta(seconds=3))
+    store.save_run(waiting)
+    for label, status, record_state in (
+        ("completed", WorkflowStatus.COMPLETED, RunRecordState.ACTIVE),
+        ("running", WorkflowStatus.RUNNING, RunRecordState.ACTIVE),
+        ("deleted", WorkflowStatus.RETRYING, RunRecordState.DELETED),
+    ):
+        store.save_run(RuntimeRunRecord(runId=f"run-{label}", missionId=mission.mission_id,
+            workflowId="workflow", domain="general", runtimeEngine="acg", status=status,
+            recordState=record_state))
+    ids = []
+    for page in range(1, 5):
+        result = store.list_planning_wakeup_candidates(page=page, page_size=1)
+        assert result.total == 4 and result.page == page and result.page_size == 1
+        ids.extend(item.run_id for item in result.items)
+        result.items[0].input["mutated"] = True
+    assert ids == [item.run_id for item in candidates] + [waiting.run_id]
+    assert store.list_planning_wakeup_candidates(page=5, page_size=1).items == ()
+    assert "mutated" not in store.get_run(candidates[0].run_id).input
+    assert store.list_runs().total == 3  # Only the unowned, nondeleted records.
+    visible = store.list_runs(owner_user_id="reviewer", owner_tenant_id="tenant-a")
+    assert {item.run_id for item in visible.items} & {item.run_id for item in candidates} == {candidates[0].run_id}
+    overviews = store.list_run_overviews(owner_user_id="reviewer", owner_tenant_id="tenant-a")
+    assert {item.run_id for item in overviews.items} == {item.run_id for item in visible.items}
+
+
+def test_sqlite_background_planning_scan_filters_summary_columns_before_loading_payloads(tmp_path):
+    path = tmp_path / "workflow.db"
+    store = SQLiteWorkflowStore(path)
+    mission = RuntimeMissionRecord(title="Background discovery")
+    store.save_mission(mission)
+    candidate = RuntimeRunRecord(missionId=mission.mission_id, workflowId="workflow", domain="general", runtimeEngine="acg",
+        status=WorkflowStatus.RETRYING, input={"authenticatedUserId": "reviewer", "authenticatedTenantId": "tenant"})
+    excluded = candidate.model_copy(deep=True, update={"run_id": "run-completed", "status": WorkflowStatus.COMPLETED})
+    store.save_run(candidate)
+    store.save_run(excluded)
+    _corrupt_run_payload(path, excluded.run_id)
+    assert [item.run_id for item in SQLiteWorkflowStore(path).list_planning_wakeup_candidates().items] == [candidate.run_id]
+
+
+@pytest.mark.parametrize(
+    "store_factory",
+    [lambda _: MemoryWorkflowStore(), lambda path: SQLiteWorkflowStore(path / "workflow.db")],
+)
 def test_list_run_overviews_matches_list_runs_projection(store_factory, tmp_path: Path) -> None:
     store = store_factory(tmp_path)
     mission = RuntimeMissionRecord(missionId="mission_overview", title="Overview mission")
