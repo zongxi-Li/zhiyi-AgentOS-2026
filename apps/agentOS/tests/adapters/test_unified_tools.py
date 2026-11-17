@@ -23,6 +23,7 @@ from adapters.guarded_model import GuardedModelRuntime
 from adapters.guarded_tool import GuardedToolRuntime
 from adapters.hands_http import HandsHttpTransport, receipt_checksum
 from adapters.model.native import NativeGeneralAgent
+from adapters.model_adapter import StructuredGenerationError
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.openai_runtime import OpenAICompatibleRuntime
@@ -49,6 +50,8 @@ from service.agents.base import AgentRunContext, AgentProfile
 
 NAMES = {'fs.read', 'fs.list', 'fs.write', 'fs.patch', 'shell.exec'}
 ANSWER = {'type': 'object', 'properties': {'answer': {'type': 'string'}}, 'required': ['answer']}
+WORKSPACE_CANDIDATE = {'workspace_changes': [], 'test_results': [], 'execution_receipts': [],
+                       'development_summary': 'Check the actual host receipts before accepting completion.'}
 
 
 class GeneralAgent(NativeGeneralAgent):
@@ -167,7 +170,9 @@ class HandsService:
         if self.failed:
             receipt['error'] = {'code': 'CONTROLLED_FAILURE', 'retryable': False, 'message': 'test failure'}
         receipt['checksum'] = 'invalid' if self.bad_receipt else receipt_checksum(receipt)
-        result = {'executionId': wire['invocationId'],
+        # Production Hands assigns a separate admission/execution identity;
+        # the caller invocationId remains unchanged in its signed receipt.
+        result = {'executionId': f'xhexec_{self.execution_count:032x}',
             'state': 'FAILED' if self.failed else 'COMPLETED', 'receipt': receipt}
         self.ledger[wire['idempotencyKey']] = digest, result
         return httpx.Response(200, json=result)
@@ -240,7 +245,8 @@ async def test_three_agent_types_discover_identical_native_catalog_at_node_bound
     original.run = inspect_and_run
     monkeypatch.setenv('AGENTOS_WORKSPACE_TEST_PYTHON', sys.executable)
     turns = [[('fs.write', {'path': 'sample.py', 'content': 'source'})],
-             [('shell.exec', {'runner': 'pytest'})], {'answer': 'catalog matched'}]
+             [('shell.exec', {'runner': 'pytest'})],
+             WORKSPACE_CANDIDATE if isinstance(original, WorkspaceDeveloper) else {'answer': 'catalog matched'}]
     runner, state, step, _ = node(stack, original, turns)
     await runner(step.step_id, state)
     assert len(stack.service.requests) >= 2
@@ -335,7 +341,10 @@ async def test_native_tool_node_streams_before_committing_and_replays_without_ne
         while not queue.empty():
             events.append(queue.get_nowait())
         assert stack.runtime.execution_value_store.get_output(run_id=runner.run.run_id, output_ref=result['outputRef']) == {'answer': 'live answer'}
-        assert 'PRIVATE' not in json.dumps([event.model_dump(mode='json') for event in events])
+        thoughts = [event for event in events if event.event_type == 'model.reasoning.delta']
+        assert thoughts and thoughts[0].payload['delta'] == 'PRIVATE'
+        assert all('PRIVATE' not in json.dumps(event.payload) for event in events
+                   if event.event_type == 'model.output.delta')
         await runner(step.step_id, state)
         assert len(http.requests) == 2 and len(stack.service.requests) == 1
     finally:
@@ -377,13 +386,14 @@ async def test_failed_execution_returns_error_and_allows_reasoning(stack):
 
 
 @pytest.mark.asyncio
-async def test_action_budget_checks_entire_batch_before_dispatch(stack):
+async def test_legacy_action_limit_does_not_block_authorized_batches(stack):
     runner, _, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 'n'})],
-        [('fs.list', {'path': '.'}), ('fs.read', {'path': 'n'})]])
+        [('fs.read', {'path': f'file-{i}.py'}) for i in range(40)], {'answer': 'observed files'}])
     session = AgentToolSession(context_for(runner, step), max_actions=2)
-    with pytest.raises(RuntimeError, match='budget'):
-        await session.generate_json(prompt='read', schema=ANSWER)
-    assert len(stack.service.requests) == 1 and len(http.requests) == 2
+    result = await session.generate_json(prompt='read', schema=ANSWER)
+    assert result.data == {'answer': 'observed files'}
+    assert len(stack.service.requests) == 41 and len(http.requests) == 3
+    assert session.actions == 41 and session.max_actions is None
 
 
 @pytest.mark.asyncio
@@ -422,7 +432,8 @@ async def test_three_concurrent_nodes_have_independent_context_grants_and_leases
     monkeypatch.setenv('AGENTOS_WORKSPACE_TEST_PYTHON', sys.executable)
     stack.service.release = asyncio.Event()
     triples = [node(stack, kind(), [[('fs.write', {'path': 'same.txt', 'content': kind.__name__})],
-        [('shell.exec', {'runner': 'pytest', 'path': '.'})], {'answer': 'ok'}], workspace=str(i), run_id=f'run-{i}')
+        [('shell.exec', {'runner': 'pytest', 'path': '.'})],
+        WORKSPACE_CANDIDATE if kind is WorkspaceDeveloper else {'answer': 'ok'}], workspace=str(i), run_id=f'run-{i}')
         for i, kind in enumerate([GeneralAgent, ResearchAgent, WorkspaceDeveloper])]
     tasks = [asyncio.create_task(runner(step.step_id, state)) for runner, state, step, _ in triples]
     await stack.service.started.wait()
@@ -468,8 +479,9 @@ async def test_session_deadline_cleans_up_lease_and_stops_model(stack):
     async def blocked(*args, **kwargs):
         await asyncio.Event().wait()
     stack.runtime.local_runtime_transport.execute_with_identity = blocked
-    with pytest.raises(TimeoutError):
+    with pytest.raises(StructuredGenerationError) as captured:
         await AgentToolSession(context_for(runner, step)).generate_json(prompt='read', schema=ANSWER, timeout_seconds=.05)
+    assert captured.value.code == 'AGENT_WORK_TIMEOUT'
     assert len(http.requests) == 1
     assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 0
 
@@ -592,7 +604,7 @@ async def test_cancellation_during_model_generation(stack):
 @pytest.mark.asyncio
 async def test_workspace_does_not_count_arbitrary_shell_exit_zero_as_passing_tests(stack):
     runner, state, step, _ = node(stack, WorkspaceDeveloper(), [[('fs.write', {'path': 'n', 'content': 'source'})],
-        [('shell.exec', {'command': 'mock-echo'})], {}])
+        [('shell.exec', {'command': 'mock-echo'})], WORKSPACE_CANDIDATE])
     with pytest.raises(RuntimeError, match='UNVERIFIED'):
         await runner(step.step_id, state)
 

@@ -6,19 +6,23 @@ import asyncio
 from support.async_tasks import await_owned, await_settled, run_blocking
 import json
 from collections.abc import AsyncIterator, Callable
+from http.client import HTTPException
 from threading import RLock
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from adapters.model_diagnostics import safe_transport_diagnostics
+
 
 class HttpTransportError(RuntimeError):
     """表示不暴露请求或响应正文的 HTTP 传输稳定错误。"""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, diagnostics: dict | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.diagnostics = safe_transport_diagnostics(diagnostics)
 
 
 class RotatingKeyProvider:
@@ -119,7 +123,20 @@ class HttpJsonTransport:
         data_lines: list[str] = []
         try:
             while True:
-                raw_line = await run_blocking(response.readline)
+                try:
+                    raw_line = await run_blocking(response.readline)
+                except HTTPError as exc:
+                    raise HttpTransportError(
+                        self._code_for_status(exc.code),
+                        "HTTP provider returned an error response",
+                        diagnostics={"phase": "stream_read", "httpStatus": exc.code},
+                    ) from exc
+                except (URLError, TimeoutError, OSError, HTTPException) as exc:
+                    raise HttpTransportError(
+                        "MODEL_TEMPORARY_UNAVAILABLE",
+                        "HTTP provider stream connection failed",
+                        diagnostics={"phase": "stream_read", "exceptionType": type(exc).__name__},
+                    ) from exc
                 if not raw_line:
                     if data_lines:
                         event = self._parse_sse_data(data_lines)
@@ -173,16 +190,19 @@ class HttpJsonTransport:
             raise HttpTransportError(
                 self._code_for_status(exc.code),
                 "HTTP provider returned an error response",
+                diagnostics={"phase": "request", "httpStatus": exc.code},
             ) from exc
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, HTTPException) as exc:
             raise HttpTransportError(
                 "MODEL_TEMPORARY_UNAVAILABLE",
                 "HTTP provider connection failed",
+                diagnostics={"phase": "request", "exceptionType": type(exc).__name__},
             ) from exc
         if status < 200 or status >= 300:
             raise HttpTransportError(
                 self._code_for_status(status),
                 "HTTP provider returned an error response",
+                diagnostics={"phase": "request", "httpStatus": status},
             )
         try:
             parsed = json.loads(raw_response.decode("utf-8"))
@@ -220,11 +240,13 @@ class HttpJsonTransport:
             raise HttpTransportError(
                 self._code_for_status(exc.code),
                 "HTTP provider returned an error response",
+                diagnostics={"phase": "stream_open", "httpStatus": exc.code},
             ) from exc
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, HTTPException) as exc:
             raise HttpTransportError(
                 "MODEL_TEMPORARY_UNAVAILABLE",
                 "HTTP provider connection failed",
+                diagnostics={"phase": "stream_open", "exceptionType": type(exc).__name__},
             ) from exc
         if status < 200 or status >= 300:
             close = getattr(response, "close", None)
@@ -233,6 +255,7 @@ class HttpJsonTransport:
             raise HttpTransportError(
                 self._code_for_status(status),
                 "HTTP provider returned an error response",
+                diagnostics={"phase": "stream_open", "httpStatus": status},
             )
         return response
 

@@ -16,6 +16,7 @@ from adapters.model_adapter import (
     StructuredGenerationError,
     StructuredGenerationResult,
 )
+from adapters.model_diagnostics import safe_stream_diagnostics, safe_transport_diagnostics
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.openai_runtime import ModelInvocationError, decode_json_object
 from adapters.prompt_runtime import canonical_hash, prompt_instance_metadata, trust_summary
@@ -32,8 +33,6 @@ from adapters.request_diagnostics import resolve_request_budget
 
 # 允许透传的思考档位：GLM 5.3 low/high/max 与 OpenAI 系 low/medium/high 的并集。
 _REASONING_EFFORT_VALUES = frozenset({"low", "medium", "high", "max"})
-
-
 def _validated_reasoning_effort(value: Any) -> str | None:
     """只放行受支持的档位，防止任务输入把任意键值注入供应商请求体。"""
     if isinstance(value, str):
@@ -63,6 +62,9 @@ class RegisteredModelRuntime:
     """
 
     supports_continuation = True
+    # Streaming tool turns enforce their own provider phase and total deadline;
+    # GuardedModelRuntime must not wrap them in a competing wait_for.
+    manages_tool_turn_timeout = True
 
     def __init__(
         self,
@@ -119,7 +121,8 @@ class RegisteredModelRuntime:
 
     async def generate_tool_turn(self, *, messages, tools, schema, timeout_seconds=120.0,
                                  commit_id=None, max_output_tokens=None, reasoning_effort=None,
-                                 temperature=None, progress_callback=None, request_budget=None, **kwargs):
+                                 temperature=None, progress_callback=None, request_budget=None,
+                                 schema_message_index=None, emit_reasoning_deltas=False, **kwargs):
         """One native Function Calling turn through the registered model adapter."""
         if not self.supports_tool_calling:
             raise StructuredGenerationError("MODEL_TOOLS_UNSUPPORTED", "model does not declare tool calling")
@@ -136,19 +139,22 @@ class RegisteredModelRuntime:
         if temperature is not None:
             options['temperature'] = temperature
         request = ModelInvocationRequest(requestId=commit_id or f"model:{uuid4().hex}", model=self.model,
-            messages=messages, responseSchema=schema, options=options, commitId=commit_id,
+            messages=messages, responseSchema=schema, schemaMessageIndex=schema_message_index,
+            options=options, commitId=commit_id, streamReasoning=emit_reasoning_deltas,
             requestBudget=resolve_request_budget(request_budget, capability, tokens))
         try:
             adapter = self._registry.resolve(self.provider, self.model, version=self.version)
             if progress_callback is not None and getattr(adapter, "supports_streamed_tool_turns", False):
-                return await self._wait_for(self._stream_tool_turn(adapter, request, progress_callback, timeout_seconds), timeout_seconds)
+                return await self._stream_tool_turn(adapter, request, progress_callback, timeout_seconds)
             return await self._wait_for(self._invoke(adapter, request, timeout_seconds), timeout_seconds)
         except asyncio.TimeoutError as exc:
             raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
         except ModelInvocationError as exc:
             raise StructuredGenerationError(exc.code, "model tool turn failed", audit={
                 "provider": self.provider, "model": self.model, "usage": dict(exc.usage),
-                "requestDiagnostics": dict(exc.metadata.get("requestDiagnostics") or {})}) from exc
+                "requestDiagnostics": dict(exc.metadata.get("requestDiagnostics") or {}),
+                "streamDiagnostics": safe_stream_diagnostics(exc.metadata.get("streamDiagnostics")),
+                "transportDiagnostics": safe_transport_diagnostics(exc.metadata.get("transportDiagnostics"))}) from exc
 
     async def _invoke(self, adapter, request, timeout):
         slot = self._call_quota(request, timeout) if self._call_quota else nullcontext()
@@ -174,38 +180,129 @@ class RegisteredModelRuntime:
 
     async def _stream_tool_turn(self, adapter, request, progress, timeout):
         """Forward public content while retaining the complete tool turn internally."""
-        iterator = self._stream(adapter, request, timeout).__aiter__()
+        policy = ModelStreamPolicy.from_environment()
+        total_timeout = min(timeout, policy.total)
+        quota_stack = AsyncExitStack()
+        iterator = None
         response = None
+        sealed_response = None
         first = False
+        provider_active = False
         chunks = length = 0
         started = last_activity = self._clock()
-        await progress("model.started", {"provider": self.provider, "model": self.model, "streamingCapability": True})
+        provider_started = False
+        stream_usage = {}
+
+        def audit(reason):
+            return {"provider": self.provider, "model": self.model, "usage": dict(stream_usage),
+                "streamDiagnostics": {"streamStarted": provider_started, "firstTokenObserved": first,
+                    "outputDeltaObserved": first, "deltaCount": chunks,
+                    "completionObserved": response is not None or sealed_response is not None, "streamTerminationReason": reason,
+                    "elapsedMs": max(0, round((self._clock() - started) * 1000))}}
+
+        def recover_usage_tail(code):
+            diagnostics = audit("completed_after_usage_timeout")["streamDiagnostics"]
+            usage = dict(stream_usage or sealed_response.usage)
+            metadata = {**sealed_response.metadata, "streamDiagnostics": diagnostics, "usageTailTimeoutCode": code}
+            if usage:
+                metadata["usage"] = usage
+            return sealed_response.model_copy(update={"usage": usage, "metadata": metadata})
+
         try:
-            async for event in iterator:
-                if event.event_type == "delta" and event.delta:
-                    chunks += 1
-                    length += len(event.delta)
-                    if not first:
-                        first = True
-                        await progress("model.first_token", {})
-                    await progress("model.output.delta", {"delta": event.delta})
-                elif event.event_type == "completed":
-                    response = event.response
-                # Private reasoning/tool argument fragments indicate liveness,
-                # but neither is ever forwarded to the runtime event broker.
-                if event.event_type in {"activity", "delta", "tool_call"} and self._clock() - last_activity >= .35:
-                    last_activity = self._clock()
-                    await progress("model.activity", {"elapsedMs": round((last_activity-started)*1000),
-                        "receivedChunks": chunks, "receivedLength": length})
+            # Overall request time still includes quota admission. Provider
+            # first-response/idle clocks begin only after admission, as on the
+            # ordinary JSON stream path.
+            async with asyncio.timeout(timeout):
+                charge = await quota_stack.enter_async_context(self._call_quota(request, timeout)) if self._call_quota else None
+                started = last_activity = last_activity_event = self._clock()
+                iterator = self._stream(adapter, request, total_timeout, charge).__aiter__()
+                provider_started = True
+                await progress("model.started", {"provider": self.provider, "model": self.model, "streamingCapability": True})
+                while True:
+                    try:
+                        event = await self._next_stream_event(iterator, started=started, last_activity=last_activity,
+                            provider_active=provider_active, ttft_timeout=policy.first_response,
+                            idle_timeout=policy.idle, total_timeout=total_timeout)
+                    except StopAsyncIteration:
+                        break
+                    raw_usage = event.metadata.get("usage")
+                    if isinstance(raw_usage, dict):
+                        stream_usage = dict(raw_usage)
+                    if event.event_type in {"activity", "reasoning_delta", "tool_call", "sealed"} or (
+                        event.event_type == "delta" and event.delta
+                    ):
+                        provider_active = True
+                        last_activity = self._clock()
+                    if event.event_type == "delta" and event.delta:
+                        chunks += 1
+                        length += len(event.delta)
+                        if not first:
+                            first = True
+                            await progress("model.first_token", {})
+                        await progress("model.output.delta", {"delta": event.delta})
+                    elif event.event_type == "reasoning_delta" and event.delta:
+                        await progress("model.reasoning.delta", {"delta": event.delta})
+                    elif event.event_type == "sealed":
+                        if event.response is None:
+                            raise ModelInvocationError("MODEL_RESPONSE_INVALID", "sealed stream has no response")
+                        sealed_response = event.response
+                    elif event.event_type == "completed":
+                        response = event.response
+                        break
+                    if provider_active and self._clock() - last_activity_event >= .35:
+                        last_activity_event = self._clock()
+                        await progress("model.activity", {"elapsedMs": round((last_activity_event-started)*1000),
+                            "receivedChunks": chunks, "receivedLength": length})
+                if response is None:
+                    raise StructuredGenerationError("MODEL_STREAM_INCOMPLETE", "tool stream ended without a complete response")
+        except asyncio.TimeoutError as exc:
+            if sealed_response is None:
+                raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out", audit=audit("MODEL_TIMEOUT")) from exc
+            response = recover_usage_tail("MODEL_TIMEOUT")
+        except StructuredGenerationError as exc:
+            if sealed_response is not None and exc.code in {"MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT", "MODEL_TIMEOUT"}:
+                response = recover_usage_tail(exc.code)
+            else:
+                exc.audit = {**audit(exc.code), **exc.audit}
+                raise
+        except ModelInvocationError as exc:
+            exc.metadata.setdefault("streamDiagnostics", audit(exc.code)["streamDiagnostics"])
+            raise
         finally:
-            closer = getattr(iterator, "aclose", None)
-            if callable(closer):
-                await closer()
-        if response is None:
-            raise StructuredGenerationError("MODEL_STREAM_INCOMPLETE", "tool stream ended without a complete response")
-        await progress("model.completed", {"provider": response.provider, "model": response.model,
-            "receivedLength": length, "usage": dict(response.usage), "finishReason": response.metadata.get("finishReason")})
+            try:
+                closer = getattr(iterator, "aclose", None)
+                if callable(closer):
+                    await closer()
+            finally:
+                await quota_stack.aclose()
+        # Provider resources are settled before reporting completion. Display
+        # backpressure cannot invalidate an already parsed, sealed model turn.
+        try:
+            await self._wait_for(progress("model.completed", {"provider": response.provider, "model": response.model,
+                "receivedLength": length, "usage": dict(response.usage),
+                "finishReason": response.metadata.get("finishReason")}), timeout)
+        except asyncio.TimeoutError:
+            pass
         return response
+
+    async def _next_stream_event(self, iterator, *, started, last_activity, provider_active,
+                                 ttft_timeout, idle_timeout, total_timeout):
+        """One deadline policy shared by ordinary and tool-capable streams."""
+        now = self._clock()
+        total_left = total_timeout - (now - started)
+        if total_left <= 0:
+            raise StructuredGenerationError("MODEL_TOTAL_TIMEOUT", "model stream total timeout exceeded")
+        window = idle_timeout if provider_active else ttft_timeout
+        activity_left = window - (now - (last_activity if provider_active else started))
+        activity_code = "MODEL_IDLE_TIMEOUT" if provider_active else "MODEL_TTFT_TIMEOUT"
+        if activity_left <= 0:
+            raise StructuredGenerationError(activity_code, "model stream activity deadline exceeded", retryable=True)
+        timeout_code = "MODEL_TOTAL_TIMEOUT" if total_left <= activity_left else activity_code
+        try:
+            return await self._wait_for(anext(iterator), min(total_left, activity_left))
+        except asyncio.TimeoutError as exc:
+            raise StructuredGenerationError(timeout_code, "model stream deadline exceeded",
+                retryable=timeout_code != "MODEL_TOTAL_TIMEOUT") from exc
 
     async def generate_json(
         self,
@@ -328,6 +425,7 @@ class RegisteredModelRuntime:
                         "model": capability.model,
                         "usage": dict(getattr(exc, "usage", {}) or {}),
                         "finishReason": (getattr(exc, "metadata", {}) or {}).get("finishReason"),
+                        "candidateFingerprint": (getattr(exc, "metadata", {}) or {}).get("candidateFingerprint"),
                         "requestDiagnostics": dict((getattr(exc, "metadata", {}) or {}).get("requestDiagnostics") or {}),
                         "capability": capability.model_dump(by_alias=True, mode="json", exclude_none=True),
                         "outputPolicy": policy.value,
@@ -441,6 +539,7 @@ class RegisteredModelRuntime:
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         emit_output_deltas: bool = True,
+        emit_reasoning_deltas: bool = False,
         prompt_metadata: dict[str, Any] | None = None,
     ):
         """Consume a provider stream while keeping structured output private when requested."""
@@ -476,6 +575,8 @@ class RegisteredModelRuntime:
             temperature=temperature, streaming=True,
         )
         request, safe_audit = prepared.request, prepared.audit
+        if emit_reasoning_deltas:
+            request = request.model_copy(update={"stream_reasoning": True})
         safe_audit.update(capability=capability.model_dump(by_alias=True, mode="json"),
             outputPolicy=prepared.output_policy.value, effectiveOutputTokens=prepared.effective_tokens,
             effectiveReason=prepared.effective_reason)
@@ -526,40 +627,24 @@ class RegisteredModelRuntime:
                 **safe_audit,
             })
             while True:
-                total_left = total_timeout - (self._clock() - started)
-                if total_left <= 0:
-                    raise StructuredGenerationError("MODEL_TOTAL_TIMEOUT", "model stream total timeout exceeded")
-                window = ttft_timeout if not provider_active else idle_timeout
-                activity_left = window - (self._clock() - (started if not provider_active else last_activity))
-                if activity_left <= 0:
-                    code = "MODEL_TTFT_TIMEOUT" if not first else "MODEL_IDLE_TIMEOUT"
-                    raise StructuredGenerationError(code, "model stream activity deadline exceeded", retryable=True)
                 try:
-                    item = await self._wait_for(anext(iterator), min(total_left, activity_left))
+                    item = await self._next_stream_event(iterator, started=started, last_activity=last_activity,
+                        provider_active=provider_active, ttft_timeout=ttft_timeout,
+                        idle_timeout=idle_timeout, total_timeout=total_timeout)
                 except StopAsyncIteration:
                     break
-                except asyncio.TimeoutError as exc:
-                    code = "MODEL_TTFT_TIMEOUT" if not first else "MODEL_IDLE_TIMEOUT"
-                    raise StructuredGenerationError(code, "model stream activity deadline exceeded", retryable=True) from exc
                 except ModelInvocationError as exc:
                     audit = {
                         "provider": self.provider,
                         "model": self.model,
                         "usage": dict(getattr(exc, "usage", {}) or {}),
                         "finishReason": (getattr(exc, "metadata", {}) or {}).get("finishReason"),
+                        "candidateFingerprint": (getattr(exc, "metadata", {}) or {}).get("candidateFingerprint"),
                         "requestDiagnostics": dict((getattr(exc, "metadata", {}) or {}).get("requestDiagnostics") or {}),
                     }
-                    raw_diagnostics = (getattr(exc, "metadata", {}) or {}).get("streamDiagnostics")
-                    if isinstance(raw_diagnostics, dict):
-                        stream_diagnostics = {
-                            key: value
-                            for key, value in raw_diagnostics.items()
-                            if key in {
-                                "streamStarted", "firstTokenObserved", "outputDeltaObserved",
-                                "deltaCount", "completionObserved", "streamTerminationReason", "elapsedMs",
-                            }
-                            and isinstance(value, (bool, int, float, str))
-                        }
+                    stream_diagnostics = safe_stream_diagnostics(
+                        (getattr(exc, "metadata", {}) or {}).get("streamDiagnostics"))
+                    if stream_diagnostics:
                         audit["streamDiagnostics"] = dict(stream_diagnostics)
                     raise StructuredGenerationError(
                         exc.code,
@@ -568,10 +653,12 @@ class RegisteredModelRuntime:
                         audit=audit,
                     ) from exc
                 now = self._clock()
-                if item.event_type == "activity":
+                if item.event_type in {"activity", "reasoning_delta", "tool_call"}:
                     provider_active = True
                     idle_ms = now - last_activity
                     last_activity = now
+                    if item.event_type == "reasoning_delta" and item.delta and emit_reasoning_deltas:
+                        yield emit("model.reasoning.delta", {"delta": item.delta})
                     if now - last_activity_event >= 0.35:
                         last_activity_event = now
                         yield emit("model.activity", activity_payload(idle_ms))
@@ -654,7 +741,7 @@ class RegisteredModelRuntime:
             raise StructuredGenerationError(
                 "MODEL_OUTPUT_INVALID_JSON",
                 "streamed model output is not valid JSON",
-                audit=completed_audit,
+                audit={**completed_audit, "candidateFingerprint": canonical_hash({"text": "".join(buffer)})},
             ) from exc
         yield emit("model.completed", {
             "receivedLength": sum(map(len, buffer)),

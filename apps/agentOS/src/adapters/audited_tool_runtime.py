@@ -59,6 +59,10 @@ class AuditedToolRuntime:
         collect = getattr(self.delegate, 'verified_observations', None)
         return await collect(context) if collect else []
 
+    async def previous_attempt_observations(self, context):
+        collect = getattr(self.delegate, 'previous_attempt_observations', None)
+        return await collect(context) if callable(collect) else None
+
     async def execute(self, name: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
         """先验证授权并记录安全元数据，随后才调用可能产生副作用的 delegate。"""
         if name not in self.allowed_tools:

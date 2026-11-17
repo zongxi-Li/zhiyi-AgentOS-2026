@@ -183,19 +183,59 @@ def test_audit_record_contains_identity_but_no_raw_prompt_or_data() -> None:
 
 
 def test_execution_trace_projection_keeps_identity_and_drops_raw_content() -> None:
+    from adapters.request_diagnostics import request_diagnostics
+    from contracts.request_budget import ModelRequestBudget
+
+    diagnostics = request_diagnostics({"messages": [
+        {"role": "system", "content": "shared kernel"},
+        {"role": "user", "content": "shared task"},
+        {"role": "system", "content": "current capability"},
+        {"role": "user", "content": "private node input"},
+    ]}, 2, ModelRequestBudget(totalTokens=10000, outputReserveTokens=1000,
+        workingSetTriggerTokens=5000, workingSetTargetTokens=3000))
+    untrusted = json.loads(json.dumps(diagnostics))
+    untrusted["prompt"] = "TOP SECRET"
+    untrusted["requestBudget"]["response"] = "TOP SECRET"
+    untrusted["workingSet"]["content"] = "TOP SECRET"
+    untrusted["segments"][0]["content"] = "TOP SECRET"
     projected = ACGNodeRunner._safe_model_invocations([{
         "promptTemplateHash": "template",
         "promptInstanceHash": "instance",
         "schemaHash": "schema",
         "preset": "executor",
         "trustSummary": {"external_untrusted": 2},
+        "requestDiagnostics": untrusted,
         "fullPrompt": "TOP SECRET",
         "sourceText": "attachment body",
     }])[0]
     assert projected["promptInstanceHash"] == "instance"
     assert projected["trustSummary"] == {"external_untrusted": 2}
+    assert projected["requestDiagnostics"] == diagnostics
     assert "fullPrompt" not in projected
     assert "sourceText" not in projected
+    assert "TOP SECRET" not in json.dumps(projected)
+    assert "private node input" not in json.dumps(projected)
+
+
+def test_execution_trace_diagnostics_reject_wrong_types_and_bound_segments() -> None:
+    projected = ACGNodeRunner._safe_model_invocations([{
+        "requestDiagnostics": {
+            "layoutVersion": "secret request body",
+            "sharedPrefixHash": "secret request body",
+            "messageCount": True,
+            "totalCharacters": -1,
+            "requestBudget": {"estimatedInputTokens": {"prompt": "secret request body"},
+                              "status": "secret request body"},
+            "segments": [{"index": 0, "role": "system", "segment": "message",
+                          "characters": 10, "hash": "a" * 64, "content": "secret request body"}] * 40,
+        },
+    }])[0]["requestDiagnostics"]
+    assert set(projected) == {"requestBudget", "segments"}
+    assert projected["requestBudget"] == {}
+    assert len(projected["segments"]) == 32
+    assert all(segment == {"index": 0, "role": "system", "segment": "message",
+                           "characters": 10, "hash": "a" * 64} for segment in projected["segments"])
+    assert "secret request body" not in json.dumps(projected)
 
 
 def test_planner_call_projects_safe_prompt_identity_into_existing_audit() -> None:

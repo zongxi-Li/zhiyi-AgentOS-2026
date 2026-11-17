@@ -33,6 +33,60 @@ class _Model:
                            attemptId=kwargs["attempt_id"], payload={})
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owns_timeout", [False, True])
+async def test_tool_turn_has_one_explicit_request_timeout_owner(monkeypatch, owns_timeout):
+    observed = []
+    original = asyncio.wait_for
+
+    async def track(awaitable, timeout):
+        observed.append(timeout)
+        return await original(awaitable, timeout)
+
+    class ToolModel:
+        manages_tool_turn_timeout = owns_timeout
+
+        async def generate_tool_turn(self, **kwargs):
+            return {"result": "complete"}
+
+    monkeypatch.setattr("adapters.guarded_model.asyncio.wait_for", track)
+    wrapper = GuardedModelRuntime(delegate=ToolModel())
+    assert await wrapper.generate_tool_turn(timeout_seconds=10) == {"result": "complete"}
+    assert observed == ([] if owns_timeout else [10])
+
+
+@pytest.mark.asyncio
+async def test_managed_tool_deadline_retries_in_place_and_preserves_phase_diagnostics(monkeypatch):
+    failure = StructuredGenerationError("MODEL_IDLE_TIMEOUT", "idle", audit={
+        "streamDiagnostics": {"streamTerminationReason": "MODEL_IDLE_TIMEOUT"}})
+    progress = []
+
+    async def observe(kind, payload):
+        progress.append((kind, payload))
+
+    async def backoff(_delay):
+        return None
+
+    monkeypatch.setattr("adapters.guarded_model.asyncio.sleep", backoff)
+
+    class ToolModel:
+        manages_tool_turn_timeout = True
+        calls = 0
+
+        async def generate_tool_turn(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise failure
+            return {"result": "complete"}
+
+    delegate = ToolModel()
+    wrapper = GuardedModelRuntime(delegate=delegate, retries=2)
+    assert await wrapper.generate_tool_turn(timeout_seconds=10, progress_callback=observe) == {"result": "complete"}
+    assert delegate.calls == 2
+    assert progress[0][1]["streamTerminationReason"] == "MODEL_IDLE_TIMEOUT"
+    assert progress[0][1]["errorCode"] == "MODEL_IDLE_TIMEOUT"
+
+
 def _wrappers(delegate, *, interval=0):
     registry = ModelCallGateRegistry()
     return tuple(GuardedModelRuntime(

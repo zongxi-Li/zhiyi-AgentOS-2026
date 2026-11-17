@@ -192,12 +192,13 @@ class StructuredGenerationRuntime(Protocol):
         prompt_version: str = "native-capability.v3",
         commit_id: str | None = None,
         emit_output_deltas: bool = True,
+        emit_reasoning_deltas: bool = False,
         prompt_metadata: Dict[str, Any] | None = None,
     ) -> AsyncIterator[RuntimeEvent]:
         """Stream transient model events; final JSON validation remains a later phase.
 
-        ``emit_output_deltas`` is true for business-node output and false for
-        planner calls, whose structured JSON buffer is deliberately private.
+        Reasoning is a separate, opt-in display channel, never part of JSON
+        validation or the final structured result.
         """
         ...
 

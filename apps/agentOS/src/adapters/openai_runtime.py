@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
-import re
 from collections.abc import Mapping
 from time import monotonic
 from typing import Any, AsyncIterator, Protocol
 
 from adapters.http_transport import HttpTransportError
+from adapters.model_diagnostics import safe_transport_diagnostics
+from adapters.json_output import decode_json_object_value
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -126,44 +128,16 @@ class ModelInvocationError(RuntimeError):
         self.metadata = dict(metadata or {})
 
 
-def decode_json_object(content: object) -> dict[str, Any]:
+def decode_json_object(content: object, *, finish_reason=None) -> dict[str, Any]:
     """Decode a provider JSON object while tolerating harmless text wrappers."""
     if isinstance(content, Mapping):
         return dict(content)
     if not isinstance(content, str):
         raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content is not a JSON object")
 
-    stripped = content.strip().lstrip("\ufeff")
-    candidates = [stripped]
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
-    if fenced:
-        candidates.append(fenced.group(1).strip())
-    first_object = stripped.find("{")
-    last_object = stripped.rfind("}")
-    if first_object >= 0 and last_object > first_object:
-        candidates.append(stripped[first_object:last_object + 1])
-
-    for candidate in dict.fromkeys(candidates):
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError as exc:
-            # Markdown strings sometimes contain literal newlines/tabs. This
-            # changes escaping only, never invents syntax or edits field values.
-            # Other control bytes, broken quotes and truncated objects still fail.
-            if exc.msg.startswith("Invalid control character") and not any(
-                ord(char) < 32 and char not in "\n\r\t" for char in candidate
-            ):
-                try:
-                    parsed = json.loads(candidate, strict=False)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(parsed, dict):
-                    return parsed
-            continue
-        except TypeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
+    parsed, _ = decode_json_object_value(content, finish_reason=finish_reason)
+    if parsed is not None:
+        return parsed
     raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content is not valid JSON")
 
 
@@ -262,7 +236,10 @@ class OpenAICompatibleRuntime:
             exc.metadata["requestDiagnostics"] = diagnostics
             raise
         except HttpTransportError as exc:
-            raise ModelInvocationError(exc.code, "OpenAI compatible provider request failed", metadata={"requestDiagnostics": diagnostics}) from exc
+            raise ModelInvocationError(exc.code, "OpenAI compatible provider request failed", metadata={
+                "requestDiagnostics": diagnostics,
+                "transportDiagnostics": safe_transport_diagnostics(exc.diagnostics),
+            }) from exc
         except Exception as exc:
             raise ModelInvocationError(
                 "MODEL_PROVIDER_FAILED",
@@ -318,14 +295,41 @@ class OpenAICompatibleRuntime:
             and stream_options.get("include_usage") is True
         )
         completed = False
+        completion_transport_diagnostics: dict[str, Any] = {}
         finish_reason: str | None = None
         tool_turn = bool(request.options.get("tools"))
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
+        refusal_observed = False
         calls: dict[int, dict[str, Any]] = {}
+        sealed_response: ModelInvocationResponse | None = None
+
+        def response_metadata(reason: str) -> dict[str, Any]:
+            metadata = {"streamDiagnostics": stream_diagnostics(reason), "requestDiagnostics": diagnostics}
+            if finish_reason is not None:
+                metadata["finishReason"] = finish_reason
+            if stream_usage:
+                metadata["usage"] = dict(stream_usage)
+            if completion_transport_diagnostics:
+                metadata["transportDiagnostics"] = completion_transport_diagnostics
+            return metadata
+
+        def seal_response() -> ModelInvocationResponse:
+            message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+            if calls:
+                message["tool_calls"] = [calls[index] for index in sorted(calls)]
+                if reasoning_parts:
+                    message["reasoning_content"] = "".join(reasoning_parts)
+            response = self._parse_response(request=request, model=model, response_mode="stream", response={
+                "choices": [{"finish_reason": finish_reason, "message": message}], "usage": stream_usage})
+            return response.model_copy(deep=True, update={"metadata": {
+                **response.metadata, **response_metadata("sealed"), "streaming": True}})
+
+        stream_iterator = None
         try:
             stream_started = True
-            async for chunk in streamer(path=self._PATH, payload=payload, idempotency_key=request.commit_id):
+            stream_iterator = streamer(path=self._PATH, payload=payload, idempotency_key=request.commit_id).__aiter__()
+            async for chunk in stream_iterator:
                 if not isinstance(chunk, Mapping):
                     raise ModelInvocationError("MODEL_RESPONSE_INVALID", "stream chunk is not an object")
                 last_chunk = chunk
@@ -337,18 +341,43 @@ class OpenAICompatibleRuntime:
                     if isinstance(raw_usage, Mapping):
                         stream_usage = dict(raw_usage)
                 choices = chunk.get("choices")
+                if completed:
+                    # Finish seals the selected answer. Only usage may follow;
+                    # additional answer/tool fragments invalidate the stream.
+                    if choices is not None and not isinstance(choices, list):
+                        raise ModelInvocationError("MODEL_RESPONSE_INVALID", "invalid stream completion tail")
+                    for tail_choice in choices or []:
+                        if not isinstance(tail_choice, Mapping):
+                            raise ModelInvocationError("MODEL_RESPONSE_INVALID", "invalid stream completion tail")
+                        tail_delta = tail_choice.get("delta")
+                        tail_finish = tail_choice.get("finish_reason")
+                        if tail_delta is not None and not isinstance(tail_delta, Mapping):
+                            raise ModelInvocationError("MODEL_RESPONSE_INVALID", "invalid stream completion tail")
+                        if (isinstance(tail_delta, Mapping) and any(tail_delta.get(key)
+                                for key in ("content", "reasoning_content", "tool_calls", "refusal"))) or (
+                                tail_finish and tail_finish != finish_reason):
+                            raise ModelInvocationError("MODEL_RESPONSE_INVALID", "response changed after completion")
+                    if isinstance(chunk.get("usage"), Mapping):
+                        yield ModelStreamEvent(requestId=request.request_id, eventType="activity",
+                            provider=self._manifest.provider, model=model, metadata={"usage": dict(stream_usage)})
+                    continue
                 if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
                     continue
                 choice = choices[0]
                 delta_data = choice.get("delta")
+                if isinstance(delta_data, Mapping) and delta_data.get("refusal"):
+                    refusal_observed = True
                 delta = delta_data.get("content") if isinstance(delta_data, Mapping) else None
                 reasoning = delta_data.get("reasoning_content") if isinstance(delta_data, Mapping) else None
                 if isinstance(reasoning, str) and reasoning:
                     if tool_turn:
                         reasoning_parts.append(reasoning)
-                    # Never expose private reasoning, but preserve provider
-                    # liveness so long thinking is not misclassified as TTFT.
-                    yield ModelStreamEvent(requestId=request.request_id, eventType="activity", provider=self._manifest.provider, model=model)
+                    # Only the explicitly opted-in planner display receives this
+                    # channel. Other consumers retain activity-only semantics.
+                    yield ModelStreamEvent(requestId=request.request_id,
+                        eventType="reasoning_delta" if request.stream_reasoning else "activity",
+                        delta=reasoning if request.stream_reasoning else "",
+                        provider=self._manifest.provider, model=model)
                 if isinstance(delta, str) and delta:
                     if tool_turn:
                         content_parts.append(delta)
@@ -358,9 +387,13 @@ class OpenAICompatibleRuntime:
                     yield ModelStreamEvent(requestId=request.request_id, eventType="delta", delta=delta, provider=self._manifest.provider, model=model)
                 if isinstance(delta_data, Mapping):
                     tool_calls = delta_data.get("tool_calls")
+                    if tool_turn and tool_calls is not None and not isinstance(tool_calls, list):
+                        raise ModelInvocationError("MODEL_TOOL_CALL_INVALID", "tool call fragments are not a list")
                     if isinstance(tool_calls, list):
                         for tool_call in tool_calls:
                             if not isinstance(tool_call, Mapping):
+                                if tool_turn:
+                                    raise ModelInvocationError("MODEL_TOOL_CALL_INVALID", "invalid tool call fragment")
                                 continue
                             if tool_turn:
                                 index = tool_call.get("index", 0)
@@ -395,35 +428,59 @@ class OpenAICompatibleRuntime:
                                 toolName=name if isinstance(name, str) else None,
                                 toolArguments=arguments,
                             )
-                if isinstance(choice.get("finish_reason"), str):
+                if isinstance(choice.get("finish_reason"), str) and choice["finish_reason"]:
                     completed = True
                     completion_observed = True
                     finish_reason = choice["finish_reason"]
+                    if finish_reason == "content_filter" or refusal_observed:
+                        raise ModelInvocationError("MODEL_RESPONSE_REFUSED", "model provider declined the response",
+                            usage=stream_usage, metadata=response_metadata("provider_error"))
+                    if tool_turn:
+                        sealed_response = seal_response()
+                        yield ModelStreamEvent(requestId=request.request_id, eventType="sealed",
+                            provider=self._manifest.provider, model=model, response=sealed_response,
+                            metadata=sealed_response.metadata)
                     # Some OpenAI-compatible providers send usage in a final
                     # choices=[] chunk after the finish chunk. Keep consuming
                     # the stream so the shape diagnostic can observe it.
                     continue
         except HttpTransportError as exc:
-            raise ModelInvocationError(
-                exc.code,
-                "OpenAI compatible provider stream failed",
-                metadata={"requestDiagnostics": diagnostics, "streamDiagnostics": stream_diagnostics("provider_transport_error")},
-            ) from exc
+            transport_diagnostics = safe_transport_diagnostics(exc.diagnostics)
+            if (completed and exc.code in {"MODEL_TEMPORARY_UNAVAILABLE", "MODEL_TIMEOUT"}
+                    and transport_diagnostics.get("phase") == "stream_read"):
+                # Finish seals the model turn. A dropped optional usage tail
+                # must not discard it or cause tools to be requested again.
+                # The assembled response still passes the normal parser below.
+                completion_transport_diagnostics = transport_diagnostics
+            else:
+                raise ModelInvocationError(
+                    exc.code,
+                    "OpenAI compatible provider stream failed",
+                    usage=stream_usage,
+                    metadata={"requestDiagnostics": diagnostics,
+                        "streamDiagnostics": stream_diagnostics("provider_transport_error"),
+                        "transportDiagnostics": transport_diagnostics},
+                ) from exc
         except ModelInvocationError as exc:
             metadata = {**exc.metadata, "requestDiagnostics": diagnostics}
             metadata.setdefault("streamDiagnostics", stream_diagnostics("provider_error"))
             raise ModelInvocationError(
                 exc.code,
                 str(exc),
-                usage=exc.usage,
+                usage=exc.usage or stream_usage,
                 metadata=metadata,
             ) from exc
         except Exception as exc:
             raise ModelInvocationError(
                 "MODEL_PROVIDER_FAILED",
                 "OpenAI compatible provider stream failed",
+                usage=stream_usage,
                 metadata={"requestDiagnostics": diagnostics, "streamDiagnostics": stream_diagnostics("provider_exception")},
             ) from exc
+        finally:
+            close = getattr(stream_iterator, "aclose", None)
+            if callable(close):
+                await close()
         _log_provider_usage_shape(
             provider=self._manifest.provider,
             model=model,
@@ -447,25 +504,13 @@ class OpenAICompatibleRuntime:
             raise ModelInvocationError(
                 "MODEL_STREAM_INCOMPLETE",
                 "provider stream ended without completion",
+                usage=stream_usage,
                 metadata={"requestDiagnostics": diagnostics, "streamDiagnostics": stream_diagnostics("eof_before_completion")},
             )
-        metadata: dict[str, Any] = {}
-        if finish_reason is not None:
-            metadata["finishReason"] = finish_reason
-        if stream_usage:
-            metadata["usage"] = dict(stream_usage)
-        metadata["streamDiagnostics"] = stream_diagnostics("completed")
-        metadata["requestDiagnostics"] = diagnostics
-        response = None
-        if tool_turn:
-            message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
-            if calls:
-                message["tool_calls"] = [calls[index] for index in sorted(calls)]
-                if reasoning_parts:
-                    message["reasoning_content"] = "".join(reasoning_parts)
-            response = self._parse_response(request=request, model=model, response_mode="stream", response={
-                "choices": [{"finish_reason": finish_reason, "message": message}], "usage": stream_usage})
-            response = response.model_copy(update={"metadata": {**response.metadata, **metadata, "streaming": True}})
+        metadata = response_metadata(
+            "completed_after_transport_error" if completion_transport_diagnostics else "completed")
+        response = sealed_response.model_copy(update={"usage": dict(stream_usage),
+            "metadata": {**sealed_response.metadata, **metadata}}) if sealed_response is not None else None
         yield ModelStreamEvent(
             requestId=request.request_id,
             eventType="completed",
@@ -501,6 +546,7 @@ class OpenAICompatibleRuntime:
         payload: dict[str, Any] = dict(request.options)
         payload["model"] = model
         payload["messages"] = [dict(message) for message in request.messages]
+        tool_turn = bool(payload.get("tools"))
         if request.response_schema is not None:
             # 思考档位只对声明该能力的供应商（GLM/DeepSeek）外发，其余端点剥离
             # 该选项，避免未知参数破坏严格兼容端点的 wire format。判定依据是
@@ -523,10 +569,21 @@ class OpenAICompatibleRuntime:
                     # 考，私有推理与 JSON 答案争夺同一输出预算，可能在对象闭合
                     # 前耗尽响应；规划器已提供显式校验与修复兜底。
                     payload["thinking"] = {"type": "disabled"}
-                payload["response_format"] = {"type": "json_object"}
+            if thinking_provider or tool_turn:
+                # A tool-enabled turn can either act or finish. JSON output
+                # modes constrain the final answer, not native function calls;
+                # applying them to every turn can suppress the action itself.
+                # Final assistant text still goes through _parse_response and
+                # the host's bounded JSON/contract validation.
+                if not tool_turn:
+                    payload["response_format"] = {"type": "json_object"}
                 schema_instruction = (
-                    "Return exactly one JSON object that strictly validates against this JSON Schema. "
-                    "Do not omit required fields, add undeclared fields, or change required array sizes.\n"
+                    ("Use native tool_calls when observations or actions are needed before completion. "
+                     "This schema applies only to the final assistant text, not to tool calls or their arguments. "
+                     "When completing the task, return exactly one JSON object that strictly validates against this JSON Schema. "
+                     if tool_turn else
+                     "Return exactly one JSON object that strictly validates against this JSON Schema. ")
+                    + "Do not omit required fields, add undeclared fields, or change required array sizes.\n"
                     + json.dumps(
                         request.prefix_response_schema if request.prefix_response_schema is not None else request.response_schema,
                         ensure_ascii=False, separators=(",", ":"),
@@ -552,7 +609,10 @@ class OpenAICompatibleRuntime:
                     payload["messages"].insert(len(payload["messages"]) - 1, {
                         "role": "system",
                         "content": "CURRENT CONTINUATION OUTPUT CONTRACT: This replaces only the earlier output schema, "
-                        "not the evidence or authority rules. Return exactly the JSON object matching this schema:\n"
+                        "not the evidence or authority rules. "
+                        + ("When completing, return final assistant text as exactly the JSON object matching this schema; "
+                           "native tool calls remain available before completion:\n" if tool_turn else
+                           "Return exactly the JSON object matching this schema:\n")
                         + json.dumps(request.response_schema, ensure_ascii=False, separators=(",", ":")),
                     })
             else:
@@ -595,6 +655,11 @@ class OpenAICompatibleRuntime:
             finish_reason_present=isinstance(finish_reason, str),
         )
         safe_metadata = {"finishReason": finish_reason} if isinstance(finish_reason, str) else {}
+        if finish_reason == "content_filter" or message.get("refusal"):
+            raise ModelInvocationError(
+                "MODEL_RESPONSE_REFUSED", "model provider declined the response",
+                usage=safe_usage, metadata=safe_metadata,
+            )
         if finish_reason in {"length", "max_tokens", "max_output_tokens"}:
             raise ModelInvocationError(
                 "MODEL_OUTPUT_EXHAUSTED",
@@ -603,6 +668,12 @@ class OpenAICompatibleRuntime:
                 metadata=safe_metadata,
             )
         tool_calls = message.get("tool_calls")
+        if ((tool_calls is not None and not isinstance(tool_calls, list))
+                or (finish_reason == "tool_calls" and not tool_calls)):
+            raise ModelInvocationError(
+                "MODEL_TOOL_CALL_INVALID", "provider response has no valid tool call list",
+                usage=safe_usage, metadata=safe_metadata,
+            )
         if tool_calls:
             if not request.options.get("tools") or not isinstance(tool_calls, list) or any(
                 not isinstance(call, dict) or not isinstance(call.get("id"), str) or not call['id']
@@ -617,7 +688,7 @@ class OpenAICompatibleRuntime:
                     key: message[key] for key in ("tool_calls", "reasoning_content") if key in message}},
                 provider=self._manifest.provider, model=model, usage=safe_usage, metadata=safe_metadata)
         try:
-            content = self._content_object(message.get("content"))
+            content = self._content_object(message.get("content"), finish_reason=finish_reason)
         except ModelInvocationError as exc:
             # Keep model source/prompt text out of logs while retaining enough
             # syntax evidence to diagnose code-bearing structured responses.
@@ -630,9 +701,25 @@ class OpenAICompatibleRuntime:
                     diagnostics.update(reason=syntax.msg, line=syntax.lineno, column=syntax.colno)
             logger.warning("model_json_decode_failed provider=%s model=%s diagnostics=%s",
                            self._manifest.provider, model, diagnostics)
-            exc.usage.update(safe_usage)
-            exc.metadata.update(safe_metadata, responseDiagnostics=diagnostics)
-            raise
+            safe_metadata["responseDiagnostics"] = diagnostics
+            safe_metadata["candidateFingerprint"] = hashlib.sha256(
+                (raw if isinstance(raw, str) else "").encode("utf-8")).hexdigest()
+            if request.options.get("tools"):
+                # A malformed final candidate is local conversation data, not a
+                # completed node result. Preserve it for bounded same-session
+                # feedback and WAL replay without exposing its body in audit.
+                assistant = {"role": "assistant", "content": raw if isinstance(raw, str) else ""}
+                if isinstance(message.get("reasoning_content"), str):
+                    assistant["reasoning_content"] = message["reasoning_content"]
+                return ModelInvocationResponse(
+                    requestId=request.request_id, content={}, outputError="MODEL_OUTPUT_INVALID_JSON",
+                    assistantMessage=assistant, provider=self._manifest.provider, model=model,
+                    usage=safe_usage, metadata=safe_metadata,
+                )
+            raise ModelInvocationError(
+                "MODEL_OUTPUT_INVALID_JSON", "model output is not a valid JSON object",
+                usage=safe_usage, metadata=safe_metadata,
+            ) from exc
         return ModelInvocationResponse(
             requestId=request.request_id,
             content=content,
@@ -643,9 +730,9 @@ class OpenAICompatibleRuntime:
         )
 
     @staticmethod
-    def _content_object(content: object) -> dict[str, Any]:
+    def _content_object(content: object, *, finish_reason=None) -> dict[str, Any]:
         """把供应商内容规范为 JSON 对象，不把原始响应嵌入错误信息。"""
-        return decode_json_object(content)
+        return decode_json_object(content, finish_reason=finish_reason)
 
 
 __all__ = ["JsonTransport", "ModelInvocationError", "OpenAICompatibleRuntime"]

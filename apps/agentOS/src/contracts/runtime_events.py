@@ -28,6 +28,8 @@ class RuntimeEvent(BaseModel):
 TRANSIENT_RUNTIME_EVENT_TYPES = frozenset({
     "model.output.delta", "model.activity", "planner.model.activity",
     "planner.model.output.delta", "planner.draft.updated",
+    "planner.model.reasoning.delta",
+    "model.reasoning.delta",
 })
 
 

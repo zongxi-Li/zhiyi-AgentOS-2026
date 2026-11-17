@@ -8,7 +8,8 @@ from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
 from adapters.model_adapter import StructuredGenerationError
 from adapters.prompt_runtime import planner_prompt_metadata
-from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest, ModelStreamEvent
+from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest, ModelInvocationResponse, ModelStreamEvent
+from support.model_stream_policy import ModelStreamPolicy
 
 
 class _ClosingStreamingAdapter:
@@ -391,3 +392,210 @@ def test_registered_model_runtime_forwards_reasoning_effort_on_stream() -> None:
     asyncio.run(collect())
 
     assert captured and captured[0].options.get("reasoning_effort") == "max"
+
+
+class _StreamClock:
+    """Advance event time deterministically, canceling stalled iterator reads."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    async def wait_for(self, awaitable, timeout):
+        started = self.now
+        task = asyncio.ensure_future(awaitable)
+        await asyncio.sleep(0)
+        if not task.done():
+            self.now += timeout
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise asyncio.TimeoutError
+        result = task.result()
+        if self.now - started > timeout:
+            raise asyncio.TimeoutError
+        return result
+
+
+class _ToolActivityAdapter(_ClosingStreamingAdapter):
+    supports_streamed_tool_turns = True
+
+    def __init__(self, events, clock):
+        super().__init__()
+        self.events, self.clock = events, clock
+
+    def describe_model(self, model):
+        capability = super().describe_model(model)
+        return capability.model_copy(update={"features": capability.features.model_copy(update={"tools": True})})
+
+    def astream(self, request):
+        async def iterator():
+            try:
+                for kind, delay in self.events:
+                    if kind == "stall":
+                        await asyncio.Event().wait()
+                    self.clock.now += delay
+                    event = {"requestId": request.request_id, "eventType": kind,
+                        "provider": "fixture", "model": "fixture-model"}
+                    if kind == "delta":
+                        event["delta"] = '{"answer":"ok"}'
+                    elif kind == "reasoning_delta":
+                        event["delta"] = "PRIVATE REASONING"
+                    elif kind == "tool_call":
+                        event["toolArguments"] = "PRIVATE ARGUMENTS"
+                    if kind == "completed":
+                        event["response"] = ModelInvocationResponse(requestId=request.request_id,
+                            provider="fixture", model="fixture-model", content={"answer": "ok"})
+                    event["metadata"] = {"usage": {"total_tokens": 3}}
+                    yield ModelStreamEvent(**event)
+            finally:
+                self.closed.set()
+        return iterator()
+
+
+def _activity_runtime(events):
+    clock = _StreamClock()
+    adapter = _ToolActivityAdapter(events, clock)
+    registry = ModelCompatibilityRegistry()
+    registry.register(adapter)
+    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model",
+        clock=clock, wait_for=clock.wait_for)
+    return runtime, adapter, clock
+
+
+async def _consume_activity_runtime(runtime, path="tools", **kwargs):
+    if path == "json":
+        return [event async for event in runtime.stream_generate_json(prompt="PRIVATE PROMPT",
+            schema={"type": "object"}, run_id="run-phase-timeout", **kwargs)]
+
+    async def progress(_kind, _payload):
+        pass
+
+    return await runtime.generate_tool_turn(messages=[{"role": "user", "content": "PRIVATE PROMPT"}],
+        tools=[{"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}],
+        schema={"type": "object"}, timeout_seconds=2, progress_callback=progress, **kwargs)
+
+
+@pytest.mark.parametrize("path", ["tools", "json"])
+@pytest.mark.parametrize(("events", "code"), [
+    ([("stall", 0)], "MODEL_TTFT_TIMEOUT"),
+    ([("delta", .01), ("stall", 0)], "MODEL_IDLE_TIMEOUT"),
+    ([("reasoning_delta", .01), ("stall", 0)], "MODEL_IDLE_TIMEOUT"),
+])
+def test_stream_paths_share_first_response_and_idle_deadlines(monkeypatch, path, events, code):
+    monkeypatch.setattr(ModelStreamPolicy, "from_environment", classmethod(
+        lambda cls: ModelStreamPolicy(first_response=.05, idle=.08, total=1)))
+    runtime, adapter, _ = _activity_runtime(events)
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(_consume_activity_runtime(runtime, path))
+    assert caught.value.code == code
+    assert adapter.closed.is_set()
+    assert "PRIVATE" not in str(caught.value.audit)
+    if path == "tools":
+        diagnostics = caught.value.audit["streamDiagnostics"]
+        assert diagnostics["streamTerminationReason"] == code
+        assert diagnostics["completionObserved"] is False
+
+
+@pytest.mark.parametrize("path", ["tools", "json"])
+@pytest.mark.parametrize("kind", ["activity", "reasoning_delta", "tool_call"])
+def test_private_activity_refreshes_stream_deadline_without_public_output(monkeypatch, path, kind):
+    monkeypatch.setattr(ModelStreamPolicy, "from_environment", classmethod(
+        lambda cls: ModelStreamPolicy(first_response=.05, idle=.08, total=1)))
+    runtime, adapter, clock = _activity_runtime([(kind, .04)] * 6 + [("delta", .01), ("completed", .01)])
+    result = asyncio.run(_consume_activity_runtime(runtime, path))
+    assert clock.now > .05
+    assert adapter.closed.is_set()
+    if path == "tools":
+        assert result.content == {"answer": "ok"}
+    else:
+        assert result[-1].payload["data"] == {"answer": "ok"}
+
+
+@pytest.mark.parametrize("path", ["tools", "json"])
+def test_active_streams_still_obey_total_policy(monkeypatch, path):
+    monkeypatch.setattr(ModelStreamPolicy, "from_environment", classmethod(
+        lambda cls: ModelStreamPolicy(first_response=.05, idle=.08, total=.1)))
+    runtime, adapter, _ = _activity_runtime([("activity", .04)] * 4 + [("completed", 0)])
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(_consume_activity_runtime(runtime, path))
+    assert caught.value.code == "MODEL_TOTAL_TIMEOUT"
+    assert adapter.closed.is_set()
+
+
+def test_tool_stream_overall_deadline_caps_a_blocked_progress_consumer(monkeypatch):
+    monkeypatch.setattr(ModelStreamPolicy, "from_environment", classmethod(
+        lambda cls: ModelStreamPolicy(first_response=1, idle=1, total=2)))
+    runtime, adapter, _ = _activity_runtime([("delta", 0), ("completed", 0)])
+
+    async def blocked_progress(kind, _payload):
+        if kind == "model.output.delta":
+            await asyncio.Event().wait()
+
+    async def run():
+        await runtime.generate_tool_turn(messages=[], tools=[{"type": "function", "function": {"name": "read"}}],
+            schema={}, timeout_seconds=.05, progress_callback=blocked_progress)
+
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(run())
+    assert caught.value.code == "MODEL_TIMEOUT"
+    assert caught.value.audit["streamDiagnostics"]["firstTokenObserved"] is True
+    assert caught.value.audit["usage"] == {"total_tokens": 3}
+    assert adapter.closed.is_set()
+
+
+def test_tool_stream_external_cancellation_preserves_cancellation_and_closes_iterator():
+    runtime, adapter, _ = _activity_runtime([("activity", 0), ("stall", 0)])
+    runtime._wait_for = asyncio.wait_for
+
+    async def run():
+        started = asyncio.Event()
+
+        async def progress(kind, _payload):
+            if kind == "model.started":
+                started.set()
+
+        task = asyncio.create_task(runtime.generate_tool_turn(messages=[],
+            tools=[{"type": "function", "function": {"name": "read"}}], schema={},
+            timeout_seconds=2, progress_callback=progress))
+        await started.wait()
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert adapter.closed.is_set()
+
+    asyncio.run(run())
+
+
+def test_tool_stream_quota_admission_precedes_provider_deadlines_and_releases_slot(monkeypatch):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ModelStreamPolicy, "from_environment", classmethod(
+        lambda cls: ModelStreamPolicy(first_response=.05, idle=.08, total=1)))
+    runtime, adapter, clock = _activity_runtime([("delta", .01), ("completed", .01)])
+    slots = {"active": 0, "entries": 0}
+
+    @asynccontextmanager
+    async def quota(_request, _timeout):
+        # Model capacity wait is not provider first-response latency.
+        clock.now += .2
+        slots["active"] += 1
+        slots["entries"] += 1
+        try:
+            yield SimpleNamespace(observe=lambda _usage: None)
+        finally:
+            slots["active"] -= 1
+
+    runtime._call_quota = quota
+    result = asyncio.run(_consume_activity_runtime(runtime))
+    assert result.content == {"answer": "ok"}
+    assert slots == {"active": 0, "entries": 1}
+    assert adapter.closed.is_set()
+
+
+def test_registered_runtime_declares_tool_turn_deadline_ownership():
+    runtime, _adapter, _clock = _activity_runtime([("delta", .01), ("completed", .01)])
+    assert runtime.manages_tool_turn_timeout is True

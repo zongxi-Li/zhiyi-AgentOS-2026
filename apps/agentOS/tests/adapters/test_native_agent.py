@@ -97,13 +97,13 @@ class _StreamingUsageModel:
         async def iterator():
             yield RuntimeEvent(
                 eventType="model.started",
-                runId="run-stream-usage",
+                runId=kwargs["run_id"],
                 sequence=1,
                 payload={"provider": "glm", "model": "glm-5.3-flash"},
             )
             yield RuntimeEvent(
                 eventType="model.completed",
-                runId="run-stream-usage",
+                runId=kwargs["run_id"],
                 sequence=2,
                 payload={
                     "data": {
@@ -361,6 +361,53 @@ def test_native_agent_preserves_stream_usage_and_latency_in_model_invocation_aud
     }
     assert result.model_invocations[0]["latencyMs"] == 17
     assert result.model_invocations[0]["finishReason"] == "stop"
+
+
+def test_native_retry_consumes_verified_previous_attempt_observations():
+    observations = [{"kind": "previous_attempt_tool_observation", "record": {
+        "runId": "retry", "stepId": "understand", "attemptId": "previous", "status": "completed"},
+        "operationKey": "old:tool:0", "receiptRef": "receipt", "requestRef": "request",
+        "result": {"stdout": "previous observed data"}}]
+    seen = []
+    async def collect(context):
+        seen.append((context.run.run_id, context.step.step_id))
+        return observations
+    model = _StreamingUsageModel()
+    task = RuntimeMissionRecord(missionId="retry-task", title="Review")
+    run = RuntimeRunRecord(runId="retry", missionId=task.mission_id, workflowId="native", domain="general",
+        runtimeEngine="acg", executionState={"settledSessionRetryProofs": {"old": {"stepId": "understand"}}})
+    context = AgentRunContext(task=task, run=run,
+        workflow=WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg"),
+        step=WorkflowStep(stepId="understand", name="Review", agentName="native_general_agent", capability="task_understanding"),
+        memory=[], contextPack=ContextPack(runId=run.run_id, stepId="understand"), modelRuntime=model,
+        capabilityDescriptor=build_default_capability_catalog().get("task_understanding"),
+        toolRuntime=SimpleNamespace(previous_attempt_observations=collect), commitId="new:commit", attemptId="new")
+    result = asyncio.run(NativeGeneralAgent().run(context))
+    assert seen == [("retry", "understand")]
+    assert "previous observed data" in model.stream_kwargs[0]["prompt"]
+    assert "not count as actions performed by this new Attempt" in model.stream_kwargs[0]["system_prompt"]
+    assert not result.tool_executions
+
+
+@pytest.mark.parametrize("proof_step", ["understand", "other-node"])
+def test_native_requires_retry_collector_only_for_the_current_node(proof_step):
+    model = _StreamingUsageModel()
+    task = RuntimeMissionRecord(missionId="retry-task", title="Review")
+    run = RuntimeRunRecord(missionId=task.mission_id, workflowId="native", domain="general",
+        runtimeEngine="acg", executionState={"settledSessionRetryProofs": {"old": {"stepId": proof_step}}})
+    context = AgentRunContext(task=task, run=run,
+        workflow=WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg"),
+        step=WorkflowStep(stepId="understand", name="Review", agentName="native_general_agent", capability="task_understanding"),
+        memory=[], contextPack=ContextPack(runId=run.run_id, stepId="understand"), modelRuntime=model,
+        capabilityDescriptor=build_default_capability_catalog().get("task_understanding"), commitId="new:commit")
+    if proof_step == "understand":
+        with pytest.raises(StructuredGenerationError) as caught:
+            asyncio.run(NativeGeneralAgent().run(context))
+        assert caught.value.code == "RETRY_EVIDENCE_UNAVAILABLE"
+        assert model.stream_kwargs == []
+    else:
+        result = asyncio.run(NativeGeneralAgent().run(context))
+        assert len(model.stream_kwargs) == 1 and not result.tool_executions
 
 
 def test_native_agent_streams_reasoning_effort_to_model_runtime() -> None:
@@ -704,7 +751,7 @@ def test_invalid_json_repair_does_not_consume_contract_repair(continuation) -> N
 
 
 @pytest.mark.parametrize("continuation", [False, True])
-def test_contract_repair_remains_bounded_after_invalid_json_repair(continuation) -> None:
+def test_contract_repair_stops_on_repeated_invalid_state_after_json_correction(continuation) -> None:
     agent = NativeGeneralAgent()
     model = _JsonThenContractRepairModel(complete_contract_repair=False, continuation=continuation)
     descriptor = build_default_capability_catalog().get("solution_design")
@@ -743,5 +790,5 @@ def test_contract_repair_remains_bounded_after_invalid_json_repair(continuation)
     with pytest.raises(StructuredGenerationError) as error:
         asyncio.run(agent.run(context))
 
-    assert error.value.code == "OUTPUT_CONTRACT_VIOLATION"
-    assert len(model.calls) == 3
+    assert error.value.code == "OUTPUT_CONTRACT_NO_PROGRESS"
+    assert len(model.calls) == 4

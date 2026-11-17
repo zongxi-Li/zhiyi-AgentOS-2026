@@ -3,10 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from adapters.execution_prefix import execution_messages
+from adapters.agent_tools import AgentToolSession
 from adapters.model.native_prompt import NativeCapabilityPromptBuilder
 from adapters.guarded_model import GuardedModelRuntime
 from adapters.model_compatibility import ModelCompatibilityRegistry
@@ -14,6 +16,7 @@ from adapters.model_runtime import RegisteredModelRuntime
 from adapters.openai_runtime import OpenAICompatibleRuntime, ModelInvocationError
 from adapters.prompt_runtime import canonical_hash
 from contracts.capability import CapabilityKind, CapabilityManifest, ModelInvocationRequest
+from contracts.tools import ToolDefinition, ToolResult
 from support.acg.models import build_default_capability_catalog
 
 
@@ -189,6 +192,100 @@ def test_guarded_runtime_routes_shared_layout_to_actual_transport_and_audits_the
     assert diagnostics["totalCharacters"] == sum(len(m["content"]) for m in transport.payload["messages"])
     assert diagnostics["segments"][2]["hash"] == canonical_hash(transport.payload["messages"][2])
     assert "UNTRUSTED shared source" not in json.dumps(diagnostics)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("provider_name", ["deepseek", "glm", "openai_compatible"])
+@pytest.mark.parametrize("workspace_bound", [False, True])
+def test_tool_sessions_keep_shared_wire_prefix_across_capabilities_and_turns(streaming, provider_name, workspace_bound):
+    class Transport:
+        def __init__(self):
+            self.payloads = []
+
+        def turn(self, payload):
+            self.payloads.append(deepcopy(payload))
+            if len(self.payloads) % 2:
+                return {"content": None, "tool_calls": [{"id": "read", "type": "function",
+                    "function": {"name": "test__read", "arguments": "{}"}}]}, "tool_calls"
+            return {"content": '{"answer":"ok"}'}, "stop"
+
+        async def post_json(self, **kwargs):
+            message, finish = self.turn(kwargs["payload"])
+            return {"choices": [{"message": message, "finish_reason": finish}]}
+
+        async def stream_json(self, **kwargs):
+            message, finish = self.turn(kwargs["payload"])
+            yield {"choices": [{"delta": message, "finish_reason": finish}]}
+
+    class Tools:
+        calls = 0
+
+        def list_tools(self):
+            return (ToolDefinition(name="test.read", source="test", description="Read evidence",
+                parameters={"type": "object", "properties": {}, "additionalProperties": False}),)
+
+        async def execute(self, name, arguments, **kwargs):
+            self.calls += 1
+            return ToolResult(name=name, source="test", status="succeeded", output={"text": "UNTRUSTED tool result"})
+
+    transport, tools = Transport(), Tools()
+    if not streaming:
+        transport.stream_json = None
+    manifest = adapter(provider_name).manifest.model_copy(update={"metadata": {"modelCapabilities": {
+        "deepseek-flash": {"features": {"tools": True, "streaming": streaming}},
+    }}})
+    registry = ModelCompatibilityRegistry()
+    registry.register(OpenAICompatibleRuntime(manifest=manifest, transport=transport))
+    runtime = GuardedModelRuntime(delegate=RegisteredModelRuntime(registry=registry, provider=provider_name, model="deepseek-flash"))
+
+    async def scenario():
+        for capability in ("analysis", "verification"):
+            item = envelope(capability)
+            before = deepcopy(item)
+            schema = {"type": "object", "properties": {
+                "answer": {"type": "string"}, f"{capability}Result": {},
+            }, "required": ["answer"]}
+            context = SimpleNamespace(model_runtime=runtime, tool_runtime=tools, commit_id=capability,
+                attempt_id=capability, run=SimpleNamespace(run_id="run-tool-prefix", input={}, execution_state={}),
+                step=SimpleNamespace(input={}, step_id=capability, name=capability),
+                communication_reader=SimpleNamespace(model_budget=SimpleNamespace(max_read_tokens=128),
+                    available_sources=["upstream"], operation_store=None))
+            if workspace_bound:
+                context.run.input["workspaceBinding"] = {"workspaceId": "workspace", "grantId": "private-grant"}
+            session = AgentToolSession(context)
+            result = await session.generate_json(prompt=item.user_prompt, system_prompt=item.system_prompt,
+                prompt_metadata=item.audit_metadata(), schema=schema)
+            assert result.data == {"answer": "ok"}
+            assert result.streaming is streaming
+            assert item == before
+            initial, continued = transport.payloads[-2:]
+            assert len(initial["messages"]) == 4
+            request = json.loads(initial["messages"][-1]["content"])
+            assert request["requestType"] == "ExecutionRequest"
+            if workspace_bound:
+                assert request["workspace"]["trustClass"] == "runtime_authoritative"
+                assert request["workspace"]["content"]["root"] == "."
+            else:
+                assert "workspace" not in request
+            assert continued["messages"][:4] == initial["messages"]
+            assert [m["role"] for m in continued["messages"][4:]] == ["assistant", "tool"]
+            assert "Follow context.read_page" in initial["messages"][2]["content"]
+            for record, payload in zip(session.invocations, (initial, continued)):
+                diagnostics = record["requestDiagnostics"]
+                assert diagnostics["layoutVersion"] == "shared-execution.v1"
+                assert record["stablePrefixHash"] == diagnostics["sharedPrefixHash"] == canonical_hash(payload["messages"][:2])
+                assert diagnostics["messageCount"] == len(payload["messages"])
+                system = "".join(m["content"] for m in payload["messages"] if m["role"] == "system")
+                assert "response_format" not in payload
+                assert system.count(f'"{capability}Result"') == 1
+                assert "JSON output requirements apply only to the final answer" in system
+                assert "UNTRUSTED" not in system
+                assert "private-grant" not in json.dumps(payload)
+                assert "UNTRUSTED" not in json.dumps(record)
+
+    asyncio.run(scenario())
+    assert tools.calls == 2
+    assert transport.payloads[0]["messages"][:2] == transport.payloads[2]["messages"][:2]
 
 
 @pytest.mark.parametrize("streaming", [False, True])

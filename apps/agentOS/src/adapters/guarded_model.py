@@ -19,6 +19,7 @@ from adapters.model_adapter import (
     StructuredGenerationResult,
     StructuredGenerationRuntime,
 )
+from adapters.model_diagnostics import safe_stream_diagnostics, safe_transport_diagnostics
 from contracts.runtime_events import RuntimeEvent
 
 
@@ -35,30 +36,9 @@ _RETRYABLE_CODES = frozenset(
     }
 )
 
-_STREAM_DIAGNOSTIC_KEYS = frozenset(
-    {
-        "streamStarted",
-        "firstTokenObserved",
-        "outputDeltaObserved",
-        "deltaCount",
-        "completionObserved",
-        "streamTerminationReason",
-        "elapsedMs",
-    }
-)
-
-
-def _safe_stream_diagnostics(error: StructuredGenerationError) -> dict[str, object]:
-    audit = getattr(error, "audit", None)
-    diagnostics = audit.get("streamDiagnostics") if isinstance(audit, dict) else None
-    if not isinstance(diagnostics, dict):
-        return {}
-    return {
-        key: value
-        for key, value in diagnostics.items()
-        if key in _STREAM_DIAGNOSTIC_KEYS
-        and isinstance(value, (bool, int, float, str))
-    }
+_STREAM_RETRYABLE_CODES = _RETRYABLE_CODES | {
+    "MODEL_TTFT_TIMEOUT", "MODEL_IDLE_TIMEOUT", "MODEL_TOTAL_TIMEOUT",
+}
 
 
 class _CallGate:
@@ -183,14 +163,49 @@ class GuardedModelRuntime:
     def supports_tool_calling(self) -> bool:
         return bool(getattr(self.delegate, "supports_tool_calling", False))
 
+    @property
+    def manages_tool_turn_timeout(self) -> bool:
+        return getattr(self.delegate, "manages_tool_turn_timeout", False) is True
+
     async def generate_tool_turn(self, *, timeout_seconds=120.0, **kwargs):
+        """Retry unfinished model I/O in place; the caller owns tools and cancellation."""
         if timeout_seconds <= 0:
             raise StructuredGenerationError("MODEL_TIMEOUT", "model timeout must be positive")
-        try:
-            return await self._gate.call(lambda: asyncio.wait_for(
-                self.delegate.generate_tool_turn(timeout_seconds=timeout_seconds, **kwargs), timeout_seconds))
-        except asyncio.TimeoutError as exc:
-            raise StructuredGenerationError("MODEL_TIMEOUT", "model tool turn timed out") from exc
+        async def invoke():
+            operation = self.delegate.generate_tool_turn(timeout_seconds=timeout_seconds, **kwargs)
+            if self.manages_tool_turn_timeout:
+                # The registered runtime owns request/stream deadlines and
+                # diagnostics. A competing timer here would erase their cause.
+                return await operation
+            return await asyncio.wait_for(operation, timeout_seconds)
+        attempt = 0
+        delay = min(max(self.retry_delay_seconds, .25), 30.0)
+        while True:
+            attempt += 1
+            try:
+                return await self._gate.call(invoke)
+            except asyncio.TimeoutError:
+                error = StructuredGenerationError(
+                    "MODEL_TIMEOUT", "model tool turn timed out", attempts=attempt, retryable=True)
+            except StructuredGenerationError as exc:
+                exc.attempts = attempt
+                if exc.code not in _STREAM_RETRYABLE_CODES:
+                    raise
+                error = exc
+                error.retryable = True
+            # A failed model turn has not dispatched any tools. Keep the exact
+            # conversation and commit identity; release capacity before the
+            # cancellable backoff, with no retry-count termination rule.
+            progress = kwargs.get("progress_callback")
+            if progress is not None:
+                await progress("model.activity", {
+                    "phase": "retrying", "errorCode": error.code,
+                    "retryCount": attempt, "retryDelayMs": round(delay * 1000),
+                    **safe_stream_diagnostics(error.audit.get("streamDiagnostics")),
+                    "transportDiagnostics": safe_transport_diagnostics(error.audit.get("transportDiagnostics")),
+                })
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30.0)
 
     async def generate_json(
         self,
@@ -293,12 +308,7 @@ class GuardedModelRuntime:
             except asyncio.CancelledError:
                 raise
             except StructuredGenerationError as exc:
-                retryable_codes = _RETRYABLE_CODES | {
-                    "MODEL_TTFT_TIMEOUT",
-                    "MODEL_IDLE_TIMEOUT",
-                    "MODEL_TOTAL_TIMEOUT",
-                }
-                diagnostics = _safe_stream_diagnostics(exc)
+                diagnostics = safe_stream_diagnostics(exc.audit.get("streamDiagnostics"))
                 if diagnostics:
                     yield RuntimeEvent(
                         eventType="model.stream.failure",
@@ -312,7 +322,7 @@ class GuardedModelRuntime:
                             "retryCount": attempt - 1,
                         },
                     )
-                if exc.code not in retryable_codes or attempt > self.retries:
+                if exc.code not in _STREAM_RETRYABLE_CODES or attempt > self.retries:
                     raise
                 if self.retry_delay_seconds:
                     await asyncio.sleep(self.retry_delay_seconds * attempt)
