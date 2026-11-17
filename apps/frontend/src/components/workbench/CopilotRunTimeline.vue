@@ -1,21 +1,33 @@
 <template>
   <div class="run-timeline" aria-label="任务执行时间线">
+    <WorkspaceReviewProgress :review="workspaceReview" :nodes="reviewNodes" />
     <div v-if="active || hasWorkContent" class="run-timeline__status" role="status">
       <button type="button" class="run-timeline__history-toggle" :aria-expanded="historyExpanded" aria-label="展开或收起工作记录" @click="historyExpanded = !historyExpanded">
         <ArrowRight class="run-timeline__chevron" :class="{ 'is-expanded': historyExpanded }" aria-hidden="true" />
         <span>{{ elapsed ? `${active ? '已运行' : '用时'} ${elapsed}` : '工作记录' }}</span>
       </button>
       <span class="run-timeline__state"><span v-if="active && !waitingForApproval" class="run-timeline__dot is-active" />{{ statusText }}</span>
+      <code v-if="reviewDiagnostic?.errorCode" class="run-timeline__review-error">{{ reviewDiagnostic.errorCode }}</code>
     </div>
-    <template v-for="entry in entries" :key="entry.id">
+    <section v-for="group in workGroups" :key="group.id" v-show="!group.agent || historyExpanded" :class="group.agent ? 'agent-work' : 'timeline-flow'">
+      <header v-if="group.agent" class="agent-work__heading">
+        <span class="agent-work__signal" aria-hidden="true" />
+        <strong>{{ group.agent.agentName || '执行 Agent 待确认' }}</strong>
+        <small v-if="group.agent.agentRegistration">{{ group.agent.agentRegistration.instanceId }} · 第 {{ group.agent.agentRegistration.generation }} 代</small>
+        <span>{{ group.agent.title }}</span>
+      </header>
+    <template v-for="entry in group.entries" :key="entry.id">
     <slot v-if="entry.kind === 'message'" name="message" :message="entry.message" />
-    <article v-else-if="entry.kind === 'progress'" v-show="historyExpanded" class="run-timeline__planning run-timeline__progress">
-      <p>{{ entry.text }}</p>
-      <details v-if="entry.detail" class="run-timeline__failure"><summary>失败信息</summary><p>{{ entry.detail }}</p></details>
-    </article>
+    <details v-else-if="entry.kind === 'progress'" v-show="historyExpanded" class="run-timeline__progress" :open="entry.items.some(item => item.detail)">
+      <summary class="run-timeline__operation-summary"><ArrowRight class="run-timeline__chevron" aria-hidden="true" /><span>规划记录</span><small>{{ entry.items.length }} 项</small></summary>
+      <article v-for="item in entry.items" :key="item.id" class="run-timeline__progress-item">
+        <ChatTranscriptBlock :block="{ id: item.id, kind: 'status', state: 'completed', text: item.text }" />
+        <details v-if="item.detail" class="run-timeline__failure"><summary>失败信息</summary><p>{{ item.detail }}</p></details>
+      </article>
+    </details>
     <article v-else-if="entry.kind === 'plan' && plan" class="run-timeline__plan">
       <h3>初步规划 <small>版本 {{ plan.planVersion }}</small></h3>
-      <p v-if="plan.objective" class="run-timeline__objective">{{ plan.objective }}</p>
+      <div v-if="plan.objective" class="run-timeline__objective markdown-body" v-html="planObjectiveMarkup" />
       <template v-if="plan.tasks[0]?.rationale"><p class="run-timeline__context">规划思路摘要</p><p>{{ plan.tasks[0].rationale }}</p></template>
       <details v-if="plan.constraints.length">
         <summary>任务边界与约束 · {{ plan.constraints.length }}</summary>
@@ -33,18 +45,20 @@
       <p v-if="['pending', 'planning'].includes(status)" class="run-timeline__confirm">请检查以上规划，确认后继续。</p>
     </article>
     <article v-else-if="entry.kind === 'planning'" v-show="historyExpanded" class="run-timeline__planning">
-      <p :class="{ 'run-timeline__context': planningText }"><span v-if="planningText">规划思路摘要 · </span>{{ planningMessage }}</p>
-      <div v-if="planningText" class="run-timeline__planning-text run-timeline__text markdown-body" v-html="planningMarkup"></div>
-      <details v-else-if="runtime?.planning.draft.nodes.length" class="run-timeline__draft" open><summary>正在形成的计划 · {{ runtime.planning.draft.nodes.length }} 个步骤</summary>
+      <ChatTranscriptBlock v-if="!plan" :block="{ id: 'planning-status', kind: 'status', state: 'completed', text: planningMessage }" />
+      <CopilotPlannerStep v-if="planningText || planningReasoning || runtime?.planning.outputId" :key="runtime?.planning.outputId || 'planning-current'" class="run-timeline__planning-text" :id="runtime?.planning.outputId || 'planning-current'"
+        :stage="runtime?.planning.stage" :text="planningText" :reasoning="planningReasoning" :reasoning-truncated="runtime?.planning.reasoningTruncated" :state="planningOutputState" :elapsed-ms="runtime?.planning.elapsedMs" />
+      <details v-else-if="runtime?.planning.draft.nodes.length" class="run-timeline__draft"><summary>查看规划草稿 · {{ runtime.planning.draft.nodes.length }} 个步骤</summary>
         <ul><li v-for="node in runtime.planning.draft.nodes" :key="node.key">{{ node.title }}<p v-if="node.rationale">{{ node.rationale }}</p></li></ul>
       </details>
-      <small v-if="planningText || runtime?.planning.draft.nodes.length" class="run-timeline__draft-note">当前为规划草稿，以待确认的初步规划为准。</small>
+      <small v-if="!planningText && runtime?.planning.draft.nodes.length" class="run-timeline__draft-note">当前为规划草稿，以待确认的初步规划为准。</small>
     </article>
     <details v-else-if="entry.kind === 'tools'" v-show="historyExpanded" class="run-timeline__tools">
       <summary class="run-timeline__operation-summary">
         <ArrowRight class="run-timeline__chevron" aria-hidden="true" />
         <span class="run-timeline__tool-name">{{ [...new Set(entry.items.map(item => toolLabel(item.tool)))].join('、') }}</span>
         <small v-if="entry.items.length > 1">{{ entry.items.length }} 项</small>
+        <small v-if="entry.items.some(item => item.approvalDecision?.source === 'policy')" class="run-timeline__approval-summary">已自动批准</small>
         <span class="run-timeline__flag" :class="`is-${toolGroupStatus(entry.items)}`">{{ toolStatusLabel(toolGroupStatus(entry.items)) }}</span>
       </summary>
       <details v-for="item in entry.items" :key="item.id" class="run-timeline__tool">
@@ -52,25 +66,41 @@
           <ArrowRight class="run-timeline__chevron" aria-hidden="true" />
           <span class="run-timeline__tool-name">{{ toolLabel(item.tool) }}</span>
           <small class="run-timeline__flag" :class="`is-${item.status}`">{{ toolStatusLabel(item.status) }}</small>
+          <small v-if="item.approvalDecision?.source === 'policy'" class="run-timeline__auto-approved">已自动批准</small>
         </summary>
+        <p v-if="item.target" class="run-timeline__tool-target">{{ item.target }}</p>
+        <pre v-if="item.resultPreview" class="run-timeline__tool-result">{{ item.resultPreview }}</pre>
         <dl><div v-if="item.stepId"><dt>步骤</dt><dd>{{ item.stepId }}</dd></div><div v-if="item.executionId"><dt>执行记录</dt><dd>{{ item.executionId }}</dd></div><div v-if="item.receiptRef"><dt>结果凭据</dt><dd>{{ item.receiptRef }}</dd></div></dl>
+        <dl v-if="item.approvalDecision" class="run-timeline__approval-decision" aria-label="工具审批记录">
+          <div><dt>批准来源</dt><dd>{{ item.approvalDecision.source === 'policy' ? '任务自动审批策略' : '人工批准' }}</dd></div>
+          <div v-if="item.approvalDecision.actor"><dt>操作者</dt><dd>{{ item.approvalDecision.actor.userId }}<span v-if="item.approvalDecision.actor.tenantId"> · {{ item.approvalDecision.actor.tenantId }}</span></dd></div>
+          <div v-if="item.approvalDecision.decidedAt"><dt>批准时间</dt><dd>{{ approvalTime(item.approvalDecision.decidedAt) }}</dd></div>
+          <div v-if="item.approvalDecision.policyRevision != null"><dt>策略版本</dt><dd>{{ item.approvalDecision.policyRevision }}</dd></div>
+        </dl>
       </details>
     </details>
+    <CopilotPlannerStep v-else-if="entry.kind === 'output' && entry.output.planning" v-show="historyExpanded" :id="entry.output.id"
+      :stage="entry.output.stage" :text="entry.output.text" :reasoning="entry.output.reasoning" :reasoning-truncated="entry.output.reasoningTruncated" :state="entry.output.state || (entry.output.failed ? 'interrupted' : 'completed')" :elapsed-ms="entry.output.elapsedMs" />
     <article v-else-if="entry.kind === 'output'" v-show="historyExpanded" class="run-timeline__output">
         <header class="run-timeline__output-heading"><h3>{{ entry.output.planning ? '规划思路摘要' : entry.output.title }}</h3><small>{{ outputStatus(entry.output) }}</small></header>
+        <p v-if="entry.output.modelName" class="run-timeline__model">模型 · {{ entry.output.modelName }}</p>
         <details v-if="entry.output.approach?.objective || entry.output.approach?.rationale" class="run-timeline__approach">
           <summary>查看步骤目标与规划依据</summary>
           <p v-if="entry.output.approach?.objective">{{ entry.output.approach.objective }}</p>
           <p v-if="entry.output.approach?.rationale && entry.output.approach.rationale !== entry.output.approach.objective">{{ entry.output.approach.rationale }}</p>
         </details>
-        <TaskWorkSummary v-if="!entry.output.text && entry.output.node && active && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(entry.output.node.status)" :node="entry.output.node" />
+        <CopilotPlannerStep v-if="entry.output.reasoning" :key="`${entry.output.id}:reasoning`" class="run-timeline__reasoning" execution
+          :id="`${entry.output.id}:reasoning`" text="" :reasoning="entry.output.reasoning" :state="entry.output.running ? 'streaming' : entry.output.failed ? 'interrupted' : 'completed'" />
+        <TaskWorkSummary v-if="!entry.output.text && !entry.output.reasoning && entry.output.node && active && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(entry.output.node.status)" :node="entry.output.node" />
+        <p v-if="entry.output.running && entry.output.text && !entry.output.reasoning" class="run-timeline__context">正在接收正文 · 暂未收到思考文本</p>
         <div v-if="entry.output.text" class="run-timeline__text markdown-body" v-html="outputMarkup.get(entry.output.id)"></div>
-        <p v-else-if="!entry.output.node">正在等待模型正文…</p>
+        <p v-else-if="!entry.output.node && !entry.output.reasoning">正在等待模型正文…</p>
         <small v-if="entry.output.planning" class="run-timeline__draft-note">规划草稿，以待确认的初步规划为准。</small>
         <small v-else-if="!entry.output.running" class="run-timeline__draft-note">这是本次接收的生成片段，完整结果以步骤交付为准。</small>
     </article>
     <slot v-else-if="entry.kind === 'controls'" name="controls" />
     </template>
+    </section>
     <slot name="approvals" />
   </div>
 </template>
@@ -81,12 +111,23 @@ import type { CopilotInitialPlan, CopilotToolActivity } from '@/services/api/age
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore, type NodeRuntimeState } from '@/workbench/runtime/runtimeEvents'
 import type { WorkspaceGraphNode } from '@/services/api/agentos'
 import TaskWorkSummary from '../workspace/TaskWorkSummary.vue'
+import ChatTranscriptBlock from '@/components/ChatTranscriptBlock.vue'
+import CopilotPlannerStep from './CopilotPlannerStep.vue'
+import WorkspaceReviewProgress from '@/components/agentos/WorkspaceReviewProgress.vue'
+import type { WorkspaceReviewProjection } from '@/services/api/agentos/types/graph'
 import { planningContent, streamingContent } from '@/workbench/runtime/streamingContent'
 import { projectModelOutput, type RuntimeTraceObservation } from '@/workbench/runtime/observation'
-import { renderMarkdown } from '@/utils/markdown'
-import { planningProfileText, planningProgressText, type CopilotConversationMessage } from './copilotConversation'
+import { renderCopilotMarkdown } from './copilotMarkdown'
+import { planningProfileText, planningProgressText, planningStageLabel, type CopilotConversationMessage } from './copilotConversation'
 
-const props = withDefaults(defineProps<{ runId: string | null; status: string; plan?: CopilotInitialPlan | null; graphNodes?: WorkspaceGraphNode[]; tools?: CopilotToolActivity[]; traces?: RuntimeTraceObservation[]; messages?: CopilotConversationMessage[]; startedAt?: string | null; updatedAt?: string | null; waitingForApproval?: boolean }>(), { plan: null, graphNodes: () => [], tools: () => [], traces: () => [], messages: () => [], waitingForApproval: false })
+const props = withDefaults(defineProps<{ runId: string | null; status: string; plan?: CopilotInitialPlan | null; graphNodes?: WorkspaceGraphNode[]; tools?: CopilotToolActivity[]; traces?: RuntimeTraceObservation[]; messages?: CopilotConversationMessage[]; startedAt?: string | null; updatedAt?: string | null; waitingForApproval?: boolean; workspaceReview?: WorkspaceReviewProjection | null }>(), { plan: null, graphNodes: () => [], tools: () => [], traces: () => [], messages: () => [], waitingForApproval: false, workspaceReview: null })
+const reviewNodes = computed(() => props.graphNodes.map(node => ({ nodeId: node.acgNodeId, name: node.name })))
+const planObjectiveMarkup = computed(() => {
+  // Pasted task headings can contain separated markers such as "# # 任务".
+  const objective = (props.plan?.objective || '').replace(/^((?:#[ \t]*){1,6})(?=\S)/,
+    marks => `${'#'.repeat((marks.match(/#/g) || []).length)} `)
+  return renderCopilotMarkdown(objective)
+})
 const active = computed(() => ['pending', 'planning', 'running', 'retrying', 'waiting_review'].includes(props.status))
 const emit = defineEmits<{ content: [hasContent: boolean] }>()
 const runtime = shallowRef<RunRuntimeStore | null>(null)
@@ -119,24 +160,34 @@ watch(() => [props.runId, active.value], connect, { immediate: true })
 onDeactivated(() => { suspended = true; disconnect() })
 onActivated(() => { if (suspended) { suspended = false; connect() } })
 onBeforeUnmount(disconnect)
-interface WorkOutput { id: string; title: string; timestamp: string | null; text: string; running: boolean; failed: boolean; planning: boolean; node?: NodeRuntimeState; approach?: CopilotInitialPlan['tasks'][number] }
+interface WorkOutput { nodeId?: string; attemptId?: string | null; agentName?: string; agentRegistration?: NodeRuntimeState['agentRegistration']; modelName?: string | null; callId?: string; id: string; title: string; timestamp: string | null; text: string; running: boolean; failed: boolean; planning: boolean; stage?: string | null; state?: string; elapsedMs?: number | null; reasoning?: string; reasoningTruncated?: boolean; node?: NodeRuntimeState; approach?: CopilotInitialPlan['tasks'][number] }
 const outputStatus = (output: WorkOutput) => output.running
-  ? output.node && !output.node.firstTokenAt && !output.node.chunkCount ? '等待正文' : '正在生成'
+  ? output.reasoning && !output.text ? '正在思考' : output.node && !output.node.firstTokenAt && !output.node.chunkCount ? '等待正文' : '正在生成'
   : output.failed ? '生成已中断' : '生成记录'
 const outputs = computed<WorkOutput[]>(() => Object.entries(runtime.value?.nodes || {}).filter(([, node]) => node.modelStartedAt || node.outputBuffer || node.lastActivityAt)
-  .slice(-8).map(([id, node]) => ({ id: node.outputId || id, title: node.title || props.graphNodes.find(graphNode => graphNode.acgNodeId === id)?.name || '当前步骤', timestamp: node.modelStartedAt, text: streamingContent(node.outputBuffer, true), planning: false, node,
+  .slice(-8).map(([id, node]) => ({ id: node.outputId || id, nodeId: id, attemptId: node.currentAttemptId, agentName: node.agentName, agentRegistration: node.agentRegistration, modelName: node.modelName, callId: node.callId, title: node.title || props.graphNodes.find(graphNode => graphNode.acgNodeId === id)?.name || '当前步骤', timestamp: node.modelStartedAt, text: streamingContent(node.outputBuffer, true), reasoning: node.reasoningBuffer, planning: false, node,
     approach: props.plan?.tasks.find(task => task.key === props.graphNodes.find(graphNode => graphNode.acgNodeId === id)?.semanticTaskKey),
     running: active.value && ['MODEL_STARTING', 'STREAMING'].includes(node.phase) && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(node.status), failed: node.status === 'FAILED' })))
 const pastOutputs = computed<WorkOutput[]>(() => (runtime.value?.outputHistory || []).map(item => ({ ...item, planning: item.kind === 'planning', running: false })))
 const planningText = computed(() => planningContent(runtime.value?.planning.outputBuffer || ''))
-const planningMarkup = computed(() => renderMarkdown(planningText.value))
+const planningReasoning = computed(() => runtime.value?.planning.reasoningBuffer || '')
+const planningOutputState = computed(() => {
+  const planning = runtime.value?.planning
+  if (planning?.status === 'FAILED') return 'interrupted'
+  if (planning?.modelPhase === 'COMPLETED' || planning?.status === 'COMPLETED') return 'completed'
+  return active.value && !props.plan ? 'streaming' : 'interrupted'
+})
 let outputCache = new Map<string, { text: string; html: string }>()
 const outputMarkup = computed(() => {
   // Streaming a new paragraph should not reparse every earlier explanation.
   const next = new Map<string, { text: string; html: string }>()
   for (const output of [...pastOutputs.value, ...outputs.value]) {
     const previous = outputCache.get(output.id)
-    next.set(output.id, previous?.text === output.text ? previous : { text: output.text, html: renderMarkdown(output.text) })
+    if (previous?.text === output.text) { next.set(output.id, previous); continue }
+    // Plain-text task reports also use Chinese section labels without Markdown
+    // hashes. Keep these boundaries while allowing prose lines to flow naturally.
+    const prose = output.text.replace(/^([一二三四五六七八九十百]+、[^\r\n。！？；]{1,32})$/gm, '\n\n$1\n\n')
+    next.set(output.id, { text: output.text, html: renderCopilotMarkdown(prose) })
   }
   outputCache = next
   return new Map([...next].map(([id, rendered]) => [id, rendered.html]))
@@ -151,17 +202,23 @@ const elapsed = computed(() => {
   if (!Number.isFinite(seconds) || seconds < 0) return ''
   return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
 })
-const statusText = computed(() => props.waitingForApproval ? '等待你确认' : ({ pending: '正在准备任务', planning: '正在规划', running: '正在执行', retrying: '正在恢复', waiting_review: '等待审核', failed: '本次运行未完成', completed: '本次运行已完成', cancelled: '本次运行已取消', superseded: '已由后续运行接替' } as Record<string, string>)[props.status] || '等待运行状态')
+const reviewDiagnostic = computed(() => active.value && !props.waitingForApproval && props.workspaceReview?.status !== 'completed'
+  && runtime.value?.workspaceReview?.status !== 'IDLE' ? runtime.value?.workspaceReview : null)
+const statusText = computed(() => {
+  if (props.waitingForApproval) return '等待你确认'
+  if (reviewDiagnostic.value?.status === 'BLOCKED') return '仓库审查暂时受阻'
+  if (reviewDiagnostic.value?.status === 'RETRYING') return '仓库审查正在重试'
+  return ({ pending: '正在准备任务', planning: '正在规划', running: '正在执行', retrying: '正在恢复', waiting_review: '等待审核', failed: '本次运行未完成', completed: '本次运行已完成', cancelled: '本次运行已取消', superseded: '已由后续运行接替' } as Record<string, string>)[props.status] || '等待运行状态'
+})
 const planningMessage = computed(() => {
   const planning = runtime.value?.planning
   if (planning?.status === 'FAILED' || planningHistory.value.some(item => item.kind === 'failed')) return '本次规划未完成，下面保留已收到的规划内容与阶段记录。'
   if (planning?.status === 'COMPLETED') return '初步规划已生成，正在载入待确认版本。'
-  const stage = (planning?.stage || planning?.draft.stage || '').split('.')[0]
-  const labels: Record<string, string> = { intent_profile: '理解目标与约束', profile: '理解目标与约束', decompose: '拆分任务与规划依据', tasks: '拆分任务步骤', outline: '拟定任务步骤', detail: '补充步骤目标与验收标准', relations: '梳理步骤依赖', coverage: '检查交付覆盖', repair: '修正规划并重新校验', planning: '校验初步规划' }
-  return stage ? `正在整理规划：${labels[stage] || '形成执行方案'}` : props.status === 'running' ? '正在处理当前步骤，执行进展将在这里显示。' : '正在理解任务并形成初步规划，完成后会在这里供你确认。'
+  const stage = planning?.stage || planning?.draft.stage
+  return stage ? `正在整理规划：${planningStageLabel(stage)}` : props.status === 'running' ? '正在处理当前步骤，执行进展将在这里显示。' : '正在理解任务并形成初步规划，完成后会在这里供你确认。'
 })
 const activity = computed(() => {
-  const items = new Map(props.tools.map(tool => [tool.executionId, { ...tool, id: tool.executionId }]))
+  const items = new Map(props.tools.map(tool => [tool.executionId, { ...tool, id: tool.executionId, target: tool.target, resultPreview: tool.resultPreview }]))
   const operationKey = (stepId: string, attemptId: string, tool: string) => JSON.stringify([stepId, attemptId, tool])
   const completedAt = new Map<string, number>()
   for (const tool of props.tools) {
@@ -183,19 +240,21 @@ const activity = computed(() => {
       if (items.has(id) || (completionTime !== undefined && Date.parse(event.timestamp || '') <= completionTime)) continue
     }
     if (event.eventType === 'tool.execution_completed') items.delete(startId)
-    items.set(id, { id, executionId: p.executionId || '', tool: p.tool || '', status: event.eventType === 'tool.execution_completed' ? p.status || 'completed' : 'running', stepId: event.nodeId || '', attemptId: event.attemptId || undefined, createdAt: event.timestamp || '', receiptRef: p.receiptRef })
+    items.set(id, { id, executionId: p.executionId || '', tool: p.tool || '', status: event.eventType === 'tool.execution_completed' ? p.status || 'completed' : 'running', stepId: event.nodeId || '', attemptId: event.attemptId || undefined, createdAt: event.timestamp || '', receiptRef: p.receiptRef, target: p.target, resultPreview: p.resultPreview,
+      approvalDecision: p.approvalDecision ?? items.get(id)?.approvalDecision })
   }
   return [...items.values()].slice(-100)
 })
 type ToolItem = typeof activity.value[number]
+const approvalTime = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : value
 type ConversationEntry = { id: string; time: number } & (
-  | { kind: 'progress'; text: string; detail?: string | null }
+  | { kind: 'progress'; items: Array<{ id: string; text: string; detail?: string | null }> }
   | { kind: 'message'; message: CopilotConversationMessage }
   | { kind: 'tools'; items: ToolItem[] }
   | { kind: 'output'; output: WorkOutput }
   | { kind: 'plan' | 'planning' | 'controls' }
 )
-const hasWorkContent = computed(() => Boolean(planningText.value || runtime.value?.planning.draft.nodes.length || planningProfile.value || planningHistory.value.length || outputs.value.length || pastOutputs.value.length || props.plan || activity.value.length))
+const hasWorkContent = computed(() => Boolean(props.workspaceReview || reviewDiagnostic.value || planningText.value || planningReasoning.value || runtime.value?.planning.draft.nodes.length || planningProfile.value || planningHistory.value.length || outputs.value.length || pastOutputs.value.length || props.plan || activity.value.length))
 const entries = computed(() => {
   const start = Date.parse(props.startedAt || '') || 0
   const time = (timestamp?: string | null) => {
@@ -204,11 +263,11 @@ const entries = computed(() => {
   }
   const result: ConversationEntry[] = planningHistory.value
     .filter(item => !(props.plan && item.kind === 'completed') && !(planningProfile.value && item.kind === 'stage_completed' && item.stage === 'intent_profile'))
-    .map(item => ({ id: `progress:${item.id}`, kind: 'progress', time: time(item.timestamp), text: planningProgressText(item), detail: item.detail }))
+    .map(item => ({ id: `progress:${item.id}`, kind: 'progress', time: time(item.timestamp), items: [{ id: item.id, text: planningProgressText(item), detail: item.detail }] }))
   if (planningProfile.value && !planningHistory.value.some(item => item.kind === 'profile_resolved')) {
-    result.push({ id: 'planning-profile', kind: 'progress', time: start, text: planningProfileText(planningProfile.value) })
+    result.push({ id: 'planning-profile', kind: 'progress', time: start, items: [{ id: 'planning-profile', text: planningProfileText(planningProfile.value) }] })
   }
-  if (!props.plan && (planningText.value || runtime.value?.planning.draft.nodes.length || active.value && (!outputs.value.length && !activity.value.length))) {
+  if (planningText.value || planningReasoning.value || runtime.value?.planning.outputId || !props.plan && (runtime.value?.planning.draft.nodes.length || active.value && (!outputs.value.length && !activity.value.length))) {
     result.push({ id: 'planning-preview', kind: 'planning', time: time(runtime.value?.planning.modelStartedAt || runtime.value?.planning.startedAt) })
   }
   if (props.plan) {
@@ -225,24 +284,58 @@ const entries = computed(() => {
     const previous = grouped[grouped.length - 1]
     if (entry.kind === 'tools' && previous?.kind === 'tools'
       && previous.items[0].stepId === entry.items[0].stepId && previous.items[0].attemptId === entry.items[0].attemptId) previous.items.push(...entry.items)
+    else if (entry.kind === 'progress' && previous?.kind === 'progress') previous.items.push(...entry.items)
     else grouped.push(entry)
     return grouped
   }, [])
 })
+// Group contiguous work by the actual node attempt. Messages and other Agents
+// retain their chronological positions; never merge separate attempts by name.
+const workGroups = computed(() => {
+  const result: Array<{ id: string; key?: string; agent?: WorkOutput; entries: ConversationEntry[] }> = []
+  for (const entry of entries.value) {
+    const output = entry.kind === 'output' && !entry.output.planning ? entry.output : undefined
+    const tool = entry.kind === 'tools' ? entry.items[0] : undefined
+    const nodeId = output?.nodeId || tool?.stepId
+    const attemptId = output?.attemptId || tool?.attemptId
+    const key = nodeId ? JSON.stringify([nodeId, attemptId || '']) : undefined
+    const previous = result[result.length - 1]
+    if (key && previous?.key === key) { previous.entries.push(entry); continue }
+    const node = nodeId ? runtime.value?.nodes?.[nodeId] : undefined
+    const agent = nodeId ? { id: nodeId, title: output?.title || node?.title || props.graphNodes.find(n => n.acgNodeId === nodeId)?.name || '步骤执行',
+      agentName: output?.agentName || (node && node.currentAttemptId === attemptId ? node.agentName : undefined),
+      agentRegistration: output?.agentRegistration || (node && node.currentAttemptId === attemptId ? node.agentRegistration : undefined),
+      text: '', timestamp: null, running: false, failed: false, planning: false } : undefined
+    result.push({ id: entry.id, key, agent, entries: [entry] })
+  }
+  return result
+})
 const toolStatusLabel = (status: string) => ({ completed: '已完成', failed: '失败', running: '执行中', cancelled: '已取消' } as Record<string, string>)[status] || status
 const toolGroupStatus = (items: ToolItem[]) => items.some(item => item.status === 'running') ? 'running' : items.some(item => item.status === 'failed') ? 'failed' : items.every(item => item.status === 'completed') ? 'completed' : items[0].status
-watch(() => [planningText.value, runtime.value?.planning.draft.nodes, planningProfile.value, planningHistory.value, outputs.value, pastOutputs.value, props.plan, activity.value], () => {
+watch(() => [planningText.value, planningReasoning.value, runtime.value?.planning.draft.nodes, planningProfile.value, planningHistory.value, outputs.value, pastOutputs.value, props.plan, activity.value, props.workspaceReview, reviewDiagnostic.value], () => {
   emit('content', hasWorkContent.value)
 }, { immediate: true })
 const toolLabel = (tool: string) => ({ 'fs.read': '读取文件', read_file: '读取文件', 'fs.list': '查看目录', list_files: '查看目录', 'fs.write': '写入文件', write_file: '写入文件', 'fs.patch': '修改文件', patch_file: '修改文件', 'shell.exec': '运行命令', run_tests: '运行测试' } as Record<string, string>)[tool] || tool || '工具操作'
 </script>
 <style scoped>
-.run-timeline { min-width: 0; color: var(--wb-text-secondary); font-size: 13px; line-height: 1.75; text-wrap: pretty; }
+.timeline-flow { display: contents; }
+.agent-work { margin: 14px 0 22px; border: 1px solid var(--wb-border-soft); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.agent-work__heading { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; padding-bottom: 10px; color: var(--wb-text); font-size: 12px; }
+.agent-work__heading small { color: var(--wb-text-muted); font-size: 10px; overflow-wrap: anywhere; }
+.agent-work__heading > span:last-child { flex-basis: 100%; color: var(--wb-text-secondary); }
+.agent-work__signal { width: 6px; height: 6px; border-radius: 50%; background: var(--wb-accent); }
+.run-timeline__model { color: var(--wb-text-muted); font-size: 11px; }
+.run-timeline__tool-result { max-height: 200px; overflow: auto; white-space: pre-wrap; font: 11px/1.6 var(--font-mono, monospace); }
+.run-timeline__tool-target { overflow-wrap: anywhere; font-size: 12px; }
+.run-timeline__auto-approved, .run-timeline__approval-summary { color: var(--wb-accent); white-space: nowrap; }
+.run-timeline__approval-decision { border-top: 1px solid var(--wb-border-soft); padding-top: 6px; }
+.run-timeline { min-width: 0; color: var(--wb-text-secondary); font-size: 13px; line-height: var(--cp-prose-line-height, 1.7); text-wrap: wrap; }
 .run-timeline__status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 22px; color: var(--wb-text-muted); font-size: 11px; }
 .run-timeline__history-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .run-timeline__history-toggle:hover { color: var(--wb-text); }
 .run-timeline__history-toggle:focus-visible, summary:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: 3px; }
 .run-timeline__state { display: inline-flex; align-items: center; gap: 6px; }
+.run-timeline__review-error { overflow-wrap: anywhere; color: var(--wb-text-secondary); font-size: 10px; }
 .run-timeline__dot { width: 5px; height: 5px; flex: 0 0 5px; background: var(--wb-accent); border-radius: 50%; }
 .run-timeline__dot.is-active { animation: activity-pulse 1.8s ease-in-out infinite; }
 .run-timeline__planning, .run-timeline__plan, .run-timeline__output { margin: 0 0 22px; }
@@ -256,7 +349,7 @@ p { margin: 0 0 12px; overflow-wrap: anywhere; }
 p:last-child { margin-bottom: 0; }
 h3 { margin: 0 0 12px; color: var(--wb-text); font-size: 13px; font-weight: 600; }
 h3 small { margin-left: 7px; font-size: 10px; font-weight: 400; color: var(--wb-text-muted); }
-.run-timeline__objective { white-space: pre-wrap; }
+.run-timeline__objective { white-space: normal; margin-bottom: 12px; }
 details { margin: 10px 0; }
 summary { cursor: pointer; color: var(--wb-text-muted); border-radius: 4px; font-size: 12px; transition: color 140ms var(--ease-out, ease); }
 summary:hover { color: var(--wb-text); }
@@ -272,7 +365,10 @@ li p { margin: 6px 0; }
 .run-timeline__failure p { margin-top: 8px; font: 11px/1.7 var(--font-mono, monospace); }
 .run-timeline__tools { margin: -6px 0 20px; }
 .run-timeline__tool { margin: 6px 0 6px 18px; }
-.run-timeline__tools summary { display: flex; align-items: center; gap: 7px; min-height: 28px; list-style: none; }
+.run-timeline__tools summary, .run-timeline__progress > summary { display: flex; align-items: center; gap: 7px; min-height: 28px; list-style: none; }
+.run-timeline__progress { margin: 0 0 16px; }
+.run-timeline__progress-item { margin: 8px 0 8px 6px; padding-left: 18px; border-left: 1px solid var(--wb-border); }
+.run-timeline__progress-item :deep(.chat-recovery) { color: var(--wb-text-muted); font-size: 12px; }
 .run-timeline__tools summary::-webkit-details-marker { display: none; }
 .run-timeline__tools summary small { flex-shrink: 0; font-size: 10px; }
 .run-timeline__chevron { width: 11px; height: 11px; flex: 0 0 11px; color: var(--wb-text-muted); transition: transform 160ms var(--ease-out, ease); }
@@ -288,6 +384,9 @@ dt { color: var(--wb-text-muted); }
 dd { margin: 0; overflow-wrap: anywhere; font: 11px/1.6 var(--font-mono, monospace); }
 .run-timeline__text.markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
 .run-timeline__text { overflow-wrap: anywhere; }
+.run-timeline__text :deep(p) { margin: 0 0 var(--cp-paragraph-gap, .65em); }
+.run-timeline__text :deep(ul), .run-timeline__text :deep(ol) { margin: var(--cp-paragraph-gap, .65em) 0; padding-left: 1.5em; }
+.run-timeline__text :deep(li) { margin: var(--cp-list-item-gap, .2em) 0; }
 .run-timeline__text :deep(p:first-child) { margin-top: 0; }
 .run-timeline__text :deep(p:last-child) { margin-bottom: 0; }
 .run-timeline__text :deep(pre) { max-width: 100%; overflow: auto; }

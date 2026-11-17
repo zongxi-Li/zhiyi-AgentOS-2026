@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { WorkspaceGraphNode } from '@/services/api/agentos'
+import type { WorkflowRun, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation, RuntimeTraceObservation } from './observation'
 import { projectRunProgress } from './runProgress'
 
@@ -190,5 +190,83 @@ describe('projectRunProgress', () => {
 
     expect(timeline.planner).toBeNull()
     expect(timeline.tasks).toHaveLength(0)
+  })
+
+  it('uses the recovered running step when the trace contains only its previous failure', () => {
+    const current = observation([
+      traceEvent('old-failure', { errorCode: 'MODEL_TIMEOUT' }, {
+        stepId: 'node_a', eventType: 'step_failed', timestamp: '2026-09-02T00:00:02Z', durationMs: 1000
+      })
+    ])
+    current.run = { runId: 'run_1', steps: [{ stepId: 'node_a', status: 'running', attempt: 1,
+      startedAt: '2026-09-02T00:00:03Z' }] } as WorkflowRun
+    const timeline = projectRunProgress(current, [{ ...graphNodes[0], status: 'running', attemptId: 'new-attempt' }])
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'running', errorCode: null, durationMs: null })
+    expect(timeline.tasks[0].previousFailures).toEqual([expect.objectContaining({
+      eventId: 'old-failure', errorCode: 'MODEL_TIMEOUT', attemptId: null, durationMs: 1000
+    })])
+    expect(current.traces[0].eventType).toBe('step_failed')
+  })
+
+  it('keeps a real current failure and archives a failure from a previous attempt', () => {
+    const current = observation([
+      traceEvent('old-failure', { attemptId: 'old-attempt', errorCode: 'MODEL_TIMEOUT' }, {
+        stepId: 'node_a', eventType: 'step_failed', timestamp: '2026-09-02T00:00:02Z'
+      }),
+      traceEvent('new-failure', { attemptId: 'new-attempt', errorCode: 'OUTPUT_INVALID' }, {
+        stepId: 'node_a', eventType: 'step_failed', timestamp: '2026-09-02T00:00:04Z'
+      })
+    ])
+    current.run = { runId: 'run_1', steps: [{ stepId: 'node_a', status: 'failed', attempt: 1,
+      startedAt: '2026-09-02T00:00:03Z' }] } as WorkflowRun
+    const timeline = projectRunProgress(current, [{ ...graphNodes[0], attemptId: 'new-attempt' }])
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'failed', errorCode: 'OUTPUT_INVALID' })
+    expect(timeline.tasks[0].previousFailures?.map(failure => failure.eventId)).toEqual(['old-failure'])
+  })
+
+  it('does not attach a previous failure to a new failed attempt with no failure trace yet', () => {
+    const current = observation([
+      traceEvent('old-failure', { errorCode: 'MODEL_TIMEOUT' }, {
+        stepId: 'node_a', eventType: 'step_failed', timestamp: '2026-09-02T00:00:02Z'
+      })
+    ])
+    current.run = { runId: 'run_1', steps: [{ stepId: 'node_a', status: 'failed', attempt: 1,
+      startedAt: '2026-09-02T00:00:03Z' }] } as WorkflowRun
+    const timeline = projectRunProgress(current, graphNodes)
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'failed', errorCode: 'STEP_FAILED' })
+    expect(timeline.tasks[0].previousFailures).toHaveLength(1)
+  })
+
+  it('uses a known graph state when run detail is unavailable and ignores another Run detail', () => {
+    const current = observation([
+      traceEvent('old-failure', { errorCode: 'MODEL_TIMEOUT' }, { stepId: 'node_a', eventType: 'step_failed' })
+    ])
+    current.run = { runId: 'other-run', steps: [{ stepId: 'node_a', status: 'failed' }] } as WorkflowRun
+    const timeline = projectRunProgress(current, [{ ...graphNodes[0], status: 'completed' }])
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'success', errorCode: null })
+    expect(timeline.tasks[0].previousFailures).toHaveLength(1)
+  })
+
+  it('does not let a default pending graph node erase a real trace failure', () => {
+    const timeline = projectRunProgress(observation([
+      traceEvent('failure', { errorCode: 'MODEL_TIMEOUT' }, { stepId: 'node_a', eventType: 'step_failed' })
+    ]), [{ ...graphNodes[0], status: 'pending' }])
+
+    expect(timeline.tasks[0]).toMatchObject({ status: 'failed', errorCode: 'MODEL_TIMEOUT', previousFailures: [] })
+  })
+
+  it('shows cancellation without presenting an earlier failure as the current outcome', () => {
+    const current = observation([
+      traceEvent('failure', { errorCode: 'MODEL_TIMEOUT' }, { stepId: 'node_a', eventType: 'step_failed' })
+    ])
+    current.run = { runId: 'run_1', steps: [{ stepId: 'node_a', status: 'cancelled' }] } as WorkflowRun
+
+    expect(projectRunProgress(current, graphNodes).tasks[0]).toMatchObject({
+      status: 'warning', errorCode: null, previousFailures: [expect.objectContaining({ eventId: 'failure' })]
+    })
   })
 })

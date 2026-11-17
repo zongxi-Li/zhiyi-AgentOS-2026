@@ -19,21 +19,8 @@
       ...(isOlderSelection ? [{ label: '最近创建', value: lifecycle.latestRunId, code: true }] : []),
       ...(lifecycle.successorRunId ? [{ label: '后续运行', value: lifecycle.successorRunId, code: true }] : [])
     ]" />
-    <div v-if="availableActions.length" class="lifecycle-available">
-      <span>当前可用</span>
-      <div><span v-for="action in availableActions" :key="action">{{ capabilityLabels[action] }}</span></div>
-    </div>
-    <p v-else-if="!lifecycle.capabilities" class="lifecycle-note">操作状态暂时无法确认，请等待运行记录刷新。</p>
-    <InspectorDetails title="其他操作为何不可用" :count="lifecycle.capabilities?.unavailableReasons.length">
-      <dl class="lifecycle-reasons">
-        <div v-for="reason in lifecycle.capabilities?.unavailableReasons || []" :key="reason.action">
-          <dt>{{ capabilityLabels[reason.action] || '其他操作' }}</dt>
-          <dd>{{ capabilityReason(reason.code) }}</dd>
-        </div>
-      </dl>
-      <p v-if="!lifecycle.capabilities">当前缺少经校验的操作状态，系统暂不提供执行操作。</p>
-    </InspectorDetails>
-    <InspectorDetails title="技术详情与事实来源" description="编号、状态版本和原因码用于定位问题，可选中文字复制。">
+    <p v-if="!lifecycle.capabilities" class="lifecycle-note">操作状态暂时无法确认，请等待运行记录刷新。</p>
+    <InspectorDetails title="诊断详情">
       <RuntimeObservationNotice :observation="observation" :run-id="lifecycle.runId" />
       <InspectorPropertyList :rows="[
         { label: '运行编号', value: lifecycle.runId, code: true },
@@ -44,6 +31,14 @@
         { label: '产物编号', value: lifecycle.deliverable?.artifactId, code: true },
         { label: '正文引用', value: lifecycle.deliverable?.contentRef, code: true }
       ]" />
+      <InspectorDetails v-if="lifecycle.capabilities?.unavailableReasons.length" title="操作限制">
+        <dl class="lifecycle-reasons">
+          <div v-for="reason in lifecycle.capabilities.unavailableReasons" :key="reason.action">
+            <dt>{{ capabilityLabels[reason.action] || '其他操作' }}</dt>
+            <dd>{{ capabilityReason(reason.code) }}</dd>
+          </div>
+        </dl>
+      </InspectorDetails>
       <ul class="lifecycle-raw"><li v-for="reason in lifecycle.capabilities?.unavailableReasons || []" :key="reason.action"><code>{{ reason.action }}: {{ reason.code }}</code></li></ul>
       <InspectorDetails title="状态证据" :count="lifecycle.evidenceReferences.length">
         <ul class="lifecycle-raw"><li v-for="source in lifecycle.evidenceReferences" :key="source"><code>{{ source }}</code></li></ul>
@@ -72,8 +67,6 @@ const emit = defineEmits<{ follow: []; openArtifact: [entry: WorkspaceEntry] }>(
 const provenance = computed(() => props.observation?.runId === props.lifecycle.runId ? props.observation.provenance.integrityStatus : null)
 const phaseLabel = computed(() => lifecycleLabels[props.lifecycle.phase])
 const isOlderSelection = computed(() => props.lifecycle.latestRunId && props.lifecycle.latestRunId !== props.lifecycle.runId)
-const availableActions = computed(() => Object.keys(capabilityLabels).filter(action =>
-  props.lifecycle.capabilities?.[action as keyof NonNullable<LifecycleProjection['capabilities']>] === true))
 const description = computed(() => lifecycleDescriptions[props.lifecycle.phase])
 </script>
 
@@ -88,9 +81,6 @@ const description = computed(() => lifecycleDescriptions[props.lifecycle.phase])
 .lifecycle-delivery button:hover { background: var(--wb-hover); }
 .lifecycle-delivery button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 2px; }
 .lifecycle-delivery.is-missing, .lifecycle-failure { border-left: 2px solid var(--wb-warning); padding-left: 12px; }
-.lifecycle-available { margin-top: 14px; color: var(--wb-text-secondary); font-size: 12px; }
-.lifecycle-available > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.lifecycle-available > div span { padding: 2px 8px; border-radius: 4px; background: var(--wb-surface-inset); }
 .lifecycle-reasons { margin: 0; }
 .lifecycle-reasons > div { margin-bottom: 12px; }
 .lifecycle-reasons dt { font-weight: 550; color: var(--wb-text-secondary); font-size: 12px; }

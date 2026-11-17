@@ -2,22 +2,22 @@
   <section class="acg-copilot" aria-label="ACG Copilot 任务助手">
     <div class="context-strip"><el-icon><Share /></el-icon><span :title="targetTitle">{{ targetTitle }}</span><small>{{ statusLabel }}</small></div>
     <nav class="copilot-tabs" aria-label="助手视图">
-      <button :class="{ active: tab === 'chat' }" @click="tab = 'chat'">对话 <i v-if="state?.question || state?.review" class="attention-dot"></i></button>
-      <button :class="{ active: tab === 'trace' }" @click="tab = 'trace'">轨迹 <small v-if="trajectory.length">{{ trajectory.length }}</small></button>
+      <button :class="{ active: tab === 'chat' }" @click="tab = 'chat'">对话 <i v-if="state?.question || state?.review && !reviewPending" class="attention-dot"></i></button>
+      <button :class="{ active: tab === 'trace' }" @click="tab = 'trace'">活动记录 <small v-if="trajectory.length">{{ trajectory.length }}</small></button>
       <button :class="{ active: tab === 'pool' }" @click="tab = 'pool'">执行池</button>
     </nav>
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
       <CopilotRunTimeline :key="runId || ''" :run-id="runId" :status="state?.status || runStatus || ''"
-        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()">
+        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()">
       <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
         :can-cancel="canCancel" :cancel-pending="cancelPending" embedded conversational
         :readonly="readonly || historical || busy || loading || !state"
         :execution-readonly="permission !== 'task_collaboration'" :reviewed-plan="state?.initialPlan" require-plan-review :waiting-for-approval="hasPendingToolApproval"
-        :show-review="!state?.review" @refresh="refreshRun" @cancel="emit('cancel-run')" /></template>
-      <template #approvals><FormalToolApprovals v-if="runId && !historical" :run-id="runId" :active="(state?.status || runStatus) === 'running'"
+        :show-review="!state?.review && !state?.planningProgress" @refresh="refreshRun" @cancel="emit('cancel-run')" /></template>
+      <template #approvals><FormalToolApprovals v-if="runId && !historical" ref="toolApprovals" :run-id="runId" :active="(state?.status || runStatus) === 'running'"
         :readonly="readonly || !allows('canResolveToolApproval')" @waiting="hasPendingToolApproval = $event" @resolved="refreshRun" /></template>
       <template #message="{ message }">
       <article class="message" :class="`is-${message.role}`">
@@ -27,15 +27,17 @@
         <div v-if="message.action" class="operation-card">
           <strong>{{ actionLabel(message.action.kind) }}</strong>
           <p v-if="message.action.kind === 'user_input'">在当前执行片段结束后，由 Planner 重新观察并处理补充要求。</p>
-          <template v-else><p>重新执行：{{ stepNames(message.action.executeStepIds) }}</p><p>复用结果：{{ stepNames(message.action.reusedStepIds) || '无' }}</p><p v-if="message.action.executionEnvironmentChanged">执行环境已更新：保持原计划与输入，使用当前可用能力重新执行。</p><small>创建新 Run，保留原运行记录与上游证据。</small></template>
+          <template v-else><p>重新执行：{{ stepNames(message.action.executeStepIds) }}</p><p>复用结果：{{ stepNames(message.action.reusedStepIds) || '无' }}</p><p v-if="message.action.executionEnvironmentChanged">执行环境已更新：保持原计划与输入，使用当前可用能力重新执行。</p><small v-if="message.action.kind === 'recover' && message.action.retryMode === 'current_run'">在当前 Run 继续执行，保留已提交结果并追加执行记录。</small><small v-else>创建新 Run，保留原运行记录与上游证据。</small></template>
           <button type="button" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !proposalAllowed(message.action, message.sourceRunId) || !!receipts[receiptKey(message.sourceRunId, message.proposalId)]" @click="confirmAction(message.proposalId, message.action, message.sourceRunId)">{{ receipts[receiptKey(message.sourceRunId, message.proposalId)] ? '已提交' : '确认操作' }}</button>
         </div>
         <div v-if="message.receipt" class="operation-receipt"><span>{{ message.receipt.kind === 'user_input' ? '等待 Planner 处理' : '运行已提交' }}</span><button v-if="message.receipt.runId !== runId" type="button" @click="emit('select-run', message.receipt.runId)">查看新运行 <el-icon><ArrowRight /></el-icon></button></div>
       </article>
       </template>
       </CopilotRunTimeline>
+      <div v-if="planningRepairing" class="planning-progress wait-note" role="status"><el-icon class="is-loading"><Loading /></el-icon><span>{{ state?.planningProgress?.message }}</span></div>
+      <div v-else-if="state?.planningProgress?.kind === 'blocked'" class="planning-progress planning-progress--blocked" role="status"><p>{{ state.planningProgress.message }}</p><details><summary>查看交接受阻原因</summary><p>{{ state.planningProgress.reason || state.planningProgress.errorCode }}</p><small v-if="state.planningProgress.errorType">{{ state.planningProgress.errorType }}</small></details></div>
       <div v-if="loading && !state" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon><p>正在读取任务对话…</p></div>
-      <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval && !hasTimelineContent && !['pending', 'planning'].includes(state?.status || runStatus || '')" class="empty-state">
+      <div v-else-if="!messages.length && !state?.question && !state?.review && !state?.planningProgress && !state?.initialPlan && !state?.toolActivity?.length && !hasPendingToolApproval && !hasTimelineContent && !['pending', 'planning'].includes(state?.status || runStatus || '')" class="empty-state">
         <img class="empty-watermark" :src="activePack.mark" alt="" aria-hidden="true" />
         <h3>{{ runId ? '一起推进这项任务' : '从一项任务开始' }}</h3>
         <p>{{ runId ? '检查进展、理解问题，或一起梳理下一步。' : '选择或启动任务后，在这里与任务助手交流。' }}</p>
@@ -43,7 +45,7 @@
 
       <article v-if="busy && pendingUser" class="stream-turn">
         <div v-if="!answering" class="message is-user"><div class="message-content">{{ pendingUser }}</div></div>
-        <ChatTranscriptBlock v-if="streamContent" class="message-content streaming-content" :block="streamBlock" />
+        <ChatTranscriptBlock v-if="streamContent" class="message-content streaming-content" :block="streamBlock" :render-text="renderCopilotMarkdown" />
         <div class="stream-activity" role="status"><el-icon class="is-loading"><Loading /></el-icon><span>{{ answering ? '正在提交回答' : streamPhaseText }}</span><div v-if="!streamContent" class="thinking-line"></div></div>
       </article>
       <article v-if="state?.question" class="question-card">
@@ -53,28 +55,29 @@
         <button v-if="state" class="reply-link" @click="answering = true; focusComposer()">回答后继续规划 <el-icon><ArrowRight /></el-icon></button>
       </article>
       <article v-if="state?.review && !state.question" class="review-card">
-          <div class="question-heading"><el-icon><Clock /></el-icon><strong>{{ state.review.decisionRejected ? (state.decision?.action === 'recover' ? '任务暂停，未能自动恢复' : '任务暂停，下一步尚未执行') : state.review.subjectType === 'planner' ? '等待继续条件确认' : '请审核当前步骤的结果' }}</strong></div>
-          <p>{{ state.review.decisionRejected ? '系统未能执行建议的处理方案，任务仍处于暂停状态。可先查看失败详情，再说明需要补充的材料或调整的执行要求，生成新的处理方案。' : state.review.subjectType === 'planner' ? '确认下方说明中的等待条件已满足后，系统会重新判断能否继续执行。' : '请检查当前步骤的结果。批准后继续执行后续工作；拒绝将结束本次运行，保留已有记录。' }}</p>
+        <div class="question-heading"><el-icon :class="{ 'is-loading': reviewPending }"><Loading v-if="reviewPending" /><Clock v-else /></el-icon><strong>{{ reviewTitle }}</strong></div>
+        <p>{{ reviewDescription }}</p>
         <ul v-if="failedSteps.length"><li v-for="step in failedSteps" :key="step.stepId">{{ step.name }} · 执行失败</li></ul>
-          <details><summary>{{ state.review.decisionRejected ? '查看技术详情' : '查看等待原因与处理建议' }}</summary><p>暂停记录：{{ state.review.reason }}</p><p v-if="state.decision?.reason">运行决策：{{ state.decision.reason }}</p></details>
-          <textarea v-model="reviewComment" rows="2" maxlength="2000" :placeholder="state.review.subjectType === 'planner' ? '说明要补充的材料或调整的执行要求…' : '填写审核意见…'" aria-label="审核意见" :disabled="busy" />
+        <details><summary>{{ reviewPending || state.review.decisionRejected || reviewKind === 'workspace_revision_blocked' || reviewKind === 'planner_rejected' ? '查看技术详情' : '查看等待原因与处理建议' }}</summary><p>当前记录：{{ state.review.reason }}</p><p v-if="state.review.errorCode">拒绝代码：{{ state.review.errorCode }}</p><p v-if="state.review.errorType">错误类型：{{ state.review.errorType }}</p><p v-if="state.decision?.reason && state.decision.reason !== state.review.reason">规划时记录：{{ state.decision.reason }}</p></details>
+        <textarea v-if="!reviewPending" v-model="reviewComment" rows="2" maxlength="2000" :placeholder="state.review.subjectType === 'planner' ? '说明要补充的材料或调整的执行要求…' : '填写审核意见…'" aria-label="审核意见" :disabled="busy" />
         <div class="review-actions">
-          <button v-if="state.review.canApprove" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('approved')">{{ state.review.subjectType === 'planner' ? '确认条件已满足' : '批准并继续' }}</button>
-            <button v-if="state.review.subjectType === 'planner'" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canCollaborate') || !reviewComment.trim()" @click="submitReviewInput">预览调整方案</button>
+          <button v-if="reviewCanApprove" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('approved')">{{ state.review.subjectType === 'planner' ? '确认条件已满足' : '批准并继续' }}</button>
+          <button v-if="!reviewPending && state.review.subjectType === 'planner'" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canCollaborate') || !reviewComment.trim()" @click="submitReviewInput">预览调整方案</button>
           <button v-if="failedSteps.length" @click="tab = 'trace'">查看失败详情</button>
-            <button :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('rejected')">{{ state.review.subjectType === 'planner' ? '结束本次运行' : '拒绝并结束本次运行' }}</button>
+          <button v-else-if="reviewPending || reviewKind === 'workspace_revision_blocked' || reviewKind === 'planner_rejected'" @click="tab = 'trace'">查看活动记录</button>
+          <button v-if="!reviewPending" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('rejected')">{{ state.review.subjectType === 'planner' ? '结束本次运行' : '拒绝并结束本次运行' }}</button>
         </div>
-        <small v-if="permission !== 'task_collaboration' && !readonly && !historical">切换为“按需确认”权限后可操作。</small>
+        <small v-if="!reviewPending && permission !== 'task_collaboration' && !readonly && !historical">切换为“按需确认”权限后可操作。</small>
         <small v-if="historical">请前往当前运行处理审核。</small>
-          <small v-else-if="state.review.subjectType === 'planner'">先填写调整要求并预览方案；确认后，系统才会据此重新规划。</small>
+        <small v-else-if="!reviewPending && state.review.subjectType === 'planner'">补充要求可用于预览新的处理方案；方案仍须通过正式校验后才能执行。</small>
       </article>
       <div v-else-if="state?.decision && state.status === 'waiting_review' && !state.question" class="wait-note"><el-icon><Clock /></el-icon><span>{{ state.decision.reason }}</span></div>
     </div>
 
     <div v-if="tab === 'trace'" class="trajectory-view">
-      <div class="trace-toolbar"><span>运行记录 · {{ trajectory.length }}</span><input v-model="traceSearch" placeholder="搜索步骤或调用" aria-label="搜索运行轨迹" /></div>
-      <div v-if="!trajectory.length" class="empty-state"><el-icon><Connection /></el-icon><h3>尚无运行轨迹</h3><p>模型、执行步骤和工具调用会在这里留下记录。</p></div>
-      <div v-else class="trace-lanes" aria-label="轨迹来源概览"><span v-for="lane in lanes" :key="lane" :class="`lane-${lane}`">{{ laneLabel(lane) }}</span><div><i v-for="event in trajectory" :key="event.id" :class="`lane-${event.kind}`" :title="event.title"></i></div></div>
+      <div class="trace-toolbar"><span>{{ traceSearch.trim() ? `匹配 ${filteredTrajectory.length} / 已加载 ${trajectory.length} 条` : `已加载 ${trajectory.length} 条` }}</span><input v-model="traceSearch" placeholder="搜索步骤或调用" aria-label="搜索活动记录" /></div>
+      <div v-if="!trajectory.length" class="empty-state"><el-icon><Connection /></el-icon><h3>尚无活动记录</h3><p>模型、执行步骤和工具调用会在这里留下记录。</p></div>
+      <div v-else class="trace-lanes" aria-label="已加载活动分类"><span v-for="lane in lanes" :key="lane" :class="`lane-${lane}`">{{ laneLabel(lane) }} {{ laneCounts[lane] }}</span><div><i v-for="event in filteredTrajectory" :key="event.id" :class="`lane-${event.kind}`" :title="event.title"></i></div></div>
       <div class="trace-list">
         <details v-for="event in filteredTrajectory" :key="event.id" class="trace-event" :class="`lane-${event.kind}`">
           <summary><span class="trace-dot"></span><span class="trace-kind">{{ laneLabel(event.kind) }}</span><div><strong>{{ event.title }}</strong><small>{{ event.step || 'Run' }} <span v-if="event.duration != null">· {{ event.duration }} ms</span></small></div><time>{{ formatTime(event.time) }}</time><el-icon><ArrowDown /></el-icon></summary>
@@ -83,35 +86,36 @@
       </div>
       <p v-if="callError" class="no-results">{{ callError }}</p>
       <button v-if="callCursor" class="load-more" :disabled="callsLoading" @click="loadCalls(true)">加载更多模型调用</button>
-      <p v-if="trajectory.length && !filteredTrajectory.length" class="no-results">没有匹配的运行记录</p>
-      <small class="trace-footnote">点击展开详情，查看所属步骤、调用链和运行结果。</small>
+      <p v-if="trajectory.length && !filteredTrajectory.length" class="no-results">没有匹配的活动记录</p>
+      <small class="trace-footnote">按已加载的活动记录计数，不代表步骤数；模型调用按页加载，内部投影合并在调用详情中。</small>
     </div>
 
     <AgentPoolPanel v-if="tab === 'pool'" @select-run="emit('select-run', $event)" />
 
     <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
+    <div v-if="permissionReceipt" class="wait-note permission-receipt" role="status">{{ permissionReceipt }}</div>
     <div v-if="error" class="error-note" role="alert"><span>{{ error }}</span><button @click="refresh()">刷新</button></div>
     <div v-if="historical || readonly || !allows('canCollaborate')" class="readonly-note">{{ historical ? '历史 Run 只读，可讨论原始证据。' : '操作按所选 Run 的服务端能力限制。' }}<button v-if="state?.latestRunId && state.latestRunId !== runId" type="button" @click="emit('select-run', state.latestRunId)">查看最新创建的 Run</button></div>
     <form ref="composerRoot" class="composer" :class="{ 'is-answering': answering && state?.question }" @submit.prevent="send" @keydown.esc="openMenu = null">
       <div v-if="state?.question" class="composer-mode"><button type="button" :class="{ selected: answering }" @click="answering = true">回答问题</button><button type="button" :class="{ selected: !answering }" @click="answering = false">询问助手</button></div>
       <textarea ref="composerInput" v-model="draft" rows="3" :maxlength="answering && state?.question ? 2000 : 4000" :disabled="!runId || busy" :placeholder="composerPlaceholder" aria-label="任务对话输入" @keydown="onKeydown"></textarea>
       <div class="composer-footer">
-        <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration' || readonly || historical || !(allows('canCollaborate') || allows('canRetrySuccessor') || allows('canRerunSuccessor'))" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
+        <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration' || readonly || historical || !(allows('canCollaborate') || operationAllowed('recover') || allows('canRerunSuccessor'))" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
           <div v-if="openMenu === 'operation'" class="picker-menu operation-menu">
             <div class="menu-heading">任务操作</div>
             <button type="button" :disabled="!allows('canRerunSuccessor')" @click="prepareOperation('rerun')"><span><strong>原样重跑</strong><small>沿用当前计划与输入，创建新运行</small></span></button>
             <label>起始节点<select v-model="operationStep" aria-label="选择重跑节点"><option value="" disabled>选择一个节点</option><option v-for="step in state?.steps" :key="step.stepId" :value="step.stepId">{{ step.name }}</option></select></label>
             <button type="button" :disabled="!operationStep || !allows('canRerunSuccessor')" @click="prepareOperation('rerun_node')"><span><strong>从指定节点重跑</strong><small>重新执行该节点及其受影响的后续步骤</small></span></button>
-            <button type="button" :disabled="!allows('canRetrySuccessor')" @click="prepareOperation('recover')"><span><strong>恢复失败任务</strong><small>复用已提交结果，重试失败节点</small></span></button>
+            <button type="button" :disabled="!operationAllowed('recover')" @click="prepareOperation('recover')"><span><strong>恢复失败任务</strong><small>{{ offeredCapabilities?.retryMode === 'current_run' ? '在当前 Run 复用已提交结果，重试失败节点' : '在新 Run 复用已提交结果，重试失败节点' }}</small></span></button>
             <button type="button" :disabled="!draft.trim() || !allows('canCollaborate')" @click="prepareOperation('user_input')"><span><strong>提交补充要求</strong><small>将输入框中的要求交给 Planner 重新决策</small></span></button>
           </div>
         </div>
-        <div class="composer-picker permission-picker">
-          <button type="button" class="picker-trigger" aria-label="选择权限" aria-haspopup="menu" :aria-expanded="openMenu === 'permission'" :disabled="busy || !state || readonly || historical || !allows('canCollaborate')" @click="openMenu = openMenu === 'permission' ? null : 'permission'"><el-icon><Lock /></el-icon><span>{{ readonly || historical || !allows('canCollaborate') || permission === 'read_only' ? '仅对话' : '按需确认' }}</span><el-icon class="chevron"><ArrowDown /></el-icon></button>
+        <div class="composer-picker permission-picker" :class="{ 'is-auto-approval': permissionChoice === 'full' }" @keydown="onPermissionKeydown">
+          <button type="button" class="picker-trigger" aria-label="选择权限" aria-haspopup="menu" :aria-expanded="openMenu === 'permission'" :aria-busy="settingPermission" :disabled="busy || loading || !state || readonly || historical || !allows('canSetPermission')" @click="openMenu = openMenu === 'permission' ? null : 'permission'"><el-icon :class="{ 'is-loading': settingPermission }"><Loading v-if="settingPermission" /><MagicStick v-else-if="permissionChoice === 'full'" /><Lock v-else /></el-icon><span>{{ settingPermission ? '正在设置…' : permissionLabel }}</span><el-icon class="chevron"><ArrowDown /></el-icon></button>
           <div v-if="openMenu === 'permission'" class="picker-menu permission-menu" role="menu" aria-label="任务助手权限">
-            <div class="menu-heading">权限范围 · 整个任务</div>
-            <button v-for="option in permissionOptions" :key="option.value" type="button" role="menuitemradio" :aria-checked="permission === option.value" @click="changePermission(option.value)"><el-icon><Lock v-if="option.value === 'read_only'" /><CircleCheck v-else /></el-icon><span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span><el-icon v-if="permission === option.value" class="selected-check"><Check /></el-icon></button>
-            <p>权限选择不会绕过任务的审计与执行约束。</p>
+            <div class="menu-heading">授权范围 · 整个任务</div>
+            <button v-for="option in permissionOptions" :key="option.id" type="button" role="menuitemradio" :aria-checked="permissionChoice === option.id" @click="changePermission(option.permission, option.approvalMode)"><el-icon><Lock v-if="option.id === 'read_only'" /><MagicStick v-else-if="option.id === 'full'" /><CircleCheck v-else /></el-icon><span><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span><el-icon v-if="permissionChoice === option.id" class="selected-check"><Check /></el-icon></button>
+            <p>适用于本任务当前绑定的工作区授权。命令按当前系统用户权限执行。</p>
           </div>
         </div>
         <div class="composer-picker model-picker">
@@ -133,13 +137,14 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
-import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, Share } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, ArrowUp, ChatDotRound, Check, CircleCheck, Clock, Connection, Cpu, Loading, Lock, MagicStick, Share } from '@element-plus/icons-vue'
 import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGraphNode, type ModelCallUsage, type RunActionCapabilities } from '@/services/api/agentos'
 import { readRunCapabilities, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
-import type { CopilotPermission, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase } from '@/services/api/agentos/api/copilot'
+import type { CopilotPermission, CopilotPermissionChange, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase, TaskApprovalMode } from '@/services/api/agentos/api/copilot'
 import { copilotResponseSummary, type CopilotConversationMessage } from './copilotConversation'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 import { renderMarkdown } from '@/utils/markdown'
+import { renderCopilotMarkdown } from './copilotMarkdown'
 import { clearCopilotSession, getCopilotSession, saveCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
@@ -153,7 +158,7 @@ const props = withDefaults(defineProps<{
   entry?: WorkspaceEntry | null; graphNode?: WorkspaceGraphNode | null; graphNodes?: WorkspaceGraphNode[]
   graph?: GraphProjection | null; runId?: string | null; runStatus?: string | null
   runtimeObservation?: RuntimeObservation | null; historical?: boolean; readonly?: boolean; actionCapabilities?: RunActionCapabilities | null
-  missionId?: string; canCancel?: boolean; cancelPending?: boolean; projectionRevision?: number
+  missionId?: string; canCancel?: boolean; cancelPending?: boolean; projectionRevision?: number; workspaceRefreshing?: boolean
 }>(), { entry: null, graphNode: null, graphNodes: () => [], graph: null, runId: null, runStatus: null, runtimeObservation: null, historical: false, readonly: false, missionId: '', canCancel: false, cancelPending: false })
 const emit = defineEmits<{ 'select-run': [runId: string]; 'refresh-run': []; 'cancel-run': [] }>()
 const { activePack } = useBrand()
@@ -166,13 +171,34 @@ function allows(action: RunCapabilityAction) {
   return caps?.[action] === true && (!mutation || !props.historical && !props.readonly)
 }
 function proposalAllowed(action: CopilotAction, sourceRunId?: string) {
+  const recoveryAllowed = action.kind !== 'recover' || action.stepId === offeredCapabilities.value?.retryStepId && (action.retryMode === 'current_run'
+    ? allows('canRecoverCurrentRun') && offeredCapabilities.value?.retryMode === 'current_run'
+    : (!action.retryMode || action.retryMode === 'successor_run') && allows('canRetrySuccessor')
+      && offeredCapabilities.value?.retryMode === 'successor_run')
   return (!sourceRunId || sourceRunId === props.runId) && action.expectedRevision === offeredCapabilities.value?.runtimeRevision
-    && allows(action.kind === 'user_input' ? 'canCollaborate' : action.kind === 'recover' ? 'canRetrySuccessor' : 'canRerunSuccessor')
+    && recoveryAllowed && operationAllowed(action.kind)
+}
+function operationAllowed(kind: CopilotActionKind) {
+  return kind === 'recover' ? allows('canRecoverCurrentRun') || allows('canRetrySuccessor')
+    : allows(kind === 'user_input' ? 'canCollaborate' : 'canRerunSuccessor')
 }
 const hasFormalControl = computed(() => Boolean(controlRun.value?.formalControl || controlRun.value?.executionState?.planningCommitRequired))
-const refreshRun = () => { emit('refresh-run'); void refresh() }
+const refreshRun = () => {
+  refreshPending = true
+  explicitRefreshPending = true
+  accessDenied = false
+  refreshFailures = 0
+  emit('refresh-run')
+  scheduleRefresh()
+}
 const state = ref<CopilotState | null>(null)
 const hasPendingToolApproval = ref(false)
+const toolApprovals = ref<InstanceType<typeof FormalToolApprovals> | null>(null)
+// The workbench already refreshes durable execution facts. Reconcile approvals
+// on that same cadence even when the transient event connection has stopped.
+watch(() => props.runtimeObservation, observation => {
+  if (observation?.runId === props.runId) void toolApprovals.value?.refresh()
+}, { flush: 'post' })
 const hasTimelineContent = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
 const tab = ref<'chat' | 'trace' | 'pool'>('chat')
@@ -189,6 +215,8 @@ const stepNames = (ids: string[]) => ids.map(id => state.value?.steps.find(s => 
 const receiptKey = (sourceRunId: string | undefined, proposalId: string) => `${sourceRunId || props.runId}:${proposalId}`
 const receipts = computed(() => Object.fromEntries((state.value?.exchanges || []).filter(e => e.receipt).map(e => [receiptKey(e.sourceRunId, e.receipt!.proposalId), e.receipt!])))
 const selectedModel = ref(''), permission = ref<CopilotPermission>('task_collaboration')
+const approvalMode = ref<TaskApprovalMode>('ask'), settingPermission = ref(false), permissionReceipt = ref('')
+let permissionRequest: { runId: string; permission: CopilotPermission; change: CopilotPermissionChange } | undefined
 const reasoningEffort = ref(''), streamContent = ref(''), pendingUser = ref('')
 const streamPhase = ref<CopilotProgressPhase>('preparing')
 const streamPhaseText = computed(() => ({ preparing: '正在准备任务回复', waiting_model: '等待模型响应',
@@ -201,12 +229,15 @@ const effortLabel = (value: string) => ({ low: '低', medium: '中', high: '高'
 const defaultModelLabel = computed(() => availableModels.value.find(m => m.id === state.value?.defaultModelId)?.model || state.value?.defaultModelId?.split('/').slice(1).join('/') || (state.value?.modelAvailable ? '当前任务模型' : '尚未配置模型'))
 const modelLabel = computed(() => answering.value && state.value?.question ? defaultModelLabel.value : selectedModel.value ? availableModels.value.find(m => m.id === selectedModel.value)?.model || '模型已不可用' : defaultModelLabel.value)
 const permissionOptions = [
-  { value: 'read_only' as const, label: '仅对话', description: '查看状态、解释问题和提供建议' },
-  { value: 'task_collaboration' as const, label: '按需确认', description: '对整个任务生效，跨运行持续协作；操作仍需确认与系统校验' }
-]
+  { id: 'read_only', permission: 'read_only', approvalMode: 'ask', label: '仅对话', description: '查看状态、解释问题和提供建议；不暂停正在执行的任务' },
+  { id: 'ask', permission: 'task_collaboration', approvalMode: 'ask', label: '按需确认', description: '继续协作，文件修改和命令执行按现有规则询问' },
+  { id: 'full', permission: 'task_collaboration', approvalMode: 'full', label: '自动审批', description: '自动批准文件修改与命令执行，跨图版本和断点恢复持续有效，直到关闭' }
+] satisfies { id: string; permission: CopilotPermission; approvalMode: TaskApprovalMode; label: string; description: string }[]
+const permissionChoice = computed(() => permission.value === 'read_only' ? 'read_only' : approvalMode.value === 'full' ? 'full' : 'ask')
+const permissionLabel = computed(() => permissionOptions.find(option => option.id === permissionChoice.value)!.label)
 const modelCalls = ref<ModelCallUsage[]>([]), callCursor = ref<string | null>(null), callError = ref(''), callsLoading = ref(false)
 let generation = 0, refreshSequence = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined
-let refreshPending = false, refreshing = false, accessDenied = false
+let refreshPending = false, explicitRefreshPending = false, refreshing = false, accessDenied = false
 let refreshFailures = 0
 let validatedRunId: string | null = null
 let viewActive = true
@@ -214,7 +245,19 @@ let viewSuspended = false
 let requestKey: { content: string; target: string; id: string; options: string } | undefined
 const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
 const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
-const statusLabel = computed(() => hasPendingToolApproval.value ? '等待你确认' : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
+const reviewKind = computed(() => state.value?.review?.kind || (state.value?.review?.decisionRejected ? 'planner_rejected' : state.value?.review?.subjectType === 'planner' ? 'planner_wait' : 'step_review'))
+const reviewPending = computed(() => reviewKind.value === 'workspace_revision_pending')
+const planningRepairing = computed(() => state.value?.planningProgress?.kind === 'repairing')
+const reviewCanApprove = computed(() => !allows('canRecoverCurrentRun') && state.value?.review?.canApprove === true && !state.value.review.decisionRejected && !['workspace_revision_pending', 'workspace_revision_blocked', 'planner_rejected'].includes(reviewKind.value))
+const reviewTitle = computed(() => allows('canRecoverCurrentRun') ? '节点执行失败，可以局部恢复' : ({ workspace_revision_pending: '正在自动修订审查计划', workspace_revision_blocked: '审查计划修订受阻', planner_wait: '等待外部条件确认', step_review: '请审核当前步骤的结果' } as Record<string, string>)[reviewKind.value]
+  || (state.value?.review?.reasonCode === 'PLANNING_COMMIT_REJECTED' ? '计划修订未通过校验' : state.value?.decision?.action === 'recover' ? '任务暂停，未能自动恢复' : '任务暂停，下一步尚未执行'))
+const reviewDescription = computed(() => allows('canRecoverCurrentRun') ? '已完成的结果和工具证据已保留。打开输入框下方的任务操作，选择“恢复失败任务”，继续处理失败节点。' : state.value?.review?.displayReason || (reviewPending.value
+  ? '系统正在处理审查计划的自动修订，完成正式校验后会继续执行。'
+  : reviewKind.value === 'workspace_revision_blocked' ? '审查计划修订未通过正式校验，任务仍处于暂停状态。请先查看受阻原因和已有执行记录。'
+  : reviewKind.value === 'planner_rejected' ? '系统未能执行建议的处理方案，任务仍处于暂停状态。请先查看失败详情和已有执行记录，再决定需要补充的材料或调整要求。'
+  : reviewKind.value === 'planner_wait' ? '确认下方说明中的外部等待条件已满足后，系统会重新判断能否继续执行。'
+  : '请检查当前步骤的结果。批准后继续执行后续工作；拒绝将结束本次运行，保留已有记录。'))
+const statusLabel = computed(() => hasPendingToolApproval.value ? '等待你确认' : state.value?.planningProgress?.kind === 'blocked' ? '图交接受阻' : planningRepairing.value ? '自动修正中' : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : reviewPending.value ? '自动修订中' : reviewKind.value === 'workspace_revision_blocked' ? '修订受阻' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
 const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
 const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed<CopilotConversationMessage[]>(() => [
@@ -226,7 +269,7 @@ const messageMarkup = computed(() => {
   const next = new Map<string, { text: string; html: string }>()
   for (const message of messages.value) {
     const previous = markupCache.get(message.id)
-    next.set(message.id, previous?.text === message.content ? previous : { text: message.content, html: renderMarkdown(message.content) })
+    next.set(message.id, previous?.text === message.content ? previous : { text: message.content, html: (message.role === 'assistant' ? renderCopilotMarkdown : renderMarkdown)(message.content) })
   }
   markupCache = next
   return new Map([...next].map(([id, rendered]) => [id, rendered.html]))
@@ -234,34 +277,93 @@ const messageMarkup = computed(() => {
 const lanes = ['planner', 'model', 'tool', 'execution']
 const laneLabel = (kind: string) => ({ planner: '规划', model: '模型', tool: '工具', execution: '执行' } as Record<string, string>)[kind] || kind
 const trajectory = computed(() => {
-  const calls = modelCalls.value.map(c => ({ id: `model:${c.callId}`, kind: 'model', title: `${c.model || '模型调用'} · ${c.usage.totalTokens} tokens`, time: c.createdAt || null,
-    step: [c.stepId || 'Run', c.callChainId ? `调用链 ${c.callChainId}${c.partIndex != null ? ` · part ${c.partIndex}` : ''}` : ''].filter(Boolean).join(' → '), duration: c.latencyMs, detail: JSON.stringify(c, null, 2) }))
-  const ids = new Set(modelCalls.value.map(c => c.callId))
-  const traces = (props.runtimeObservation?.runId === props.runId ? props.runtimeObservation.traces : []).filter(e => !ids.has(String(e.payload?.callId || ''))).map(e => {
-  const kind = String(e.payload?.runtimeEvent || '').startsWith('planner.') ? 'planner' : e.eventType.includes('model') ? 'model' : e.eventType.includes('tool') ? 'tool' : 'execution'
-  return { id: e.eventId, kind, title: e.observation || e.eventType, time: e.timestamp, step: e.stepId, duration: e.durationMs, detail: JSON.stringify(e.payload, null, 2).slice(0, 12000) }
-  })
+  const source = props.runtimeObservation?.runId === props.runId ? props.runtimeObservation.traces : []
+  const callIds = new Set(modelCalls.value.map(c => c.callId))
+  const traceCallId = (e: typeof source[number]) => e.eventType === 'model_called'
+    ? e.eventId : e.eventType.includes('model') ? String(e.payload?.callId || '') : ''
+  const calls = [...new Map(modelCalls.value.map(c => [c.callId, c])).values()].map(c => ({
+    id: `model:${c.callId}`, kind: 'model', title: `${c.model || '模型调用'} · ${c.usage.totalTokens} tokens`, time: c.createdAt || null,
+    step: [c.stepId || 'Run', c.callChainId ? `调用链 ${c.callChainId}${c.partIndex != null ? ` · part ${c.partIndex}` : ''}` : ''].filter(Boolean).join(' → '),
+    duration: c.latencyMs, detail: JSON.stringify({ ...c, trace: source.filter(e => traceCallId(e) === c.callId) }, null, 2) }))
+  const traces = [...new Map(source.map(e => [e.eventId, e])).values()]
+    .filter(e => !callIds.has(traceCallId(e))).map(e => {
+      const p = e.payload || {}
+      const kind = p.category === 'planner' || p.planningProgress === true || String(p.runtimeEvent || '').startsWith('planner.')
+        ? 'planner' : e.eventType.includes('model') ? 'model' : e.eventType.includes('tool') ? 'tool' : 'execution'
+      return { id: e.eventId, kind, title: e.observation || e.eventType, time: e.timestamp, step: e.stepId, duration: e.durationMs,
+        detail: JSON.stringify(p, null, 2).slice(0, 12000) }
+    })
   return [...traces, ...calls].sort((a, b) => (a.time || '').localeCompare(b.time || ''))
 })
-const filteredTrajectory = computed(() => trajectory.value.filter(e => `${e.title} ${e.step || ''} ${laneLabel(e.kind)}`.toLowerCase().includes(traceSearch.value.toLowerCase())))
+const filteredTrajectory = computed(() => trajectory.value.filter(e => `${e.title} ${e.step || ''} ${laneLabel(e.kind)}`.toLowerCase().includes(traceSearch.value.trim().toLowerCase())))
+const laneCounts = computed<Record<string, number>>(() => Object.fromEntries(lanes.map(lane => [lane,
+  filteredTrajectory.value.filter(e => e.kind === lane).length])))
 const formatTime = (value?: string | null) => value ? new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''
 function focusComposer() { void nextTick(() => composerInput.value?.focus()) }
 function trackScroll() { const e = messageList.value; if (e) followBottom.value = e.scrollHeight - e.scrollTop - e.clientHeight < 80 }
 function scrollBottom() { if (followBottom.value) void nextTick(() => { const e = messageList.value; if (e) e.scrollTop = e.scrollHeight }) }
 function errorMessage(e: any) { return typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : e?.response?.data?.message || e?.message || '连接暂时不可用，请重试。你的输入已保留。' }
-async function changePermission(value: CopilotPermission) {
-  if (!props.runId || busy.value || !allows('canCollaborate')) return
+async function changePermission(value: CopilotPermission, mode: TaskApprovalMode = 'ask') {
+  if (!props.runId || busy.value || loading.value || !state.value || validatedRunId !== props.runId || !allows('canSetPermission')) return
   const token = generation
-  busy.value = true; openMenu.value = null
+  const effectiveMode = value === 'read_only' ? 'ask' : mode
+  if (!permissionRequest || permissionRequest.runId !== props.runId || permissionRequest.permission !== value || permissionRequest.change.approvalMode !== effectiveMode) {
+    permissionRequest = { runId: props.runId, permission: value, change: {
+      approvalMode: effectiveMode, expectedPolicyRevision: state.value.policyRevision ?? 0, operationId: crypto.randomUUID(),
+    } }
+  }
+  const request = permissionRequest
+  busy.value = true; settingPermission.value = true; openMenu.value = null; error.value = ''; permissionReceipt.value = ''
   try {
-    const result = await agentosApi.setCopilotPermission(props.runId, value)
-    if (token === generation) { permission.value = result.taskPermission; if (state.value) state.value.taskPermission = result.taskPermission }
-  } catch (e) { if (token === generation) error.value = errorMessage(e) }
-  finally { if (token === generation) busy.value = false }
+    const result = await agentosApi.setCopilotPermission(request.runId, request.permission, request.change)
+    if (token !== generation) return
+    if (props.missionId && result.missionId !== props.missionId) throw new Error('任务授权身份不匹配，请刷新后重试。')
+    permissionRequest = undefined
+    // A receipt can arrive after a newer policy snapshot from another client.
+    if ((result.policyRevision ?? 0) >= (state.value?.policyRevision ?? 0)) {
+      permission.value = result.taskPermission; approvalMode.value = result.approvalMode ?? 'ask'
+      if (state.value) Object.assign(state.value, { taskPermission: result.taskPermission, approvalMode: approvalMode.value,
+        policyRevision: result.policyRevision ?? 0, approvalPolicy: result.approvalPolicy })
+      permissionReceipt.value = approvalMode.value === 'full'
+        ? `已开启自动审批，已处理 ${result.autoApprovedCount ?? 0} 项待审批操作`
+        : '后续操作将按需确认'
+    }
+    void toolApprovals.value?.refresh()
+    emit('refresh-run')
+  } catch (e: any) {
+    if (token === generation) {
+      error.value = errorMessage(e)
+      // A rejected compare-and-set has no unknown result to replay.
+      if (e?.response?.status === 409) { permissionRequest = undefined; refreshPending = true }
+    }
+  } finally {
+    if (token === generation) { busy.value = false; settingPermission.value = false; if (refreshPending) scheduleRefresh() }
+  }
+}
+function onPermissionKeydown(event: KeyboardEvent) {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return
+  const root = event.currentTarget as HTMLElement
+  const trigger = root.querySelector<HTMLButtonElement>('.picker-trigger')
+  if (trigger?.disabled) return
+  event.preventDefault(); event.stopPropagation()
+  if (event.key === 'Escape') { openMenu.value = null; trigger?.focus(); return }
+  const wasOpen = openMenu.value === 'permission'
+  openMenu.value = 'permission'
+  void nextTick(() => {
+    const options = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+    const current = options.indexOf(document.activeElement as HTMLButtonElement)
+    const selected = options.findIndex(option => option.getAttribute('aria-checked') === 'true')
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : !wasOpen || current < 0
+      ? Math.max(0, selected) : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
+    options[index]?.focus()
+  })
 }
 async function refresh(silent = false) {
   const id = props.runId, token = generation
   if (!id) return
+  silent = silent && !explicitRefreshPending
+  explicitRefreshPending = false
+  stopScheduledRefresh()
   const request = ++refreshSequence
   const revision = props.projectionRevision
   refreshing = true
@@ -275,10 +377,17 @@ async function refresh(silent = false) {
     validatedRunId = id
     accessDenied = false
     refreshFailures = 0
-    refreshPending = props.projectionRevision !== revision
+    refreshPending = refreshPending || props.projectionRevision !== revision
     const changedQuestion = next.question?.questionId !== state.value?.question?.questionId
+    // Policy revisions are independent of the Run revision. A GET started before
+    // a successful setting must not roll its authority back when it arrives.
+    if ((next.policyRevision ?? 0) < (state.value?.policyRevision ?? 0)) {
+      Object.assign(next, { taskPermission: state.value?.taskPermission, approvalMode: state.value?.approvalMode,
+        policyRevision: state.value?.policyRevision, approvalPolicy: state.value?.approvalPolicy })
+    }
     state.value = next
     if (next.taskPermission) permission.value = next.taskPermission
+    approvalMode.value = next.approvalMode ?? 'ask'
     if (requestKey && next.exchanges.some(e => e.operationId === requestKey?.id)) { draft.value = ''; requestKey = undefined }
     if (changedQuestion) { answering.value = !!next.question; requestKey = undefined }
     if (!silent) error.value = ''
@@ -297,14 +406,14 @@ async function refresh(silent = false) {
 }
 
 function stopScheduledRefresh() { clearTimeout(refreshTimer); refreshTimer = undefined }
-function scheduleRefresh() {
-  if (!refreshPending || !viewActive || document.hidden || busy.value || refreshing || accessDenied || !props.runId || refreshTimer) return
+function scheduleRefresh(delay = 150) {
+  if (!refreshPending || !viewActive || document.hidden || busy.value || refreshing || props.workspaceRefreshing || accessDenied || !props.runId || refreshTimer) return
   // Consume the Mission subscription already owned by the workbench. A burst
   // requests at most one read, plus one follow-up if it changed during the read.
   refreshTimer = setTimeout(() => {
     refreshTimer = undefined
-    if (refreshPending && viewActive && !document.hidden && !busy.value && !refreshing && !accessDenied) void refresh(true)
-  }, refreshFailures ? 1000 * refreshFailures : 150)
+    if (refreshPending && viewActive && !document.hidden && !busy.value && !refreshing && !props.workspaceRefreshing && !accessDenied) void refresh(true)
+  }, refreshFailures ? 1000 * refreshFailures : delay)
 }
 watch(() => props.projectionRevision, (revision, previous) => {
   if (!Number.isSafeInteger(revision) || revision! < 0 || (previous !== undefined && revision! <= previous)) return
@@ -313,6 +422,15 @@ watch(() => props.projectionRevision, (revision, previous) => {
   scheduleRefresh()
 })
 watch(busy, value => { if (!value) scheduleRefresh() })
+// Formal receipts and the workspace watermark share the same pending read.
+// Wait for the parent's projection so one conversation read covers both.
+watch(() => props.workspaceRefreshing, value => {
+  if (value) return
+  // Read the committed snapshot before the next throttled workspace refresh;
+  // continuous runtime events must not keep postponing the conversation.
+  stopScheduledRefresh()
+  scheduleRefresh(0)
+})
 function onVisibilityChange() {
   if (document.hidden) stopScheduledRefresh()
   else if (viewActive) { refreshPending = true; scheduleRefresh() }
@@ -371,7 +489,7 @@ async function send() {
   finally { if (token === generation) batcher.flush(); batcher.dispose(); if (streamBatcher === batcher) streamBatcher = undefined; if (token === generation) { busy.value = false; streamContent.value = ''; pendingUser.value = '' } }
 }
 async function prepareOperation(kind: CopilotActionKind) {
-  if (!state.value || !props.runId || busy.value || !allows(kind === 'user_input' ? 'canCollaborate' : kind === 'recover' ? 'canRetrySuccessor' : 'canRerunSuccessor') || permission.value !== 'task_collaboration') return
+  if (!state.value || !props.runId || busy.value || !operationAllowed(kind) || permission.value !== 'task_collaboration') return
   const id = props.runId, token = generation
   const stepId = kind === 'rerun_node' ? operationStep.value : undefined
   const content = kind === 'user_input' ? draft.value.trim() : `${actionLabel(kind)}${stepId ? `：${stepNames([stepId])}` : ''}`
@@ -396,7 +514,7 @@ async function submitReviewInput() {
 }
 async function submitReview(decision: 'approved' | 'rejected') {
   const review = state.value?.review, id = props.runId, token = generation
-  if (!review || !id || busy.value || !allows('canReview') || permission.value !== 'task_collaboration' || (decision === 'approved' && !review.canApprove)) return
+  if (!review || !id || busy.value || !allows('canReview') || permission.value !== 'task_collaboration' || reviewPending.value || (decision === 'approved' && !reviewCanApprove.value)) return
   const comment = reviewComment.value.trim()
   if (!reviewRequest || reviewRequest.subject !== review.subjectId || reviewRequest.revision !== review.expectedRunUpdatedAt || reviewRequest.decision !== decision || reviewRequest.comment !== comment) reviewRequest = { subject: review.subjectId, revision: review.expectedRunUpdatedAt, decision, comment, id: crypto.randomUUID() }
   busy.value = true; error.value = ''
@@ -428,17 +546,18 @@ watch(() => props.runId, (_next, previous) => {
   saveSession(previous)
   generation++; controller?.abort(); controller = new AbortController(); stopScheduledRefresh()
   streamBatcher?.dispose(); streamBatcher = undefined
-  refreshing = false; refreshPending = false; accessDenied = false; refreshFailures = 0
+  refreshing = false; refreshPending = false; explicitRefreshPending = false; accessDenied = false; refreshFailures = 0
   validatedRunId = null
   hasPendingToolApproval.value = false
   hasTimelineContent.value = false
   state.value = null; draft.value = ''; error.value = ''; busy.value = false; requestKey = undefined; answering.value = false
   reviewComment.value = ''; reviewReceipt.value = ''; reviewRequest = undefined
+  approvalMode.value = 'ask'; settingPermission.value = false; permissionReceipt.value = ''; permissionRequest = undefined
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null
   reasoningEffort.value = ''; streamContent.value = ''; pendingUser.value = ''
   modelCalls.value = []; callCursor.value = null; callError.value = ''; callsLoading.value = false
   const cached = props.runId ? getCopilotSession(props.runId) : undefined
-  if (cached) { state.value = cached.state; draft.value = cached.draft; selectedModel.value = cached.model; permission.value = cached.permission; reasoningEffort.value = cached.effort; requestKey = cached.operation; answering.value = !!cached.state.question }
+  if (cached) { state.value = cached.state; draft.value = cached.draft; selectedModel.value = cached.model; permission.value = cached.permission; approvalMode.value = cached.state.approvalMode ?? 'ask'; reasoningEffort.value = cached.effort; requestKey = cached.operation; answering.value = !!cached.state.question }
   void refresh()
 }, { immediate: true })
 watch(tab, value => { if (value === 'trace') void loadCalls() })
@@ -452,6 +571,10 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopSc
 </script>
 
 <style scoped>
+.planning-progress--blocked { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--wb-border-soft, var(--border-light)); border-radius: 6px; color: var(--sem-waiting, var(--text-secondary)); font-size: 12px; }
+.planning-progress--blocked p { margin: 0 0 6px; line-height: 1.7; overflow-wrap: anywhere; }
+.planning-progress--blocked summary { cursor: pointer; color: var(--text-secondary); font-size: 11px; }
+.planning-progress--blocked details p { margin-top: 8px; font-size: 11px; }
 .review-card { margin: 16px 0; padding: 18px; border: 1px solid var(--cp-border); border-radius: 12px; background: var(--wb-surface-section); font-size: 13px; line-height: 1.7; }
 .review-card strong { color: var(--wb-text); }
 .review-card p { margin: 10px 0; }
@@ -460,7 +583,7 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopSc
 .review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .review-actions button { padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--wb-accent-soft); color: var(--wb-accent); cursor: pointer; }
 .review-actions button:disabled { opacity: .45; cursor: not-allowed; }
-.acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); }
+.acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); --cp-prose-line-height:1.7; --cp-paragraph-gap:.65em; --cp-list-item-gap:.2em; }
 .agent-pool ~ .composer, .agent-pool ~ .composer-caption, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
 button { font:inherit; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.4; }
@@ -475,6 +598,16 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .copilot-tabs small { margin-left:4px; font:10px var(--font-mono,monospace); }
 .attention-dot { display:inline-block; width:5px; height:5px; border-radius:50%; margin-left:4px; background:var(--wb-accent); }
 .conversation,.trajectory-view { flex:1; min-height:0; overflow:auto; padding:18px 16px; }
+/* Keep long-form content at primary contrast; metadata uses the secondary tier. */
+.conversation { --wb-text-secondary:var(--wb-text); --wb-text-muted:var(--sem-text-2); text-shadow:var(--cp-text-glow, none); }
+html[data-color-scheme='codex-dark'] .conversation,
+html[data-color-scheme='one-dark-modern'] .conversation {
+  --wb-text:#F1F4FF;
+  --wb-text-secondary:#F1F4FF;
+  --wb-text-muted:#C8D0E2;
+  --cp-text-glow:0 0 .5px rgb(239 244 255 / .38), 0 0 7px rgb(183 200 255 / .12);
+  --cp-keyword-glow:0 0 6px color-mix(in srgb, currentColor 28%, transparent);
+}
 .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; min-height:230px; height:100%; color:var(--wb-text-muted); }
 .conversation.has-run-controls > .empty-state { height:auto; min-height:180px; padding:24px 0; }
 .empty-watermark { display:block; width:148px; height:148px; object-fit:contain; margin-bottom:6px; animation:copilot-watermark-pulse 3.2s ease-in-out infinite; }
@@ -490,8 +623,21 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .streaming-content { min-height:24px; }
 .response-stats { display:block; margin-top:8px; color:var(--wb-text-muted); font-size:10px; }
 .message.is-user { width:fit-content; max-width:92%; margin-left:auto; padding:10px 13px; border-radius:12px; background:var(--wb-surface-section); border:1px solid var(--cp-border); }
-.message-content { color:var(--wb-text-secondary); font-size:13px; line-height:1.75; overflow-wrap:anywhere; text-wrap:pretty; }
-/* 元素排版交给 github-markdown-css（global.css），字号行高继承上面的 13px/1.75 */
+.message-content { color:var(--wb-text); font-size:13px; line-height:var(--cp-prose-line-height); overflow-wrap:anywhere; text-wrap:wrap; }
+/* One prose rhythm for replies, streamed step output and planner thoughts. */
+.conversation :deep(.markdown-body) { line-height:var(--cp-prose-line-height); white-space:normal; text-wrap:wrap; }
+.conversation :deep(.markdown-body p) { margin:0 0 var(--cp-paragraph-gap); color:inherit; }
+.conversation :deep(.markdown-body ul), .conversation :deep(.markdown-body ol) { margin:var(--cp-paragraph-gap) 0; padding-left:1.5em; color:inherit; }
+.conversation :deep(.markdown-body li) { margin:var(--cp-list-item-gap) 0; color:inherit; }
+.conversation :deep(.markdown-body li > p) { margin:.25em 0; }
+.conversation :deep(.markdown-body h1), .conversation :deep(.markdown-body h2), .conversation :deep(.markdown-body h3),
+.conversation :deep(.markdown-body h4), .conversation :deep(.markdown-body h5), .conversation :deep(.markdown-body h6) { margin:1.1em 0 .5em; line-height:1.4; color:var(--wb-text); }
+.conversation :deep(.markdown-body > :first-child) { margin-top:0; }
+.conversation :deep(.markdown-body > :last-child) { margin-bottom:0; }
+.conversation :deep(.copilot-keyword) { text-shadow:var(--cp-keyword-glow, none); }
+.conversation :deep(.copilot-keyword--security) { color:var(--sem-artifact); }
+.conversation :deep(.copilot-keyword--verification) { color:var(--sem-running); }
+.conversation :deep(.copilot-keyword--attention) { color:var(--sem-waiting); }
 .message-content :deep(p:last-child) { margin-bottom:0; }
 .question-card { margin:8px 0 18px; padding:14px; border:1px solid color-mix(in srgb,var(--wb-accent) 45%,var(--cp-border)); border-radius:12px; background:color-mix(in srgb,var(--wb-accent) 4%,var(--wb-surface-section)); }
 .operation-card { margin-top:12px; padding:12px; border:1px solid var(--cp-border); border-radius:10px; background:var(--wb-surface-section); font-size:12px; }
@@ -525,6 +671,7 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .picker-trigger .chevron { font-size:9px; color:var(--wb-text-muted); }
 .picker-trigger > small { flex-shrink:0; font-size:10px; color:var(--wb-text-muted); }
 .permission-picker .picker-trigger > .el-icon:first-child { color:var(--wb-warning); }
+.permission-picker.is-auto-approval .picker-trigger > .el-icon:first-child { color:var(--wb-accent); }
 .picker-menu { position:absolute; z-index:20; bottom:52px; right:8px; left:8px; padding:6px; max-height:320px; overflow:auto; border:1px solid var(--wb-border); border-radius:12px; background:var(--wb-surface-section); box-shadow:0 8px 28px #00000040; }
 .menu-heading { display:flex; justify-content:space-between; padding:8px 8px 7px; color:var(--wb-text-muted); font-size:10px; }
 .menu-heading small { font-size:10px; }

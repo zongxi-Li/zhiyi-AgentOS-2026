@@ -160,4 +160,28 @@ describe('run document projection', () => {
     expect(result.status).toBe('warning')
     expect(result.subtitle).toContain('Final deliverable missing')
   })
+
+  it('keeps a recovered task running and places the earlier failure in its history', () => {
+    const current = observation(trace('old-failure', { errorCode: 'MODEL_TIMEOUT' }, {
+      stepId: 'node_capacity', eventType: 'step_failed'
+    }))
+    current.run = { runId: 'run_1', steps: [{ stepId: 'node_capacity', status: 'running', attempt: 1,
+      startedAt: '2026-09-05T00:00:01Z' }] } as NonNullable<RuntimeObservation['run']>
+    const model = projectRunDocument({
+      runId: 'run_1', mission, entries: [], runtimeObservation: current,
+      graphNodes: [{ ...nodes[0], status: 'running', attemptId: 'current-attempt' }]
+    })
+    const execution = model.symbols.find(item => item.type === 'execution')!
+    const task = execution.children[0]
+    const history = task.children.find(item => item.title === '历史执行')!
+
+    expect(execution.status).toBe('running')
+    expect(task).toMatchObject({ status: 'running', subtitle: 'Running' })
+    expect(task.detail).toBeUndefined()
+    expect(task.children.some(item => item.type === 'result')).toBe(false)
+    expect(history).toMatchObject({ defaultExpanded: false, subtitle: '1 次失败记录' })
+    expect(history.children[0]).toMatchObject({ status: 'failed', detail: 'MODEL_TIMEOUT' })
+    expect(history.children[0].metrics).not.toHaveProperty('Attempt')
+    expect(task.metrics?.Attempt).toBe('current-attempt')
+  })
 })

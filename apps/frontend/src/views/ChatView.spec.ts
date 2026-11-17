@@ -597,7 +597,7 @@ describe('ChatView ACG progress integration', () => {
     const { wrapper } = await mountPage('?workspace=chat')
     const metrics = wrapper.get('.chat-info-card__metrics').text()
     expect(metrics).toContain('下次上下文估算')
-    expect(metrics).toContain('≈ 1%')
+    expect(metrics).toContain('≈ 1.1%')
     expect(metrics).toContain('11k / 1m Token')
     wrapper.unmount()
   })

@@ -11,12 +11,16 @@ from copy import deepcopy
 from time import monotonic
 
 from contracts.runtime_events import RuntimeEvent
+from contracts.task_operator_policy import public_approval_decision
 
 
 _PRIVATE = re.compile(r"reasoning|chain.?of.?thought|prompt|secret|password|api[_-]?key|authorization|access[_-]?token|credential|^(?:action|arguments|parameters|tool_calls|toolCalls)$", re.I)
 _NARRATIVE = frozenset("answer final_answer finalAnswer final_report report_markdown report task_summary summary overview description content text title name objective primaryGoal keyConstraints expectedArtifacts acceptanceCriteria decompositionRationale producedArtifacts analysis conclusion rationale explanation finding findings recommendation recommendations assumptions constraints success_criteria open_questions criterion result evidence unresolvedGaps unresolved_gaps risks notes".split())
-_SCALARS = frozenset("stage callKey retryIndex retryCount attempt nodeTitle model provider requestId elapsedMs idleMs receivedChunks receivedLength errorCode status taskCount dependencyCount nodeCount edgeCount requiredCapabilityCount expectedArtifactCount".split())
-_EVENTS = frozenset("node.started node.completed node.failed model.started model.first_token model.activity model.output.delta model.completed planner.started planner.stage.started planner.stage.retry planner.model.started planner.model.first_token planner.model.activity planner.model.output.delta planner.model.completed planner.stage.completed planner.profile.resolved planner.plan.parsed planner.graph.compiled planner.completed planner.failed run.completed run.failed run.cancelled".split())
+_SCALARS = frozenset("agentName callId tool executionId receiptRef operationKey target resultPreview stage callKey retryIndex retryCount attempt nodeTitle model provider requestId elapsedMs idleMs receivedChunks receivedLength errorCode status taskCount dependencyCount nodeCount edgeCount requiredCapabilityCount expectedArtifactCount".split())
+_WORKSPACE_REVIEW_EVENTS = frozenset({"workspace.review.blocked", "workspace.review.retry", "workspace.review.resumed"})
+_WORKSPACE_REVIEW_SCALARS = frozenset({"stage", "status", "errorCode", "errorType",
+    "authorityReason", "activationId", "observationId", "graphVersion"})
+_EVENTS = frozenset("tool.execution_started tool.execution_completed node.started node.completed node.failed model.started model.first_token model.activity model.output.delta model.completed planner.started planner.stage.started planner.stage.retry planner.model.started planner.model.first_token planner.model.activity planner.model.output.delta planner.model.completed planner.stage.completed planner.profile.resolved planner.plan.parsed planner.graph.compiled planner.completed planner.failed run.completed run.failed run.cancelled".split()) | _WORKSPACE_REVIEW_EVENTS
 _TERMINAL = frozenset({"run.completed", "run.failed", "run.cancelled", "run.superseded"})
 
 
@@ -106,14 +110,16 @@ class RuntimeDisplayProjection:
         self.events = list(saved.get("events", []))
         self.raw: dict[str, str] = {}
         self.current: dict[str, str] = {}
-        self.retired: dict[str, set[str]] = {}
+        self.retired: dict[str, set[str]] = {
+            key: set(values) for key, values in saved.get("retiredAttempts", {}).items()}
         self.terminal = any(e["eventType"] in _TERMINAL for e in self.events)
         self.closed: set[str] = set()
         self.pending: dict[str, RuntimeEvent] = {}
         self.folded_at: dict[str, tuple[float, int]] = {}
         for item in self.events:
-            lane = item.get("nodeId") or "planner"
-            identity = item.get("attemptId") or str(item.get("payload", {}).get("callKey") or "planner")
+            review = item["eventType"] in _WORKSPACE_REVIEW_EVENTS
+            lane = "workspace_review" if review else item.get("nodeId") or "planner"
+            identity = lane if review else item.get("attemptId") or str(item.get("payload", {}).get("callKey") or "planner")
             previous = self.current.get(lane)
             if item.get("nodeId") and previous and previous != identity:
                 self.retired.setdefault(lane, set()).add(previous)
@@ -121,13 +127,33 @@ class RuntimeDisplayProjection:
             if item["eventType"].endswith("model.started"):
                 self.current[lane + ":call"] = item.get("displayCall", item["eventId"])
 
+    def reopen(self, current_attempts: dict[str, str], known_attempts: dict[str, set[str]]) -> None:
+        """Rebase display only after the broker has verified a durable active Run.
+
+        Node failures remain historical facts. A previous Run terminal must not
+        stop replay of a formally resumed Run, nor may its old Attempts return.
+        """
+        self.events = [item for item in self.events if item["eventType"] not in _TERMINAL]
+        for lane, identities in known_attempts.items():
+            self.retired.setdefault(lane, set()).update(identities - {current_attempts.get(lane)})
+        for lane, identity in current_attempts.items():
+            self.current[lane] = identity
+            self.retired.setdefault(lane, set()).discard(identity)
+        self.raw.clear()
+        self.pending.clear()
+        self.folded_at.clear()
+        self.closed.clear()
+        self.terminal = False
+        self.sequence += 1
+
     def apply(self, event: RuntimeEvent) -> RuntimeEvent | None:
         self.sequence = event.sequence
         kind = event.event_type
         if kind not in _EVENTS | _TERMINAL or self.terminal:
             return None
-        lane = event.node_id or "planner"
-        identity = event.attempt_id or str(event.payload.get("callKey") or "planner")
+        review = kind in _WORKSPACE_REVIEW_EVENTS
+        lane = "workspace_review" if review else event.node_id or "planner"
+        identity = lane if review else event.attempt_id or str(event.payload.get("callKey") or "planner")
         previous = self.current.get(lane)
         if event.node_id and identity in self.retired.get(lane, set()):
             return None
@@ -139,13 +165,22 @@ class RuntimeDisplayProjection:
             self.closed.discard(lane)
             self.pending.pop(lane, None)
             self.folded_at.pop(lane, None)
-        payload = {k: (v[:1000] if isinstance(v, str) else v) for k, v in event.payload.items()
-                   if k in _SCALARS and isinstance(v, (str, int, float, bool))}
-        if event.payload.get("validationFailures"):
+        source_payload = ({k: v for k, v in event.payload.items() if k in _WORKSPACE_REVIEW_SCALARS}
+                          if review else event.payload)
+        allowed_scalars = _WORKSPACE_REVIEW_SCALARS if review else _SCALARS
+        payload = {k: (v[:1000] if isinstance(v, str) else v) for k, v in source_payload.items()
+                   if k in allowed_scalars and isinstance(v, (str, int, float, bool))}
+        if kind.startswith("tool.") and (approval := public_approval_decision(source_payload.get("approvalDecision"))):
+            payload["approvalDecision"] = approval
+        registration = source_payload.get("agentRegistration")
+        if isinstance(registration, dict):
+            payload["agentRegistration"] = {k: v for k, v in registration.items()
+                if k in {"agentId", "instanceId", "generation"} and isinstance(v, (str, int))}
+        if source_payload.get("validationFailures"):
             # The planner itself emits broker events. Import its diagnostic
             # projection only after module initialization, when an event arrives.
             from components.planner.task_decomposer import safe_validation_failures
-            validation_failures = safe_validation_failures(event.payload["validationFailures"])
+            validation_failures = safe_validation_failures(source_payload["validationFailures"])
             if validation_failures:
                 payload["validationFailures"] = validation_failures
         for collection, fields, limit in (
@@ -153,7 +188,7 @@ class RuntimeDisplayProjection:
             ("edges", {"sourceKey", "targetKey", "relationType"}, 300),
             ("relations", {"sourceKey", "targetKey", "relationType"}, 300),
         ):
-            items = event.payload.get(collection)
+            items = source_payload.get(collection)
             if isinstance(items, list):
                 payload[collection] = [{k: v[:512] for k, v in item.items() if k in fields and isinstance(v, str)}
                                        for item in items[:limit] if isinstance(item, dict)]
@@ -180,6 +215,10 @@ class RuntimeDisplayProjection:
         if kind.endswith("model.started"):
             self.current[lane + ":call"] = event.event_id
         call = self.current.get(lane + ":call", identity)
+        # Tool operations are separate records within one model turn.
+        # Keep all calls, not only the last invocation of the same tool.
+        if kind.startswith("tool."):
+            call = str(event.payload.get("operationKey") or event.payload.get("executionId") or event.event_id)
         record["displayCall"] = call
         self.events = [e for e in self.events if not (
             e["eventType"] == kind and e.get("nodeId") == event.node_id and e.get("displayCall") == call)]
@@ -210,8 +249,10 @@ class RuntimeDisplayProjection:
 
     def snapshot(self) -> dict:
         return {"schemaVersion": 1, "sequence": self.sequence,
+                "retiredAttempts": {key: sorted(values) for key, values in self.retired.items()},
                 "events": deepcopy([{k: v for k, v in e.items() if k != "displayCall"} for e in self.events])}
 
     def durable(self) -> dict:
         # The broker copies once under its lock before checkpoint I/O.
-        return {"schemaVersion": 1, "sequence": self.sequence, "events": self.events}
+        return {"schemaVersion": 1, "sequence": self.sequence, "events": self.events,
+                "retiredAttempts": {key: sorted(values) for key, values in self.retired.items()}}

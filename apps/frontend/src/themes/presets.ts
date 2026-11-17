@@ -9,6 +9,26 @@ export interface ColorScheme {
   bodyBackground: string
 }
 
+// Shared text hierarchy for dark surfaces, including teleported UI controls.
+const darkTextPalette: Record<string, string> = {
+  '--text-primary': '#F1F4FF',
+  '--text-regular': '#E0E6F2',
+  '--text-secondary': '#CDD5E6',
+  '--text-muted': '#ADB8CF',
+  '--text-disabled': '#7F8BA1',
+  '--app-topbar-text': 'var(--text-regular)',
+  '--app-topbar-muted': 'var(--text-muted)',
+  '--el-text-color-primary': 'var(--text-primary)',
+  '--el-text-color-regular': 'var(--text-regular)',
+  '--el-text-color-secondary': 'var(--text-secondary)',
+  '--el-text-color-placeholder': 'var(--text-muted)',
+  '--el-text-color-disabled': 'var(--text-disabled)',
+  '--sem-text-1': 'var(--text-primary)',
+  '--sem-text-2': 'var(--text-secondary)',
+  '--sem-text-3': 'var(--text-muted)',
+  '--interface-text-glow': '0 0 .4px rgb(239 244 255 / .3), 0 0 6px rgb(183 200 255 / .1)',
+}
+
 const codexDark: ColorScheme = {
   id: 'codex-dark',
   name: '经典黑色',
@@ -16,6 +36,7 @@ const codexDark: ColorScheme = {
   previewColor: '#4FC1FF',
   bodyBackground: 'none',
   variables: {
+    ...darkTextPalette,
     '--primary-color': '#0E639C',
     '--primary-hover': '#1177BB',
     '--primary-active': '#005A9E',
@@ -49,8 +70,6 @@ const codexDark: ColorScheme = {
     '--selection-text': '#FFFFFF',
 
     '--app-topbar-bg': '#181818',
-    '--app-topbar-text': '#CCCCCC',
-    '--app-topbar-muted': '#858585',
     '--app-topbar-border': '#2B2B2B',
     '--app-topbar-hover': '#2A2D2E',
     '--app-topbar-active': '#37373D',
@@ -62,11 +81,6 @@ const codexDark: ColorScheme = {
     '--app-topbar-kbd-bg': '#2D2D2D',
     '--app-topbar-logo-bg': '#252526',
 
-    '--text-primary': '#D4D4D4',
-    '--text-regular': '#C8C8C8',
-    '--text-secondary': '#A6A6A6',
-    '--text-muted': '#858585',
-    '--text-disabled': '#5A5A5A',
 
     '--border-light': '#3C3C3C',
     '--border-hover': '#4E4E4E',
@@ -106,11 +120,6 @@ const codexDark: ColorScheme = {
     '--el-fill-color-dark': '#1F1F1F',
     '--el-fill-color-darker': '#181818',
     '--el-fill-color-disabled': '#252526',
-    '--el-text-color-primary': '#D4D4D4',
-    '--el-text-color-regular': '#C8C8C8',
-    '--el-text-color-secondary': '#A6A6A6',
-    '--el-text-color-placeholder': '#858585',
-    '--el-text-color-disabled': '#5A5A5A',
     '--el-border-color': '#3C3C3C',
     '--el-border-color-light': '#454545',
     '--el-border-color-lighter': '#353535',
@@ -126,9 +135,6 @@ const codexDark: ColorScheme = {
     '--sem-failed': '#E06C75',
     '--sem-artifact': '#B39DDB',
     '--sem-flow': '#67C5C8',
-    '--sem-text-1': '#D7DAE0',
-    '--sem-text-2': '#9AA3B2',
-    '--sem-text-3': '#626B78',
   },
 }
 
@@ -141,6 +147,7 @@ const oneDarkModern: ColorScheme = {
   previewColor: '#61AFEF',
   bodyBackground: 'none',
   variables: {
+    ...darkTextPalette,
     '--primary-color': '#4D78CC',
     '--primary-hover': '#5C88D8',
     '--primary-active': '#4064B3',
@@ -174,8 +181,6 @@ const oneDarkModern: ColorScheme = {
     '--selection-text': '#FFFFFF',
 
     '--app-topbar-bg': '#21252B',
-    '--app-topbar-text': '#ABB2BF',
-    '--app-topbar-muted': '#6F7784',
     '--app-topbar-border': '#2E323A',
     '--app-topbar-hover': '#2C313C',
     '--app-topbar-active': '#323842',
@@ -187,11 +192,6 @@ const oneDarkModern: ColorScheme = {
     '--app-topbar-kbd-bg': '#2C313C',
     '--app-topbar-logo-bg': '#282C34',
 
-    '--text-primary': '#D7DAE0',
-    '--text-regular': '#ABB2BF',
-    '--text-secondary': '#9DA5B4',
-    '--text-muted': '#6F7784',
-    '--text-disabled': '#5C6370',
 
     '--border-light': '#3E4452',
     '--border-hover': '#4B5263',
@@ -231,11 +231,6 @@ const oneDarkModern: ColorScheme = {
     '--el-fill-color-dark': '#21252B',
     '--el-fill-color-darker': '#181A1F',
     '--el-fill-color-disabled': '#282C34',
-    '--el-text-color-primary': '#D7DAE0',
-    '--el-text-color-regular': '#ABB2BF',
-    '--el-text-color-secondary': '#9DA5B4',
-    '--el-text-color-placeholder': '#6F7784',
-    '--el-text-color-disabled': '#5C6370',
     '--el-border-color': '#3E4452',
     '--el-border-color-light': '#454C59',
     '--el-border-color-lighter': '#3A3F4B',
@@ -251,9 +246,6 @@ const oneDarkModern: ColorScheme = {
     '--sem-failed': '#E06C75',
     '--sem-artifact': '#B39DDB',
     '--sem-flow': '#67C5C8',
-    '--sem-text-1': '#D7DAE0',
-    '--sem-text-2': '#9AA3B2',
-    '--sem-text-3': '#626B78',
   },
 }
 

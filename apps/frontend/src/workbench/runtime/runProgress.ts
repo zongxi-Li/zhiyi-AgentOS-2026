@@ -39,13 +39,22 @@ export interface RunProgressPlannerGroup {
 
 export interface RunProgressTaskGroup {
   category: 'task'
-  status: 'running' | 'success' | 'warning' | 'failed'
+  status: 'pending' | 'running' | 'success' | 'warning' | 'failed'
   title: string
   semanticTaskKey: string | null
   graphNodeId: string | null
   durationMs: number | null
   errorCode: string | null
   tools: RunProgressItem[]
+  previousFailures?: RunProgressTaskFailure[]
+}
+
+export interface RunProgressTaskFailure {
+  eventId: string
+  timestamp: string | null
+  attemptId: string | null
+  errorCode: string
+  durationMs: number | null
 }
 
 export interface RunProgressTimeline {
@@ -160,6 +169,7 @@ export const projectRunProgress = (
   const taskKinds = new Set(['step_started', 'step_succeeded', 'step_completed', 'step_failed'])
   const tasks = new Map<string, RunProgressTaskGroup>()
   const taskStartedAt = new Map<string, string>()
+  const failures = new Map<string, RunProgressTaskFailure[]>()
   const tools: RunProgressItem[] = []
   const ensureTask = (stepId: string, node?: WorkspaceGraphNode) => {
     const graphNodeId = node?.acgNodeId || stepId
@@ -206,6 +216,7 @@ export const projectRunProgress = (
     if (event.eventType === 'step_started') {
       group.status = 'running'
       group.errorCode = null
+      group.durationMs = null
       if (event.timestamp) taskStartedAt.set(graphNodeId, event.timestamp)
     } else if (event.eventType === 'step_failed') {
       group.status = 'failed'
@@ -213,6 +224,14 @@ export const projectRunProgress = (
       group.durationMs = durationOf(event.durationMs)
         ?? durationOf(event.payload.durationMs)
         ?? durationBetween(taskStartedAt.get(graphNodeId), event.timestamp)
+      const failure: RunProgressTaskFailure = {
+        eventId: event.eventId,
+        timestamp: event.timestamp,
+        attemptId: typeof event.payload.attemptId === 'string' ? event.payload.attemptId : null,
+        errorCode: group.errorCode,
+        durationMs: group.durationMs
+      }
+      failures.set(graphNodeId, [...(failures.get(graphNodeId) || []), failure])
     } else {
       // A failed event belongs to one attempt. A later completion is the
       // current task state after retry, so historical failures must not make
@@ -227,6 +246,52 @@ export const projectRunProgress = (
   for (const tool of tools) {
     const owner = tool.graphNodeId ? tasks.get(tool.graphNodeId) : undefined
     if (owner) owner.tools.push(tool)
+  }
+
+  // Trace exports can omit a retry's start while retaining its previous failure.
+  // Current execution facts own the task status; traces still own its history.
+  const run = observation?.run?.runId === observation?.runId ? observation?.run : null
+  const steps = new Map(run?.steps.map(step => [step.stepId, step]) || [])
+  const tree = observation?.executionTree?.run.runId === observation?.runId ? observation?.executionTree : null
+  const statusFor = (status: string | null | undefined): RunProgressTaskGroup['status'] | null => {
+    if (['running', 'retrying', 'executing', 'planning'].includes(status || '')) return 'running'
+    if (['completed', 'succeeded', 'success'].includes(status || '')) return 'success'
+    if (status === 'failed') return 'failed'
+    if (status === 'waiting_review' || status === 'cancelled') return 'warning'
+    if (status === 'pending') return 'pending'
+    return null
+  }
+  for (const [nodeId, group] of tasks) {
+    const node = nodeByLookupId.get(nodeId)
+    const step = steps.get(nodeId)
+    const attempts = tree?.nodes.find(item => item.acgNodeId === nodeId)?.attempts || []
+    const currentAttempt = node?.attemptId
+      ? attempts.find(item => item.attempt.attemptId === node.attemptId)?.attempt
+      : attempts.find(item => item.attempt.attemptNumber === (step?.attempt ?? -1) + 1)?.attempt
+    const currentAttemptId = currentAttempt?.attemptId || node?.attemptId || null
+    const startedAt = currentAttempt?.startedAt || step?.startedAt
+    const started = startedAt ? Date.parse(startedAt) : NaN
+    const historical = (failure: RunProgressTaskFailure) => (
+      Boolean(failure.attemptId && currentAttemptId && failure.attemptId !== currentAttemptId)
+      || Boolean(failure.timestamp && Number.isFinite(started) && Date.parse(failure.timestamp) < started)
+    )
+    const status = statusFor(step?.status || (node?.status === 'pending' ? null : node?.status))
+    const recorded = failures.get(nodeId) || []
+    const latestFailure = recorded[recorded.length - 1]
+    if (status) {
+      const tracedStatus = group.status
+      group.status = status
+      group.errorCode = status === 'failed'
+        ? latestFailure && !historical(latestFailure) ? latestFailure.errorCode : 'STEP_FAILED'
+        : null
+      group.durationMs = status === 'success' || status === 'failed'
+        ? durationOf(step?.durationMs) ?? (tracedStatus === status
+          && (status !== 'failed' || !latestFailure || !historical(latestFailure)) ? group.durationMs : null)
+        : null
+    }
+    group.previousFailures = recorded.filter(failure => (
+      group.status !== 'failed' || failure !== latestFailure || historical(failure)
+    ))
   }
 
   return {

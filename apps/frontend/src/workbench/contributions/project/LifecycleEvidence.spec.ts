@@ -28,6 +28,11 @@ describe('Inspector lifecycle reading and authority boundaries', () => {
     observation.provenance.integrityStatus = 'valid'
     const wrapper = mount(LifecycleEvidence, { props: { lifecycle: view, observation } })
     expect(wrapper.get('.lifecycle-summary').text()).toContain('本次运行已完成')
+    expect(wrapper.find('.lifecycle-available').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('其他操作为何不可用')
+    const diagnostics = wrapper.findAll('.inspector-details').find(node => node.find('summary').text().includes('诊断详情'))!
+    expect(diagnostics.attributes('open')).toBeUndefined()
+    expect(diagnostics.find('.lifecycle-reasons').exists()).toBe(true)
     expect(wrapper.get('.lifecycle-delivery').text()).toContain('方案报告.md')
     expect(wrapper.get('.lifecycle-delivery').text()).toContain('此校验只说明产物与执行记录的关联情况')
     expect(wrapper.findAll('.inspector-details').every(node => node.attributes('open') === undefined)).toBe(true)

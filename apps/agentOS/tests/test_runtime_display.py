@@ -38,6 +38,44 @@ def store_at(path):
     return store
 
 
+def test_paused_authority_diagnostic_survives_restart_without_mutating_run(tmp_path):
+    store = store_at(tmp_path / "paused.db")
+    original = store.get_run("run").model_dump_json()
+    revision = store.workspace_projection_revision("mission")
+    broker = RuntimeEventBroker(store=store)
+    safe = {"stage": "workspace_review", "status": "blocked", "errorCode": "INVALID_PROPOSAL",
+        "errorType": "_TransitionRejected", "activationId": "activation:2", "observationId": "observation:1",
+        "graphVersion": 2, "authorityReason": "current origin differs from accepted frozen provenance"}
+    broker.publish_from_thread("run", event("workspace.review.blocked", {
+        **safe, "patch": {"private": "PRIVATE"}, "arguments": {"secret": "PRIVATE"},
+        "rawResponse": "PRIVATE"}, attempt=None, node=None))
+    restarted = SQLiteWorkflowStore(store.db_path)
+    saved = restarted.get_runtime_display("run")
+    assert saved["events"][-1]["payload"] == safe
+    assert "PRIVATE" not in json.dumps(saved)
+    assert restarted.get_run("run").model_dump_json() == original
+    assert restarted.workspace_projection_revision("mission") == revision
+
+
+def test_planner_reasoning_reaches_live_subscribers_without_entering_display_checkpoints(tmp_path):
+    async def run():
+        store = store_at(tmp_path / 'reasoning.db')
+        broker = RuntimeEventBroker(store=store)
+        stream = broker.subscribe('run')
+        await anext(stream)
+        await broker.publish('run', event('planner.model.reasoning.delta',
+            {'delta': '先核对约束', 'callKey': 'outline', 'stage': 'outline'}, attempt=None, node=None))
+        live = await anext(stream)
+        assert live.event_type == 'planner.model.reasoning.delta'
+        assert live.payload['delta'] == '先核对约束'
+        broker.flush()
+        saved = store.get_runtime_display('run')
+        assert '先核对' not in json.dumps(saved, ensure_ascii=False)
+        assert all(item['eventType'] != 'planner.model.reasoning.delta' for item in saved['events'])
+        await stream.aclose()
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("source, expected", [
     ('{"content":"hello', 'hello'),
     ('{"content":"hi\\nworld", "reasoning_content":"PRIVATE"}', 'hi\nworld'),
@@ -93,6 +131,54 @@ def test_validation_diagnostics_survive_snapshot_restore_without_model_text(tmp_
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("kind,status", [
+    ("workspace.review.blocked", "blocked"),
+    ("workspace.review.retry", "retrying"),
+    ("workspace.review.resumed", "resumed"),
+])
+def test_workspace_review_diagnostics_replay_independently_with_only_safe_fields(tmp_path, kind, status):
+    async def run():
+        store = store_at(tmp_path / 'review.db')
+        original = store.get_run('run').model_dump_json()
+        revision = store.workspace_projection_revision('mission')
+        broker = RuntimeEventBroker(store=store)
+        await broker.publish('run', event('planner.model.started',
+            {'stage': 'outline', 'callKey': 'outline'}, attempt=None, node=None))
+        await broker.publish('run', event('planner.model.output.delta',
+            {'publicText': '已收到的公开规划', 'callKey': 'outline'}, attempt=None, node=None))
+        await broker.publish('run', event('workspace.review.blocked', {
+            'stage': 'workspace_review', 'status': 'blocked', 'errorCode': 'OLD_REVIEW_FAILURE',
+        }, attempt=None, node=None))
+        expected = {'stage': 'workspace_review', 'status': status}
+        if kind != 'workspace.review.resumed':
+            expected['errorCode'] = 'REVIEW_EVIDENCE_MISSING'
+        await broker.publish('run', event(kind, {
+            **expected,
+            'callKey': 'PRIVATE_CALL', 'delta': 'PRIVATE_MODEL_TEXT',
+            'nodes': [{'key': 'PRIVATE_NODE', 'title': 'PRIVATE_TITLE'}],
+            'validationFailures': [{'code': 'PRIVATE_DIAGNOSTIC'}],
+            'agentRegistration': {'agentId': 'PRIVATE_AGENT'},
+        }, attempt=None, node=None))
+        broker.flush()
+        saved = store.get_runtime_display('run')
+        projection = RuntimeDisplayProjection(saved)
+        assert projection.current['planner'] == 'outline'
+        assert projection.current['workspace_review'] == 'workspace_review'
+        assert 'PRIVATE' not in json.dumps(saved)
+        restarted = RuntimeEventBroker(store=SQLiteWorkflowStore(store.db_path))
+        stream = restarted.subscribe('run')
+        baseline = await anext(stream)
+        diagnostic = next(item for item in baseline.payload['events'] if item['eventType'] == kind)
+        assert diagnostic['payload'] == expected
+        planning = next(item for item in baseline.payload['events']
+                        if item['eventType'] == 'planner.model.output.delta')
+        assert planning['payload']['publicText'] == '已收到的公开规划'
+        assert store.get_run('run').model_dump_json() == original
+        assert store.workspace_projection_revision('mission') == revision
+        await stream.aclose()
+    asyncio.run(run())
+
+
 def test_handshake_has_no_gap_and_slow_consumer_rebaselines_all_text(tmp_path):
     async def run():
         store = store_at(tmp_path / 'runs.db')
@@ -138,6 +224,79 @@ def test_attempt_identity_terminal_and_bounds(tmp_path):
     assert apply(event('model.output.delta', {'delta': 'late'})) is None
 
 
+def test_same_run_formal_resume_rebases_terminal_and_retires_old_attempts(tmp_path):
+    from contracts.workflow import WorkflowStatus, WorkflowStep
+    store = store_at(tmp_path / 'resume.db')
+    broker = RuntimeEventBroker(store=store)
+    broker.publish_from_thread('run', event('model.started'))
+    broker.publish_from_thread('run', event('model.output.delta', {'publicText': 'previous evidence'}))
+    broker.publish_from_thread('run', event('node.failed'))
+    run = store.get_run('run')
+    run.status = WorkflowStatus.FAILED
+    store.save_run(run)
+    broker.publish_from_thread('run', event('run.failed', node=None, attempt=None))
+    terminal = broker.snapshot('run')
+    assert terminal.payload['events'][-1]['eventType'] == 'run.failed'
+
+    run.status = WorkflowStatus.RETRYING
+    run.steps = [WorkflowStep(stepId='node', name='Review', agentName='agent', status='retrying')]
+    run.execution_state['attemptIds'] = {'node:1:root': 'a1'}
+    store.save_run(run)
+    broker.bind_run('run', store)
+    resumed = broker.snapshot('run')
+    assert resumed.sequence > terminal.sequence
+    assert not any(item['eventType'] == 'run.failed' for item in resumed.payload['events'])
+    assert any(item['eventType'] == 'node.failed' for item in resumed.payload['events'])
+    assert resumed.payload['retiredAttempts']['node'] == ['a1']
+    broker.flush()
+
+    # Restart before the next Attempt emits anything; the old identity stays retired.
+    restarted = RuntimeEventBroker(store=SQLiteWorkflowStore(store.db_path))
+    restarted.bind_run('run', store)
+    restarted.publish_from_thread('run', event('run.failed', node=None, attempt=None))
+    restarted.publish_from_thread('run', event('model.output.delta', {'publicText': 'late old output'}))
+    restarted.publish_from_thread('run', event('model.started', attempt='a2'))
+    restarted.publish_from_thread('run', event('model.output.delta', {'publicText': 'new evidence'}, attempt='a2'))
+    restarted.publish_from_thread('run', event('model.completed', attempt='a2'))
+    values = restarted.snapshot('run').payload['events']
+    assert not any(item['eventType'] == 'run.failed' for item in values)
+    assert 'late old output' not in json.dumps(values)
+    assert any(item['payload'].get('publicText') == 'new evidence' for item in values)
+    restarted.flush()
+
+
+def test_model_activity_cannot_reopen_a_durably_failed_run(tmp_path):
+    from contracts.workflow import WorkflowStatus
+    store = store_at(tmp_path / 'failed.db')
+    run = store.get_run('run')
+    run.status = WorkflowStatus.FAILED
+    store.save_run(run)
+    broker = RuntimeEventBroker(store=store)
+    broker.publish_from_thread('run', event('run.failed', node=None, attempt=None))
+    broker.bind_run('run', store)
+    broker.publish_from_thread('run', event('model.output.delta', {'publicText': 'late output'}))
+    assert broker.snapshot('run').payload['events'][-1]['eventType'] == 'run.failed'
+    broker.flush()
+
+
+def test_rebased_stream_drops_all_retired_attempt_frames(tmp_path):
+    async def run():
+        store = store_at(tmp_path / 'retired.db')
+        store.save_runtime_display('run', {'sequence': 4, 'events': [], 'retiredAttempts': {'node': ['a1']}})
+        broker = RuntimeEventBroker(store=store)
+        stream = broker.subscribe('run')
+        await anext(stream)
+        for kind in ('model.started', 'model.completed', 'node.failed', 'tool.execution_completed'):
+            await broker.publish('run', event(kind))
+        await broker.publish('run', event('model.started', attempt='a2'))
+        received = await anext(stream)
+        assert received.event_type == 'model.started'
+        assert received.attempt_id == 'a2'
+        await stream.aclose()
+        broker.flush()
+    asyncio.run(run())
+
+
 def test_checkpoint_cas_rollback_and_deleted_run_cannot_resurrect(tmp_path):
     store = store_at(tmp_path / 'runs.db')
     store.save_runtime_display('run', {'sequence': 2, 'events': []})
@@ -167,8 +326,15 @@ def test_display_checkpoint_does_not_wake_mission_projection_readers(tmp_path, m
 
 
 def test_small_chunks_fold_in_bounded_batches_and_terminal_flushes_the_tail(monkeypatch):
-    from runtime import runtime_display
+    from runtime import live_events, runtime_display
     monkeypatch.setattr(runtime_display, 'monotonic', lambda: 1.0)
+    # Exercise chunk and terminal boundaries independently of wall-clock
+    # checkpoint timers, which may fire mid-loop on a busy test machine.
+    class ManualTimer:
+        def __init__(self, *args, **kwargs): pass
+        def start(self): pass
+        def cancel(self): pass
+    monkeypatch.setattr(live_events, 'Timer', ManualTimer)
     original = runtime_display.public_narrative
     folds = []
     def fold(raw):
@@ -213,3 +379,25 @@ def test_checkpoint_io_does_not_hold_the_cross_run_publication_lock():
         worker.join(timeout=2)
         broker.flush()
     assert not worker.is_alive()
+
+
+def test_display_replays_agent_instance_and_each_tool_operation():
+    display = RuntimeDisplayProjection()
+    display.apply(event('node.started', {'agentName': 'Analyzer', 'agentRegistration':
+        {'agentId': 'analyzer', 'instanceId': 'instance-2', 'generation': 3, 'definitionDigest': 'internal'}}))
+    display.apply(event('model.started', {'model': 'glm', 'callId': 'turn-1'}))
+    for index in range(2):
+        display.apply(event('tool.execution_completed', {'tool': 'fs.read', 'executionId': f'exec-{index}',
+            'operationKey': f'turn-1:call:{index}', 'status': 'completed', 'target': f'{index}.py',
+            'approvalDecision': {'source': 'policy', 'decidedAt': '2026-11-17T06:00:00+00:00',
+                'policyRevision': 3, 'actor': {'userId': 'user', 'tenantId': None, 'secret': 'PRIVATE'},
+                'command': 'PRIVATE'},
+            'resultPreview': 'read complete', 'arguments': {'token': 'PRIVATE'}}))
+    tools = [e for e in display.events if e['eventType'] == 'tool.execution_completed']
+    assert len(tools) == 2
+    assert [e['payload']['target'] for e in tools] == ['0.py', '1.py']
+    assert tools[0]['payload']['approvalDecision'] == {'source': 'policy', 'decidedAt': '2026-11-17T06:00:00+00:00',
+        'policyRevision': 3, 'actor': {'userId': 'user', 'tenantId': None}}
+    assert display.events[0]['payload']['agentRegistration'] == {
+        'agentId': 'analyzer', 'instanceId': 'instance-2', 'generation': 3}
+    assert 'PRIVATE' not in json.dumps(display.events)

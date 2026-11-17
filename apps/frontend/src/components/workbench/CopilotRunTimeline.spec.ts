@@ -15,6 +15,221 @@ const plan: CopilotInitialPlan = { planVersion: 1, commitId: 'commit', commitmen
   objective: '分析恢复策略', constraints: ['只做分析，不修改代码'], expectedArtifacts: ['报告'],
   tasks: [{ key: 'T1', title: '核对事实', objective: '确认输入', rationale: '为下游建立共同事实依据', acceptanceCriteria: ['标明来源'], sourceRefs: [] }] }
 describe('Copilot task timeline', () => {
+  it('keeps policy approval evidence inside its tool result without implying execution success', () => {
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', tools: [{
+      executionId: 'command', tool: 'command.run', status: 'failed', stepId: 'node', attemptId: 'attempt',
+      createdAt: '2026-11-17T10:00:01Z', resultPreview: 'process exited with code 1',
+      approvalDecision: { source: 'policy', policyRevision: 7, actor: { userId: 'operator', tenantId: 'tenant' }, decidedAt: '2026-11-17T10:00:00Z' },
+    }] } }); wrappers.push(w)
+    expect(w.findAll('.run-timeline__tool')).toHaveLength(1)
+    expect(w.get('.run-timeline__auto-approved').text()).toBe('已自动批准')
+    expect(w.get('.run-timeline__tools > summary').text()).toContain('已自动批准')
+    expect(w.get('.run-timeline__tool .run-timeline__flag').classes()).toContain('is-failed')
+    expect(w.get('[aria-label="工具审批记录"]').text()).toContain('任务自动审批策略')
+    expect(w.get('[aria-label="工具审批记录"]').text()).toContain('operator · tenant')
+    expect(w.get('[aria-label="工具审批记录"]').text()).toContain('策略版本7')
+    expect(w.get('.run-timeline__tool-result').text()).toBe('process exited with code 1')
+  })
+  it('retains persisted approval metadata when a live completion omits it and accepts live decisions', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const decision = { source: 'policy' as const, policyRevision: 2, actor: { userId: 'operator', tenantId: 'tenant' }, decidedAt: '2026-11-17T10:00:00Z' }
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', tools: [{
+      executionId: 'command', tool: 'command.run', status: 'completed', stepId: 'node', attemptId: 'attempt',
+      createdAt: '2026-11-17T10:00:01Z', approvalDecision: decision,
+    }] } }); wrappers.push(w)
+    store.apply({ eventId: 'completed-1', sequence: 1, runId: 'run', nodeId: 'node', attemptId: 'attempt',
+      eventType: 'tool.execution_completed', timestamp: '2026-11-17T10:00:01Z', payload: { executionId: 'command', tool: 'command.run', status: 'completed' } })
+    store.apply({ eventId: 'completed-2', sequence: 2, runId: 'run', nodeId: 'node', attemptId: 'attempt',
+      eventType: 'tool.execution_completed', timestamp: '2026-11-17T10:00:02Z', payload: { executionId: 'command-2', tool: 'command.run', status: 'completed', approvalDecision: decision } })
+    await w.vm.$nextTick()
+    expect(w.findAll('.run-timeline__auto-approved')).toHaveLength(2)
+    expect(w.findAll('[aria-label="工具审批记录"]')).toHaveLength(2)
+    expect(w.findAll('.run-timeline__tools')).toHaveLength(1)
+    store.dispose()
+  })
+  it('shows workspace review diagnostics without resetting planning output and respects approval and terminal state', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
+    const apply = (sequence: number, eventType: string, payload: Record<string, unknown> = {}) => store.apply({
+      eventId: `review-${sequence}`, runId: 'run', sequence, eventType,
+      timestamp: new Date(sequence * 1000).toISOString(), payload,
+    })
+    apply(1, 'planner.model.started', { stage: 'outline', callKey: 'outline' })
+    apply(2, 'planner.model.reasoning.delta', { delta: '核对需要读取的依据' })
+    apply(3, 'planner.model.output.delta', { publicText: '已经收到的规划内容' })
+    apply(4, 'planner.model.completed')
+    apply(5, 'workspace.review.retry', { stage: 'workspace_review', status: 'retrying', errorCode: 'REVIEW_BUSY' })
+    await w.vm.$nextTick()
+    expect(w.get('.run-timeline__state').text()).toBe('仓库审查正在重试')
+    expect(w.get('.run-timeline__review-error').text()).toBe('REVIEW_BUSY')
+    expect(w.text()).toContain('核对需要读取的依据')
+    expect(w.text()).toContain('已经收到的规划内容')
+    apply(6, 'workspace.review.blocked', { errorCode: 'REVIEW_EVIDENCE_MISSING' })
+    await w.vm.$nextTick()
+    expect(w.get('.run-timeline__state').text()).toBe('仓库审查暂时受阻')
+    expect(w.get('.run-timeline__review-error').text()).toBe('REVIEW_EVIDENCE_MISSING')
+    apply(7, 'workspace.review.resumed', { stage: 'workspace_review', status: 'resumed' })
+    await w.vm.$nextTick()
+    expect(w.get('.run-timeline__state').text()).toBe('正在执行')
+    expect(w.find('.run-timeline__review-error').exists()).toBe(false)
+    expect(w.text()).toContain('核对需要读取的依据')
+    expect(w.text()).toContain('已经收到的规划内容')
+    apply(8, 'workspace.review.blocked', { errorCode: 'REVIEW_EVIDENCE_MISSING' })
+    await w.vm.$nextTick()
+    await w.setProps({ waitingForApproval: true })
+    expect(w.get('.run-timeline__state').text()).toBe('等待你确认')
+    expect(w.find('.run-timeline__review-error').exists()).toBe(false)
+    await w.setProps({ waitingForApproval: false, status: 'completed' })
+    expect(w.get('.run-timeline__state').text()).toBe('本次运行已完成')
+    expect(w.find('.run-timeline__review-error').exists()).toBe(false)
+    expect(w.text()).toContain('已经收到的规划内容')
+    store.dispose()
+  })
+  it('does not let a stale review retry override a completed formal review', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    store.apply({ eventId: 'retry', sequence: 1, runId: 'run', eventType: 'workspace.review.retry', payload: { errorCode: 'REVIEW_BUSY' } })
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', workspaceReview: {
+      schemaVersion: 1, graphVersion: 3, round: 2, status: 'completed', rounds: [],
+      gaps: { missingReadCount: 0, missingListingCount: 0, unsupportedEntryCount: 0,
+        missingReads: [], missingListings: [], unsupportedEntries: [] },
+    } } }); wrappers.push(w)
+    expect(w.get('.run-timeline__state').text()).toBe('正在执行')
+    expect(w.find('.run-timeline__review-error').exists()).toBe(false)
+    store.dispose()
+  })
+  it('keeps repository review rounds and evidence alongside repeated node tool calls', async () => {
+    const workspaceReview = { schemaVersion: 1 as const, round: 2, graphVersion: 3, status: 'reading' as const,
+      gaps: { missingReadCount: 105, missingListingCount: 8, unsupportedEntryCount: 0,
+        missingReads: ['src/next.py'], missingListings: ['tests'], unsupportedEntries: [] },
+      rounds: [{ round: 1, graphVersion: 2, action: 'revise', reason: '补读尚未覆盖的文件',
+        stepIds: ['read-1'], addedStepIds: ['read-1'], observationRef: 'observation:1', traceRefs: ['trace:review'] }],
+    }
+    const tools = ['a.py', 'b.py'].map((target, index) => ({ executionId: `read-${index}`, tool: 'fs.read',
+      status: 'completed', stepId: 'read-1', attemptId: 'attempt', createdAt: new Date(index * 1000).toISOString(), target }))
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running', workspaceReview, tools } }); wrappers.push(w)
+    expect(w.get('[aria-label="仓库审查进展"]').text()).toContain('第 2 轮')
+    expect(w.text()).toContain('文件 105')
+    expect(w.text()).toContain('observation:1')
+    expect(w.text()).toContain('trace:review')
+    expect(w.findAll('.run-timeline__tool-target').map(item => item.text())).toEqual(['a.py', 'b.py'])
+    await w.setProps({ workspaceReview: { ...workspaceReview, round: 3, graphVersion: 4, status: 'completed',
+      gaps: { ...workspaceReview.gaps, missingReadCount: 0, missingListingCount: 0 } } })
+    expect(w.get('[aria-label="仓库审查进展"]').text()).toContain('第 3 轮')
+    expect(w.text()).toContain('图 v4')
+    expect(w.findAll('.run-timeline__tool-target')).toHaveLength(2)
+  })
+  it('keeps Agent instance, model turns and tool results in the same work area', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
+    let sequence = 0
+    const apply = (eventType: string, payload: Record<string, unknown>) => store.apply({ eventId: `agent-${++sequence}`, sequence,
+      eventType, runId: 'run', nodeId: 'node', attemptId: 'attempt', timestamp: new Date(sequence * 1000).toISOString(), payload })
+    apply('node.started', { agentName: '代码分析 Agent', agentRegistration: { agentId: 'analyst', instanceId: 'instance-7', generation: 2 }, nodeTitle: '提取依赖' })
+    apply('model.started', { model: 'glm-test', callId: 'call-1' })
+    apply('model.reasoning.delta', { delta: '先检查目录。' })
+    apply('model.completed', {})
+    apply('tool.execution_completed', { tool: 'fs.list', executionId: 'exec-1', status: 'completed', target: 'src', resultPreview: 'main.py' })
+    apply('model.started', { model: 'glm-test', callId: 'call-2' })
+    await w.vm.$nextTick()
+    expect(w.findAll('.agent-work')).toHaveLength(1)
+    expect(w.get('.agent-work__heading').text()).toContain('代码分析 Agent')
+    expect(w.get('.agent-work__heading').text()).toContain('instance-7')
+    expect(w.get('.agent-work').text()).toContain('glm-test')
+    expect(w.get('.agent-work').text()).toContain('先检查目录。')
+    expect(w.get('.run-timeline__tool-target').text()).toBe('src')
+    expect(w.get('.run-timeline__tool-result').text()).toBe('main.py')
+    expect(w.findAll('.run-timeline__output')).toHaveLength(2)
+    store.dispose()
+  })
+  it('shows execution reasoning before any answer is returned', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
+    store.apply({ eventId: 'start', sequence: 1, runId: 'run', nodeId: 'node', eventType: 'model.started' })
+    store.apply({ eventId: 'thought', sequence: 2, runId: 'run', nodeId: 'node', eventType: 'model.reasoning.delta', payload: { delta: '先检查输入依据，再核对约束。' } })
+    await w.vm.$nextTick()
+    expect(w.get('.run-timeline__reasoning').text()).toContain('先检查输入依据')
+    expect(w.get('[aria-label="执行节点思考过程"]').text()).toContain('先检查输入依据')
+    expect(w.get('.run-timeline__reasoning > summary').text()).toContain('思考过程')
+    store.apply({ eventId: 'next-thought', sequence: 3, runId: 'run', nodeId: 'node', eventType: 'model.reasoning.delta', payload: { delta: '继续核对依赖关系。' } })
+    await w.vm.$nextTick()
+    expect(w.get('[aria-label="执行节点思考过程"]').text()).toContain('继续核对依赖关系。')
+    expect(w.get('.run-timeline__output-heading').text()).toContain('正在思考')
+    expect(w.find('.task-work-summary').exists()).toBe(false)
+    store.dispose()
+  })
+  it('renders the initial plan objective as Markdown rather than preformatted plain text', () => {
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'pending', plan: { ...plan,
+      objective: '# # 任务目标\n\n设计**实验室平台**。\n\n- 明确权限\n- 完成验收\n\n<script>alert(1)</script>',
+    } } }); wrappers.push(w)
+    expect(w.get('.run-timeline__objective h2').text()).toBe('任务目标')
+    expect(w.get('.run-timeline__objective strong').text()).toBe('实验室平台')
+    expect(w.findAll('.run-timeline__objective li')).toHaveLength(2)
+    expect(w.find('.run-timeline__objective script').exists()).toBe(false)
+  })
+  it('flows prose within paragraphs while retaining plain Chinese section boundaries', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'running' } }); wrappers.push(w)
+    store.apply({ eventId: 'start', sequence: 1, runId: 'run', nodeId: 'node', eventType: 'model.started' })
+    store.apply({ eventId: 'body', sequence: 2, runId: 'run', nodeId: 'node', eventType: 'model.output.delta', payload: { publicText: '四、质量要求\n设计必须具有业务依据。\n各项设计必须保持一致。\n五、执行约束\n不虚构测试结果。' } })
+    store.apply({ eventId: 'end', sequence: 3, runId: 'run', nodeId: 'node', eventType: 'model.completed' })
+    await w.vm.$nextTick()
+    expect(w.findAll('.run-timeline__text p').map(p => p.text())).toEqual([
+      '四、质量要求', '设计必须具有业务依据。\n各项设计必须保持一致。', '五、执行约束', '不虚构测试结果。',
+    ])
+    store.dispose()
+  })
+  it('renders thought deltas before structured planner output exists', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'planning' } }); wrappers.push(w)
+    store.apply({ eventId: 'start', sequence: 1, runId: 'run', eventType: 'planner.model.started', payload: { stage: 'outline' } })
+    store.apply({ eventId: 'thought', sequence: 2, runId: 'run', eventType: 'planner.model.reasoning.delta', payload: { delta: '先厘清冲突，再选择恢复策略。' } })
+    store.apply({ eventId: 'activity', sequence: 3, runId: 'run', eventType: 'planner.model.activity' })
+    await w.vm.$nextTick()
+    expect(w.get('[aria-label="规划器思考过程"]').text()).toContain('先厘清冲突，再选择恢复策略。')
+    expect(w.find('.planner-step__draft').exists()).toBe(false)
+    expect(w.emitted('content')?.at(-1)).toEqual([true])
+    store.apply({ eventId: 'body', sequence: 4, runId: 'run', eventType: 'planner.model.output.delta', payload: { publicText: '策略冲突与依赖分析\n\n高风险人工取舍必须明确列出' } })
+    store.apply({ eventId: 'end', sequence: 5, runId: 'run', eventType: 'planner.model.completed' })
+    await w.vm.$nextTick()
+    expect(w.get('[aria-label="规划器思考过程"]').text()).not.toContain('高风险人工取舍必须明确列出')
+    expect(w.get('.planner-step__draft').attributes('open')).toBeUndefined()
+    store.dispose()
+  })
+  it('keeps planner returns as foldable transcript steps when the final plan arrives', async () => {
+    const store = new RunRuntimeStore('run')
+    vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
+    const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'planning' } }); wrappers.push(w)
+    const events = [
+      { eventType: 'planner.model.started', payload: { stage: 'intent_profile', callKey: 'intent_profile' } },
+      { eventType: 'planner.model.output.delta', payload: { publicText: '先核对任务约束' } },
+      { eventType: 'planner.model.completed', payload: { elapsedMs: 1800 } },
+      { eventType: 'planner.stage.started', payload: { stage: 'outline', callKey: 'outline' } },
+      { eventType: 'planner.model.started', payload: { stage: 'outline', callKey: 'outline' } },
+      { eventType: 'planner.model.output.delta', payload: { publicText: '再拆分三个步骤' } },
+      { eventType: 'planner.model.completed', payload: {} },
+      { eventType: 'planner.completed', payload: {} },
+    ]
+    events.forEach((event, index) => store.apply({ ...event, eventId: `p-${index}`, runId: 'run', sequence: index + 1, timestamp: new Date(index * 1000).toISOString() }))
+    await w.setProps({ plan, status: 'pending' })
+    const steps = w.findAll('.planner-step')
+    expect(steps).toHaveLength(2)
+    expect(steps[0].get('summary').text()).toContain('理解目标与约束')
+    expect(steps[1].get('summary').text()).toContain('拟定任务步骤')
+    expect(steps.every(step => step.attributes('open') === undefined)).toBe(true)
+    expect(w.text()).toContain('先核对任务约束')
+    expect(w.text()).toContain('再拆分三个步骤')
+    expect(w.get('.run-timeline__plan').text()).toContain('初步规划')
+    await w.get('.run-timeline__history-toggle').trigger('click')
+    expect(w.get('.run-timeline__plan').isVisible()).toBe(true)
+    store.dispose()
+  })
   it('loads public text on a terminal Run without starting a ticking clock', async () => {
     vi.useFakeTimers()
     const store = new RunRuntimeStore('run')
@@ -74,7 +289,7 @@ describe('Copilot task timeline', () => {
     const other = { ...traces[0], eventId: 'other', runId: 'other-run', payload: { planningProgress: true, kind: 'plan_parsed', taskCount: 999 } }
     const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'failed', traces: [...traces, other] } }); wrappers.push(w)
     expect(w.find('.run-timeline__planning-history').exists()).toBe(false)
-    expect(w.findAll('.run-timeline__progress > p').map(p => p.text())).toEqual([
+    expect(w.findAll('.run-timeline__progress-item .chat-recovery').map(p => p.text())).toEqual([
       '已生成任务步骤与规划依据，后续还需校验是否满足任务约束。',
       '本轮规划修正已生成，仍需通过校验后才能进入执行。',
       '本次规划未完成，暂时无法进入执行。',
@@ -122,14 +337,14 @@ describe('Copilot task timeline', () => {
     expect(w.get('.run-timeline__planning-text').text()).toContain('先统一数据口径')
     expect(w.text()).toContain('本次规划未完成')
   })
-  it('opens the task draft and shows its public rationale before plan acceptance', async () => {
+  it('keeps task fields in a collapsed draft before plan acceptance', async () => {
     const store = new RunRuntimeStore('run')
     vi.mocked(acquireRunRuntimeStore).mockReturnValue(store)
     const w = mount(CopilotRunTimeline, { props: { runId: 'run', status: 'planning' } }); wrappers.push(w)
     store.apply({ eventId: 'draft', sequence: 1, eventType: 'planner.draft.updated', runId: 'run',
       payload: { stage: 'detail', nodes: [{ key: 'T1', title: '核对数据范围', rationale: '先核对需求再建立模型' }] } })
     await w.vm.$nextTick()
-    expect(w.get('.run-timeline__draft').attributes('open')).toBeDefined()
+    expect(w.get('.run-timeline__draft').attributes('open')).toBeUndefined()
     expect(w.get('.run-timeline__draft').text()).toContain('先核对需求再建立模型')
   })
   it('renders each public delta before the model finishes and retains the preview after run completion', async () => {
@@ -188,7 +403,7 @@ describe('Copilot task timeline', () => {
     apply('model.completed')
     // All events can arrive before Vue paints; the earlier explanation must survive.
     await w.vm.$nextTick()
-    const rows = Array.from(w.element.children).filter(el => el.matches('article, details'))
+    const rows = Array.from(w.get('.agent-work').element.children).filter(el => el.matches('article, details'))
     expect(rows).toHaveLength(3)
     expect(rows[0].textContent).toContain('先读取事件处理代码')
     expect(rows[1].className).toBe('run-timeline__tools')
@@ -243,7 +458,7 @@ describe('Copilot task timeline', () => {
     expect(groups[0].findAll('.run-timeline__tool')).toHaveLength(2)
     expect(groups[0].text()).toContain('shell-evidence')
     expect(groups[1].get('.run-timeline__operation-summary').text()).toBe('修改文件已完成')
-    expect(Array.from(w.element.children).filter(el => el.matches('details, article')).map(el => el.className)).toEqual([
+    expect(Array.from(w.element.querySelectorAll('.run-timeline__tools, .test-message')).map(el => el.className)).toEqual([
       'run-timeline__tools', 'test-message', 'run-timeline__tools',
     ])
     expect(w.get('.run-timeline__status').text()).toContain('用时 57 秒')

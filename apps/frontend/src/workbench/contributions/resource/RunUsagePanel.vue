@@ -6,8 +6,19 @@
         <div class="usage-total"><span>累计已观测 Token</span><strong>{{ number(summary?.usageReportedCalls === 0 && summary?.callCount ? null : summary?.totalTokens) }}</strong><small>当前运行的模型消耗<span v-if="summary?.usageMissingCalls"> · {{ summary.usageMissingCalls }} 次调用未返回用量</span></small></div>
         <div class="usage-current"><span>最近一次上下文输入</span><strong>{{ number(context?.inputTokens) }}</strong><small>{{ context?.measurement === 'provider' ? '供应商实测' : context?.measurement === 'estimate' ? '估算，不用于计费' : '未观测' }}<template v-if="context?.contextWindowTokens"> · 窗口 {{ number(context.contextWindowTokens) }}</template></small></div>
         <div><span>模型调用记录</span><strong>{{ number(summary?.callCount) }}</strong><small>{{ number(summary?.retryCount) }} 次重试</small></div>
-        <div><span>缓存命中率</span><strong>{{ hitRatio }}</strong><small>缓存读取 / 输入 Token</small></div>
+        <div>
+          <span>Run 缓存命中率</span><strong>{{ formatRatio(summary?.cacheHitRatio) }}</strong>
+          <small v-if="summary?.cacheUsageReportedCalls != null">已观测 {{ summary.cacheUsageReportedCalls }}/{{ summary.callCount }} 次调用</small>
+          <small v-else>缓存读取 / 输入 Token</small>
+        </div>
       </div>
+
+      <dl v-if="usage?.cacheScopes?.length" class="token-legend" aria-label="各阶段缓存命中率">
+        <div v-for="item in usage.cacheScopes" :key="item.scope">
+          <dt>{{ scopeLabels[item.scope] ?? item.scope }}</dt>
+          <dd>{{ formatRatio(item.cacheHitRatio) }} · 已观测 {{ item.cacheUsageReportedCalls }}/{{ item.callCount }} 次调用</dd>
+        </div>
+      </dl>
 
       <div class="usage-chart">
         <header><strong>Token 构成</strong><span>输入 + 输出</span></header>
@@ -51,18 +62,21 @@ let timer: ReturnType<typeof setTimeout> | null = null
 const summary = computed(() => usage.value?.usage)
 const context = computed(() => usage.value?.contextPressure.latestRequest)
 const number = (value?: number | null) => value == null ? '—' : value.toLocaleString('zh-CN')
-const hitRatio = computed(() => {
-  const ratio = summary.value?.cacheHitRatio
-  return ratio == null || !Number.isFinite(ratio) ? '未观测' : `${(Math.min(1, Math.max(0, ratio)) * 100).toFixed(1)}%`
-})
+const scopeLabels: Record<string, string> = { planning: '规划器', node: '执行 Agent', copilot: 'Copilot' }
+const formatRatio = (ratio?: number | null) =>
+  ratio == null || !Number.isFinite(ratio) || ratio < 0 || ratio > 1 ? '未观测' : `${(ratio * 100).toFixed(1)}%`
 const segments = computed(() => {
   const input = summary.value?.inputTokens
-  const cached = input == null ? undefined : Math.min(input, summary.value?.cacheReadTokens ?? 0)
+  const measured = summary.value?.cacheMeasuredInputTokens ?? input
+  const cached = measured == null ? undefined : Math.min(measured,
+    summary.value?.cacheMeasuredReadTokens ?? summary.value?.cacheReadTokens ?? 0)
+  const unknown = input == null ? 0 : Math.max(0, input - (measured ?? 0))
   const output = summary.value?.outputTokens
   const total = (input ?? 0) + (output ?? 0)
   return [
     { label: '输入 · 命中缓存', value: cached, tone: 'is-cached' },
-    { label: '输入 · 未命中', value: input == null ? undefined : input - (cached ?? 0), tone: 'is-input' },
+    { label: '输入 · 未命中', value: measured == null ? undefined : measured - (cached ?? 0), tone: 'is-input' },
+    ...(unknown ? [{ label: '输入 · 缓存状态未知', value: unknown, tone: 'is-unknown' }] : []),
     { label: '输出', value: output, tone: 'is-output' }
   ].map(segment => ({ ...segment, width: total ? (segment.value ?? 0) / total * 100 : 0 }))
 })
@@ -153,6 +167,7 @@ onBeforeUnmount(stop)
 .token-track i, .model-track i { display: block; height: 100%; }
 .is-cached { background: color-mix(in srgb, var(--primary-color) 35%, var(--wb-text)); }
 .is-input { background: color-mix(in srgb, var(--primary-color) 65%, var(--wb-text)); }
+.is-unknown { background: var(--wb-text-secondary); }
 .is-output, .model-track i { background: var(--primary-color); }
 .token-legend { display: grid; gap: 8px; margin: 0; font-size: 10px; }
 .token-legend > div { display: flex; justify-content: space-between; gap: 10px; }
