@@ -1,7 +1,7 @@
 import type { RunActionCapabilities, WorkflowRun } from '@/services/api/agentos'
 
 export const runCapabilityActions = ['canInspect', 'canDiscuss', 'canCancel', 'canReview', 'canExecuteFormalAction',
-  'canResolveToolApproval', 'canAnswerPlanner', 'canCollaborate', 'canRetrySuccessor', 'canRerunSuccessor',
+  'canResolveToolApproval', 'canAnswerPlanner', 'canCollaborate', 'canSetPermission', 'canRetrySuccessor', 'canRecoverCurrentRun', 'canRerunSuccessor',
   'canDecideRevision', 'canApplyRevision', 'canDelete'] as const
 export type RunCapabilityAction = typeof runCapabilityActions[number]
 const active = new Set(['pending', 'planning', 'running', 'retrying', 'waiting_review'])
@@ -10,6 +10,16 @@ const terminal = new Set(['completed', 'failed', 'cancelled', 'superseded'])
 /** Validate scope and comparison revision; selected/latest never grant offers. */
 export function readRunCapabilities(value: RunActionCapabilities | null | undefined, missionId: string,
   runId: string | null, revision?: number, status?: string): RunActionCapabilities | null {
+  if (value && value.canSetPermission == null) value = { ...value, canSetPermission: value.canCollaborate }
+  // Earlier schema-v1 projections omit the additive current-run recovery fields.
+  // Missing recovery metadata must not revoke unrelated explicit offers, and it
+  // cannot authorize either recovery path without the matching mode and target.
+  if (value?.canRetrySuccessor === false && value.canRecoverCurrentRun !== true
+    && (value.canRecoverCurrentRun === undefined || value.retryMode === undefined)) {
+    value = { ...value,
+      canRecoverCurrentRun: value.canRecoverCurrentRun === undefined ? false : value.canRecoverCurrentRun,
+      retryMode: value.retryMode === undefined ? null : value.retryMode }
+  }
   if (!value || value.schemaVersion !== 1 || value.missionId !== missionId || value.runId !== runId
     || !Number.isInteger(value.runtimeRevision) || value.runtimeRevision < 0
     || (revision !== undefined && revision !== value.runtimeRevision) || (status !== undefined && status !== value.status)
@@ -28,7 +38,9 @@ export function readRunCapabilities(value: RunActionCapabilities | null | undefi
     || value.canExecuteFormalAction !== (value.formalActions.length > 0)
     || value.canResolveToolApproval && value.status !== 'running'
     || value.canAnswerPlanner && value.status !== 'waiting_review'
-    || value.canRetrySuccessor && (value.status !== 'failed' || !value.retryStepId)
+    || value.canRetrySuccessor && (value.status !== 'failed' || !value.retryStepId || value.retryMode !== 'successor_run')
+    || value.canRecoverCurrentRun && (!['failed', 'waiting_review'].includes(value.status) || !value.retryStepId || value.retryMode !== 'current_run')
+    || !value.canRetrySuccessor && !value.canRecoverCurrentRun && (value.retryMode !== null || value.retryStepId !== null)
     || value.canDecideRevision && !value.isExecutionActive || value.canApplyRevision && value.status !== 'cancelled'
     || value.canDelete && !terminal.has(value.status)) return null
   return value

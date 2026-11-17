@@ -55,7 +55,7 @@ onBeforeUnmount(() => { observer?.disconnect(); spring.stop() })
       :tabindex="hasDetail ? -1 : 0" :aria-hidden="hasDetail"
       :aria-expanded="expanded" :style="{ opacity: Math.max(0, 1 - progress * 5), pointerEvents: progress > 0.01 ? 'none' : 'auto' }"
       @click.stop="emit('toggle')">
-      <strong>{{ name }}</strong><span>{{ statusLabel }}</span>
+      <strong>{{ name }}</strong><span class="execution-node__status"><i v-if="status === 'running'" class="execution-node__activity" aria-hidden="true" />{{ statusLabel }}</span>
     </button>
     <div ref="content" class="execution-node__measure nodrag nowheel" :aria-hidden="!hasDetail" :style="{ visibility: hasDetail ? 'visible' : 'hidden' }">
       <motion.div :initial="false" :animate="{ opacity: expanded ? 1 : 0, y: expanded ? 0 : 6 }"
@@ -71,7 +71,7 @@ onBeforeUnmount(() => { observer?.disconnect(); spring.stop() })
 <style scoped>
 .execution-node { position: relative; box-sizing: border-box; overflow: hidden; border: 1px solid var(--wb-border, #64748b); background: var(--wb-surface-2, #e6edf2); color: var(--wb-text, #26332f); box-shadow: 0 2px 7px #00000014; }
 .execution-node.is-open { border-color: var(--wb-accent, #6ea8fe); background: var(--wb-surface-1, #fff); box-shadow: 0 10px 28px #00000026; }
-.execution-node.running { border-color: var(--sem-running, #6ea8fe); }
+.execution-node.running { border-color: var(--sem-running, #6ea8fe); background: color-mix(in srgb, var(--sem-running, #6ea8fe) 8%, var(--wb-surface-2, #e6edf2)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sem-running, #6ea8fe) 16%, transparent); }
 .execution-node.completed { border-color: var(--sem-success, #8bcb78); }
 .execution-node.failed { border-color: var(--sem-failed, #e06c75); }
 .execution-node.waiting_review { border-color: var(--sem-waiting, #d9b86c); }
@@ -79,6 +79,11 @@ onBeforeUnmount(() => { observer?.disconnect(); spring.stop() })
 .execution-node__capsule { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 320px; height: 44px; padding: 0 16px; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
 .execution-node__capsule strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .execution-node__capsule span { flex-shrink: 0; color: var(--wb-text-secondary, #66736f); font-size: 11px; }
+.execution-node__status { display: inline-flex; align-items: center; gap: 6px; }
+.running .execution-node__status { color: var(--sem-running, #6ea8fe); font-weight: 600; }
+.execution-node__activity { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; animation: execution-activity 1.6s ease-in-out infinite; }
+@keyframes execution-activity { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .execution-node__activity { animation: none; } }
 .execution-node__measure { position: absolute; top: 0; left: 0; width: 378px; }
 .execution-node :deep(.vue-flow__handle) { width: 1px; height: 1px; min-width: 0; min-height: 0; opacity: 0; border: 0; pointer-events: none; }
 .execution-node__capsule:focus-visible { outline: 2px solid var(--wb-accent, #6ea8fe); outline-offset: -4px; border-radius: 22px; }

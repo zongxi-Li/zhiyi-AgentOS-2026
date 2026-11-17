@@ -169,13 +169,20 @@ export interface ModelCallUsage {
   usageReported?: boolean
   contextUsage?: ModelContextUsage
 }
+interface CacheCoverage {
+  cacheHitRatio?: number | null
+  cacheUsageReportedCalls?: number
+  cacheMeasuredInputTokens?: number
+  cacheMeasuredReadTokens?: number
+}
+
 export interface RunResourceUsage {
   runId: string
   capability?: ModelCapabilitySnapshot | null
   /** 观测到真实调用为 observed；零调用时来自运行时声明的 catalog 提示为 declared */
   capabilitySource?: 'observed' | 'declared' | null
   outputPolicy?: string | null
-  usage: {
+  usage: CacheCoverage & {
     inputTokens: number
     outputTokens: number
     cacheReadTokens: number
@@ -185,10 +192,10 @@ export interface RunResourceUsage {
     callCount: number
     retryCount: number
     latencyMs: number
-    cacheHitRatio?: number | null
     usageReportedCalls?: number
     usageMissingCalls?: number
   }
+  cacheScopes?: Array<CacheCoverage & { scope: string; callCount: number }>
   contextPressure: {
     current?: number | null
     peak?: number | null

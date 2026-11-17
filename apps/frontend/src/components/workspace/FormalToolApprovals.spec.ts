@@ -68,16 +68,19 @@ describe('inline formal tool approval', () => {
     expect(releaseRunRuntimeStore).toHaveBeenCalled()
     expect(agentosRequest.post).not.toHaveBeenCalled()
   })
-  it('keeps the latest same-run snapshot when earlier GETs finish out of order', async () => {
+  it('coalesces invalidations during a slow read without cancelling it or losing the follow-up', async () => {
     let old!: (value: any) => void
     vi.mocked(agentosRequest.get).mockReturnValueOnce(new Promise(resolve => { old = resolve }))
     const w = await render()
     const oldRequest = vi.mocked(agentosRequest.get).mock.calls[0][1]
     vi.mocked(agentosRequest.get).mockResolvedValue({ data: { items: [] } })
     events.activity.approvalRevision++; await flushPromises()
-    expect(oldRequest?.signal?.aborted).toBe(true)
+    events.activity.approvalRevision++; await flushPromises()
+    expect(agentosRequest.get).toHaveBeenCalledTimes(1)
+    expect(oldRequest?.signal?.aborted).toBe(false)
     old({ data: { items: [approval] } }); await flushPromises()
+    expect(agentosRequest.get).toHaveBeenCalledTimes(2)
     expect(w.find('article').exists()).toBe(false)
-    expect(w.emitted('waiting')?.at(-1)).not.toEqual([true])
+    expect(w.emitted('waiting')?.at(-1)).toEqual([false])
   })
 })

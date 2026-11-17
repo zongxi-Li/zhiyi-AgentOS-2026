@@ -145,6 +145,8 @@ const mountWorkspace = async (
     runId: 'run_2', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops', status: 'succeeded', eventCount: 0, events: []
   } as any)
   vi.spyOn(agentosApi, 'getRunProvenance').mockResolvedValue({ runId: 'run_2', events: [], productions: [], consumptions: [], interactions: [] })
+  vi.spyOn(agentosApi, 'getGraphVersions').mockImplementation(async runId => ({ runId, graphId: 'graph_1',
+    currentBlueprintId: null, currentGraphVersion: 1, items: [], proposals: [] }))
   vi.spyOn(agentosApi, 'listResources').mockResolvedValue({ items: [], total: 0 })
   vi.spyOn(agentosApi, 'getExecutionTree').mockResolvedValue({ nodes: [] } as any)
   vi.spyOn(agentosApi, 'listWorkflowReviews').mockResolvedValue({ items: [] } as any)
@@ -617,6 +619,42 @@ describe('MissionWorkspaceView', () => {
     expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith(
       'mission_1', expect.objectContaining({ runId: 'run_3' })
     )
+  })
+
+  it.each([9, 10])('uses only current Run recovery and refreshes it after admission at revision %s', async admissionRevision => {
+    const failedCapabilities = capabilitiesFixture('run_1', 'mission_1', 'failed', 9,
+      { canRecoverCurrentRun: true, retryStepId: 'design' })
+    const source = projection({ activeRun: { runId: 'run_1', status: 'failed', createdAt: '', isActive: true,
+      actionCapabilities: failedCapabilities } })
+    const recovered = projection({ activeRun: { runId: 'run_1', status: 'running', createdAt: '', isActive: true,
+      actionCapabilities: capabilitiesFixture('run_1', 'mission_1', 'running', 10) } })
+    let resumed = false
+    const failed = { runId: 'run_1', missionId: 'mission_1', workflowId: 'workflow_1', domain: 'ops',
+      status: 'failed', runtimeRevision: 9, actionCapabilities: failedCapabilities,
+      steps: [{ stepId: 'source', name: 'Source', agentName: 'native', status: 'completed' },
+        { stepId: 'design', name: 'Design', agentName: 'native', status: 'failed' }] }
+    const running = { ...failed, status: 'running', runtimeRevision: 10,
+      actionCapabilities: recovered.activeRun!.actionCapabilities,
+      steps: [failed.steps[0], { ...failed.steps[1], status: 'pending' }] }
+    vi.spyOn(agentosApi, 'getWorkflowRun').mockImplementation(async () => (resumed ? running : failed) as any)
+    const retry = vi.spyOn(agentosApi, 'retryWorkflowStepAsync').mockImplementation(async () => {
+      resumed = true
+      return { ...running, status: admissionRevision === 9 ? 'retrying' : 'running',
+        runtimeRevision: admissionRevision } as any
+    })
+    const rerun = vi.spyOn(agentosApi, 'rerunWorkflowAsync')
+    const { wrapper, router } = await mountWorkspace(() => resumed ? recovered : source,
+      '/agentos/missions/mission_1/workspace?runId=run_1')
+    await wrapper.get('.workbench-status-bar__run-trigger').trigger('click')
+    expect(wrapper.get('.workbench-status-bar__run-action').text()).toContain('从失败处继续（当前 Run）')
+    await wrapper.get('.workbench-status-bar__run-action').trigger('click')
+    await flushPromises()
+    expect(retry).toHaveBeenCalledWith('run_1', 'design', expect.objectContaining({ mode: 'current_run',
+      expectedRuntimeRevision: 9, clientRequestId: expect.any(String) }))
+    expect(rerun).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.query.runId).toBe('run_1')
+    expect(agentosApi.getMissionWorkspace).toHaveBeenLastCalledWith('mission_1', expect.objectContaining({ runId: 'run_1' }))
+    expect(sessionStorage.length).toBe(0)
   })
 
   it('keeps mission and Run navigation available before identity projection exists', async () => {

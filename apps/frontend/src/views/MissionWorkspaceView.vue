@@ -105,6 +105,12 @@
           @refresh-run="loadWorkspace(selectedRunId || undefined)"
           @cancel-run="cancelActiveRun"
         />
+        <GraphVersionInspector
+          v-else-if="activeOpened?.entry.kind === 'graph' && graphVersions.historical.value"
+          :fullscreen="rightState.rightPaneMaximized"
+          @toggle-fullscreen="rightState.toggleRightPaneMaximized"
+          @close="rightState.toggleRightPane"
+        />
         <RuntimeInspector
           v-else
           :entry="inspectorEntry"
@@ -218,7 +224,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry, type WorkspaceFileOpenRequest, type WorkspaceGraphNode } from '@/services/api/agentos'
@@ -229,6 +235,7 @@ import EditorGroup, { type OpenWorkspaceEntry } from '@/components/workspace/Edi
 import type { WorkspaceFileEditorStatus } from '@/components/workbench/WorkspaceFileEditor.vue'
 import { missionDocumentContent } from '@/components/workspace/missionSemanticDisplay'
 import RuntimeInspector from '@/components/workspace/RuntimeInspector.vue'
+import GraphVersionInspector from '@/components/workspace/GraphVersionInspector.vue'
 import WorkbenchBottomPanel, { type WorkbenchBottomTab } from '@/components/workbench/WorkbenchBottomPanel.vue'
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue'
 import WorkbenchContributionRenderer from '@/components/workbench/WorkbenchContributionRenderer.vue'
@@ -237,15 +244,17 @@ import { createNativeWorkbenchRegistry } from '@/workbench/composition'
 import { registerOpenFile } from '@/workbench/core/openFileRequest'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
-import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import { acquireRunRuntimeStore, releaseRunRuntimeStore, reconcileRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
-import { beginRunRecovery, pendingRunRecovery, completeRunRecovery } from '@/workbench/runtime/recoveryIdentity'
+import { beginRunRecovery, pendingRunRecovery, completeRunRecovery, confirmCurrentRunRecovery,
+  RecoveryResponseError } from '@/workbench/runtime/recoveryIdentity'
 import { readRunCapabilities } from '@/workbench/runtime/runCapabilities'
 import { conversationBindingKey, readRunDeliverableIntent } from '@/features/workspace/navigation'
 import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 import { initialEditorIntent, selectLifecycleEditor } from '@/workbench/runtime/editorSelection'
 import { WorkspaceProjectionClient } from '@/workbench/runtime/workspaceEvents'
+import { createGraphVersions, graphVersionsKey } from '@/components/workspace/graphVersions'
 
 const route = useRoute()
 const router = useRouter()
@@ -306,6 +315,17 @@ const selectedGraphNodeId = ref<string | null>(null)
 // The snapshot is replaced as a whole, so deep Vue proxies only add work here.
 const runtimeObservation = shallowRef<RuntimeObservation | null>(null)
 const runtimeStore = shallowRef<RunRuntimeStore | null>(null)
+const graphVersions = createGraphVersions(
+  computed(() => selectedRunId.value || projection.value?.activeRun?.runId || null),
+  computed(() => projection.value?.activeRun?.runId === selectedRunId.value ? projection.value.activeGraph || null : null),
+  computed(() => `${projection.value?.projectionRevision || 0}:${runtimeObservation.value?.run?.graphVersion || 0}`)
+)
+provide(graphVersionsKey, graphVersions)
+watch(graphVersions.selectedKey, () => {
+  focusNodeId.value = null
+  selectedGraphNodeId.value = null
+  selectedSemanticTaskKey.value = null
+})
 const lifecycle = computed(() => projectLifecycle({ workspace: projection.value, selectedRunId: selectedRunId.value,
   run: runtimeObservation.value?.runId === selectedRunId.value ? runtimeObservation.value.run : null }))
 const editorIntent = ref(initialEditorIntent())
@@ -412,10 +432,19 @@ const isHistorical = computed(() => lifecycle.value.isHistorical)
 // has briefly failed. Only an empty workspace is blocked by load state.
 const controlReadOnly = computed(() => lifecycle.value.isReadOnly
   || (!projection.value && (loading.value || Boolean(loadError.value))))
+const recoveryIdentityRevision = ref(0)
+const pendingSelectedRecovery = computed(() => {
+  void recoveryIdentityRevision.value
+  const runId = projection.value?.activeRun?.runId
+  if (!runId) return null
+  try { return pendingRunRecovery(missionId.value, runId, sessionStorage) } catch { return null }
+})
 const canRerunSelectedRun = computed(() => Boolean(
-  projection.value?.activeRun?.runId && (lifecycle.value.capabilities?.canRetrySuccessor || lifecycle.value.capabilities?.canRerunSuccessor)
+  projection.value?.activeRun?.runId && (pendingSelectedRecovery.value || lifecycle.value.capabilities?.canRetrySuccessor
+    || lifecycle.value.capabilities?.canRecoverCurrentRun || lifecycle.value.capabilities?.canRerunSuccessor)
 ))
-const shouldResumeSelectedRun = computed(() => lifecycle.value.capabilities?.canRetrySuccessor === true)
+const shouldResumeSelectedRun = computed(() => pendingSelectedRecovery.value?.kind === 'retry'
+  || lifecycle.value.capabilities?.canRetrySuccessor === true || lifecycle.value.capabilities?.canRecoverCurrentRun === true)
 const canCancelActiveRun = computed(() => Boolean(
   projection.value?.activeRun?.runId
   && !controlReadOnly.value
@@ -423,15 +452,17 @@ const canCancelActiveRun = computed(() => Boolean(
   && !cancelPending.value
 ))
 const rerunDisabledReason = computed(() => {
-  if (rerunPending.value) return '正在创建新的 Run'
-  if (!canRerunSelectedRun.value) return '服务端未提供创建后继 Run 的能力'
+  if (rerunPending.value) return '正在提交恢复或再次运行请求'
+  if (!canRerunSelectedRun.value) return '服务端未提供恢复或再次运行的能力'
   return shouldResumeSelectedRun.value
     ? '复用已完成节点，从失败节点继续执行'
     : '从当前 Run 创建新的执行版本'
 })
-const rerunLabel = computed(() => shouldResumeSelectedRun.value
-  ? runtimeObservation.value?.run?.steps.length === 0 ? '重新运行（新 Run）' : '从失败处继续（新 Run）'
-  : '再次运行')
+const rerunLabel = computed(() => pendingSelectedRecovery.value ? '核对恢复结果'
+  : lifecycle.value.capabilities?.canRecoverCurrentRun ? '从失败处继续（当前 Run）'
+    : shouldResumeSelectedRun.value
+      ? runtimeObservation.value?.run?.steps.length === 0 ? '重新运行（新 Run）' : '从失败处继续（新 Run）'
+      : '再次运行')
 
 const workbenchContext = computed(() => createWorkbenchContext({
   missionId: missionId.value,
@@ -478,6 +509,7 @@ const auxiliaryViewProps = computed(() => ({
   readonly: controlReadOnly.value,
   actionCapabilities: lifecycle.value.capabilities,
   projectionRevision: projection.value?.projectionRevision,
+  workspaceRefreshing: projectionRequestInFlight.value,
   ...(activeAuxiliaryView.value?.getProps?.(workbenchContext.value) || {})
 }))
 type RightPaneState = {
@@ -554,7 +586,9 @@ const followLifecycle = () => {
   const selection = selectLifecycleEditor(editorIntent.value, lifecycle.value)
   editorIntent.value = selection.intent
   if (!selection.handoff) return
-  activeAuxiliaryId.value = ['review', 'formal'].includes(lifecycle.value.recommendedInspector) ? 'acg-copilot.sidebar' : null
+  // Formal/review handoffs may open Copilot, but independent projection/detail
+  // reads must never unmount it while they reconcile or execution advances.
+  if (['review', 'formal'].includes(lifecycle.value.recommendedInspector)) activeAuxiliaryId.value = 'acg-copilot.sidebar'
   if (!openEditors.value.length) {
     const progress = progressEntryFor(selectedRunId.value)
     if (lifecycle.value.recommendedEditor === 'progress') { entryCache.value[progress.entryId] = progress; openEditors.value.push(progress.entryId) }
@@ -682,7 +716,7 @@ let projectionRefreshTimer: ReturnType<typeof setTimeout> | null = null
 const workspaceEvents = new WorkspaceProjectionClient()
 let workspaceEventsMissionId: string | null = null
 let targetProjectionRevision = -1
-let projectionRequestInFlight = false
+const projectionRequestInFlight = ref(false)
 let projectionRefreshDelay = 150
 
 const stopProjectionRefresh = () => {
@@ -710,12 +744,12 @@ const scheduleProjectionRefresh = () => {
       scheduleProjectionRefresh()
     })
   }
-  if (projectionRequestInFlight || targetProjectionRevision <= snapshot.projectionRevision!) { stopProjectionRefresh(); return }
+  if (projectionRequestInFlight.value || targetProjectionRevision <= snapshot.projectionRevision!) { stopProjectionRefresh(); return }
   // Throttle bursts rather than postponing the read on every new event.
   if (projectionRefreshTimer !== null) return
   projectionRefreshTimer = setTimeout(async () => {
     projectionRefreshTimer = null
-    if (isWorkspaceVisible() && !projectionRequestInFlight) await loadWorkspace(selectedRunId.value)
+    if (isWorkspaceVisible() && !projectionRequestInFlight.value) await loadWorkspace(selectedRunId.value)
   }, projectionRefreshDelay)
 }
 
@@ -767,7 +801,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   stopProjectionRefresh()
   controller = new AbortController()
   const requestController = controller
-  projectionRequestInFlight = true
+  projectionRequestInFlight.value = true
   // Keep the editor interactive during background/manual refreshes. The initial
   // request still owns the loading state while no projection is available.
   loading.value = !preserveRenderedWorkspace
@@ -806,6 +840,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
           if (controller === requestController && !requestController.signal.aborted
             && selectedRunId.value === observation.runId && observation.run?.missionId === missionId.value) {
             runtimeObservation.value = observation
+            reconcileRunRuntimeStore(observation.run)
           }
         }
       })
@@ -830,7 +865,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
     projectionRefreshDelay = 5000
   } finally {
     if (controller === requestController) {
-      projectionRequestInFlight = false
+      projectionRequestInFlight.value = false
       if (!requestController.signal.aborted) loading.value = false
       // One completion path owns subscription and any pending watermark retry.
       scheduleProjectionRefresh()
@@ -873,6 +908,7 @@ const createClientRequestId = () => globalThis.crypto?.randomUUID?.()
   || `rerun-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
 const rerunErrorMessage = (error: unknown) => {
+  if (error instanceof RecoveryResponseError) return error.message
   const response = (error as { response?: { status?: number; data?: { detail?: unknown; message?: unknown } } })?.response
   const detail = [response?.data?.detail, response?.data?.message]
     .find(value => typeof value === 'string' && value.trim())
@@ -931,7 +967,7 @@ const cancelActiveRun = async () => {
 const rerunSelectedRun = async () => {
   const sourceRunId = projection.value?.activeRun?.runId
   if (!sourceRunId || !canRerunSelectedRun.value || rerunPending.value) return
-  const { canRetrySuccessor, runtimeRevision, retryStepId } = lifecycle.value.capabilities!
+  const capabilities = lifecycle.value.capabilities
   rerunPending.value = true
   loadError.value = ''
   const sourceMission = missionId.value
@@ -940,7 +976,9 @@ const rerunSelectedRun = async () => {
     && missionId.value === sourceMission && selectedRunId.value === sourceRunId
   try {
     let identity = pendingRunRecovery(sourceMission, sourceRunId, sessionStorage)
-    if (!identity && canRetrySuccessor) {
+    if (!identity && capabilities && (capabilities.canRetrySuccessor || capabilities.canRecoverCurrentRun)) {
+      const { runtimeRevision, retryStepId, retryMode } = capabilities
+      if (!retryMode) throw new Error('服务端未提供已验证的恢复方式')
       const sourceRun = await agentosApi.getWorkflowRun(sourceRunId)
       if (sourceRun.runId !== sourceRunId || sourceRun.missionId !== sourceMission) throw new Error('源 Run 身份不匹配')
       if (sourceRun.runtimeRevision !== runtimeRevision) throw new Error('源 Run 版本已变化，请刷新能力后重试')
@@ -950,7 +988,7 @@ const rerunSelectedRun = async () => {
         clientRequestId: createClientRequestId(),
         reason: 'resume_failed',
         expectedRuntimeRevision: runtimeRevision,
-        mode: 'successor_run'
+        mode: retryMode
       } }, sessionStorage)
     }
     if (!identity) {
@@ -968,13 +1006,24 @@ const rerunSelectedRun = async () => {
     const nextRun = identity.kind === 'retry'
       ? await agentosApi.retryWorkflowStepAsync(sourceRunId, identity.stepId, identity.payload)
       : await agentosApi.rerunWorkflowAsync(sourceMission, identity.payload)
-    if (nextRun.missionId !== sourceMission || nextRun.runId === sourceRunId
-      || nextRun.lineage?.sourceRunId !== sourceRunId) throw new Error('Successor 响应身份或 lineage 不匹配，保留原操作等待核对')
+    const currentRecovery = identity.kind === 'retry' && identity.payload.mode === 'current_run'
+    if (identity.kind === 'retry' && identity.payload.mode === 'current_run') {
+      await confirmCurrentRunRecovery(identity, nextRun, runId => agentosApi.getWorkflowRun(runId))
+    } else if (nextRun.missionId !== sourceMission || nextRun.runId === sourceRunId
+      || nextRun.lineage?.sourceRunId !== sourceRunId) throw new RecoveryResponseError('Successor 响应身份或 lineage 不匹配，保留原操作等待核对')
     completeRunRecovery(identity, sessionStorage)
-    if (stillSelected()) await selectRun(nextRun.runId)
+    if (stillSelected()) {
+      if (currentRecovery) {
+        runtimeObservationAdapter.stop()
+        runtimeObservation.value = null
+        await loadWorkspace(sourceRunId, { focusProgress: true })
+      }
+      else await selectRun(nextRun.runId)
+    }
   } catch (error: unknown) {
     if (stillSelected() && !isAbortError(error)) loadError.value = `${rerunErrorMessage(error)}；结果未确认时将重试同一操作。`
   } finally {
+    recoveryIdentityRevision.value++
     if (ownerGeneration === recoveryUiGeneration) rerunPending.value = false
   }
 }
@@ -1096,7 +1145,7 @@ const reorderEditors = (from: number, to: number) => {
 const selectSemanticTask = (semanticTaskKey: string | null) => {
   selectedSemanticTaskKey.value = semanticTaskKey
   selectedGraphNodeId.value = projection.value?.graphNodes.find(node => node.semanticTaskKey === semanticTaskKey)?.acgNodeId || null
-  if (selectedGraphNodeId.value) focusNodeId.value = selectedGraphNodeId.value
+  focusNodeId.value = selectedGraphNodeId.value
 }
 
 const selectRunSymbol = (item: RunDocumentSymbol) => {
@@ -1199,7 +1248,7 @@ const suspendWorkspace = () => {
   workspaceEvents.disconnect()
   workspaceEventsMissionId = null
   targetProjectionRevision = -1
-  projectionRequestInFlight = false
+  projectionRequestInFlight.value = false
   projectionRefreshDelay = 150
   // Runtime output is transient and cannot be replayed. The cached Mission owns
   // its one shared Runtime SSE reference while workspace invalidations suspend.

@@ -4,6 +4,7 @@ import { runPath } from '../paths'
 import { apiUrl } from '@/platform'
 import { readSseFrames } from '@/utils/sse'
 import type { ResponseTimings } from '../../../../../../backend/src/shared/chat-stream/index.mjs'
+import type { WorkspaceReviewProjection } from '../types/graph'
 
 export type CopilotProgressPhase = 'preparing' | 'waiting_model' | 'receiving' | 'retrying' | 'validating'
 export interface CopilotStreamEvent {
@@ -25,19 +26,51 @@ export interface CopilotExchange {
   receipt?: { proposalId: string; runId: string; kind: CopilotActionKind; status: string; executeStepIds: string[]; reusedStepIds: string[] }
 }
 export type CopilotActionKind = 'rerun' | 'rerun_node' | 'recover' | 'user_input'
-export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string; capabilityCatalogRevision?: string; executionEnvironmentChanged?: boolean }
+export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string; retryMode?: 'current_run' | 'successor_run'; capabilityCatalogRevision?: string; executionEnvironmentChanged?: boolean }
 export type CopilotPermission = 'read_only' | 'task_collaboration'
+export type TaskApprovalMode = 'ask' | 'full'
+export interface TaskOperatorPolicy {
+  missionId: string; permission: CopilotPermission; approvalMode: TaskApprovalMode; policyRevision: number
+  workspaceScope?: { workspaceId: string; grantId: string; resourceId?: string | null } | null
+  updatedBy?: { userId: string; tenantId?: string | null } | null
+  effectiveApprovalMode?: TaskApprovalMode; effectiveScopeMatch?: boolean
+  operationId?: string | null; updatedAt?: string | null
+}
+export interface CopilotPermissionChange {
+  approvalMode: TaskApprovalMode; expectedPolicyRevision: number; operationId: string
+}
+export interface CopilotPermissionReceipt {
+  missionId: string; taskPermission: CopilotPermission; approvalMode: TaskApprovalMode; policyRevision: number
+  approvalPolicy?: TaskOperatorPolicy | null; autoApprovedCount: number
+}
+export interface ToolApprovalDecision {
+  source: 'policy' | 'user'; decidedAt: string; policyRevision?: number
+  actor?: { userId: string; tenantId?: string | null } | null
+}
 export interface CopilotInitialPlan {
   planVersion: number; commitId: string | null; commitmentRevision: number | null
   objective: string; constraints: string[]; expectedArtifacts: string[]
   tasks: { key: string; title: string; objective: string; rationale: string; acceptanceCriteria: string[]; sourceRefs: string[] }[]
 }
 export interface CopilotToolActivity {
+  target?: string; resultPreview?: string
   executionId: string; tool: string; status: string; stepId: string
   createdAt: string; attemptId?: string; receiptRef?: string
+  approvalDecision?: ToolApprovalDecision | null
+}
+export interface CopilotReview {
+  subjectId: string; subjectType: string; reason: string; reasonCode: string
+  kind?: 'workspace_revision_pending' | 'workspace_revision_blocked' | 'planner_wait' | 'planner_rejected' | 'step_review'
+  displayReason?: string; errorCode?: string; errorType?: string
+  canApprove: boolean; decisionRejected: boolean; expectedRunUpdatedAt: string
+}
+export interface CopilotPlanningProgress {
+  kind: 'repairing' | 'blocked'; status: string; message: string; observationId: string; errorCode: string
+  reason?: string; errorType?: string; canApprove?: boolean
 }
 export interface CopilotState {
   missionId?: string; latestRunId?: string; taskPermission?: CopilotPermission
+  approvalMode?: TaskApprovalMode; policyRevision?: number; approvalPolicy?: TaskOperatorPolicy | null
   runId: string; status: string; revision: number; modelAvailable: boolean
   models?: { id: string; provider: string; model: string; reasoningEfforts?: string[]; defaultReasoningEffort?: string | null }[]
   defaultModelId?: string | null; permissions?: CopilotPermission[]
@@ -45,14 +78,16 @@ export interface CopilotState {
   humanAnswers: { questionId: string; sourceRunId: string; prompt: string; answer: string; answeredAt: string }[]
   exchanges: CopilotExchange[]
   decision: { action: string; reason: string } | null
-  review?: { subjectId: string; subjectType: string; reason: string; reasonCode: string; canApprove: boolean; decisionRejected: boolean; expectedRunUpdatedAt: string } | null
+  review?: CopilotReview | null
+  planningProgress?: CopilotPlanningProgress | null
   initialPlan?: CopilotInitialPlan | null
   toolActivity?: CopilotToolActivity[]
+  workspaceReview?: WorkspaceReviewProjection | null
   steps: { stepId: string; name: string; status: string }[]
 }
 export const createCopilotApi = () => ({
-  async setCopilotPermission(runId: string, permission: CopilotPermission): Promise<{ missionId: string; taskPermission: CopilotPermission }> {
-    return (await agentosRequest.post(`${runPath(runId)}/copilot/permission`, { permission })).data
+  async setCopilotPermission(runId: string, permission: CopilotPermission, change?: CopilotPermissionChange): Promise<CopilotPermissionReceipt> {
+    return (await agentosRequest.post(`${runPath(runId)}/copilot/permission`, { permission, ...change })).data
   },
   async previewCopilotAction(runId: string, kind: CopilotActionKind, content: string, operationId: string, permission: CopilotPermission, stepId?: string): Promise<CopilotExchange> {
     return (await agentosRequest.post(`${runPath(runId)}/copilot/actions/preview`, { kind, content, operationId, permission, ...(stepId ? { stepId } : {}) })).data

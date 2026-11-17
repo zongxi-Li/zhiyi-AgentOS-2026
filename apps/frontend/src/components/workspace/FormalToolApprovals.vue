@@ -35,17 +35,27 @@ let connectedRunId: string | null = null
 let viewActive = true
 let generation = 0
 let controller: AbortController | null = null
-async function refresh() {
-  if (!viewActive || !props.active || !props.runId) return
-  controller?.abort()
-  const request = new AbortController()
-  controller = request
+let refreshTask: Promise<void> | null = null
+let refreshPending = false
+function refresh(): Promise<void> {
+  if (!viewActive || !props.active || !props.runId) return Promise.resolve()
+  if (refreshTask) { refreshPending = true; return refreshTask }
   const token = generation, runId = props.runId
-  try {
-    const response = await agentosRequest.get(`/runs/${encodeURIComponent(runId)}/tool-approvals`, { signal: request.signal, timeout: 15000 })
-    if (viewActive && token === generation && controller === request) { items.value = response.data.items; error.value = '' }
-  }
-  catch { if (viewActive && token === generation && !request.signal.aborted) error.value = '暂时无法读取工具审批状态。' }
+  const task = (async () => {
+    do {
+      refreshPending = false
+      const request = new AbortController()
+      controller = request
+      try {
+        const response = await agentosRequest.get(`/runs/${encodeURIComponent(runId)}/tool-approvals`, { signal: request.signal, timeout: 15000 })
+        if (viewActive && token === generation && controller === request) { items.value = response.data.items; error.value = '' }
+      }
+      catch { if (viewActive && token === generation && !request.signal.aborted) error.value = '暂时无法读取工具审批状态。' }
+      finally { if (controller === request) controller = null }
+    } while (refreshPending && viewActive && props.active && token === generation)
+  })().finally(() => { if (refreshTask === task) refreshTask = null })
+  refreshTask = task
+  return task
 }
 async function resolve(id: string, decision: string) {
   if (busy.value || props.readonly || !props.active) return
@@ -62,6 +72,7 @@ async function resolve(id: string, decision: string) {
 }
 function disconnect() {
   generation++; controller?.abort(); controller = null
+  refreshTask = null; refreshPending = false
   if (events.value) releaseRunRuntimeStore(connectedRunId, events.value)
   events.value = null; connectedRunId = null
   items.value = []; busy.value = false; error.value = ''; emit('waiting', false)
@@ -79,6 +90,7 @@ watch(() => items.value.length > 0, value => emit('waiting', value))
 onDeactivated(() => { viewActive = false; disconnect() })
 onActivated(() => { if (!viewActive) { viewActive = true; connect() } })
 onBeforeUnmount(disconnect)
+defineExpose({ refresh })
 </script>
 <style scoped>
 .tool-approvals { margin: 14px 0; color: var(--wb-text); font-size: 12px; line-height: 1.7; }

@@ -6,6 +6,7 @@ import { agentosApi, type WorkflowRun } from '@/services/api/agentos'
 import { nextFormalAction, prepareFormalCommand } from '@/features/acg/formalControl'
 import FormalExecutionControls from './FormalExecutionControls.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
+import { projectLifecycle } from '@/workbench/runtime/lifecycleProjection'
 
 const permitted = (): WorkflowRun => ({
   runId: 'run', missionId: 'mission', workflowId: 'workflow', domain: 'test', status: 'pending', steps: [], runtimeRevision: 7,
@@ -25,6 +26,29 @@ const execute = (wrapper: ReturnType<typeof render>) => wrapper.findAll('button'
 beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.stubGlobal('crypto', webcrypto) })
 
 describe('formal Workbench controls', () => {
+  it('allows confirmation with schema-v1 planning offers that omit additive recovery fields', async () => {
+    const run = permitted()
+    run.status = 'planning'; run.runtimeRevision = 0
+    run.formalControl = { ...run.formalControl!, status: 'PLANNING_ACCEPTED', permitIssued: false, permitId: null, permitStatus: null }
+    const { canRecoverCurrentRun: _recovery, retryMode: _mode, ...legacy } = capabilitiesFixture('run', 'mission', 'planning', 0,
+      { canExecuteFormalAction: true, formalActions: ['materialize'],
+        unavailableReasons: [{ action: 'canRecoverCurrentRun', code: 'RECOVERY_EVIDENCE_UNAVAILABLE' }] })
+    run.actionCapabilities = legacy as any
+    const lifecycle = projectLifecycle({ selectedRunId: 'run', run,
+      workspace: { mission: { missionId: 'mission' }, activeRun: { runId: 'run', status: 'planning', actionCapabilities: legacy },
+        runs: [], entries: [], graphNodes: [] } as any })
+    const post = vi.spyOn(agentosApi, 'submitFormalControl').mockImplementation(async (_mission, _run, _action, command) =>
+      ({ operationId: command.operationId, status: 'MATERIALIZED_INACTIVE' }))
+    const w = render(run, { readonly: lifecycle.isReadOnly, requirePlanReview: true,
+      reviewedPlan: { commitId: 'commit', commitmentRevision: 1 } })
+    expect(lifecycle.capabilities?.canExecuteFormalAction).toBe(true)
+    expect(w.get('.formal-control__primary').attributes('disabled')).toBeUndefined()
+    await w.get('.formal-control__primary').trigger('click'); await flushPromises()
+    expect(post).toHaveBeenCalledWith('mission', 'run', 'materialize', expect.objectContaining({
+      commitId: 'commit', expectedCommitmentRevision: 1,
+    }))
+    w.unmount()
+  })
   it.each([false, true])('approves only the displayed planning commit (conversational: %s)', async conversational => {
     const run = permitted()
     run.formalControl = { ...run.formalControl!, status: 'PLANNING_ACCEPTED', permitIssued: false, permitId: null, permitStatus: null }

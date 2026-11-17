@@ -224,7 +224,10 @@ export interface RunActionCapabilities {
   canResolveToolApproval: boolean
   canAnswerPlanner: boolean
   canCollaborate: boolean
+  canSetPermission?: boolean
   canRetrySuccessor: boolean
+  canRecoverCurrentRun: boolean
+  retryMode: 'successor_run' | 'current_run' | null
   retryStepId: string | null
   canRerunSuccessor: boolean
   canDecideRevision: boolean
