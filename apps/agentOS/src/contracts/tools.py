@@ -40,7 +40,8 @@ def hands_tools() -> tuple[ToolDefinition, ...]:
     specs = [
         ("fs.read", "Read a workspace-relative file.",
          {"path": string, "binary": boolean, "versioned": boolean}, ["path"]),
-        ("fs.list", "List a workspace-relative directory.", {"path": string}, ["path"]),
+        ("fs.list", "List a workspace-relative directory. Use path '.' for the bound workspace root; "
+         "use returned relative names for child paths.", {"path": string}, ["path"]),
         ("fs.write", "Write a workspace-relative text file.",
          {"path": string, "content": string, "createIfAbsent": boolean, "expectedVersion": string}, ["path", "content"]),
         ("fs.patch", "Replace literal text in a workspace-relative file.",

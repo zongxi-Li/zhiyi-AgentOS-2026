@@ -13,8 +13,8 @@ from contracts.workflow import MissionRecordState, RunRecordState, WorkflowStatu
 ACTIVE = {'pending', 'planning', 'running', 'retrying', 'waiting_review'}
 TERMINAL = {'completed', 'failed', 'cancelled', 'superseded'}
 ACTIONS = ('canInspect', 'canDiscuss', 'canCancel', 'canReview', 'canExecuteFormalAction',
-    'canResolveToolApproval', 'canAnswerPlanner', 'canCollaborate', 'canRetrySuccessor',
-    'canRerunSuccessor', 'canDecideRevision', 'canApplyRevision', 'canDelete')
+    'canResolveToolApproval', 'canAnswerPlanner', 'canCollaborate', 'canSetPermission', 'canRetrySuccessor',
+    'canRecoverCurrentRun', 'canRerunSuccessor', 'canDecideRevision', 'canApplyRevision', 'canDelete')
 EVIDENCE_ERRORS = (KeyError, ValueError, TypeError, AttributeError, RuntimeError, sqlite3.Error, PermissionError, HTTPException)
 
 
@@ -63,12 +63,13 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
     result = {**dict.fromkeys(ACTIONS, False), 'schemaVersion': 1,
         'missionId': run.mission_id, 'runId': run.run_id, 'runtimeRevision': run.runtime_revision,
         'status': status, 'isExecutionActive': status in ACTIVE, 'isSuperseded': is_superseded(run),
-        'lineage': lineage, 'formalActions': [], 'retryStepId': None}
+        'lineage': lineage, 'formalActions': [], 'retryStepId': None, 'retryMode': None}
     reasons = dict.fromkeys(ACTIONS, 'EVIDENCE_UNAVAILABLE')
     reasons.update(canCancel='RUN_NOT_ACTIVE', canCollaborate='RUN_NOT_ACTIVE',
         canReview='REVIEW_EVIDENCE_UNAVAILABLE' if status == 'waiting_review' else 'RUN_NOT_WAITING_REVIEW',
         canAnswerPlanner='NO_VERIFIED_PLANNER_QUESTION', canExecuteFormalAction='FORMAL_AUTHORITY_UNAVAILABLE',
         canResolveToolApproval='NO_VERIFIED_TOOL_APPROVAL', canRetrySuccessor='RECOVERY_EVIDENCE_UNAVAILABLE',
+        canRecoverCurrentRun='RECOVERY_EVIDENCE_UNAVAILABLE',
         canRerunSuccessor='RUN_NOT_TERMINAL', canDelete='RUN_NOT_TERMINAL',
         canDecideRevision='NO_APPLICABLE_REVISION_CHANGE', canApplyRevision='NO_APPLICABLE_REVISION_DECISION')
 
@@ -84,6 +85,8 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
                 if not result[action]:
                     reasons[action] = reason
             result['formalActions'] = []
+            result['retryStepId'] = None
+            result['retryMode'] = None
         result['unavailableReasons'] = [{'action': action, 'code': code} for action, code in reasons.items()]
         return result
 
@@ -127,6 +130,13 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
                 allow('canDelete')
             return finish('RUN_SUPERSEDED')
         formal_write_proven = not run.execution_state.get('planningCommitRequired') or semantic is not None
+        if formal_write_proven:
+            try:
+                from app.tools.task_approval import assert_task_policy_target
+                assert_task_policy_target(runtime.workflow_store, run)
+                allow('canSetPermission')
+            except EVIDENCE_ERRORS:
+                reasons['canSetPermission'] = 'TASK_POLICY_TARGET_UNAVAILABLE'
         if status in ACTIVE:
             allow('canCancel')
             if formal_write_proven:
@@ -150,11 +160,32 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
                         validate_only=True)
                     allow('canRetrySuccessor')
                     result['retryStepId'] = step.step_id
+                    result['retryMode'] = 'successor_run'
                     break
                 except EVIDENCE_ERRORS:
                     pass
-        elif status == 'failed':
+        elif status in {'failed', 'waiting_review'} and run.execution_state.get('executionPermitId'):
             reasons['canRetrySuccessor'] = 'PERMIT_RETRY_REQUIRES_INTERNAL_AUTHORITY'
+            try:
+                from runtime.planning_operations import RuntimeTaskOperations
+                operations = RuntimeTaskOperations(runtime)
+                recovery_authorization = operations.assert_current_run_recovery(run)
+                for step in run.steps:
+                    if step.status.value != 'failed':
+                        continue
+                    try:
+                        runtime.runtime_recovery_coordinator.prepare_single_step_retry(
+                            run.run_id, step.step_id, expected_runtime_revision=run.runtime_revision,
+                            reuse_source_run=True, validate_only=True,
+                            **({'operator_recovery': recovery_authorization} if recovery_authorization else {}))
+                        allow('canRecoverCurrentRun')
+                        result['retryStepId'] = step.step_id
+                        result['retryMode'] = 'current_run'
+                        break
+                    except EVIDENCE_ERRORS:
+                        pass
+            except EVIDENCE_ERRORS:
+                pass
         if status == 'waiting_review' and formal_write_proven:
             try:
                 from components.executor import ACGExecutionState

@@ -173,6 +173,8 @@ class ModelInvocationRequest(BaseModel):
     schema_message_index: int | None = Field(default=None, alias="schemaMessageIndex", ge=0, strict=True)
     request_budget: ModelRequestBudget | None = Field(default=None, alias="requestBudget")
     options: dict[str, Any] = Field(default_factory=dict)
+    # Local display opt-in, never a provider wire parameter or audit field.
+    stream_reasoning: bool = Field(default=False, alias="streamReasoning", exclude=True)
     # 模型请求与 ACG 节点提交边界的关联标识。它不是 prompt、模型正文或检查点状态；
     # 支持幂等键的应用层传输可将它安全映射为 HTTP Header 或供应商请求标识。
     commit_id: str | None = Field(default=None, alias="commitId")
@@ -188,6 +190,9 @@ class ModelInvocationResponse(BaseModel):
     # Transient conversation data. Never copied into metadata/audit projections.
     tool_calls: list[dict[str, Any]] = Field(default_factory=list, alias="toolCalls")
     assistant_message: dict[str, Any] | None = Field(default=None, alias="assistantMessage")
+    # An invalid final candidate is retained only for same-session correction.
+    # It is never a successful content={} result, nor an external tool failure.
+    output_error: Literal["MODEL_OUTPUT_INVALID_JSON"] | None = Field(default=None, alias="outputError")
     provider: str
     model: str
     usage: dict[str, Any] = Field(default_factory=dict)
@@ -200,7 +205,7 @@ class ModelStreamEvent(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
 
     request_id: str = Field(alias="requestId", min_length=1)
-    event_type: Literal["activity", "delta", "tool_call", "completed"] = Field(alias="eventType")
+    event_type: Literal["activity", "delta", "reasoning_delta", "tool_call", "sealed", "completed"] = Field(alias="eventType")
     delta: str = ""
     provider: str
     model: str
@@ -209,7 +214,7 @@ class ModelStreamEvent(BaseModel):
     tool_call_id: str | None = Field(default=None, alias="toolCallId")
     tool_name: str | None = Field(default=None, alias="toolName")
     tool_arguments: str = Field(default="", alias="toolArguments")
-    # Internal final turn hand-off, including provider-required tool context.
+    # Internal sealed/final turn hand-off, including provider-required tool context.
     # Never serialize it into public events, traces or audit metadata.
     response: ModelInvocationResponse | None = Field(default=None, exclude=True)
     metadata: dict[str, Any] = Field(default_factory=dict)
