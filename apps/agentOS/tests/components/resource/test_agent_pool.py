@@ -59,6 +59,23 @@ def test_pool_exposes_separate_definition_registration_and_resource_facts(pool):
     assert pool.registry.resolve_by_id("analyst") is pool.registry.registrations()[0].implementation
 
 
+def test_failed_instance_exclusions_are_hard_constraints_for_the_existing_binder(pool):
+    failed = pool.instances()[0].ref
+    available = pool.register_instance(_agent(), instance_id="available-replica")
+    pool.resource_plane.heartbeat_runtime(EMBEDDED_AGENTS_RUNTIME_ID)
+    binder = ResourceBinder(pool.resource_plane)
+    requirement = ExecutionRequirement(requiredCapabilities=["analysis"],
+        excludedRuntimeIds=[failed.resource_id], preferences={"agentRole": "analyst"})
+    decision = binder.bind_ready(run_id="run", step_id="step", attempt_id="fresh",
+        requirement=requirement, agent_candidates=pool.local_candidates())
+    assert decision.status == "allocated" and decision.binding.agent_registration == available
+    assert binder.release_binding(decision.binding)
+    requirement = requirement.model_copy(update={"excluded_runtime_ids": [failed.resource_id, available.resource_id]})
+    exhausted = binder.bind_ready(run_id="run", step_id="step", attempt_id="exhausted",
+        requirement=requirement, agent_candidates=pool.local_candidates())
+    assert exhausted.status == "rejected" and exhausted.binding is None
+
+
 def test_global_host_refresh_uses_local_instance_state_and_not_remote_replicas(pool):
     local = pool.register_instance(_agent(), instance_id="local-replica", enabled=False)
     assert refresh_embedded_agents_runtime(pool.resource_plane, pool.registry).capacity == 2

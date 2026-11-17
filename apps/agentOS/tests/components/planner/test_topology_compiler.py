@@ -74,6 +74,153 @@ def test_terminal_edge_has_internal_provenance_but_public_relation_does_not() ->
     }
 
 
+def _delivery_catalog() -> CapabilityCatalog:
+    return CapabilityCatalog([
+        PlanningCapabilityDescriptor(capabilityId="analysis", displayName="Analyze"),
+        PlanningCapabilityDescriptor(capabilityId="artifact_generation", displayName="Write"),
+        PlanningCapabilityDescriptor(capabilityId="verification", displayName="Verify"),
+    ])
+
+
+def _final_task(key: str = "final") -> PlannedTask:
+    return _task(key, "artifact_generation").model_copy(update={
+        "logical_role": "final_synthesis", "produced_artifacts": ("report",),
+    })
+
+
+@pytest.mark.parametrize("origin", [None, EdgeOrigin.PLAN_PATCH, EdgeOrigin.TEMPLATE_DECLARED,
+                                   EdgeOrigin.FALLBACK_GENERATED])
+def test_final_synthesis_waits_for_verification_and_receives_latest_report(origin) -> None:
+    nodes = [_task("draft", "artifact_generation"), _task("check", "verification"),
+             _task("revision", "artifact_generation"), _task("recheck", "verification"),
+             _final_task()]
+    relations = [TaskPlanRelation(sourceKey=source, targetKey=target, relationType="depends_on")
+                 for source, target in [("draft", "check"), ("check", "revision"),
+                                        ("revision", "recheck")]]
+    compiler = TaskPlanTopologyCompiler(_delivery_catalog())
+    result = (compiler.compile(nodes=nodes, raw_relations=relations, control_policies=())
+              if origin is None else compiler.validate_existing_plan(
+                  nodes=nodes, raw_relations=relations, control_policies=(), relation_origin=origin))
+
+    pairs = {(edge.source_key, edge.target_key) for edge in result.candidate.edges}
+    assert ("recheck", "final") in pairs
+    assert ("revision", "final") in pairs
+    assert ("draft", "final") not in pairs
+    assert not any(source == "final" for source, _ in pairs)
+    assert all(compiler._has_path(result.candidate.edges, node.key, "final") for node in nodes)
+    for edge in result.audit.terminal_edges:
+        assert edge.mutation_policy is EdgeMutationPolicy.REGENERABLE
+
+
+def test_final_synthesis_keeps_parallel_report_branches_independent() -> None:
+    nodes = [_task("report-a", "artifact_generation"), _task("check-a", "verification"),
+             _task("report-b", "artifact_generation"), _task("check-b", "verification"),
+             _final_task()]
+    result = TaskPlanTopologyCompiler(_delivery_catalog()).compile(
+        nodes=nodes,
+        raw_relations=[TaskPlanRelation(sourceKey=source, targetKey=target, relationType="depends_on")
+                       for source, target in [("report-a", "check-a"), ("report-b", "check-b")]],
+        control_policies=(),
+    )
+    pairs = {(edge.source_key, edge.target_key) for edge in result.candidate.edges}
+    assert {("report-a", "final"), ("report-b", "final"),
+            ("check-a", "final"), ("check-b", "final")} <= pairs
+    assert ("check-a", "report-b") not in pairs
+    assert ("check-b", "report-a") not in pairs
+
+
+def test_final_synthesis_retains_distinct_upstream_artifact_deliverables() -> None:
+    report = _task("report", "artifact_generation").model_copy(update={"produced_artifacts": ("report",)})
+    appendix = _task("appendix", "artifact_generation").model_copy(update={"produced_artifacts": ("appendix",)})
+    result = TaskPlanTopologyCompiler(_delivery_catalog()).compile(
+        nodes=[report, appendix, _task("check", "verification"), _final_task()],
+        raw_relations=[TaskPlanRelation(sourceKey=source, targetKey=target, relationType="depends_on")
+                       for source, target in [("report", "appendix"), ("appendix", "check")]],
+        control_policies=(),
+    )
+    pairs = {(edge.source_key, edge.target_key) for edge in result.candidate.edges}
+    assert {("report", "final"), ("appendix", "final"), ("check", "final")} <= pairs
+
+
+def test_final_synthesis_stays_after_verification_loop_exit() -> None:
+    policy = VerificationLoopPolicy(bodyEntryKey="draft", bodyExitKey="verify", conditionSourceKey="verify")
+    result = TaskPlanTopologyCompiler(_delivery_catalog()).compile(
+        nodes=[_task("draft", "artifact_generation"), _task("verify", "verification"), _final_task()],
+        raw_relations=[TaskPlanRelation(sourceKey="draft", targetKey="verify", relationType="depends_on")],
+        control_policies=(policy,),
+    )
+    pairs = {(edge.source_key, edge.target_key) for edge in result.candidate.edges}
+    assert pairs == {("draft", "verify"), ("draft", "final"), ("verify", "final")}
+    assert result.control_policies == (policy,)
+
+
+def test_final_synthesis_runs_after_bounded_loop_finishes() -> None:
+    import asyncio
+    from components.executor.compiler import ACGGraphCompiler
+    from components.executor.graph import ACGExecutionState
+    from components.planner.acg_lowerer import ACGLowerer
+    from components.planner.cognitive_router import CapabilityBinding, CollaborationNetwork
+    from components.planner.lowering_input import build_acg_lowering_input
+    from support.acg.models import TaskSemanticProfile
+
+    catalog = _delivery_catalog()
+    nodes = [_task("draft", "artifact_generation"), _task("verify", "verification"), _final_task()]
+    result = TaskPlanTopologyCompiler(catalog).compile(
+        nodes=nodes,
+        raw_relations=[TaskPlanRelation(sourceKey="draft", targetKey="verify", relationType="depends_on")],
+        control_policies=(VerificationLoopPolicy(
+            bodyEntryKey="draft", bodyExitKey="verify", conditionSourceKey="verify", maxRevisions=1,
+        ),),
+    )
+    plan = TaskPlan(missionId="mission_0123456789ab", nodes=tuple(nodes),
+                    relations=result.task_plan_relations, controlPolicies=result.control_policies)
+    lowering = build_acg_lowering_input(
+        mission_id=plan.mission_id, profile=TaskSemanticProfile(primaryGoal="Revise the report"),
+        task_plan=plan, capability_catalog=catalog,
+        network=CollaborationNetwork(bindings=[
+            CapabilityBinding(capability=capability, agent_name="writer", score=1.0)
+            for capability in ("artifact_generation", "verification")
+        ]),
+    )
+    ids = {binding.plan_node_key: binding.acg_node_id for binding in lowering.implementation_bindings}
+    blueprint = ACGLowerer().lower(lowering)
+    graph = ACGGraphCompiler().compile(blueprint, run_id="run_0123456789ab")
+    calls = []
+
+    async def runner(step_id, state):
+        calls.append(step_id)
+        status = "failed" if step_id == ids["verify"] and calls.count(step_id) == 1 else "passed"
+        return {"outputRef": f"output:{step_id}:{calls.count(step_id)}",
+                "routeValue": {"verification": {"status": status}}}
+
+    async def execute():
+        state = ACGExecutionState(runId="run_0123456789ab", graphId=blueprint.graph_id)
+        async for _ in graph.astream(state, runner):
+            pass
+        return state
+
+    state = asyncio.run(execute())
+    assert calls == [ids["draft"], ids["verify"], ids["draft"], ids["verify"], ids["final"]]
+    assert state.output_refs[ids["draft"]] == f"output:{ids['draft']}:2"
+
+
+def test_multiple_final_synthesis_nodes_are_rejected() -> None:
+    with pytest.raises(TopologyCompileError, match="multiple final synthesis"):
+        TaskPlanTopologyCompiler(_delivery_catalog()).compile(
+            nodes=[_final_task("one"), _final_task("two")], raw_relations=[], control_policies=(),
+        )
+
+
+def test_final_synthesis_cannot_precede_a_required_business_task() -> None:
+    with pytest.raises(TopologyCompileError) as captured:
+        TaskPlanTopologyCompiler(_delivery_catalog()).compile(
+            nodes=[_final_task(), _task("required-later", "verification")],
+            raw_relations=[TaskPlanRelation(sourceKey="final", targetKey="required-later", relationType="depends_on")],
+            control_policies=(),
+        )
+    assert captured.value.conflict.code is TopologyConflictCode.TERMINAL_CONNECTION_CONFLICT
+
+
 def test_verification_loop_is_not_projected_as_static_back_edge() -> None:
     policy = VerificationLoopPolicy(
         bodyEntryKey="draft", bodyExitKey="verify", conditionSourceKey="verify"
@@ -281,19 +428,43 @@ def test_no_solution_returns_binding_conflict_with_candidate_evidence() -> None:
     assert all(item.reason == "cycle" and item.path for item in conflict.binding_rejections)
 
 
-def test_search_budget_exhaustion_fails_closed() -> None:
+def test_legacy_search_budget_does_not_reject_valid_bindings() -> None:
     nodes = [_task("P1", "cap_a"), _task("C1", "cap_b"),
              _task("P2", "cap_a"), _task("C2", "cap_b")]
     requirements = [
         CapabilityRequirement("r1", "cap_a", "cap_b", "C1", ("P1", "P2")),
         CapabilityRequirement("r2", "cap_a", "cap_b", "C2", ("P1", "P2")),
     ]
+    audit = CapabilityBindingSolver(max_search_states=1).solve(
+        nodes=nodes, requirements=requirements, base_edges=[]
+    )
+    assert len(audit.selected_bindings) == 2 and audit.search_states_explored == 2
+
+
+def test_exhausted_search_keeps_cycle_evidence_through_a_backtracked_binding() -> None:
+    nodes = [_task("P", "producer_one"), _task("C", "consumer_one"),
+             _task("Q", "producer_two"), _task("D", "consumer_two")]
+    requirements = [CapabilityRequirement("r1", "producer_one", "consumer_one", "C", ("P",)),
+                    CapabilityRequirement("r2", "producer_two", "consumer_two", "D", ("Q",))]
+    base = [TopologyEdge("C", "Q", "depends_on", EdgeOrigin.MODEL, EdgeMutationPolicy.REPAIRABLE),
+            TopologyEdge("D", "P", "depends_on", EdgeOrigin.MODEL, EdgeMutationPolicy.REPAIRABLE)]
     with pytest.raises(TopologyCompileError) as captured:
-        CapabilityBindingSolver(max_search_states=1).solve(
-            nodes=nodes, requirements=requirements, base_edges=[]
-        )
-    assert captured.value.conflict.code is TopologyConflictCode.CAPABILITY_BINDING_SEARCH_EXHAUSTED
-    assert captured.value.conflict.search_states_explored == 2
+        CapabilityBindingSolver().solve(nodes=nodes, requirements=requirements, base_edges=base)
+    conflict = captured.value.conflict
+    assert conflict.code is TopologyConflictCode.CAPABILITY_BINDING_CONFLICT
+    assert len(conflict.cycle_edges) == 4 and len(conflict.rebindable_edges) == 2
+    assert len(conflict.repairable_edges) == 2 and any(
+        item.reason == "downstream_unsatisfied" for item in conflict.binding_rejections)
+
+
+def test_growing_binding_history_has_no_total_or_recursion_depth_limit() -> None:
+    consumers = tuple(f"C:{index:04}" for index in range(1100))
+    nodes = [_task("P", "cap_a"), *(_task(key, "cap_b") for key in consumers)]
+    requirements = [CapabilityRequirement(f"r:{key}", "cap_a", "cap_b", key, ("P",))
+                    for key in consumers]
+    audit = CapabilityBindingSolver().solve(nodes=nodes, requirements=requirements, base_edges=[])
+    assert len(audit.selected_bindings) == audit.search_states_explored == 1100
+    assert not audit.rejected_candidates and audit.backtrack_count == 0
 
 
 def test_bounded_solver_backtracks_out_of_greedy_trap() -> None:

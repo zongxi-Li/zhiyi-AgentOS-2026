@@ -362,15 +362,13 @@ def test_concurrent_identical_submits_execute_exactly_once(gateway):
     assert gw.submit(session.session_id, read_request("race")).replayed
 
 
-def test_budget_exhaustion_is_deterministic(gateway):
+def test_legacy_action_limit_does_not_revoke_valid_session_or_block_replays(gateway):
     gw, _, run_id, _, _ = gateway
     session = gw.open_session(run_id, max_actions=2)
-    assert isinstance(gw.submit(session.session_id, read_request("b1")), PlannerReadResult)
-    assert isinstance(gw.submit(session.session_id, read_request("b2")), PlannerReadResult)
-    exhausted = gw.submit(session.session_id, read_request("b3"))
-    assert exhausted.code == "BUDGET_EXHAUSTED" and not exhausted.retryable
-    # 预算优先于幂等重放：耗尽后重放同样被拒。
-    assert gw.submit(session.session_id, read_request("b1")).code == "BUDGET_EXHAUSTED"
+    for index in range(40):
+        assert isinstance(gw.submit(session.session_id, read_request(f"b{index}")), PlannerReadResult)
+    assert gw.submit(session.session_id, read_request("b1")).replayed
+    assert session.actions_used == 40 and session.active and session.max_actions is None
 
 
 def test_deadline_exhaustion_revokes_session(gateway):
