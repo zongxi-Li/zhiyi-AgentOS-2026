@@ -17,15 +17,17 @@ const props = defineProps<{ node: NodeRuntimeState; objective?: string | null; r
 const now = ref(Date.now())
 const ongoing = computed(() => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(props.node.status))
 const waiting = computed(() => ongoing.value && !props.node.firstTokenAt && !props.node.chunkCount && props.node.phase !== 'FINALIZING')
+const waitingSince = computed(() => props.node.phase === 'WAITING_RESOURCE' ? props.node.queuedAt : props.node.modelStartedAt)
 const waitingSeconds = computed(() => {
-  if (!waiting.value || !props.node.modelStartedAt) return null
-  const start = Date.parse(props.node.modelStartedAt)
+  if (!waiting.value || !waitingSince.value) return null
+  const start = Date.parse(waitingSince.value)
   return Number.isFinite(start) ? Math.max(0, Math.floor((now.value - start) / 1000)) : null
 })
 const activity = computed(() => {
+  if (props.node.phase === 'WAITING_RESOURCE') return '正在等待可用的 Agent 执行资源。'
   if (props.node.phase === 'FINALIZING') return '正文已返回，正在校验步骤结果。'
   if (props.node.firstTokenAt || props.node.chunkCount) return '已收到模型正文，正在持续生成。'
-  if (props.node.lastActivityAt) return '已收到模型活动信号，正文尚未返回。'
+  if (props.node.lastActivityAt && props.node.phase !== 'WAITING') return '已收到模型活动信号，正文尚未返回。'
   return props.node.modelStartedAt ? '模型请求已发出，正在等待正文。' : '步骤已开始，正在准备模型请求。'
 })
 let timer: ReturnType<typeof setInterval> | undefined
@@ -34,9 +36,9 @@ function stopClock() { if (timer) clearInterval(timer); timer = undefined }
 function updateClock() {
   stopClock()
   now.value = Date.now()
-  if (!suspended && waiting.value && props.node.modelStartedAt) timer = setInterval(() => { now.value = Date.now() }, 1000)
+  if (!suspended && waiting.value && waitingSince.value) timer = setInterval(() => { now.value = Date.now() }, 1000)
 }
-watch(() => [waiting.value, props.node.modelStartedAt], updateClock, { immediate: true })
+watch(() => [waiting.value, waitingSince.value], updateClock, { immediate: true })
 onDeactivated(() => { suspended = true; stopClock() })
 onActivated(() => { suspended = false; updateClock() })
 onBeforeUnmount(stopClock)

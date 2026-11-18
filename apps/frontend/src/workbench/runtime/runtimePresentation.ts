@@ -34,19 +34,23 @@ export interface RuntimeSemanticPresentation {
 
 export type RuntimePresentationInput = RuntimeEvent | RuntimeTraceObservation | RuntimeEventObservation
 
-interface SourceEvent {
+interface GroupingEvent {
+  source: RuntimePresentationInput
   eventId: string
   eventType: string
   sequence: number | null
-  timestamp: string | null
-  durationMs: number | null
   stepId: string | null
   attemptId: string | null
   payload: Record<string, unknown>
+}
+
+interface SourceEvent extends GroupingEvent {
+  timestamp: string | null
+  durationMs: number | null
   observation: string | null
 }
 
-type MutablePresentation = RuntimeSemanticPresentation & { closed?: boolean }
+type MutablePresentation = RuntimeSemanticPresentation
 
 const MAX_TITLE_LENGTH = 160
 const MAX_SUMMARY_LENGTH = 320
@@ -225,29 +229,34 @@ const pickText = (payload: Record<string, unknown>, ...keys: string[]): string |
   return null
 }
 
-const normalize = (event: RuntimePresentationInput): SourceEvent => {
+const normalizeGroupingEvent = (event: RuntimePresentationInput): GroupingEvent => {
   const isRuntimeEvent = 'sequence' in event
   const payload = 'payload' in event ? record(event.payload) : {}
   const stepId = 'stepId' in event ? text(event.stepId) : text(event.nodeId) || text(payload.stepId)
   return {
+    source: event,
     eventId: event.eventId,
     eventType: event.eventType,
     sequence: isRuntimeEvent && typeof event.sequence === 'number' ? event.sequence : null,
-    timestamp: text(event.timestamp),
-    durationMs: 'durationMs' in event
-      ? number(event.durationMs)
-      : number(payload.durationMs),
     stepId,
     attemptId: isRuntimeEvent ? text(event.attemptId) : text(payload.attemptId),
-    payload,
-    observation: 'observation' in event
-      ? text(event.observation)
-      : 'summary' in event ? text(event.summary) : null
+    payload
   }
 }
 
-const orderedEvents = (events: readonly RuntimePresentationInput[]): SourceEvent[] => events
-  .map((event, index) => ({ event: normalize(event), index }))
+const normalize = (event: GroupingEvent): SourceEvent => ({
+  ...event,
+  timestamp: text(event.source.timestamp),
+  durationMs: 'durationMs' in event.source
+    ? number(event.source.durationMs)
+    : number(event.payload.durationMs),
+  observation: 'observation' in event.source
+    ? text(event.source.observation)
+    : 'summary' in event.source ? text(event.source.summary) : null
+})
+
+const orderedEvents = (events: readonly RuntimePresentationInput[]): GroupingEvent[] => events
+  .map((event, index) => ({ event: normalizeGroupingEvent(event), index }))
   .sort((left, right) => {
     if (left.event.sequence != null && right.event.sequence != null && left.event.sequence !== right.event.sequence) {
       return left.event.sequence - right.event.sequence
@@ -256,19 +265,19 @@ const orderedEvents = (events: readonly RuntimePresentationInput[]): SourceEvent
   })
   .map(item => item.event)
 
-const normalizedType = (event: SourceEvent): string => event.eventType.trim().toLowerCase()
+const normalizedType = (event: GroupingEvent): string => event.eventType.trim().toLowerCase()
 
-const isModelEvent = (event: SourceEvent): boolean => {
+const isModelEvent = (event: GroupingEvent): boolean => {
   const type = normalizedType(event)
   return MODEL_TYPES.has(type) || type.startsWith('model.') || type.startsWith('planner.model.')
 }
 
-const isToolEvent = (event: SourceEvent): boolean => {
+const isToolEvent = (event: GroupingEvent): boolean => {
   const type = normalizedType(event)
   return type === 'tool_called' || type.startsWith('tool.') || type.includes('tool_call')
 }
 
-const isCommandEvent = (event: SourceEvent): boolean => {
+const isCommandEvent = (event: GroupingEvent): boolean => {
   const type = normalizedType(event)
   const kind = pickText(event.payload, 'kind', 'type')?.toLowerCase()
   return type.startsWith('command.')
@@ -278,7 +287,7 @@ const isCommandEvent = (event: SourceEvent): boolean => {
     || kind === 'command'
 }
 
-const isArtifactEvent = (event: SourceEvent): boolean => {
+const isArtifactEvent = (event: GroupingEvent): boolean => {
   const type = normalizedType(event)
   return type === 'data_produced'
     || type === 'data_consumed'
@@ -288,7 +297,7 @@ const isArtifactEvent = (event: SourceEvent): boolean => {
     || /(^|[._])artifact([._]|$)/.test(type)
 }
 
-const isErrorEvent = (event: SourceEvent): boolean => {
+const isErrorEvent = (event: GroupingEvent): boolean => {
   const type = normalizedType(event)
   const status = pickText(event.payload, 'status', 'state', 'outcome')?.toLowerCase()
   return status === 'failed'
@@ -300,9 +309,9 @@ const isErrorEvent = (event: SourceEvent): boolean => {
     || type.includes('timeout')
 }
 
-const isCompletionEvent = (event: SourceEvent): boolean => COMPLETION_TYPES.has(normalizedType(event))
+const isCompletionEvent = (event: GroupingEvent): boolean => COMPLETION_TYPES.has(normalizedType(event))
 
-const presentationKind = (event: SourceEvent): RuntimePresentationKind => {
+const presentationKind = (event: GroupingEvent): RuntimePresentationKind => {
   if (isModelEvent(event)) return 'model'
   if (isToolEvent(event)) return 'tool'
   if (isCommandEvent(event)) return 'command'
@@ -312,7 +321,7 @@ const presentationKind = (event: SourceEvent): RuntimePresentationKind => {
   return 'generic'
 }
 
-const statusFrom = (event: SourceEvent, kind: RuntimePresentationKind): RuntimePresentationStatus => {
+const statusFrom = (event: GroupingEvent, kind: RuntimePresentationKind): RuntimePresentationStatus => {
   const rawStatus = pickText(event.payload, 'status', 'state', 'outcome')?.toLowerCase()
   if (rawStatus === 'pending' || rawStatus === 'queued') return 'pending'
   if (rawStatus === 'running' || rawStatus === 'started' || rawStatus === 'in_progress') return 'running'
@@ -321,6 +330,7 @@ const statusFrom = (event: SourceEvent, kind: RuntimePresentationKind): RuntimeP
   if (['success', 'succeeded', 'completed', 'complete', 'produced', 'resolved'].includes(rawStatus || '')) return 'success'
 
   const type = normalizedType(event)
+  if (type === 'tool.capacity_waiting' || type === 'node.queued') return 'pending'
   if (type.includes('failed') || type.includes('error') || type.includes('violation') || type.includes('exception')) return 'failed'
   if (type.includes('cancel')) return 'cancelled'
   if (type.includes('start') || type.includes('activity') || type.includes('delta') || type.includes('progress') || type.includes('first_token')) return 'running'
@@ -353,6 +363,7 @@ const modelName = (event: SourceEvent): string | null => pickText(
 const eventSummary = (event: SourceEvent, kind: RuntimePresentationKind): string => {
   const direct = event.observation || pickText(event.payload, 'summary', 'message', 'description')
   if (direct) return direct
+  if (normalizedType(event) === 'node.queued') return [pickText(event.payload, 'nodeTitle'), '等待 Agent 执行资源'].filter(Boolean).join(' · ')
 
   if (kind === 'model') {
     return [modelName(event) || '模型响应', pickText(event.payload, 'stage', 'phase')].filter(Boolean).join(' · ')
@@ -360,7 +371,8 @@ const eventSummary = (event: SourceEvent, kind: RuntimePresentationKind): string
   if (kind === 'tool') {
     return [
       pickText(event.payload, 'tool', 'name', 'toolName') || '工具调用',
-      pickText(event.payload, 'path', 'target', 'resource', 'query')
+      pickText(event.payload, 'path', 'target', 'resource', 'query'),
+      normalizedType(event) === 'tool.capacity_waiting' ? '等待执行资源' : null
     ].filter(Boolean).join(' · ')
   }
   if (kind === 'command') return pickText(event.payload, 'command', 'cmd', 'shell') || '命令执行'
@@ -378,6 +390,7 @@ const eventSummary = (event: SourceEvent, kind: RuntimePresentationKind): string
 }
 
 const titleFor = (event: SourceEvent, kind: RuntimePresentationKind): string => {
+  if (normalizedType(event) === 'node.queued') return '等待执行资源'
   if (kind === 'model') return modelName(event) ? `模型 · ${modelName(event)}` : '模型响应'
   if (kind === 'tool') return pickText(event.payload, 'tool', 'name', 'toolName') || '工具调用'
   if (kind === 'command') return '执行命令'
@@ -493,25 +506,25 @@ const appendEvent = (item: MutablePresentation, event: SourceEvent, kind: Runtim
   item.metrics.events = item.eventIds.length
 }
 
-const groupValue = (event: SourceEvent, ...keys: string[]): string | null => (
+const groupValue = (event: GroupingEvent, ...keys: string[]): string | null => (
   pickText(event.payload, ...keys)
   || pickText(event.payload, 'executionId', 'execution_id')
   || null
 )
 
-const modelIdentity = (event: SourceEvent): string | null => (
+const modelIdentity = (event: GroupingEvent): string | null => (
   pickText(event.payload, 'callKey', 'modelCallId', 'callId')
   || event.attemptId
   || pickText(event.payload, 'attemptId', 'executionId', 'execution_id', 'requestId')
   || null
 )
 
-const lifecycleStarts = (event: SourceEvent): boolean => {
+const lifecycleStarts = (event: GroupingEvent): boolean => {
   const type = normalizedType(event)
   return type.endsWith('.started') || type.endsWith('.called') || type.endsWith('.requested') || type.endsWith('.queued')
 }
 
-const lifecycleTerminal = (event: SourceEvent): boolean => {
+const lifecycleTerminal = (event: GroupingEvent): boolean => {
   const status = statusFrom(event, 'generic')
   return ['success', 'failed', 'cancelled'].includes(status)
     || /\.(completed|failed|cancelled|canceled|succeeded)$/.test(normalizedType(event))
@@ -547,7 +560,7 @@ const updateGrouped = (item: MutablePresentation, event: SourceEvent, kind: 'too
 }
 
 const finalize = (item: MutablePresentation): RuntimeSemanticPresentation => {
-  const { closed: _closed, ...presentation } = item
+  const presentation = { ...item }
   presentation.id = `runtime:${safeText(presentation.id.slice('runtime:'.length), 160)}`
   presentation.title = safeDisplayText(presentation.title, MAX_TITLE_LENGTH)
   presentation.summary = safeDisplayText(presentation.summary, MAX_SUMMARY_LENGTH)
@@ -572,14 +585,22 @@ const finalize = (item: MutablePresentation): RuntimeSemanticPresentation => {
   return presentation
 }
 
-export const projectRuntimePresentations = (
-  events: readonly RuntimePresentationInput[]
-): RuntimeSemanticPresentation[] => {
-  const output: MutablePresentation[] = []
-  const modelGroups = new Map<string, MutablePresentation>()
-  const toolGroups = new Map<string, MutablePresentation>()
-  const commandGroups = new Map<string, MutablePresentation>()
-  const activeUnidentifiedModels = new Map<string, MutablePresentation>()
+interface PresentationGroup {
+  index: number
+  closed?: boolean
+}
+
+// Counting and rendering share lifecycle decisions; only rendering materializes bodies.
+const visitPresentationGroups = (
+  events: readonly RuntimePresentationInput[],
+  visit?: (event: GroupingEvent, kind: RuntimePresentationKind, groupIndex: number, created: boolean) => void
+): number => {
+  let count = 0
+  const createGroup = (): PresentationGroup => ({ index: count++ })
+  const modelGroups = new Map<string, PresentationGroup>()
+  const toolGroups = new Map<string, PresentationGroup>()
+  const commandGroups = new Map<string, PresentationGroup>()
+  const activeUnidentifiedModels = new Map<string, PresentationGroup>()
   const ambiguousUnidentifiedModelSteps = new Set<string>()
 
   for (const event of orderedEvents(events)) {
@@ -587,18 +608,15 @@ export const projectRuntimePresentations = (
     if (kind === 'model') {
       const stepKey = event.stepId || 'run'
       const identity = modelIdentity(event)
-      let item: MutablePresentation | undefined
+      let item: PresentationGroup | undefined
       let created = false
       if (identity) {
         const key = `${stepKey}:${identity}`
         item = modelGroups.get(key)
         if (!item || lifecycleStarts(event)) {
-          item = basePresentation(event, kind)
-          output.push(item)
+          item = createGroup()
           modelGroups.set(key, item)
           created = true
-        } else {
-          updateModel(item, event)
         }
       } else {
         const active = activeUnidentifiedModels.get(stepKey)
@@ -610,25 +628,21 @@ export const projectRuntimePresentations = (
         }
 
         if (ambiguousUnidentifiedModelSteps.has(stepKey)) {
-          item = basePresentation(event, kind)
-          output.push(item)
+          item = createGroup()
           item.closed = lifecycleTerminal(event)
           created = true
         } else if (starts) {
-          item = basePresentation(event, kind)
-          output.push(item)
+          item = createGroup()
           activeUnidentifiedModels.set(stepKey, item)
           created = true
         } else if (active && !active.closed) {
           item = active
-          updateModel(item, event)
         } else {
-          item = basePresentation(event, kind)
-          output.push(item)
+          item = createGroup()
           created = true
         }
       }
-      if (item && created) updateModel(item, event)
+      if (item) visit?.(event, kind, item.index, created)
       if (item && lifecycleTerminal(event)) {
         item.closed = true
         if (!identity && activeUnidentifiedModels.get(stepKey) === item) activeUnidentifiedModels.delete(stepKey)
@@ -638,32 +652,55 @@ export const projectRuntimePresentations = (
 
     if (kind === 'tool' || kind === 'command') {
       const groups = kind === 'tool' ? toolGroups : commandGroups
+      const operationKey = kind === 'tool' ? pickText(event.payload, 'operationKey') : null
       const keyValue = kind === 'tool'
         ? groupValue(event, 'toolCallId', 'callId')
         : groupValue(event, 'commandId', 'commandKey', 'callId')
-      const key = `${event.stepId || 'run'}:${keyValue || event.eventId}`
+      const key = operationKey
+        ? JSON.stringify([event.stepId, event.attemptId, operationKey])
+        : `${event.stepId || 'run'}:${keyValue || event.eventId}`
       let item = groups.get(key)
-      if (!item || lifecycleStarts(event)) {
-        item = basePresentation(event, kind)
-        output.push(item)
+      let created = false
+      if (!item || (!operationKey && lifecycleStarts(event))) {
+        item = createGroup()
         groups.set(key, item)
-      } else {
-        updateGrouped(item, event, kind)
+        created = true
       }
-      if (item.eventIds.length === 1) updateGrouped(item, event, kind)
-      if (lifecycleTerminal(event)) item.closed = true
+      visit?.(event, kind, item.index, created)
       continue
     }
 
-    output.push(basePresentation(event, kind))
+    const index = count++
+    visit?.(event, kind, index, true)
   }
 
+  return count
+}
+
+export const projectRuntimePresentations = (
+  events: readonly RuntimePresentationInput[]
+): RuntimeSemanticPresentation[] => {
+  const output: MutablePresentation[] = []
+  visitPresentationGroups(events, (groupingEvent, kind, index, created) => {
+    const event = normalize(groupingEvent)
+    if (created) output[index] = basePresentation(event, kind)
+    const item = output[index]!
+    if (kind === 'model') updateModel(item, event)
+    else if (kind === 'tool' || kind === 'command') updateGrouped(item, event, kind)
+  })
   return output.map(finalize)
 }
 
+const observationEvents = (
+  observation: Pick<RuntimeObservation, 'traces' | 'events'> | null | undefined
+): readonly RuntimePresentationInput[] => observation
+  ? observation.traces.length ? observation.traces : observation.events
+  : []
+
 export const projectRuntimeObservation = (
   observation: Pick<RuntimeObservation, 'traces' | 'events'> | null | undefined
-): RuntimeSemanticPresentation[] => {
-  if (!observation) return []
-  return projectRuntimePresentations(observation.traces.length ? observation.traces : observation.events)
-}
+): RuntimeSemanticPresentation[] => projectRuntimePresentations(observationEvents(observation))
+
+export const countRuntimeObservationPresentations = (
+  observation: Pick<RuntimeObservation, 'traces' | 'events'> | null | undefined
+): number => visitPresentationGroups(observationEvents(observation))

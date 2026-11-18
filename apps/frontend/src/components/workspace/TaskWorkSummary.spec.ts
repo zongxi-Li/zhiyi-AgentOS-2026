@@ -7,6 +7,25 @@ const wrappers: ReturnType<typeof mount>[] = []
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.useRealTimers() })
 
 describe('public task approach and model activity', () => {
+  it('shows Agent capacity waiting separately from model requests and stops its queue clock on admission', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-18T10:00:00Z'))
+    const store = new RunRuntimeStore('run')
+    store.apply({ eventId: 'queue', runId: 'run', nodeId: 'node', attemptId: 'a1', sequence: 1, eventType: 'node.queued',
+      timestamp: new Date().toISOString(), payload: { queuedAt: new Date().toISOString(), reason: 'NO_CAPACITY' } })
+    const wrapper = mount(TaskWorkSummary, { props: { node: store.nodes.node } }); wrappers.push(wrapper)
+    expect(wrapper.text()).toContain('正在等待可用的 Agent 执行资源')
+    expect(wrapper.text()).not.toContain('模型请求已发出')
+    await vi.advanceTimersByTimeAsync(65000)
+    expect(wrapper.text()).toContain('已等待 65 秒')
+    store.apply({ eventId: 'started', runId: 'run', nodeId: 'node', attemptId: 'a1', sequence: 2, eventType: 'node.started' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('正在准备模型请求')
+    expect(wrapper.text()).not.toContain('已等待')
+    expect(vi.getTimerCount()).toBe(0)
+    store.dispose()
+  })
+
   it('shows the accepted approach before the first token and updates the actual waiting duration', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-11-14T10:00:00Z'))

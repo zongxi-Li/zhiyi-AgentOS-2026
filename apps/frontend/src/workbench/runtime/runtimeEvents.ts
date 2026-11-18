@@ -33,6 +33,8 @@ export interface NodeRuntimeState {
   firstTokenAt: string | null
   lastActivityAt: string | null
   completedAt: string | null
+  queuedAt?: string | null
+  queueReason?: string | null
 }
 
 export interface PlanningRuntimeState {
@@ -174,6 +176,7 @@ export class RunRuntimeStore {
   readonly outputHistory = reactive<RuntimePublicOutput[]>([])
   readonly activity = reactive({ events: [] as RuntimeEvent[], approvalRevision: 0 })
   private pending = new Map<string, string>()
+  private pendingNodeReasoning = new Map<string, string>()
   private pendingPlanning: string | null = null
   private pendingReasoning: string | null = null
   private retiredAttempts = new Map<string, Set<string>>()
@@ -204,6 +207,7 @@ export class RunRuntimeStore {
       if (snapshot?.schemaVersion !== 1 || !Array.isArray(snapshot.events)) return
       this.batcher.flush()
       this.pending.clear()
+      this.pendingNodeReasoning.clear()
       this.pendingPlanning = null
       this.pendingReasoning = null
       this.retiredAttempts.clear()
@@ -217,10 +221,28 @@ export class RunRuntimeStore {
       for (const item of snapshot.events) {
         if (item?.eventType !== 'runtime.display.snapshot' && item?.sequence <= event.sequence) this.apply(item)
       }
+      this.batcher.flush()
+      if (Array.isArray(snapshot.settledAttempts)) {
+        for (const item of snapshot.settledAttempts) {
+          if (typeof item?.nodeId !== 'string' || typeof item?.attemptId !== 'string') continue
+          const node = this.nodes[item.nodeId]
+          if (node?.currentAttemptId === item.attemptId && node.status !== 'COMPLETED' && ['failed', 'cancelled'].includes(item.status)) {
+            this.settleNode(node, item.status === 'failed' ? 'FAILED' : 'CANCELLED', node.lastActivityAt)
+          }
+        }
+      }
       // Replay historical output before retiring Attempts from the formal resume boundary.
       if (snapshot.retiredAttempts && typeof snapshot.retiredAttempts === 'object') {
         for (const [id, attempts] of Object.entries(snapshot.retiredAttempts)) {
           if (Array.isArray(attempts)) this.retiredAttempts.set(id, new Set(attempts.filter((value): value is string => typeof value === 'string')))
+        }
+      }
+      for (const [id, node] of Object.entries(this.nodes)) {
+        if (node.currentAttemptId && this.retiredAttempts.get(id)?.has(node.currentAttemptId)) {
+          this.archiveNode(id, node.status === 'COMPLETED' ? 'completed' : 'interrupted')
+          this.pending.delete(id)
+          this.pendingNodeReasoning.delete(id)
+          delete this.nodes[id]
         }
       }
       this.batcher.flush()
@@ -230,9 +252,11 @@ export class RunRuntimeStore {
     if (event.runId !== this.runId || event.sequence <= this.lastSequence) return
     if (this.terminal) return
     this.lastSequence = event.sequence
-    if (!['model.output.delta', 'planner.model.output.delta', 'planner.model.reasoning.delta'].includes(event.eventType)) this.batcher.flush()
-    if (['tool.approval_required', 'tool.approval_resolved', 'tool.execution_started', 'tool.execution_completed',
-      'node.started', 'node.completed', 'node.failed'].includes(event.eventType)) {
+    if (/^(node|model|tool)\./.test(event.eventType) && event.nodeId && event.attemptId
+      && this.retiredAttempts.get(event.nodeId)?.has(event.attemptId)) return
+    if (!['model.output.delta', 'model.reasoning.delta', 'planner.model.output.delta', 'planner.model.reasoning.delta'].includes(event.eventType)) this.batcher.flush()
+    if (['tool.approval_required', 'tool.approval_resolved', 'tool.capacity_waiting', 'tool.execution_started', 'tool.execution_completed',
+      'node.queued', 'node.started', 'node.completed', 'node.failed', 'node.cancelled'].includes(event.eventType)) {
       if (!this.activity.events.some(item => item.eventId === event.eventId)) {
         this.activity.events.push(event)
         if (this.activity.events.length > 100) this.activity.events.shift()
@@ -251,6 +275,11 @@ export class RunRuntimeStore {
       return
     }
     if (['run.completed', 'run.failed', 'run.cancelled', 'run.superseded'].includes(event.eventType)) {
+      // A queued node has no execution output to archive. The Run no longer
+      // owns a live queue after its terminal event.
+      for (const [id, node] of Object.entries(this.nodes)) {
+        if (node.status === 'QUEUED') delete this.nodes[id]
+      }
       this.terminal = true
       return
     }
@@ -258,9 +287,6 @@ export class RunRuntimeStore {
     if (!id) return
     const n = this.node(id)
     const p = event.payload || {}
-    if (typeof p.nodeTitle === 'string') n.title = p.nodeTitle
-    if (typeof p.agentName === 'string') n.agentName = p.agentName
-    if (p.agentRegistration && typeof p.agentRegistration.instanceId === 'string') n.agentRegistration = p.agentRegistration
     const attempt = event.attemptId || n.currentAttemptId
     if (attempt && this.retiredAttempts.get(id)?.has(attempt)) return
     const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
@@ -282,14 +308,37 @@ export class RunRuntimeStore {
       n.firstTokenAt = null
       n.lastActivityAt = null
       n.completedAt = null
+      n.queuedAt = null
+      n.queueReason = null
+      n.agentRegistration = undefined
+      n.modelName = null
       this.pending.delete(id)
+      this.pendingNodeReasoning.delete(id)
     }
-    if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
-    if (event.eventType === 'node.started') n.status = 'RUNNING'
+    if (!attemptChanged && ['COMPLETED', 'FAILED', 'CANCELLED'].includes(n.status)) return
+    if (typeof p.nodeTitle === 'string') n.title = p.nodeTitle
+    if (typeof p.agentName === 'string') n.agentName = p.agentName
+    if (event.eventType !== 'node.queued' && p.agentRegistration && typeof p.agentRegistration.instanceId === 'string') n.agentRegistration = p.agentRegistration
+    if (event.eventType === 'node.queued') {
+      if (n.status === 'RUNNING') return
+      n.status = 'QUEUED'
+      n.phase = 'WAITING_RESOURCE'
+      n.queuedAt ||= typeof p.queuedAt === 'string' ? p.queuedAt : timestampOrNow(event)
+      n.queueReason = typeof p.reason === 'string' ? p.reason : null
+      n.lastActivityAt = timestampOrNow(event)
+      n.agentRegistration = undefined
+    } else if (event.eventType === 'node.started') {
+      n.status = 'RUNNING'
+      n.phase = 'WAITING'
+      n.queuedAt = null
+      n.queueReason = null
+    }
     else if (event.eventType === 'model.started') {
       this.archiveNode(id)
       n.outputId = event.eventId
       n.status = 'RUNNING'
+      n.queuedAt = null
+      n.queueReason = null
       n.phase = 'MODEL_STARTING'
       n.outputBuffer = ''
       n.reasoningBuffer = ''
@@ -297,6 +346,7 @@ export class RunRuntimeStore {
       n.firstTokenAt = null
       n.lastActivityAt = null
       this.pending.delete(id)
+      this.pendingNodeReasoning.delete(id)
       n.modelStartedAt = timestampOrNow(event)
       n.callId = typeof p.callId === 'string' ? p.callId : undefined
       n.modelName = String(p.model || '') || n.modelName
@@ -310,7 +360,10 @@ export class RunRuntimeStore {
       n.outputId ||= event.eventId
       n.modelStartedAt ||= timestampOrNow(event)
       n.lastActivityAt = timestampOrNow(event)
-      n.reasoningBuffer = ((n.reasoningBuffer || '') + String(p.delta || '')).slice(-65536)
+      const delta = String(p.delta || '')
+      const base = this.pendingNodeReasoning.get(id) ?? n.reasoningBuffer ?? ''
+      this.pendingNodeReasoning.set(id, (base + delta).slice(-65536))
+      this.schedule(`node-reasoning:${id}`, delta, attempt || undefined)
     } else if (event.eventType === 'model.output.delta') {
       n.outputId ||= event.eventId
       n.modelStartedAt ||= timestampOrNow(event)
@@ -326,16 +379,15 @@ export class RunRuntimeStore {
       this.pending.delete(id)
       n.phase = 'FINALIZING'
     }
-    else if (event.eventType === 'node.completed') {
-      if (this.pending.has(id)) n.outputBuffer = this.pending.get(id)!
-      n.status = 'COMPLETED'
-      n.phase = 'COMPLETED'
-      n.completedAt = timestampOrNow(event)
-      this.pending.delete(id)
-    } else if (event.eventType === 'node.failed') {
-      n.status = 'FAILED'
-      n.phase = 'FAILED'
+    else if (event.eventType === 'node.completed' || event.eventType === 'node.failed' || event.eventType === 'node.cancelled') {
+      this.settleNode(n, event.eventType === 'node.completed' ? 'COMPLETED' : event.eventType === 'node.failed' ? 'FAILED' : 'CANCELLED', timestampOrNow(event))
     }
+  }
+
+  private settleNode(node: NodeRuntimeState, status: 'COMPLETED' | 'FAILED' | 'CANCELLED', at: string | null) {
+    node.status = node.phase = status
+    node.completedAt = at
+    node.queuedAt = node.queueReason = null
   }
 
   private applyPlanner(event: RuntimeEvent) {
@@ -486,12 +538,12 @@ export class RunRuntimeStore {
     while (this.outputHistory.length > 32 || length > 262144) length -= size(this.outputHistory.shift()!)
   }
 
-  private archiveNode(id: string) {
+  private archiveNode(id: string, state?: RuntimePublicOutput['state']) {
     const node = this.nodes[id]
     if (!node?.outputId) return
     this.retainOutput({ id: node.outputId, kind: 'node', nodeId: id, attemptId: node.currentAttemptId,
       agentName: node.agentName, agentRegistration: node.agentRegistration, modelName: node.modelName, callId: node.callId, title: node.title || '当前步骤', timestamp: node.modelStartedAt,
-      text: streamingContent(this.pending.get(id) ?? node.outputBuffer, true), reasoning: node.reasoningBuffer, failed: node.status === 'FAILED' })
+      text: streamingContent(this.pending.get(id) ?? node.outputBuffer, true), reasoning: this.pendingNodeReasoning.get(id) ?? node.reasoningBuffer, failed: node.status === 'FAILED', state })
   }
 
   private archivePlanning(outcome?: RuntimePublicOutput['state']) {
@@ -506,6 +558,8 @@ export class RunRuntimeStore {
   private flushPending() {
     for (const [id, value] of this.pending) this.node(id).outputBuffer = value
     this.pending.clear()
+    for (const [id, value] of this.pendingNodeReasoning) this.node(id).reasoningBuffer = value
+    this.pendingNodeReasoning.clear()
     if (this.pendingPlanning !== null) this.planning.outputBuffer = this.pendingPlanning
     this.pendingPlanning = null
     if (this.pendingReasoning !== null) this.planning.reasoningBuffer = this.pendingReasoning

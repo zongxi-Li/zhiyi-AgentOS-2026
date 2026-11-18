@@ -1,8 +1,46 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import CopilotPlannerStep from './CopilotPlannerStep.vue'
 
+afterEach(() => vi.unstubAllGlobals())
+
+function followLayout() {
+  let nextId = 0
+  const frames = new Map<number, FrameRequestCallback>()
+  const request = vi.fn((callback: FrameRequestCallback) => { const id = ++nextId; frames.set(id, callback); return id })
+  vi.stubGlobal('requestAnimationFrame', request)
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
+  const observers = new Set<ResizeObserverCallback>()
+  const disconnected = vi.fn()
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(private callback: ResizeObserverCallback) { observers.add(callback) }
+    observe() {}
+    disconnect() { observers.delete(this.callback); disconnected() }
+  })
+  return { frames, request, disconnected,
+    flush() { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(0)) },
+    resize() { [...observers].forEach(callback => callback([], {} as ResizeObserver)) },
+  }
+}
+
 describe('planner transcript step', () => {
+  it('summarizes a completed checklist and keeps the complete record folded', async () => {
+    const reasoning = '根目录缺少依赖清单（已确认）\n\npackages/chat-stream 为空（已确认）\nNode 进程入口（已确认）\n前端接口边界（已确认）'
+    const w = mount(CopilotPlannerStep, { props: { id: 'checks', execution: true, state: 'streaming', text: '', reasoning } })
+    expect(w.find('.planner-step__checklist').exists()).toBe(false)
+    await w.setProps({ state: 'completed' })
+    expect(w.attributes('open')).toBeDefined()
+    expect(w.get('.planner-step__state').text()).toBe('4 项已确认')
+    expect(w.get('.planner-step__checklist code').text()).toBe('packages/chat-stream')
+    expect(w.get('.planner-step__checklist').text()).not.toContain('（已确认）')
+    expect(w.get('.planner-step__raw').attributes('open')).toBeUndefined()
+    expect(w.get('.planner-step__raw').text()).toContain('Node 进程入口（已确认）')
+    await w.setProps({ reasoning: reasoning.replace('入口（已确认）', '入口（待核实）') })
+    expect(w.get('.planner-step__state').text()).toBe('3/4 项已确认')
+    expect(w.get('.planner-step__exception').text()).toBe('待核实')
+    w.unmount()
+  })
+
   it('shows the model reasoning directly and keeps draft fields behind a separate disclosure', async () => {
     const w = mount(CopilotPlannerStep, { props: { id: 'outline', stage: 'outline', state: 'streaming', text: '' } })
     expect(w.attributes('open')).toBeDefined()
@@ -51,25 +89,25 @@ describe('planner transcript step', () => {
   })
 
   it('keeps streaming reasoning pinned to the tail until the reader takes over', async () => {
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 16) as unknown as number)
-    vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id as unknown as Parameters<typeof clearTimeout>[0]))
+    const layout = followLayout()
     const metrics = { scrollHeight: 1200 }
     const w = mount(CopilotPlannerStep, { props: { id: 'follow', state: 'streaming', text: '', reasoning: '第一段思考' } })
     const view = w.get('.planner-step__body').element as HTMLElement
     Object.defineProperty(view, 'scrollHeight', { configurable: true, get: () => metrics.scrollHeight })
     Object.defineProperty(view, 'clientHeight', { configurable: true, get: () => 320 })
     expect(w.find('.planner-step__resume').exists()).toBe(false)
-    await new Promise(resolve => setTimeout(resolve, 30))
+    await w.vm.$nextTick()
+    layout.flush()
     expect(view.scrollTop).toBe(1200)
     metrics.scrollHeight = 2600
     await w.setProps({ reasoning: '第一段思考，继续生成更多内容' })
-    await new Promise(resolve => setTimeout(resolve, 30))
+    layout.flush()
     expect(view.scrollTop).toBe(2600)
     await w.get('.planner-step__body').trigger('wheel')
     expect(w.find('.planner-step__resume').exists()).toBe(true)
     metrics.scrollHeight = 3400
     await w.setProps({ reasoning: '第一段思考，继续生成更多内容。' })
-    await new Promise(resolve => setTimeout(resolve, 30))
+    layout.flush()
     expect(view.scrollTop).toBe(2600)
     await w.get('.planner-step__resume').trigger('click')
     expect(view.scrollTop).toBe(3400)
@@ -80,6 +118,50 @@ describe('planner transcript step', () => {
     await w.get('.planner-step__body').trigger('scroll')
     expect(w.find('.planner-step__resume').exists()).toBe(false)
     w.unmount()
-    vi.unstubAllGlobals()
+  })
+
+  it('follows delayed content growth once without scheduling idle layout work', async () => {
+    const layout = followLayout()
+    const w = mount(CopilotPlannerStep, { props: { id: 'resize', state: 'streaming', text: '', reasoning: '首段内容' } })
+    const view = w.get('.planner-step__body').element as HTMLElement
+    let height = 1200
+    const readHeight = vi.fn(() => height)
+    Object.defineProperty(view, 'scrollHeight', { configurable: true, get: readHeight })
+    await w.vm.$nextTick()
+    layout.flush()
+    expect(view.scrollTop).toBe(1200)
+    expect(layout.frames.size).toBe(0)
+    const requested = layout.request.mock.calls.length
+    layout.flush()
+    expect(layout.request).toHaveBeenCalledTimes(requested)
+    expect(readHeight).toHaveBeenCalledOnce()
+    height = 2600
+    layout.resize()
+    layout.resize()
+    await w.setProps({ reasoning: '首段内容和后续内容' })
+    expect(layout.frames.size).toBe(1)
+    layout.flush()
+    expect(view.scrollTop).toBe(2600)
+    expect(readHeight).toHaveBeenCalledTimes(2)
+    expect(layout.frames.size).toBe(0)
+    w.unmount()
+    expect(layout.disconnected).toHaveBeenCalledOnce()
+  })
+
+  it.each(['fold', 'complete', 'pause', 'unmount'])('cancels pending follow work on %s', async action => {
+    const layout = followLayout()
+    const w = mount(CopilotPlannerStep, { props: { id: 'cancel', state: 'streaming', text: '', reasoning: '正在生成' } })
+    await w.vm.$nextTick()
+    expect(layout.frames.size).toBe(1)
+    if (action === 'fold') {
+      ;(w.element as HTMLDetailsElement).open = false
+      await w.trigger('toggle')
+    } else if (action === 'complete') await w.setProps({ state: 'completed' })
+    else if (action === 'pause') await w.get('.planner-step__body').trigger('wheel')
+    else w.unmount()
+    expect(layout.frames.size).toBe(0)
+    layout.resize()
+    expect(layout.frames.size).toBe(0)
+    if (action !== 'unmount') w.unmount()
   })
 })

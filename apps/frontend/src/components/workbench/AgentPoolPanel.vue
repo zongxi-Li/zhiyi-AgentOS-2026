@@ -10,10 +10,11 @@
     <div v-else-if="loading && !snapshot" class="pool-state" role="status">正在读取执行池…</div>
     <div v-else-if="!snapshot?.instances.length" class="pool-state"><strong>当前没有可观察的执行实例</strong><span>AgentPool 会在服务完成本地装配后显示实例。</span></div>
     <div v-else class="pool-list">
-      <article v-for="instance in snapshot.instances" :key="instance.resourceId" class="pool-card" :class="{ 'is-busy': instance.activeSlots > 0, 'is-draining': instance.draining }">
+      <p v-if="selectedInstanceId && !snapshot.instances.some(instance => instance.registration.instanceId === selectedInstanceId)" class="pool-selection-note">该执行记录对应的实例 {{ selectedInstanceId }} 当前不在执行池中，以下为当前可观测实例。</p>
+      <article v-for="instance in displayedInstances" :key="instance.resourceId" class="pool-card" :class="{ 'is-busy': instance.activeSlots > 0, 'is-draining': instance.draining, 'is-selected': instance.registration.instanceId === selectedInstanceId }" :aria-label="instance.registration.instanceId === selectedInstanceId ? '当前执行记录对应的 Agent 实例' : undefined">
         <div class="pool-card__head">
           <span class="agent-signal" :class="signalClass(instance)"></span>
-          <div class="agent-title"><strong>{{ instance.agentName }}</strong><small>{{ instance.agentId }} · gen {{ instance.registration.generation }}</small></div>
+          <div class="agent-title"><strong>{{ instance.agentName }}</strong><small>{{ instance.agentId }} · {{ instance.registration.instanceId }} · gen {{ instance.registration.generation }}</small></div>
           <span class="agent-state">{{ stateLabel(instance) }}</span>
         </div>
         <div class="pool-card__meta"><span>{{ instance.host.environment }} · {{ instance.host.displayName }}</span><span>{{ instance.activeSlots }}/{{ instance.capacity }} 槽位</span></div>
@@ -36,7 +37,13 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { agentosApi, type AgentPoolInstance, type AgentPoolSnapshot } from '@/services/api/agentos'
 
 defineEmits<{ 'select-run': [runId: string] }>()
+const props = defineProps<{ selectedInstanceId?: string | null }>()
 const snapshot = ref<AgentPoolSnapshot | null>(null)
+const displayedInstances = computed(() => {
+  const instances = snapshot.value?.instances || []
+  const selected = instances.find(instance => instance.registration.instanceId === props.selectedInstanceId)
+  return selected ? [selected, ...instances.filter(instance => instance !== selected)] : instances
+})
 const loading = ref(false)
 const error = ref('')
 let timer: ReturnType<typeof setInterval> | undefined
@@ -74,13 +81,15 @@ button:focus-visible { outline:2px solid var(--wb-accent); outline-offset:2px; }
 .pool-list { flex:1; min-height:0; overflow:auto; padding:14px 16px; }
 .pool-card { margin-bottom:10px; padding:12px; border:1px solid var(--pool-border); border-radius:9px; background:var(--wb-surface-section); }
 .pool-card.is-busy { border-color:color-mix(in srgb,var(--wb-accent) 45%,var(--pool-border)); }
+.pool-card.is-selected { border-color:var(--wb-accent); outline:1px solid color-mix(in srgb,var(--wb-accent) 25%,transparent); }
+.pool-selection-note { margin:0 0 12px; color:var(--wb-text-muted); font-size:11px; line-height:1.6; overflow-wrap:anywhere; }
 .pool-card.is-draining { opacity:.76; }
 .pool-card__head,.pool-card__meta { display:flex; align-items:center; gap:8px; }
 .pool-card__head { min-width:0; }
 .agent-signal { width:7px; height:7px; flex:0 0 auto; border-radius:50%; background:var(--wb-text-muted); }
 .agent-signal.is-ready,.agent-signal.is-busy { background:var(--wb-success); box-shadow:0 0 0 3px color-mix(in srgb,var(--wb-success) 15%,transparent); }
 .agent-signal.is-draining { background:var(--wb-warning); }.agent-signal.is-unknown { background:var(--wb-danger); }.agent-signal.is-muted { background:var(--wb-text-muted); }
-.agent-title { display:grid; min-width:0; }.agent-title strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }.agent-title small { color:var(--wb-text-muted); font:9px var(--font-mono,monospace); }
+.agent-title { display:grid; min-width:0; }.agent-title strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }.agent-title small { color:var(--wb-text-muted); font:9px var(--font-mono,monospace); overflow-wrap:anywhere; }
 .agent-state { margin-left:auto; color:var(--wb-text-secondary); font-size:10px; white-space:nowrap; }
 .pool-card__meta { justify-content:space-between; margin:10px 0 8px 15px; color:var(--wb-text-muted); font-size:10px; }
 .capabilities { display:flex; flex-wrap:wrap; gap:4px; margin-left:15px; }.capabilities span,.capabilities em { padding:3px 5px; border-radius:4px; background:var(--wb-surface-inset); color:var(--wb-text-secondary); font:9px var(--font-mono,monospace); }.capabilities em { color:var(--wb-text-muted); font-style:normal; }

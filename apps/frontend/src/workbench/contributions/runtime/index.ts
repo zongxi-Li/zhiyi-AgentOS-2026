@@ -6,7 +6,7 @@ import RuntimeAuditSidebarView from './RuntimeAuditSidebarView.vue'
 import RuntimeCommunicationSidebarView from './RuntimeCommunicationSidebarView.vue'
 import RuntimeContextSidebarView from './RuntimeContextSidebarView.vue'
 import type { WorkbenchContribution } from '@/workbench/types'
-import { projectRuntimeObservation } from '@/workbench/runtime/runtimePresentation'
+import { countRuntimeObservationPresentations } from '@/workbench/runtime/runtimePresentation'
 
 /** Read-only runtime observation panels backed by RuntimeObservationAdapter. */
 export const runtimeContribution: WorkbenchContribution = {
@@ -53,7 +53,7 @@ export const runtimeContribution: WorkbenchContribution = {
       id: 'events',
       label: 'Events',
       component: RuntimeEventsPanel,
-      count: context => projectRuntimeObservation(context.runtimeObservation).length,
+      count: context => countRuntimeObservationPresentations(context.runtimeObservation),
       getProps: context => ({ runtimeObservation: context.runtimeObservation })
     },
     {

@@ -60,8 +60,9 @@ export interface CopilotToolActivity {
 }
 export interface CopilotReview {
   subjectId: string; subjectType: string; reason: string; reasonCode: string
-  kind?: 'workspace_revision_pending' | 'workspace_revision_blocked' | 'planner_wait' | 'planner_rejected' | 'step_review'
+  kind?: 'workspace_revision_pending' | 'workspace_revision_blocked' | 'planner_wait' | 'planner_error' | 'planner_rejected' | 'step_review'
   displayReason?: string; errorCode?: string; errorType?: string
+  validationFailures?: { stage: string; code: string; fieldPath: Array<string | number>; callKey?: string }[]
   canApprove: boolean; decisionRejected: boolean; expectedRunUpdatedAt: string
 }
 export interface CopilotPlanningProgress {

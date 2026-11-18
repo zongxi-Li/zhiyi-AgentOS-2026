@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeTraceObservation } from './observation'
-import { projectRuntimePresentations, type RuntimePresentationInput } from './runtimePresentation'
+import {
+  countRuntimeObservationPresentations,
+  projectRuntimeObservation,
+  projectRuntimePresentations,
+  type RuntimePresentationInput
+} from './runtimePresentation'
 
 const event = (
   sequence: number,
@@ -17,6 +22,19 @@ const event = (
   timestamp: `2026-09-23T10:00:${String(sequence).padStart(2, '0')}Z`,
   payload,
   ...overrides
+})
+
+const trace = (index: number, eventType: string, payload: Record<string, unknown> = {}): RuntimeTraceObservation => ({
+  eventId: `trace-${index}`,
+  runId: 'run-1',
+  stepId: 'node-1',
+  eventType,
+  observation: null,
+  timestamp: null,
+  durationMs: null,
+  status: null,
+  payload,
+  source: 'trace'
 })
 
 describe('runtime presentation projection', () => {
@@ -217,6 +235,30 @@ describe('runtime presentation projection', () => {
     expect(item).toMatchObject({ kind: 'tool', status: 'failed', title: 'search' })
     expect(item.details.some(detail => detail.value.includes('SEARCH_TIMEOUT'))).toBe(true)
   })
+  it('shows tool capacity waits as pending activity without a failure', () => {
+    const [item] = projectRuntimePresentations([
+      event(1, 'tool.capacity_waiting', { tool: 'fs.read', operationKey: 'read:1', reason: 'capacity', target: 'source.py' })
+    ])
+    expect(item).toMatchObject({ kind: 'tool', status: 'pending', title: 'fs.read' })
+    expect(item.summary).toContain('等待执行资源')
+  })
+  it('merges capacity waits and execution by operation while isolating parallel calls and retries', () => {
+    const events = [
+      event(1, 'tool.capacity_waiting', { tool: 'fs.read', operationKey: 'read:1' }),
+      event(2, 'tool.capacity_waiting', { tool: 'fs.read', operationKey: 'read:2' }),
+      event(3, 'tool.execution_started', { tool: 'fs.read', operationKey: 'read:1' }),
+      event(4, 'tool.execution_completed', { tool: 'fs.read', operationKey: 'read:1', executionId: 'result-1', status: 'completed' }),
+      event(5, 'tool.capacity_waiting', { tool: 'fs.read', operationKey: 'read:1' }, { attemptId: 'attempt-2' })
+    ]
+    const items = projectRuntimePresentations(events)
+    expect(items).toHaveLength(3)
+    expect(items.map(item => item.status)).toEqual(['success', 'pending', 'pending'])
+    expect(items.map(item => item.eventIds.length)).toEqual([3, 1, 1])
+    expect(items[0].summary).not.toContain('等待执行资源')
+    const traces = ['tool.capacity_waiting', 'tool.execution_started', 'tool.execution_completed']
+      .map((type, index) => trace(index, type, { tool: 'fs.read', operationKey: 'read:1' }))
+    expect(countRuntimeObservationPresentations({ traces, events: [] })).toBe(1)
+  })
 
   it('uses trace-level duration for tool activity', () => {
     const trace: RuntimeTraceObservation = {
@@ -250,6 +292,11 @@ describe('runtime presentation projection', () => {
     expect(items.map(item => item.status)).toEqual(['failed', 'running'])
   })
 
+  it('presents a queued node as waiting for Agent capacity', () => {
+    expect(projectRuntimePresentations([event(1, 'node.queued', { nodeTitle: '审查依赖', reason: 'NO_CAPACITY' })])[0])
+      .toMatchObject({ title: '等待执行资源', summary: '审查依赖 · 等待 Agent 执行资源', status: 'pending' })
+  })
+
   it('orders sequenced events deterministically and preserves source order for ties', () => {
     const items = projectRuntimePresentations([
       event(3, 'run.completed'),
@@ -264,5 +311,48 @@ describe('runtime presentation projection', () => {
       'runtime.beta',
       '运行完成'
     ])
+  })
+
+  it.each([
+    { types: ['model.started', 'model.failed', 'model.started', 'model.completed'], identity: { callKey: 'same-call' }, count: 2 },
+    { types: ['model.started', 'model.output.delta', 'model.completed', 'model.started', 'model.completed'], identity: {}, count: 2 },
+    { types: ['model.started', 'model.output.delta', 'model.started', 'model.output.delta'], identity: {}, count: 3 },
+    { types: ['tool.started', 'tool.completed', 'command.started', 'command.completed'], identity: { executionId: 'exec-1' }, count: 2 },
+    { types: ['tool.started', 'tool.completed', 'command.started', 'command.completed', 'runtime.signal'], identity: {}, count: 5 }
+  ])('counts lifecycle groups consistently with the full projection: $types', ({ types, identity, count }) => {
+    const observation = { traces: types.map((type, index) => trace(index, type, identity)), events: [] }
+
+    expect(countRuntimeObservationPresentations(observation)).toBe(count)
+    expect(countRuntimeObservationPresentations(observation)).toBe(projectRuntimeObservation(observation).length)
+  })
+
+  it('prefers traces and falls back to events for both counting and projection', () => {
+    const events = [{
+      eventId: 'fallback', eventType: 'runtime.signal', timestamp: null,
+      stepId: null, target: null, summary: 'fallback', source: 'trace' as const
+    }]
+    const traces = [trace(1, 'runtime.first'), trace(2, 'runtime.second')]
+
+    for (const observation of [{ traces, events }, { traces: [], events }, null, undefined]) {
+      expect(countRuntimeObservationPresentations(observation)).toBe(projectRuntimeObservation(observation).length)
+    }
+    expect(countRuntimeObservationPresentations({ traces, events })).toBe(2)
+    expect(countRuntimeObservationPresentations({ traces: [], events })).toBe(1)
+    expect(countRuntimeObservationPresentations(null)).toBe(0)
+  })
+
+  it('counts without accessing presentation text or payload bodies', () => {
+    const payload: Record<string, unknown> = { callKey: 'call-1' }
+    const unreadable = () => { throw new Error('Counting must not materialize presentation content') }
+    for (const key of ['details', 'detail', 'data', 'delta', 'summary', 'message', 'description', 'model', 'durationMs']) {
+      Object.defineProperty(payload, key, { get: unreadable })
+    }
+    const traces = ['model.started', 'model.completed', 'runtime.signal'].map((type, index) => {
+      const input = trace(index, type, payload)
+      for (const key of ['observation', 'timestamp', 'durationMs']) Object.defineProperty(input, key, { get: unreadable })
+      return input
+    })
+
+    expect(countRuntimeObservationPresentations({ traces, events: [] })).toBe(2)
   })
 })

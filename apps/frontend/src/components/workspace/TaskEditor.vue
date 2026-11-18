@@ -121,7 +121,7 @@ const stageOutputContent = computed(() => {
 const streamingPreview = computed(() => {
   const node = liveNode.value
   return node && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(node.status) && node.outputBuffer
-    ? streamingContent(node.outputBuffer) : null
+    ? streamingContent(node.outputBuffer, true) : null
 })
 const resultIdPrefix = computed(() => `task-result:${props.entry.semanticTaskKey || props.entry.entryId}`)
 const artifactDocument = computed(() => projectArtifactDocument({

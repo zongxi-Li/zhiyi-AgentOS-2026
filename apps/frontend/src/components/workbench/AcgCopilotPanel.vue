@@ -3,13 +3,13 @@
     <div class="context-strip"><el-icon><Share /></el-icon><span :title="targetTitle">{{ targetTitle }}</span><small>{{ statusLabel }}</small></div>
     <nav class="copilot-tabs" aria-label="助手视图">
       <button :class="{ active: tab === 'chat' }" @click="tab = 'chat'">对话 <i v-if="state?.question || state?.review && !reviewPending" class="attention-dot"></i></button>
-      <button :class="{ active: tab === 'trace' }" @click="tab = 'trace'">活动记录 <small v-if="trajectory.length">{{ trajectory.length }}</small></button>
+      <button :class="{ active: tab === 'trace' }" @click="tab = 'trace'">活动记录 <small v-if="trajectoryCount">{{ trajectoryCount }}</small></button>
       <button :class="{ active: tab === 'pool' }" @click="tab = 'pool'">执行池</button>
     </nav>
 
     <div v-show="tab === 'chat'" ref="messageList" class="conversation" :class="{ 'has-run-controls': hasFormalControl }" aria-live="polite" @scroll="trackScroll">
       <CopilotRunTimeline :key="runId || ''" :run-id="runId" :status="state?.status || runStatus || ''"
-        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()">
+        :messages="messages" :graph-nodes="graphNodes" :plan="state?.initialPlan" :tools="state?.toolActivity" :workspace-review="state?.workspaceReview" :traces="runtimeObservation?.runId === runId ? runtimeObservation.traces : []" :started-at="controlRun?.startedAt" :updated-at="controlRun?.updatedAt" :waiting-for-approval="hasPendingToolApproval" @content="hasTimelineContent = $event; scrollBottom()" @inspect-agent="inspectAgent">
       <template #controls><FormalExecutionControls :key="runId || ''" :run="controlRun" :run-id="runId"
         :action-capabilities="actionCapabilities"
         :mission-id="missionId || state?.missionId || ''" :historical="historical"
@@ -21,7 +21,7 @@
         :readonly="readonly || !allows('canResolveToolApproval')" @waiting="hasPendingToolApproval = $event" @resolved="refreshRun" /></template>
       <template #message="{ message }">
       <article class="message" :class="`is-${message.role}`">
-        <div class="message-meta"><span>{{ message.role === 'user' ? '你' : '任务助手' }}</span><small v-if="message.planner">任务澄清</small></div>
+        <div v-if="message.role === 'user' || message.planner" class="message-meta"><span>{{ message.role === 'user' ? '你' : '任务助手' }}</span><small v-if="message.planner">任务澄清</small></div>
         <div class="message-content markdown-body" v-html="messageMarkup.get(message.id)"></div>
         <small v-if="copilotResponseSummary(message)" class="response-stats" title="服务端本次回复的耗时，包含准备与排队，不包含浏览器绘制。">{{ copilotResponseSummary(message) }}</small>
         <div v-if="message.action" class="operation-card">
@@ -58,13 +58,22 @@
         <div class="question-heading"><el-icon :class="{ 'is-loading': reviewPending }"><Loading v-if="reviewPending" /><Clock v-else /></el-icon><strong>{{ reviewTitle }}</strong></div>
         <p>{{ reviewDescription }}</p>
         <ul v-if="failedSteps.length"><li v-for="step in failedSteps" :key="step.stepId">{{ step.name }} · 执行失败</li></ul>
-        <details><summary>{{ reviewPending || state.review.decisionRejected || reviewKind === 'workspace_revision_blocked' || reviewKind === 'planner_rejected' ? '查看技术详情' : '查看等待原因与处理建议' }}</summary><p>当前记录：{{ state.review.reason }}</p><p v-if="state.review.errorCode">拒绝代码：{{ state.review.errorCode }}</p><p v-if="state.review.errorType">错误类型：{{ state.review.errorType }}</p><p v-if="state.decision?.reason && state.decision.reason !== state.review.reason">规划时记录：{{ state.decision.reason }}</p></details>
-        <textarea v-if="!reviewPending" v-model="reviewComment" rows="2" maxlength="2000" :placeholder="state.review.subjectType === 'planner' ? '说明要补充的材料或调整的执行要求…' : '填写审核意见…'" aria-label="审核意见" :disabled="busy" />
+        <details>
+          <summary>{{ reviewPending || state.review.decisionRejected || ['workspace_revision_blocked', 'planner_rejected', 'planner_error'].includes(reviewKind) ? '查看技术详情' : '查看等待原因与处理建议' }}</summary>
+          <p>当前记录：{{ state.review.reason }}</p>
+          <p v-if="state.review.errorCode">{{ reviewKind === 'planner_error' ? '错误代码' : '拒绝代码' }}：{{ state.review.errorCode }}</p>
+          <p v-if="state.review.errorType">错误类型：{{ state.review.errorType }}</p>
+          <ul v-if="reviewValidationDetails.length">
+            <li v-for="(detail, index) in reviewValidationDetails" :key="index">{{ detail }}</li>
+          </ul>
+          <p v-if="state.decision?.reason && state.decision.reason !== state.review.reason">规划时记录：{{ state.decision.reason }}</p>
+        </details>
+        <textarea v-if="!reviewPending" v-model="reviewComment" rows="2" maxlength="2000" :placeholder="reviewKind === 'planner_error' ? '可选：补充重新规划的要求…' : state.review.subjectType === 'planner' ? '说明要补充的材料或调整的执行要求…' : '填写审核意见…'" aria-label="审核意见" :disabled="busy" />
         <div class="review-actions">
-          <button v-if="reviewCanApprove" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('approved')">{{ state.review.subjectType === 'planner' ? '确认条件已满足' : '批准并继续' }}</button>
+          <button v-if="reviewCanApprove" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('approved')">{{ reviewKind === 'planner_error' ? '重新规划' : state.review.subjectType === 'planner' ? '确认条件已满足' : '批准并继续' }}</button>
           <button v-if="!reviewPending && state.review.subjectType === 'planner'" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canCollaborate') || !reviewComment.trim()" @click="submitReviewInput">预览调整方案</button>
           <button v-if="failedSteps.length" @click="tab = 'trace'">查看失败详情</button>
-          <button v-else-if="reviewPending || reviewKind === 'workspace_revision_blocked' || reviewKind === 'planner_rejected'" @click="tab = 'trace'">查看活动记录</button>
+          <button v-else-if="reviewPending || ['workspace_revision_blocked', 'planner_rejected', 'planner_error'].includes(reviewKind)" @click="tab = 'trace'">查看活动记录</button>
           <button v-if="!reviewPending" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !allows('canReview')" @click="submitReview('rejected')">{{ state.review.subjectType === 'planner' ? '结束本次运行' : '拒绝并结束本次运行' }}</button>
         </div>
         <small v-if="!reviewPending && permission !== 'task_collaboration' && !readonly && !historical">切换为“按需确认”权限后可操作。</small>
@@ -79,9 +88,9 @@
       <div v-if="!trajectory.length" class="empty-state"><el-icon><Connection /></el-icon><h3>尚无活动记录</h3><p>模型、执行步骤和工具调用会在这里留下记录。</p></div>
       <div v-else class="trace-lanes" aria-label="已加载活动分类"><span v-for="lane in lanes" :key="lane" :class="`lane-${lane}`">{{ laneLabel(lane) }} {{ laneCounts[lane] }}</span><div><i v-for="event in filteredTrajectory" :key="event.id" :class="`lane-${event.kind}`" :title="event.title"></i></div></div>
       <div class="trace-list">
-        <details v-for="event in filteredTrajectory" :key="event.id" class="trace-event" :class="`lane-${event.kind}`">
+        <details v-for="event in filteredTrajectory" :key="event.id" class="trace-event" :class="`lane-${event.kind}`" :open="expandedTrajectory.has(event.id)" @toggle="toggleTrajectoryDetail(event.id, $event)">
           <summary><span class="trace-dot"></span><span class="trace-kind">{{ laneLabel(event.kind) }}</span><div><strong>{{ event.title }}</strong><small>{{ event.step || 'Run' }} <span v-if="event.duration != null">· {{ event.duration }} ms</span></small></div><time>{{ formatTime(event.time) }}</time><el-icon><ArrowDown /></el-icon></summary>
-          <pre>{{ event.detail }}</pre>
+          <pre v-if="expandedTrajectory.has(event.id)">{{ trajectoryDetails.get(event.id) }}</pre>
         </details>
       </div>
       <p v-if="callError" class="no-results">{{ callError }}</p>
@@ -90,7 +99,7 @@
       <small class="trace-footnote">按已加载的活动记录计数，不代表步骤数；模型调用按页加载，内部投影合并在调用详情中。</small>
     </div>
 
-    <AgentPoolPanel v-if="tab === 'pool'" @select-run="emit('select-run', $event)" />
+    <AgentPoolPanel v-if="tab === 'pool'" :selected-instance-id="selectedAgentInstanceId" @select-run="emit('select-run', $event)" />
 
     <div v-if="reviewReceipt" class="wait-note" role="status">{{ reviewReceipt }}</div>
     <div v-if="permissionReceipt" class="wait-note permission-receipt" role="status">{{ permissionReceipt }}</div>
@@ -142,7 +151,8 @@ import { agentosApi, type GraphProjection, type WorkspaceEntry, type WorkspaceGr
 import { readRunCapabilities, type RunCapabilityAction } from '@/workbench/runtime/runCapabilities'
 import type { CopilotPermission, CopilotPermissionChange, CopilotState, CopilotAction, CopilotActionKind, CopilotProgressPhase, TaskApprovalMode } from '@/services/api/agentos/api/copilot'
 import { copilotResponseSummary, type CopilotConversationMessage } from './copilotConversation'
-import type { RuntimeObservation } from '@/workbench/runtime/observation'
+import { validationFailureDetails, type RuntimeObservation, type RuntimeTraceObservation } from '@/workbench/runtime/observation'
+import { runningRecoveryMessage } from '@/features/workspace/runLifecycle'
 import { renderMarkdown } from '@/utils/markdown'
 import { renderCopilotMarkdown } from './copilotMarkdown'
 import { clearCopilotSession, getCopilotSession, saveCopilotSession } from './copilotSessionCache'
@@ -202,6 +212,9 @@ watch(() => props.runtimeObservation, observation => {
 const hasTimelineContent = ref(false)
 const sessionOwnerId = localStorage.getItem('userId')
 const tab = ref<'chat' | 'trace' | 'pool'>('chat')
+const selectedAgentInstanceId = ref<string | null>(null)
+function inspectAgent(instanceId: string) { selectedAgentInstanceId.value = instanceId; tab.value = 'pool' }
+watch(() => props.runId, () => { selectedAgentInstanceId.value = null })
 const draft = ref(''), error = ref(''), traceSearch = ref('')
 const reviewComment = ref(''), reviewReceipt = ref('')
 let reviewRequest: { subject: string; revision: string; decision: string; comment: string; id: string } | undefined
@@ -246,18 +259,50 @@ let requestKey: { content: string; target: string; id: string; options: string }
 const targetTitle = computed(() => props.graphNode?.name || props.entry?.name || '当前任务')
 const failedSteps = computed(() => state.value?.steps.filter(step => step.status === 'failed') || [])
 const reviewKind = computed(() => state.value?.review?.kind || (state.value?.review?.decisionRejected ? 'planner_rejected' : state.value?.review?.subjectType === 'planner' ? 'planner_wait' : 'step_review'))
+const reviewValidationDetails = computed(() => validationFailureDetails(state.value?.review?.validationFailures))
 const reviewPending = computed(() => reviewKind.value === 'workspace_revision_pending')
 const planningRepairing = computed(() => state.value?.planningProgress?.kind === 'repairing')
 const reviewCanApprove = computed(() => !allows('canRecoverCurrentRun') && state.value?.review?.canApprove === true && !state.value.review.decisionRejected && !['workspace_revision_pending', 'workspace_revision_blocked', 'planner_rejected'].includes(reviewKind.value))
-const reviewTitle = computed(() => allows('canRecoverCurrentRun') ? '节点执行失败，可以局部恢复' : ({ workspace_revision_pending: '正在自动修订审查计划', workspace_revision_blocked: '审查计划修订受阻', planner_wait: '等待外部条件确认', step_review: '请审核当前步骤的结果' } as Record<string, string>)[reviewKind.value]
+const reviewTitle = computed(() => allows('canRecoverCurrentRun') ? '节点执行失败，可以局部恢复' : ({ workspace_revision_pending: '正在自动修订审查计划', workspace_revision_blocked: '审查计划修订受阻', planner_wait: '等待外部条件确认', planner_error: '规划处理失败', step_review: '请审核当前步骤的结果' } as Record<string, string>)[reviewKind.value]
   || (state.value?.review?.reasonCode === 'PLANNING_COMMIT_REJECTED' ? '计划修订未通过校验' : state.value?.decision?.action === 'recover' ? '任务暂停，未能自动恢复' : '任务暂停，下一步尚未执行'))
 const reviewDescription = computed(() => allows('canRecoverCurrentRun') ? '已完成的结果和工具证据已保留。打开输入框下方的任务操作，选择“恢复失败任务”，继续处理失败节点。' : state.value?.review?.displayReason || (reviewPending.value
   ? '系统正在处理审查计划的自动修订，完成正式校验后会继续执行。'
   : reviewKind.value === 'workspace_revision_blocked' ? '审查计划修订未通过正式校验，任务仍处于暂停状态。请先查看受阻原因和已有执行记录。'
   : reviewKind.value === 'planner_rejected' ? '系统未能执行建议的处理方案，任务仍处于暂停状态。请先查看失败详情和已有执行记录，再决定需要补充的材料或调整要求。'
+  : reviewKind.value === 'planner_error' ? '系统未能生成有效的下一步决策，已有结果已保留。可以重新规划。'
   : reviewKind.value === 'planner_wait' ? '确认下方说明中的外部等待条件已满足后，系统会重新判断能否继续执行。'
   : '请检查当前步骤的结果。批准后继续执行后续工作；拒绝将结束本次运行，保留已有记录。'))
-const statusLabel = computed(() => hasPendingToolApproval.value ? '等待你确认' : state.value?.planningProgress?.kind === 'blocked' ? '图交接受阻' : planningRepairing.value ? '自动修正中' : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复', waiting_review: state.value?.question ? '等待你的回答' : reviewPending.value ? '自动修订中' : reviewKind.value === 'workspace_revision_blocked' ? '修订受阻' : '已暂停', completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[state.value?.status || props.runStatus || ''] || '尚未启动')
+const statusLabel = computed(() => {
+  const run = controlRun.value, current = state.value
+  const observedStatus = run?.status
+    || (props.runtimeObservation?.runId === props.runId ? props.runtimeObservation.runStatus : null)
+  // `CopilotState.revision` and `WorkflowRun.runtimeRevision` are the same
+  // durable Run revision.  Treat an observation at the same revision as
+  // authoritative too: an equal revision with a different lifecycle status
+  // is exactly the stale Copilot projection case (for example, the Run has
+  // entered waiting_review while the conversation still says running).
+  // Strict `>` left that state showing the old "执行中" label indefinitely.
+  // A few legacy observations omit runtimeRevision.  In that case a durable
+  // review/terminal status still outranks an active Copilot projection, while
+  // an unversioned active observation is kept as a temporary hint.
+  const activeStatuses = ['pending', 'planning', 'running', 'retrying', 'waiting_review']
+  const durableReviewOrTerminal = ['waiting_review', 'completed', 'failed', 'cancelled', 'superseded']
+  const hasRunRevision = typeof run?.runtimeRevision === 'number' && Number.isFinite(run.runtimeRevision)
+  const versionedRun = hasRunRevision && run!.runtimeRevision! >= (current?.revision ?? -1)
+  const unversionedRun = !hasRunRevision
+    && durableReviewOrTerminal.includes(observedStatus || '')
+    && (!current || activeStatuses.includes(current.status))
+  const newerRun = versionedRun || unversionedRun
+  const recoveryMessage = !current || current.status === run?.status || newerRun
+    ? runningRecoveryMessage(run) : null
+  const status = versionedRun && run ? run.status : unversionedRun ? observedStatus : current?.status || props.runStatus || ''
+  return recoveryMessage || (hasPendingToolApproval.value ? '等待你确认'
+    : !newerRun && current?.planningProgress?.kind === 'blocked' ? '图交接受阻'
+    : !newerRun && planningRepairing.value ? '自动修正中'
+    : ({ pending: '等待执行', planning: '规划中', running: '执行中', retrying: '准备恢复',
+      waiting_review: current?.question ? '等待你的回答' : reviewPending.value ? '自动修订中' : reviewKind.value === 'workspace_revision_blocked' ? '修订受阻' : '已暂停',
+      completed: '已完成', failed: '执行失败', cancelled: '已取消', superseded: '已替换' } as Record<string, string>)[status] || '尚未启动')
+})
 const composerPlaceholder = computed(() => !props.runId ? '先选择一项任务' : answering.value && state.value?.question ? '补充你的选择或信息，让任务继续…' : '询问当前任务，或一起梳理下一步…')
 const canSend = computed(() => !!props.runId && !!state.value && allows('canDiscuss') && !loading.value && !busy.value && !!draft.value.trim() && (answering.value && state.value.question && allows('canAnswerPlanner') ? permission.value === 'task_collaboration' : selectedModel.value ? availableModels.value.some(m => m.id === selectedModel.value) : state.value.modelAvailable))
 const messages = computed<CopilotConversationMessage[]>(() => [
@@ -276,26 +321,48 @@ const messageMarkup = computed(() => {
 })
 const lanes = ['planner', 'model', 'tool', 'execution']
 const laneLabel = (kind: string) => ({ planner: '规划', model: '模型', tool: '工具', execution: '执行' } as Record<string, string>)[kind] || kind
+const traceSource = computed(() => props.runtimeObservation?.runId === props.runId ? props.runtimeObservation.traces : [])
+const callsById = computed(() => new Map(modelCalls.value.map(call => [call.callId, call])))
+const traceCallId = (event: RuntimeTraceObservation) => event.eventType === 'model_called'
+  ? event.eventId : event.eventType.includes('model') ? String(event.payload?.callId || '') : ''
+const standaloneTraces = computed(() => [...new Map(traceSource.value.map(event => [event.eventId, event])).values()]
+  .filter(event => !callsById.value.has(traceCallId(event))))
+const trajectoryCount = computed(() => standaloneTraces.value.length + callsById.value.size)
+// Model projections share one index; building summaries never reads their payloads in full.
+const modelTraceIndex = computed(() => {
+  const index = new Map<string, RuntimeTraceObservation[]>()
+  for (const event of traceSource.value) {
+    const callId = traceCallId(event)
+    if (!callId) continue
+    const events = index.get(callId)
+    if (events) events.push(event)
+    else index.set(callId, [event])
+  }
+  return index
+})
 const trajectory = computed(() => {
-  const source = props.runtimeObservation?.runId === props.runId ? props.runtimeObservation.traces : []
-  const callIds = new Set(modelCalls.value.map(c => c.callId))
-  const traceCallId = (e: typeof source[number]) => e.eventType === 'model_called'
-    ? e.eventId : e.eventType.includes('model') ? String(e.payload?.callId || '') : ''
-  const calls = [...new Map(modelCalls.value.map(c => [c.callId, c])).values()].map(c => ({
+  const calls = [...callsById.value.values()].map(c => ({
     id: `model:${c.callId}`, kind: 'model', title: `${c.model || '模型调用'} · ${c.usage.totalTokens} tokens`, time: c.createdAt || null,
     step: [c.stepId || 'Run', c.callChainId ? `调用链 ${c.callChainId}${c.partIndex != null ? ` · part ${c.partIndex}` : ''}` : ''].filter(Boolean).join(' → '),
-    duration: c.latencyMs, detail: JSON.stringify({ ...c, trace: source.filter(e => traceCallId(e) === c.callId) }, null, 2) }))
-  const traces = [...new Map(source.map(e => [e.eventId, e])).values()]
-    .filter(e => !callIds.has(traceCallId(e))).map(e => {
-      const p = e.payload || {}
-      const kind = p.category === 'planner' || p.planningProgress === true || String(p.runtimeEvent || '').startsWith('planner.')
-        ? 'planner' : e.eventType.includes('model') ? 'model' : e.eventType.includes('tool') ? 'tool' : 'execution'
-      return { id: e.eventId, kind, title: e.observation || e.eventType, time: e.timestamp, step: e.stepId, duration: e.durationMs,
-        detail: JSON.stringify(p, null, 2).slice(0, 12000) }
-    })
+    duration: c.latencyMs, detail: () => JSON.stringify({ ...c, trace: modelTraceIndex.value.get(c.callId) || [] }, null, 2) }))
+  const traces = standaloneTraces.value.map(e => {
+    const p = e.payload || {}
+    const kind = p.category === 'planner' || p.planningProgress === true || String(p.runtimeEvent || '').startsWith('planner.')
+      ? 'planner' : e.eventType.includes('model') ? 'model' : e.eventType.includes('tool') ? 'tool' : 'execution'
+    return { id: e.eventId, kind, title: e.observation || e.eventType, time: e.timestamp, step: e.stepId, duration: e.durationMs,
+      detail: () => JSON.stringify(p, null, 2).slice(0, 12000) }
+  })
   return [...traces, ...calls].sort((a, b) => (a.time || '').localeCompare(b.time || ''))
 })
 const filteredTrajectory = computed(() => trajectory.value.filter(e => `${e.title} ${e.step || ''} ${laneLabel(e.kind)}`.toLowerCase().includes(traceSearch.value.trim().toLowerCase())))
+const expandedTrajectory = ref(new Set<string>())
+const trajectoryDetails = computed(() => tab.value === 'trace'
+  ? new Map(filteredTrajectory.value.filter(event => expandedTrajectory.value.has(event.id)).map(event => [event.id, event.detail()]))
+  : new Map<string, string>())
+function toggleTrajectoryDetail(id: string, event: Event) {
+  if ((event.currentTarget as HTMLDetailsElement).open) expandedTrajectory.value.add(id)
+  else expandedTrajectory.value.delete(id)
+}
 const laneCounts = computed<Record<string, number>>(() => Object.fromEntries(lanes.map(lane => [lane,
   filteredTrajectory.value.filter(e => e.kind === lane).length])))
 const formatTime = (value?: string | null) => value ? new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''
@@ -521,7 +588,7 @@ async function submitReview(decision: 'approved' | 'rejected') {
   try {
     await agentosApi.applyWorkflowReview(id, { stepId: review.subjectId, decision, comment, operationId: reviewRequest.id, expectedRunUpdatedAt: review.expectedRunUpdatedAt })
     if (token !== generation) return
-    reviewReceipt.value = decision === 'approved' ? '审核已提交，正在重新判断下一步。' : '已拒绝，本次运行已结束。'
+    reviewReceipt.value = decision === 'approved' ? review.kind === 'planner_error' ? '重新规划已提交，正在判断下一步。' : '审核已提交，正在重新判断下一步。' : '已拒绝，本次运行已结束。'
     reviewRequest = undefined; reviewComment.value = ''
     await refresh(true)
   } catch (e) { if (token === generation) { error.value = errorMessage(e); await refresh(true) } }
@@ -556,6 +623,7 @@ watch(() => props.runId, (_next, previous) => {
   selectedModel.value = ''; permission.value = 'task_collaboration'; openMenu.value = null
   reasoningEffort.value = ''; streamContent.value = ''; pendingUser.value = ''
   modelCalls.value = []; callCursor.value = null; callError.value = ''; callsLoading.value = false
+  expandedTrajectory.value.clear()
   const cached = props.runId ? getCopilotSession(props.runId) : undefined
   if (cached) { state.value = cached.state; draft.value = cached.draft; selectedModel.value = cached.model; permission.value = cached.permission; approvalMode.value = cached.state.approvalMode ?? 'ask'; reasoningEffort.value = cached.effort; requestKey = cached.operation; answering.value = !!cached.state.question }
   void refresh()
@@ -583,7 +651,7 @@ onBeforeUnmount(() => { saveSession(); generation++; controller?.abort(); stopSc
 .review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .review-actions button { padding: 7px 10px; border: 1px solid var(--cp-border); border-radius: 7px; background: var(--wb-accent-soft); color: var(--wb-accent); cursor: pointer; }
 .review-actions button:disabled { opacity: .45; cursor: not-allowed; }
-.acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); --cp-prose-line-height:1.7; --cp-paragraph-gap:.65em; --cp-list-item-gap:.2em; }
+.acg-copilot { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; color:var(--wb-text); background:var(--wb-surface-1); font-family:var(--font-sans,sans-serif); --cp-border:var(--wb-border-soft); --cp-prose-size:14px; --cp-prose-line-height:1.75; --cp-paragraph-gap:.45em; --cp-list-item-gap:.2em; }
 .agent-pool ~ .composer, .agent-pool ~ .composer-caption, .agent-pool ~ .error-note, .agent-pool ~ .readonly-note, .agent-pool ~ .wait-note { display:none; }
 button { font:inherit; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.4; }
@@ -598,16 +666,6 @@ button:focus-visible, input:focus-visible { outline:2px solid var(--wb-accent); 
 .copilot-tabs small { margin-left:4px; font:10px var(--font-mono,monospace); }
 .attention-dot { display:inline-block; width:5px; height:5px; border-radius:50%; margin-left:4px; background:var(--wb-accent); }
 .conversation,.trajectory-view { flex:1; min-height:0; overflow:auto; padding:18px 16px; }
-/* Keep long-form content at primary contrast; metadata uses the secondary tier. */
-.conversation { --wb-text-secondary:var(--wb-text); --wb-text-muted:var(--sem-text-2); text-shadow:var(--cp-text-glow, none); }
-html[data-color-scheme='codex-dark'] .conversation,
-html[data-color-scheme='one-dark-modern'] .conversation {
-  --wb-text:#F1F4FF;
-  --wb-text-secondary:#F1F4FF;
-  --wb-text-muted:#C8D0E2;
-  --cp-text-glow:0 0 .5px rgb(239 244 255 / .38), 0 0 7px rgb(183 200 255 / .12);
-  --cp-keyword-glow:0 0 6px color-mix(in srgb, currentColor 28%, transparent);
-}
 .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; min-height:230px; height:100%; color:var(--wb-text-muted); }
 .conversation.has-run-controls > .empty-state { height:auto; min-height:180px; padding:24px 0; }
 .empty-watermark { display:block; width:148px; height:148px; object-fit:contain; margin-bottom:6px; animation:copilot-watermark-pulse 3.2s ease-in-out infinite; }
@@ -623,9 +681,9 @@ html[data-color-scheme='one-dark-modern'] .conversation {
 .streaming-content { min-height:24px; }
 .response-stats { display:block; margin-top:8px; color:var(--wb-text-muted); font-size:10px; }
 .message.is-user { width:fit-content; max-width:92%; margin-left:auto; padding:10px 13px; border-radius:12px; background:var(--wb-surface-section); border:1px solid var(--cp-border); }
-.message-content { color:var(--wb-text); font-size:13px; line-height:var(--cp-prose-line-height); overflow-wrap:anywhere; text-wrap:wrap; }
+.message-content { color:var(--wb-text-secondary); font-size:var(--cp-prose-size); line-height:var(--cp-prose-line-height); overflow-wrap:anywhere; text-wrap:pretty; }
 /* One prose rhythm for replies, streamed step output and planner thoughts. */
-.conversation :deep(.markdown-body) { line-height:var(--cp-prose-line-height); white-space:normal; text-wrap:wrap; }
+.conversation :deep(.markdown-body) { line-height:var(--cp-prose-line-height); white-space:normal; text-wrap:pretty; }
 .conversation :deep(.markdown-body p) { margin:0 0 var(--cp-paragraph-gap); color:inherit; }
 .conversation :deep(.markdown-body ul), .conversation :deep(.markdown-body ol) { margin:var(--cp-paragraph-gap) 0; padding-left:1.5em; color:inherit; }
 .conversation :deep(.markdown-body li) { margin:var(--cp-list-item-gap) 0; color:inherit; }
@@ -634,10 +692,7 @@ html[data-color-scheme='one-dark-modern'] .conversation {
 .conversation :deep(.markdown-body h4), .conversation :deep(.markdown-body h5), .conversation :deep(.markdown-body h6) { margin:1.1em 0 .5em; line-height:1.4; color:var(--wb-text); }
 .conversation :deep(.markdown-body > :first-child) { margin-top:0; }
 .conversation :deep(.markdown-body > :last-child) { margin-bottom:0; }
-.conversation :deep(.copilot-keyword) { text-shadow:var(--cp-keyword-glow, none); }
-.conversation :deep(.copilot-keyword--security) { color:var(--sem-artifact); }
-.conversation :deep(.copilot-keyword--verification) { color:var(--sem-running); }
-.conversation :deep(.copilot-keyword--attention) { color:var(--sem-waiting); }
+.conversation :deep(.markdown-body strong) { color:var(--wb-text); font-weight:600; }
 .message-content :deep(p:last-child) { margin-bottom:0; }
 .question-card { margin:8px 0 18px; padding:14px; border:1px solid color-mix(in srgb,var(--wb-accent) 45%,var(--cp-border)); border-radius:12px; background:color-mix(in srgb,var(--wb-accent) 4%,var(--wb-surface-section)); }
 .operation-card { margin-top:12px; padding:12px; border:1px solid var(--cp-border); border-radius:10px; background:var(--wb-surface-section); font-size:12px; }

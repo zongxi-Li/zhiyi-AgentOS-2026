@@ -476,7 +476,7 @@ const modelOutputStatusState = (kind: string): ModelOutputItem['status'] => (
 )
 
 // Read structured diagnostics only; exception bodies are never display text.
-const validationFailureDetails = (value: unknown): string[] => {
+export const validationFailureDetails = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
   const rules: Record<string, string> = {
     tasks_required: '缺少任务步骤', task_object_required: '任务必须是对象',
@@ -489,6 +489,8 @@ const validationFailureDetails = (value: unknown): string[] => {
     source_assignment_invalid: '来源引用或目标任务不存在', source_assignment_coverage: '来源引用分配有遗漏或重复',
     constraint_array_required: '任务约束必须是数组', constraint_item_invalid: '任务约束格式无效',
     topology_patch_invalid: '依赖关系补丁格式或引用无效', relation_object_required: '依赖关系结果必须是对象',
+    unknown_task_reference: '引用了候选计划中未声明的任务',
+    MODEL_OUTPUT_INVALID_JSON: '模型返回的内容无法解析为 JSON 对象',
   }
   return value.slice(0, 32).map(asRecord).map(failure => {
     const code = stringOrNull(failure.code)
