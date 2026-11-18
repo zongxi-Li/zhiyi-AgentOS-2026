@@ -96,7 +96,7 @@ from components.planner.complexity import transport_error_code
 from components.planner.service import (
     normalize_capability_profile,
 )
-from runtime.binding import RuntimeBindingService
+from runtime.binding import RuntimeBindingService, queued_step_attempts
 from runtime.acg_execution import ACGExecutionService, ExecutionRunCancelled, ExecutionStateChanged
 from runtime.ports import CollaboratorAccess, RuntimeCollaborators
 from runtime.review import ReviewConflictError, ReviewService
@@ -257,14 +257,11 @@ class ExecutionRuntime(CollaboratorAccess):
         plugin_manifests: tuple = (),
         identity_lifecycle: AcgIdentityLifecyclePort | None = None,
         require_planner_identity: bool = False,
-        scheduler_wait_timeout: float = 300.0,
         model_max_concurrency: int = 4,
         model_min_interval_seconds: float = 0.0,
         resource_execution_adapters: Optional[Mapping[str, ResourceExecutionAdapter]] = None,
         planning_commit_store: object | None = None,
     ):
-        if scheduler_wait_timeout <= 0:
-            raise ValueError("scheduler_wait_timeout must be positive")
         if model_max_concurrency < 1:
             raise ValueError("model_max_concurrency must be at least 1")
         if model_min_interval_seconds < 0:
@@ -315,7 +312,6 @@ class ExecutionRuntime(CollaboratorAccess):
             agent_registry=resolved_agent_registry,
             resource_plane=resolved_resource_plane,
             resource_binder=resolved_resource_binder,
-            scheduler_wait_timeout=float(scheduler_wait_timeout),
             resource_execution_adapters=dict(resource_execution_adapters or {}),
             tool_runtime=tool_runtime,
             model_registry=model_registry or ModelCompatibilityRegistry(),
@@ -2588,6 +2584,15 @@ class ExecutionRuntime(CollaboratorAccess):
             self._transition_run(run, WorkflowStatus.CANCELLED)
             if run.status is not WorkflowStatus.CANCELLED:
                 raise InvalidStateTransition('Run changed before cancellation')
+            waiting = queued_step_attempts(run)
+            run.execution_state.pop("schedulingStates", None)
+            for step_id in waiting:
+                step = run.get_step(step_id)
+                if step.status in {StepStatus.PENDING, StepStatus.RETRYING}:
+                    self._transition_step(step, StepStatus.CANCELLED)
+                    step.error = "Cancelled while waiting for execution resources"
+            run.active_step_ids = [step_id for step_id in run.active_step_ids if step_id not in waiting]
+            run.execution_state["activeStepIds"] = list(run.active_step_ids)
             self.trace_store.append(
                 run=run,
                 event_type=TraceEventType.RUN_CANCELLED,

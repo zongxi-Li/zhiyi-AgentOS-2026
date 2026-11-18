@@ -21,7 +21,6 @@ from components.resource.runtime.embedded_runtime import EMBEDDED_AGENTS_RUNTIME
 from components.resource.application.resource_plane import ResourcePlane
 from components.resource.scheduler.binder import ResourceBinder
 from components.resource.scheduler.models import (
-    SchedulerAllocationTimeout,
     SchedulerNoEligibleResource,
 )
 from adapters.resource_execution import ResourceExecutionError
@@ -491,35 +490,147 @@ def test_impossible_frozen_binding_fails_instead_of_polling_forever() -> None:
     assert failed.execution_state["failureEvents"][-1]["reasonCode"] == "NO_ELIGIBLE_RESOURCE"
 
 
-def test_capacity_queue_has_a_bounded_failure_outcome() -> None:
-    runtime, _ = _runtime([])
-    runtime.scheduler_wait_timeout = 0.02
-    task = runtime.create_mission("resource", workflow_id="resource-run")
-    _, run = runtime.prepare_run(task.mission_id)
-    held = runtime.resource_binder.coordinator.acquire(
-        lease_id="lease-held",
-        resource_id=EMBEDDED_AGENTS_RUNTIME_ID,
-        capacity=1,
-        run_id="other-run",
-        step_id="other-step",
-        attempt_id="other-attempt",
-        slot_count=1,
-        ttl=timedelta(minutes=1),
-        now=datetime.now(timezone.utc),
-    )
-    assert held is not None
+@pytest.mark.parametrize("cancel", [False, True])
+def test_capacity_wait_is_pending_until_release_and_can_be_cancelled(monkeypatch, cancel) -> None:
+    from runtime.live_events import runtime_event_broker
 
-    with pytest.raises(ACGSuperstepError) as caught:
-        asyncio.run(asyncio.wait_for(
-            runtime.execute_prepared_run(run.run_id), timeout=2.0
-        ))
+    async def scenario():
+        calls = []
+        runtime, _ = _runtime(calls)
+        task = runtime.create_mission("resource", workflow_id="resource-run")
+        _, run = runtime.prepare_run(task.mission_id)
+        held = runtime.resource_binder.coordinator.acquire(
+            lease_id="lease-held", resource_id=EMBEDDED_AGENTS_RUNTIME_ID,
+            capacity=1, run_id="other-run", step_id="other-step",
+            attempt_id="other-attempt", slot_count=1, ttl=timedelta(minutes=1),
+        )
+        assert held is not None
+        queued = asyncio.Event()
+        publish = runtime_event_broker.publish
 
-    assert isinstance(caught.value.cause, SchedulerAllocationTimeout)
-    failed = runtime.workflow_store.get_run(run.run_id)
-    assert (
-        failed.execution_state["failureEvents"][-1]["reasonCode"]
-        == "SCHEDULER_CAPACITY_TIMEOUT"
-    )
+        async def observe(run_id, event):
+            await publish(run_id, event)
+            if run_id == run.run_id and event.event_type == "node.queued":
+                queued.set()
+
+        monkeypatch.setattr(runtime_event_broker, "publish", observe)
+        execution = asyncio.create_task(runtime.execute_prepared_run(run.run_id))
+        try:
+            await asyncio.wait_for(queued.wait(), 2)
+            saved = runtime.workflow_store.get_run(run.run_id)
+            assert saved.status.value == "running" and not execution.done()
+            assert saved.get_step("analyse").status.value == "pending"
+            assert saved.get_step("analyse").started_at is None
+            assert calls == [] and not saved.execution_state.get("executionBindings")
+            assert saved.execution_state["schedulingStates"]["analyse"]["reason"] == "NO_CAPACITY"
+            if cancel:
+                runtime.cancel(run.run_id)
+            else:
+                runtime.resource_binder.release(held.lease_id)
+            result = await asyncio.wait_for(execution, 2)
+            assert result.status.value == ("cancelled" if cancel else "completed")
+            assert not result.execution_state.get("schedulingStates")
+            assert not result.execution_state.get("failureEvents")
+            assert calls == ([] if cancel else ["agent-primary"])
+            if cancel:
+                assert result.get_step("analyse").status.value == "cancelled"
+                assert result.get_step("analyse").started_at is None
+                # Cancelling a queued node does not release another Run's lease.
+                assert runtime.resource_binder.coordinator.active_slots(EMBEDDED_AGENTS_RUNTIME_ID) == 1
+        finally:
+            if not execution.done():
+                execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+            runtime.resource_binder.release(held.lease_id)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_five_ready_nodes_share_four_agent_slots_without_capacity_failure(monkeypatch, cancel) -> None:
+    from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
+    from runtime.live_events import runtime_event_broker
+    from support.acg.models import ACGBlueprint, StepNode
+    from support.acg.planning import ACGResourcePlan, AgentBindingSpec
+
+    async def scenario():
+        runtime, agents = _runtime([])
+        agent = agents.resolve_by_id("agent-primary")
+        agent.profile.capacity = 4
+        agents.register(_BoundAgent(AgentProfile(
+            agentId="unrelated", agentName="unrelated", domain="general",
+            capabilities=["other"], capacity=1,
+        ), []))
+        keys = tuple(f"work{index}" for index in range(5))
+        mission = runtime.create_mission("five parallel jobs", workflow_id="resource-run")
+        blueprint = ACGBlueprint(graphId="capacity-backpressure",
+            nodes=[StepNode(nodeId=key, capability="analysis") for key in keys], edges=[],
+            resourcePlan=ACGResourcePlan(bindings=tuple(
+                AgentBindingSpec(stepId=key, plannedAgentId="agent-primary") for key in keys)))
+        plan = TaskPlan(missionId=mission.mission_id, nodes=tuple(
+            PlannedTask(key=key, title=key, objective=key) for key in keys))
+        mission.input.update(acgBlueprint=blueprint.model_dump(by_alias=True, mode="json"),
+            taskPlan=plan.model_dump(by_alias=True, mode="json"), taskBindings=[
+                TaskImplementationBinding(planNodeKey=key, acgNodeId=key).model_dump(by_alias=True)
+                for key in keys])
+        runtime.workflow_store.save_mission(mission)
+        _, run = runtime.prepare_run(mission.mission_id)
+        release, four_started, queued = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        active, maximum, calls = 0, 0, []
+
+        async def execute(context):
+            nonlocal active, maximum
+            calls.append(context.step.step_id)
+            active += 1
+            maximum = max(maximum, active)
+            if active == 4:
+                four_started.set()
+            try:
+                await release.wait()
+                return AgentOutput(output={"agent": "agent-primary"})
+            finally:
+                active -= 1
+
+        monkeypatch.setattr(agent, "run", execute)
+        publish = runtime_event_broker.publish
+
+        async def observe(run_id, event):
+            await publish(run_id, event)
+            if run_id == run.run_id and event.event_type == "node.queued":
+                queued.set()
+
+        monkeypatch.setattr(runtime_event_broker, "publish", observe)
+        execution = asyncio.create_task(runtime.execute_prepared_run(run.run_id))
+        try:
+            await asyncio.wait_for(asyncio.gather(four_started.wait(), queued.wait()), 2)
+            saved = runtime.workflow_store.get_run(run.run_id)
+            assert sum(s.status.value == "running" for s in saved.steps) == 4
+            assert sum(s.status.value == "pending" for s in saved.steps) == 1
+            assert len(saved.execution_state["schedulingStates"]) == 1
+            assert len(calls) == 4 and not execution.done()
+            if cancel:
+                runtime.cancel(run.run_id)
+            else:
+                release.set()
+            result = await asyncio.wait_for(execution, 2)
+            assert result.status.value == ("cancelled" if cancel else "completed") and maximum == 4
+            if cancel:
+                assert len(calls) == 4 and not result.active_step_ids
+                assert not result.execution_state["activeStepIds"]
+                assert all(s.status.value == "cancelled" for s in result.steps)
+            else:
+                assert sorted(calls) == sorted(keys)
+                assert all(s.status.value == "completed" for s in result.steps)
+            assert not result.execution_state.get("failureEvents")
+            assert not result.execution_state.get("schedulingStates")
+            assert runtime.resource_binder.coordinator.active_slots(EMBEDDED_AGENTS_RUNTIME_ID) == 0
+        finally:
+            release.set()
+            if not execution.done():
+                execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+
+    asyncio.run(scenario())
 
 
 def test_approved_evolution_version_only_changes_future_general_runs() -> None:

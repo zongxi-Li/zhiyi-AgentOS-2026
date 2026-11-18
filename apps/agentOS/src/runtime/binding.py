@@ -20,6 +20,7 @@ from contracts.resource import ExecutionRequirement, NodeHealthStatus, RuntimeKi
 from contracts.workflow import (
     RunExecutionScope,
     RuntimeRunRecord,
+    StepStatus,
     WorkflowDefinition,
 )
 from service.agents import AgentRegistry
@@ -77,6 +78,26 @@ def requirements_match_manifest(actual, expected) -> bool:
         if actual_contract != expected_contract:
             return False
     return True
+
+
+def queued_step_attempts(run: RuntimeRunRecord) -> dict[str, str]:
+    """Current queue identities; scheduling metadata never proves execution."""
+    state = run.execution_state
+    attempts = state.get("attemptIds", {})
+    scheduling = state.get("schedulingStates", {})
+    current = {}
+    for step in run.steps:
+        queued = scheduling.get(step.step_id)
+        if (step.status not in {StepStatus.PENDING, StepStatus.RETRYING}
+                or not isinstance(queued, dict) or queued.get("status") != "queued"):
+            continue
+        path = state.get("loopPaths", {}).get(step.step_id, ())
+        loop_key = ".".join(str(item) for item in path) or "root"
+        key = f"{step.step_id}:{max(step.attempt, step.retry_count) + 1}:{loop_key}"
+        attempt_id = queued.get("attemptId")
+        if isinstance(attempt_id, str) and attempts.get(key) == attempt_id:
+            current[step.step_id] = attempt_id
+    return current
 
 
 class RuntimeBindingService:
@@ -237,4 +258,4 @@ def assess_run_requirement(services: CollaboratorAccess, run: RuntimeRunRecord,
         requirement, now=now, agent_candidates=binding.local_candidates(run))
 
 
-__all__ = ["RuntimeBindingService", "assess_run_requirement"]
+__all__ = ["RuntimeBindingService", "assess_run_requirement", "queued_step_attempts"]

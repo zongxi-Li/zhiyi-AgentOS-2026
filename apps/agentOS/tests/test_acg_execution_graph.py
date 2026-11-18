@@ -105,6 +105,120 @@ def test_parallel_failure_cancels_unfinished_sibling_tasks() -> None:
     assert state.active_step_ids == []
 
 
+def test_failure_signal_stops_siblings_and_projects_before_failed_task_cleanup_finishes():
+    graph = ACGExecutionGraph(nodes=("fail", "slow"))
+
+    async def scenario():
+        state = ACGExecutionState(runId="failure-during-cleanup")
+        cleanup = asyncio.Event()
+        slow_started, slow_cancelled, stopping = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        events = []
+        failure = ValueError("failed execution authority")
+
+        async def execute(step_id, _state):
+            if step_id == "fail":
+                await slow_started.wait()
+                execute.failure_notifications.put_nowait((step_id, failure))
+                await cleanup.wait()
+                raise failure
+            slow_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                slow_cancelled.set()
+                raise
+
+        execute.failure_notifications = asyncio.Queue()
+        async def consume():
+            async for event in graph.astream(state, execute):
+                events.append(event)
+                if event["type"] == "superstep_stopping":
+                    stopping.set()
+        task = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(stopping.wait(), 1)
+            await asyncio.wait_for(slow_cancelled.wait(), 1)
+            assert not task.done() and not cleanup.is_set()
+            event = next(event for event in events if event["type"] == "superstep_stopping")
+            assert event["failedStepIds"] == ["fail"] and event["cancelledStepIds"] == ["slow"]
+        finally:
+            cleanup.set()
+            with pytest.raises(ACGSuperstepError) as caught:
+                await task
+        assert caught.value.cause is failure and state.active_step_ids == []
+    asyncio.run(scenario())
+
+
+def test_simultaneously_completed_node_is_preserved_when_sibling_fails():
+    graph = ACGExecutionGraph(nodes=("done", "fail"))
+    state = ACGExecutionState(runId="same-batch-prefix")
+    async def execute(step_id, _state):
+        if step_id == "done":
+            return {"outputSummary": "already committed", "outputRef": "output:done"}
+        raise ValueError("sibling failed")
+    with pytest.raises(ACGSuperstepError) as caught:
+        asyncio.run(graph.run(state, execute))
+    assert state.completed_step_ids == ["done"] and state.output_refs == {"done": "output:done"}
+    assert caught.value.failed_step_ids == ("fail",) and caught.value.cancelled_step_ids == ()
+
+
+def test_cancelled_node_propagates_cancellation_after_joining_its_siblings():
+    graph = ACGExecutionGraph(nodes=("cancelled", "sibling"))
+    async def scenario():
+        started, settled = asyncio.Event(), asyncio.Event()
+        state = ACGExecutionState(runId="node-cancelled")
+        async def execute(step_id, _state):
+            if step_id == "cancelled":
+                await started.wait()
+                raise asyncio.CancelledError("execution authority withdrawn")
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                settled.set()
+        with pytest.raises(asyncio.CancelledError):
+            await graph.run(state, execute)
+        assert settled.is_set() and state.active_step_ids == [] and state.completed_step_ids == []
+    asyncio.run(scenario())
+
+
+def test_simultaneous_failure_signals_do_not_cancel_already_failed_owners():
+    graph = ACGExecutionGraph(nodes=("first", "second", "sibling"))
+    async def scenario():
+        start, cleanup, stopping = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        cancelled, events = [], []
+        async def execute(step_id, _state):
+            if step_id == "sibling":
+                start.set()
+                await asyncio.Future()
+            await start.wait()
+            failure = ValueError(step_id)
+            execute.failure_notifications.put_nowait((step_id, failure))
+            try:
+                await cleanup.wait()
+            except asyncio.CancelledError:
+                cancelled.append(step_id)
+                raise
+            raise failure
+        execute.failure_notifications = asyncio.Queue()
+        async def consume():
+            async for event in graph.astream(ACGExecutionState(runId="multi-failure"), execute):
+                events.append(event)
+                if event["type"] == "superstep_stopping":
+                    stopping.set()
+        task = asyncio.create_task(consume())
+        try:
+            await asyncio.wait_for(stopping.wait(), 1)
+        finally:
+            cleanup.set()
+            with pytest.raises(ACGSuperstepError) as caught:
+                await task
+        event = next(event for event in events if event["type"] == "superstep_stopping")
+        assert event["failedStepIds"] == ["first", "second"] and cancelled == []
+        assert caught.value.failed_step_ids == ("first", "second") and len(caught.value.causes) == 2
+    asyncio.run(scenario())
+
+
 def test_parallel_node_completion_is_streamed_before_sibling_finishes() -> None:
     """并行超步中先完成的节点必须先发布，不能等待最慢兄弟。"""
     graph = ACGExecutionGraph(nodes=("left", "right"))
@@ -673,6 +787,43 @@ def test_node_runner_reuses_completed_commit_without_reinvoking_agent() -> None:
     assert "routeValue" not in committed
 
 
+def test_minimal_root_commit_replay_normalizes_zero_communication_usage() -> None:
+    agent = _CountingAgent()
+    first_runner = ACGNodeRunner.minimal(agent=agent)
+    first_state = ACGExecutionState(runId=first_runner.run.run_id)
+    first = asyncio.run(first_runner("one", first_state))
+    zero_usage = {"run": 0, "steps": {}, "channels": {}}
+    assert first_state.communication_usage == zero_usage
+
+    resumed_agent = _CountingAgent()
+    resumed_runner = ACGNodeRunner(
+        task=first_runner.task,
+        run=first_runner.run,
+        workflow=first_runner.workflow,
+        steps=first_runner.steps,
+        agents={"one": resumed_agent},
+        communicator=CommunicatorService(
+            run_id=first_runner.run.run_id,
+            mission_id=first_runner.task.mission_id,
+        ),
+        memory=first_runner.memory,
+        value_store=first_runner.value_store,
+        decision_store=first_runner.decision_store,
+    )
+    resumed_state = ACGExecutionState(runId=first_state.run_id)
+    assert resumed_state.communication_usage == {}
+    assert resumed_runner.communication_broker is None
+
+    replayed = asyncio.run(resumed_runner("one", resumed_state))
+
+    assert agent.calls == 1
+    assert resumed_agent.calls == 0
+    assert resumed_state.communication_usage == first_state.communication_usage == zero_usage
+    assert replayed["commitId"] == first["commitId"]
+    assert replayed["contextRef"] == first["contextRef"]
+    assert replayed["outputRef"] == first["outputRef"]
+
+
 def test_node_runner_does_not_treat_entropy_budget_as_a_token_limit() -> None:
     agent = _RecordingAgent()
     runner = ACGNodeRunner.minimal(agent=agent, entropy_budget=0)
@@ -829,6 +980,7 @@ def test_node_runner_separates_memory_read_types_from_write_type() -> None:
                 "write": True,
                 "writeType": "procedural",
             }},
+            goal="Recall visible facts",
             outputSpec={"type": "object", "properties": {"answer": {"type": "string"}}},
         )},
         agents={"one": agent},

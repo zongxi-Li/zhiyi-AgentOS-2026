@@ -20,7 +20,8 @@ _SCALARS = frozenset("agentName callId tool executionId receiptRef operationKey 
 _WORKSPACE_REVIEW_EVENTS = frozenset({"workspace.review.blocked", "workspace.review.retry", "workspace.review.resumed"})
 _WORKSPACE_REVIEW_SCALARS = frozenset({"stage", "status", "errorCode", "errorType",
     "authorityReason", "activationId", "observationId", "graphVersion"})
-_EVENTS = frozenset("tool.execution_started tool.execution_completed node.started node.completed node.failed model.started model.first_token model.activity model.output.delta model.completed planner.started planner.stage.started planner.stage.retry planner.model.started planner.model.first_token planner.model.activity planner.model.output.delta planner.model.completed planner.stage.completed planner.profile.resolved planner.plan.parsed planner.graph.compiled planner.completed planner.failed run.completed run.failed run.cancelled".split()) | _WORKSPACE_REVIEW_EVENTS
+_NODE_TERMINAL = frozenset({"node.completed", "node.failed", "node.cancelled"})
+_EVENTS = frozenset("tool.execution_started tool.execution_completed node.queued node.started model.started model.first_token model.activity model.output.delta model.completed planner.started planner.stage.started planner.stage.retry planner.model.started planner.model.first_token planner.model.activity planner.model.output.delta planner.model.completed planner.stage.completed planner.profile.resolved planner.plan.parsed planner.graph.compiled planner.completed planner.failed run.completed run.failed run.cancelled".split()) | _WORKSPACE_REVIEW_EVENTS | _NODE_TERMINAL
 _TERMINAL = frozenset({"run.completed", "run.failed", "run.cancelled", "run.superseded"})
 
 
@@ -168,6 +169,8 @@ class RuntimeDisplayProjection:
         source_payload = ({k: v for k, v in event.payload.items() if k in _WORKSPACE_REVIEW_SCALARS}
                           if review else event.payload)
         allowed_scalars = _WORKSPACE_REVIEW_SCALARS if review else _SCALARS
+        if kind == "node.queued":
+            allowed_scalars |= {"reason", "queuedAt"}
         payload = {k: (v[:1000] if isinstance(v, str) else v) for k, v in source_payload.items()
                    if k in allowed_scalars and isinstance(v, (str, int, float, bool))}
         if kind.startswith("tool.") and (approval := public_approval_decision(source_payload.get("approvalDecision"))):
@@ -237,7 +240,7 @@ class RuntimeDisplayProjection:
             self.raw.clear()
             self.pending.clear()
             self.folded_at.clear()
-        if kind.endswith("model.completed") or kind in {"node.completed", "node.failed"}:
+        if kind.endswith("model.completed") or kind in _NODE_TERMINAL:
             self.raw.pop(lane, None)
             self.closed.add(lane)
         return public
@@ -247,10 +250,28 @@ class RuntimeDisplayProjection:
         return [event.model_copy(update={"payload": {"publicText": public_narrative(self.raw.get(lane, ""))}})
                 for lane, event in pending.items()]
 
-    def snapshot(self) -> dict:
-        return {"schemaVersion": 1, "sequence": self.sequence,
+    def snapshot(self, *, run=None) -> dict:
+        payload = {"schemaVersion": 1, "sequence": self.sequence,
                 "retiredAttempts": {key: sorted(values) for key, values in self.retired.items()},
                 "events": deepcopy([{k: v for k, v in e.items() if k != "displayCall"} for e in self.events])}
+        if run is not None:
+            state = run.execution_state
+            # Reconcile display rows with an ended task of the same identity.
+            # A new attempt for this node must never inherit that outcome.
+            owners = {(parts[0], attempt) for key, attempt in state.get("attemptIds", {}).items()
+                      if isinstance(key, str) and isinstance(attempt, str)
+                      and len(parts := key.rsplit(":", 2)) == 3}
+            candidates = {(event.get("nodeId"), event.get("attemptId")) for event in self.events
+                          if event.get("runId") == run.run_id and event.get("nodeId") and event.get("attemptId")}
+            settled = state.get("taskSettlement", {})
+            attempts = []
+            for node_id, attempt_id in sorted(owners & candidates):
+                task = settled.get(attempt_id) or {}
+                if task.get("taskState") == "ended" and task.get("outcome") in {"failed", "cancelled"}:
+                    attempts.append({"nodeId": node_id, "attemptId": attempt_id, "status": task["outcome"]})
+            if attempts:
+                payload["settledAttempts"] = attempts
+        return payload
 
     def durable(self) -> dict:
         # The broker copies once under its lock before checkpoint I/O.

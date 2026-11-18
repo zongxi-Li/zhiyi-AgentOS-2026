@@ -53,7 +53,6 @@ class RuntimeCollaborators:
     agent_registry: AgentRegistry
     resource_plane: ResourcePlane
     resource_binder: ResourceBinder
-    scheduler_wait_timeout: float
     resource_execution_adapters: dict[str, ResourceExecutionAdapter]
     tool_runtime: object | None
     model_registry: ModelCompatibilityRegistry
@@ -191,14 +190,6 @@ class CollaboratorAccess:
     @resource_binder.setter
     def resource_binder(self, value: ResourceBinder) -> None:
         self.ports.resource_binder = value
-
-    @property
-    def scheduler_wait_timeout(self) -> float:
-        return self.ports.scheduler_wait_timeout
-
-    @scheduler_wait_timeout.setter
-    def scheduler_wait_timeout(self, value: float) -> None:
-        self.ports.scheduler_wait_timeout = value
 
     @property
     def resource_execution_adapters(

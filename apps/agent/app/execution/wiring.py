@@ -50,7 +50,6 @@ from components.resource.infrastructure.audit_store import SQLiteResourceAuditSt
 from components.marketplace.infrastructure import DirectoryCatalog, LocalPackageLauncher, LoopbackHttpEndpointProbe, SQLiteInstallationJobStore
 from components.mission_manager.store import WorkflowRegistry
 from runtime import ApplicationSetup, ExecutionRuntime
-from adapters.guarded_model import GuardedModelRuntime
 from adapters.model_runtime import RegisteredModelRuntime
 from runtime import (
     AcgIdentityLifecycleService,
@@ -248,6 +247,8 @@ def _build_coordination_client(environment: Mapping[str, str]):
         str(environment["AGENTOS_COORDINATION_REDIS_URL"]),
         password=_read_optional_secret(environment, "REDIS_PASSWORD"),
         decode_responses=False,
+        socket_connect_timeout=3,
+        socket_timeout=3,
     )
 
 

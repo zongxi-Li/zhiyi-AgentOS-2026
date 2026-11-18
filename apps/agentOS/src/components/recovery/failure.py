@@ -12,7 +12,6 @@ _CLASSIFICATIONS: dict[str, tuple[FailureSource, FailureType, str, bool]] = {
     "ExecutionDeniedError": (FailureSource.AUDIT, FailureType.POLICY, "EXECUTION_AUDIT_DENIED", False),
     "ResourceNotFoundError": (FailureSource.SCHEDULER, FailureType.CAPACITY, "RESOURCE_UNAVAILABLE", True),
     "SchedulerNoEligibleResource": (FailureSource.SCHEDULER, FailureType.CAPACITY, "NO_ELIGIBLE_RESOURCE", False),
-    "SchedulerAllocationTimeout": (FailureSource.SCHEDULER, FailureType.CAPACITY, "SCHEDULER_CAPACITY_TIMEOUT", True),
     "CommunicationBackpressureError": (FailureSource.COMMUNICATION, FailureType.COMMUNICATION, "COMMUNICATION_BACKPRESSURE", True),
     "CommunicationAccessError": (FailureSource.COMMUNICATION, FailureType.POLICY, "COMMUNICATION_NOT_AUTHORIZED", False),
     "EntropyBudgetExceededError": (FailureSource.COMMUNICATION, FailureType.POLICY, "COMMUNICATION_BUDGET_EXHAUSTED", False),
@@ -56,9 +55,9 @@ def failure_event_from_exception(
     details = {"exceptionType": type(classified).__name__}
     if type(classified).__name__ == "MaterialSourceError":
         details.update(stepId=classified.step_id, manifestId=classified.manifest_id)
-    if type(classified).__name__ in {"SchedulerNoEligibleResource", "SchedulerAllocationTimeout"}:
+    if type(classified).__name__ == "SchedulerNoEligibleResource":
         structured_reason = getattr(classified, "reason_code", None)
-        if structured_reason in {"NO_ELIGIBLE_RESOURCE", "NO_MODEL_ENDPOINT", "SCHEDULER_CAPACITY_TIMEOUT"}:
+        if structured_reason in {"NO_ELIGIBLE_RESOURCE", "NO_MODEL_ENDPOINT"}:
             reason_code = structured_reason
         details.update(stepId=getattr(classified, "step_id", None),
             candidateReasons=getattr(classified, "candidate_reasons", []))

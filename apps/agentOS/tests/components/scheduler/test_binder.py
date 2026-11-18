@@ -7,12 +7,14 @@
 
 import asyncio
 from datetime import timedelta
+import threading
 
 import pytest
 
 from components.resource.application.resource_plane import ResourcePlane
-from components.resource.scheduler.binder import LeaseKeepAlive, ResourceBinder, hard_constraint_reasons, placement_score
+from components.resource.scheduler.binder import LeaseKeepAlive, ResourceBinder, placement_score
 from components.resource.scheduler.models import FATAL_SCHEDULING_REASONS
+from contracts.agents import AgentDefinition, AgentRegistrationRef
 from contracts.resource import (
     ComputeCapacity,
     ExecutionRequirement,
@@ -63,6 +65,125 @@ def _requirement(**overrides) -> ExecutionRequirement:
     values = dict(requiredCapabilities=["repo.read"])
     values.update(overrides)
     return ExecutionRequirement(**values)
+
+
+def _register_agent(plane, host_id, instance_id, *, capabilities=("repo.read",), capacity=1):
+    definition = AgentDefinition(agentId=instance_id, agentName=instance_id,
+        domain="general", capabilities=capabilities)
+    ref = AgentRegistrationRef(registryId="test-registry", instanceId=instance_id,
+        agentId=definition.agent_id, generation=1, definitionDigest=definition.digest)
+    profile = plane.register_agent_instance(ref, definition,
+        host_runtime_id=host_id, capacity=capacity)
+    plane.heartbeat_agent_instance(ref)
+    return profile
+
+
+@pytest.mark.asyncio
+async def test_queue_observes_release_by_another_binder_without_spending_work_budget():
+    from support.work_timeouts import work_timeout
+
+    plane = _plane()
+    _register(plane, "runtime:shared", capacity=1)
+    owner = ResourceBinder(plane)
+    waiter = ResourceBinder(plane, coordinator=owner.coordinator)
+    common = dict(run_id="run", step_id="step", requirement=_requirement())
+    held = owner.bind_ready(attempt_id="held", **common)
+    queued = asyncio.Event()
+
+    async def on_queued(_decision):
+        queued.set()
+
+    async def release_later():
+        await queued.wait()
+        await asyncio.sleep(.08)
+        owner.release_binding(held.binding)
+
+    release = asyncio.create_task(release_later())
+    try:
+        async with asyncio.timeout(2):
+            async with work_timeout(.04) as budget:
+                allocated = await waiter.wait_ready(attempt_id="waiting", on_queued=on_queued, **common)
+                assert budget.when() > asyncio.get_running_loop().time()
+        assert allocated.status == "allocated"
+        assert waiter.coordinator.active_slots("runtime:shared") == 1
+        waiter.release_binding(allocated.binding)
+        assert not waiter._capacity_waiters
+    finally:
+        await release
+
+
+@pytest.mark.asyncio
+async def test_queue_deadline_and_configuration_rejection_leave_no_reservations():
+    plane = _plane()
+    _register(plane, "runtime:single", capacity=1)
+    binder = ResourceBinder(plane)
+    common = dict(run_id="run", step_id="step", requirement=_requirement())
+    held = binder.bind_ready(attempt_id="held", **common)
+    queued = await binder.wait_ready(attempt_id="waiting", timeout=.01, **common)
+    assert queued.status == "queued" and queued.reason == "NO_CAPACITY"
+    assert binder.coordinator.active_slots("runtime:single") == 1
+    rejected = await binder.wait_ready(run_id="run", step_id="missing", attempt_id="missing",
+                                       requirement=_requirement(requiredCapabilities=["missing"]))
+    assert rejected.status == "rejected" and rejected.reason == "NO_ELIGIBLE_RESOURCE"
+    assert not binder._capacity_waiters
+    binder.release_binding(held.binding)
+
+
+@pytest.mark.asyncio
+async def test_queue_retries_compensated_backend_reservation_with_fresh_lease_identity(monkeypatch):
+    plane = _plane()
+    _register(plane, "runtime:changing", capacity=1)
+    binder = ResourceBinder(plane)
+    acquire = binder.coordinator.acquire
+    reservations = []
+
+    def change_snapshot_once(**kwargs):
+        lease = acquire(**kwargs)
+        reservations.append(lease)
+        if len(reservations) == 1:
+            current = plane.runtime_snapshot("runtime:changing")
+            plane.store.update_snapshot(current.snapshot, expected_version=current.version)
+        return lease
+
+    monkeypatch.setattr(binder.coordinator, "acquire", change_snapshot_once)
+    result = await binder.wait_ready(run_id="run", step_id="step", attempt_id="same-attempt",
+                                     requirement=_requirement(), timeout=1)
+    assert result.status == "allocated"
+    assert len(reservations) == 2 and reservations[0].lease_id != reservations[1].lease_id
+    assert binder.coordinator.get(reservations[0].lease_id).status == "released"
+    assert result.binding.attempt_id == "same-attempt"
+    assert binder.coordinator.active_slots("runtime:changing") == 1
+    binder.release_binding(result.binding)
+
+
+@pytest.mark.asyncio
+async def test_queue_health_refresh_and_publication_do_not_consume_agent_work_budget():
+    from support.work_timeouts import work_timeout
+
+    plane = _plane()
+    _register(plane, "runtime:single", capacity=1)
+    binder = ResourceBinder(plane)
+    common = dict(run_id="run", step_id="step", requirement=_requirement())
+    held = binder.bind_ready(attempt_id="held", **common)
+    checks = 0
+
+    async def prepare():
+        nonlocal checks
+        checks += 1
+        await asyncio.sleep(.025)  # A real health refresh may wait on HTTP.
+        if checks == 3:
+            binder.release_binding(held.binding)
+
+    async def publish(_decision):
+        await asyncio.sleep(.05)
+
+    async with asyncio.timeout(2):
+        async with work_timeout(.04) as budget:
+            result = await binder.wait_ready(attempt_id="waiting", before_attempt=prepare,
+                                             on_queued=publish, **common)
+            assert budget.when() > asyncio.get_running_loop().time()
+    assert checks == 3 and result.status == "allocated"
+    binder.release_binding(result.binding)
 
 
 def test_bind_ready_freezes_binding_with_lease_and_metadata() -> None:
@@ -399,6 +520,76 @@ def test_assessment_checks_model_and_actual_lease_capacity_without_reserving():
     assert binder.assess(demand).ready
 
 
+def test_assessment_requires_capacity_on_a_matching_agent_and_recovers_after_release():
+    plane = _plane()
+    host = _register(plane, "runtime:shared", capacity=5)
+    agent = _register_agent(plane, host.runtime_id, "reader")
+    unrelated = _register_agent(plane, host.runtime_id, "builder", capabilities=("build",), capacity=4)
+    candidates = {host.runtime_id: (agent, unrelated)}
+    binder = ResourceBinder(plane)
+    common = dict(run_id="run", step_id="step", requirement=_requirement(), agent_candidates=candidates)
+    held = binder.bind_ready(attempt_id="held", **common)
+    assert held.status == "allocated"
+
+    for _ in range(2):
+        report = binder.assess(_requirement(), agent_candidates=candidates)
+        assert not report.ready and report.reason == "NO_CAPACITY"
+        assert report.available_runtime_ids == ()
+        assert next(c for c in report.candidates if c.resource_id == host.runtime_id).accepted
+    queued = binder.bind_ready(attempt_id="waiting", **common)
+    assert queued.status == "queued" and queued.reason == "NO_CAPACITY"
+    assert binder.coordinator.active_slots(host.runtime_id) == 1
+    assert binder.coordinator.active_slots(agent.runtime_id) == 1
+    assert binder.coordinator.active_slots(unrelated.runtime_id) == 0
+
+    binder.release_binding(held.binding)
+    report = binder.assess(_requirement(), agent_candidates=candidates)
+    assert report.ready and report.available_runtime_ids == (host.runtime_id,)
+    assert binder.coordinator.active_slots(host.runtime_id) == 0
+    allocated = binder.bind_ready(attempt_id="waiting", **common)
+    assert allocated.status == "allocated" and allocated.binding.agent_registration == agent.agent_registration
+    binder.release_binding(allocated.binding)
+
+
+def test_assessment_can_use_another_matching_instance_but_never_bypass_full_host():
+    plane = _plane()
+    host = _register(plane, "runtime:shared", capacity=2)
+    agents = tuple(_register_agent(plane, host.runtime_id, name) for name in ("reader-a", "reader-b"))
+    candidates = {host.runtime_id: agents}
+    binder = ResourceBinder(plane)
+    common = dict(run_id="run", step_id="step", requirement=_requirement(), agent_candidates=candidates)
+    held = binder.bind_ready(attempt_id="first", **common)
+    assert held.status == "allocated"
+    assert binder.assess(_requirement(), agent_candidates=candidates).ready
+    second = binder.bind_ready(attempt_id="second", **common)
+    assert second.status == "allocated"
+    assert second.binding.agent_registration != held.binding.agent_registration
+    binder.release(second.agent_lease.lease_id)
+    report = binder.assess(_requirement(), agent_candidates=candidates)
+    assert not report.ready and report.reason == "NO_CAPACITY"
+    binder.release_binding(held.binding)
+    binder.release_binding(second.binding)
+
+
+def test_unavailable_agent_coordination_never_claims_readiness(monkeypatch):
+    from components.resource.scheduler.models import SchedulerUnavailable
+
+    plane = _plane()
+    host = _register(plane, "runtime:shared")
+    agent = _register_agent(plane, host.runtime_id, "reader")
+    binder = ResourceBinder(plane)
+    active_slots = binder.coordinator.active_slots
+
+    def unavailable_agent(resource_id, *, now=None):
+        if resource_id == agent.runtime_id:
+            raise SchedulerUnavailable("Agent lease inspection unavailable")
+        return active_slots(resource_id, now=now)
+
+    monkeypatch.setattr(binder.coordinator, "active_slots", unavailable_agent)
+    report = binder.assess(_requirement(), agent_candidates={host.runtime_id: (agent,)})
+    assert not report.ready and report.reason == "COORDINATION_UNAVAILABLE"
+
+
 def test_released_lease_identity_cannot_be_reused_for_a_new_attempt() -> None:
     plane = _plane()
     _register(plane, "runtime:edge-exec-1", capacity=1)
@@ -559,5 +750,142 @@ def test_lease_keep_alive_renews_the_current_lease_version() -> None:
         await keep_alive.stop()
         assert keep_alive.failure is None
         assert keep_alive.lease.version > result.lease.version
+
+    asyncio.run(scenario())
+
+
+def test_shorter_agent_lease_renews_while_preparing_on_a_blocked_event_loop(monkeypatch) -> None:
+    async def scenario():
+        plane = _plane()
+        host = _register(plane, "runtime:edge-exec-1", capacity=1)
+        agent = _register_agent(plane, host.runtime_id, "reader")
+        binder = ResourceBinder(plane)
+        allocated = binder.bind_ready(run_id="run-1", step_id="step-1", attempt_id="attempt-1",
+            requirement=_requirement(), agent_candidates={host.runtime_id: (agent,)})
+        assert allocated.lease is not None and allocated.agent_lease is not None
+        renew = binder.coordinator.renew
+        short = renew(lease_id=allocated.agent_lease.lease_id, owner_id="attempt-1",
+            version=allocated.agent_lease.version, ttl=timedelta(milliseconds=600))
+        renewed = threading.Event()
+
+        def observe(**kwargs):
+            result = renew(**kwargs)
+            if result.lease_id == short.lease_id:
+                renewed.set()
+            return result
+
+        monkeypatch.setattr(binder.coordinator, "renew", observe)
+        keeper = LeaseKeepAlive(binder.coordinator, allocated.lease, additional_leases=(short,),
+            interval=timedelta(seconds=2), ttl=timedelta(seconds=5))
+        keeper.start()
+        try:
+            assert renewed.wait(timeout=1.4)  # The scheduler loop is busy persisting the binding.
+            binder.assert_binding(allocated.binding, now=short.expires_at)
+        finally:
+            await keeper.stop()
+            assert binder.release_binding(allocated.binding)
+
+    asyncio.run(scenario())
+
+
+def test_blocked_renewal_keeps_loop_responsive_and_stop_joins_the_pair() -> None:
+    async def scenario() -> None:
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+        class BlockingCoordinator:
+            def __init__(self):
+                self.calls = []
+
+            def renew(self, **kwargs):
+                self.calls.append(kwargs)
+                entered.set()
+                try:
+                    if not release.wait(timeout=2):
+                        raise TimeoutError("test renewal was not released")
+                    return lease.model_copy(update={"lease_id": kwargs["lease_id"], "version": kwargs["version"] + 1})
+                finally:
+                    finished.set()
+
+        plane = _plane()
+        _register(plane, "runtime:edge-exec-1", capacity=1)
+        allocated = ResourceBinder(plane).bind_ready(
+            run_id="run-1", step_id="step-1", attempt_id="attempt-1", requirement=_requirement()
+        )
+        lease = allocated.lease
+        assert lease is not None
+        agent_lease = lease.model_copy(update={"lease_id": "agent-lease"})
+        coordinator = BlockingCoordinator()
+        keeper = LeaseKeepAlive(coordinator, lease, additional_leases=(agent_lease,),
+            interval=timedelta(milliseconds=5), ttl=timedelta(seconds=5))
+        keeper.start()
+        keeper.start()
+        stop_task = None
+        try:
+            assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), 3)
+            assert not finished.is_set()
+            unrelated = asyncio.create_task(asyncio.Event().wait())
+            await asyncio.sleep(0)
+            unrelated.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(unrelated, 0.2)
+
+            stop_task = asyncio.create_task(keeper.stop())
+            await asyncio.sleep(0)
+            stop_task.cancel()
+            await asyncio.sleep(0)
+            assert not stop_task.done()
+            assert not finished.is_set()
+        finally:
+            release.set()
+            if stop_task is not None:
+                with pytest.raises(asyncio.CancelledError):
+                    await stop_task
+            else:
+                await keeper.stop()
+
+        assert keeper.failure is None
+        assert [call["lease_id"] for call in coordinator.calls] == [lease.lease_id, agent_lease.lease_id]
+        assert keeper.lease.version == lease.version + 1
+        assert keeper.additional_leases[0].version == agent_lease.version + 1
+
+    asyncio.run(scenario())
+
+
+def test_partial_lease_renewal_retries_transient_outage_with_current_versions() -> None:
+    from components.resource.scheduler.models import SchedulerUnavailable
+
+    async def scenario() -> None:
+        plane = _plane()
+        _register(plane, "runtime:edge-exec-1", capacity=1)
+        allocated = ResourceBinder(plane).bind_ready(
+            run_id="run-1", step_id="step-1", attempt_id="attempt-1", requirement=_requirement()
+        )
+        lease = allocated.lease
+        assert lease is not None
+        agent_lease = lease.model_copy(update={"lease_id": "agent-lease"})
+        recovered = threading.Event()
+        calls = []
+
+        class TransientCoordinator:
+            def renew(self, *, lease_id, version, **kwargs):
+                calls.append((lease_id, version))
+                if len(calls) == 2:
+                    raise SchedulerUnavailable("transient renewal failure")
+                if len(calls) == 4:
+                    recovered.set()
+                return lease.model_copy(update={"lease_id": lease_id, "version": version + 1})
+
+        keeper = LeaseKeepAlive(TransientCoordinator(), lease, additional_leases=(agent_lease,),
+            interval=timedelta(milliseconds=15), ttl=timedelta(seconds=3))
+        keeper.start()
+        try:
+            assert await asyncio.to_thread(recovered.wait, 2)
+        finally:
+            await keeper.stop()
+        assert keeper.failure is None
+        assert calls[:4] == [
+            (lease.lease_id, lease.version), (agent_lease.lease_id, agent_lease.version),
+            (lease.lease_id, lease.version + 1), (agent_lease.lease_id, agent_lease.version),
+        ]
 
     asyncio.run(scenario())

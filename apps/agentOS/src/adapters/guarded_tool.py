@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
 from adapters.tool_adapter import ToolRuntime
+from contracts.tools import HOST_TOOL_FAILURE_CODES
 
 
 _Result = TypeVar("_Result")
@@ -195,10 +196,22 @@ class GuardedToolRuntime:
         except ToolInvocationError:
             raise
         except Exception as exc:
+            if getattr(exc, 'code', None) == 'EXECUTION_CANCELLED':
+                raise
             raise ToolInvocationError(
-                "TOOL_EXECUTION_FAILED",
+                self._failure_code(exc),
                 "tool stream failed",
             ) from exc
+
+    @staticmethod
+    def _failure_code(exc: Exception) -> str:
+        code = getattr(exc, 'code', 'TOOL_EXECUTION_FAILED')
+        if isinstance(code, str) and code in HOST_TOOL_FAILURE_CODES:
+            return code
+        if (isinstance(code, str) and code.startswith(('HANDS_', 'PERMISSION_', 'GRANT_'))
+                and code.replace('_', '').isascii() and code.replace('_', '').isalnum()):
+            return code
+        return "TOOL_EXECUTION_FAILED"
 
     async def _invoke(
         self,
@@ -236,9 +249,7 @@ class GuardedToolRuntime:
                 if code == 'EXECUTION_CANCELLED':
                     raise
                 raise ToolInvocationError(
-                    code if isinstance(code, str) and code.startswith(('HANDS_', 'PERMISSION_', 'GRANT_'))
-                    and code.replace('_', '').isascii() and code.replace('_', '').isalnum()
-                    else "TOOL_EXECUTION_FAILED",
+                    self._failure_code(exc),
                     "tool operation failed", attempts=attempt
                 ) from exc
             if self.retry_delay_seconds:

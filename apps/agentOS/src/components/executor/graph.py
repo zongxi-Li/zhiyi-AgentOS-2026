@@ -15,7 +15,7 @@ AgentOS 内部实现。它只负责图的编译产物执行、状态通道、并
 from __future__ import annotations
 
 import asyncio
-from support.async_tasks import cancel_and_wait
+from support.async_tasks import await_settled, cancel_and_wait
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -544,22 +544,65 @@ class ACGExecutionGraph:
                 step_id: asyncio.create_task(execute(step_id, state), name=f"acg:{state.run_id}:{step_id}")
                 for step_id in ready
             }
+            # A node may already have lost its execution authority while it is
+            # still joining an in-flight tool. Stop siblings at that boundary;
+            # cleanup completion remains a separate fact owned by each task.
+            notifications = getattr(execute, "failure_notifications", None)
+            committed_results = getattr(execute, "committed_results", {})
+            failure_task = (asyncio.create_task(notifications.get(), name=f"acg-failure:{state.run_id}")
+                            if isinstance(notifications, asyncio.Queue) else None)
             try:
                 pending_tasks = dict(tasks)
                 while pending_tasks:
                     try:
-                        done, pending = await asyncio.wait(
-                            pending_tasks.values(), return_when=asyncio.FIRST_COMPLETED
+                        waiters = set(pending_tasks.values())
+                        if failure_task is not None:
+                            waiters.add(failure_task)
+                        done, _ = await asyncio.wait(
+                            waiters, return_when=asyncio.FIRST_COMPLETED
                         )
                     except asyncio.CancelledError as exc:
                         await cancel_and_wait(pending_tasks.values(), reason=str(exc) or "execution_cancelled")
                         state.active_step_ids = []
                         raise
+                    signalled = {}
+                    if failure_task is not None and failure_task in done:
+                        notices = [failure_task.result()]
+                        while not notifications.empty():
+                            notices.append(notifications.get_nowait())
+                        for step_id, failure in notices:
+                            if step_id in pending_tasks and isinstance(failure, Exception):
+                                signalled[step_id] = failure
+                        if not signalled:
+                            failure_task = asyncio.create_task(notifications.get(), name=f"acg-failure:{state.run_id}")
                     failures = [
+                        step_id for step_id in pending_tasks
+                        if step_id in signalled or (
+                            pending_tasks[step_id] in done and not pending_tasks[step_id].cancelled()
+                            and pending_tasks[step_id].exception() is not None)
+                    ]
+                    completed_ids = [
                         step_id
                         for step_id, task in pending_tasks.items()
-                        if task in done and not task.cancelled() and task.exception() is not None
+                        if task in done and not task.cancelled() and task.exception() is None and step_id not in failures
                     ]
+                    for step_id in completed_ids:
+                        try:
+                            event, review_payload = self._commit_node_result(
+                                state=state, route_values=route_values, step_id=step_id,
+                                result=pending_tasks[step_id].result())
+                        except BaseException:
+                            await cancel_and_wait(pending_tasks.values(), reason="result_commit_failure")
+                            state.active_step_ids = []
+                            raise
+                        yield event
+                        committed_results.pop(step_id, None)
+                        pending_tasks.pop(step_id)
+                        if review_payload is not None and not failures:
+                            await cancel_and_wait(pending_tasks.values(), reason="review_interrupt")
+                            from components.recovery.checkpoint import ExecutionInterrupt
+
+                            raise ExecutionInterrupt("execution requires review", review_payload)
                     if failures:
                         # 已经原子提交的节点结果继续保留；尚未提交的兄弟节点进入取消态。
                         # 这样一个慢节点失败时，不会回滚此前已经可查询的完整答案。
@@ -567,14 +610,34 @@ class ACGExecutionGraph:
                             step_id for step_id in ready
                             if step_id not in failures and step_id not in state.completed_step_ids
                         ]
-                        await cancel_and_wait(pending, reason="sibling_failure")
-                        state.active_step_ids = []
-                        cause = pending_tasks[failures[0]].exception()
+                        cause = signalled.get(failures[0]) or pending_tasks[failures[0]].exception()
                         assert cause is not None
+                        for step_id in cancelled:
+                            task = pending_tasks[step_id]
+                            if not task.done() and not task.cancelling():
+                                task.cancel("sibling_failure")
+                        if isinstance(cause, Exception):
+                            yield {"type": "superstep_stopping", "stepId": failures[0],
+                                   "failedStepIds": failures, "cancelledStepIds": cancelled,
+                                   "errorCode": str(getattr(cause, "code", None) or type(cause).__name__)}
+                        await await_settled(asyncio.gather(*pending_tasks.values(), return_exceptions=True))
+                        # A sibling can finish an atomic commit while cancellation
+                        # is delivered. Preserve that durable prefix as well.
+                        for step_id in cancelled:
+                            task = pending_tasks[step_id]
+                            result = (task.result() if not task.cancelled() and task.exception() is None
+                                      else committed_results.get(step_id))
+                            if result is not None:
+                                event, _ = self._commit_node_result(state=state, route_values=route_values,
+                                    step_id=step_id, result=result)
+                                yield event
+                                committed_results.pop(step_id, None)
+                        cancelled = [step_id for step_id in cancelled if step_id not in state.completed_step_ids]
+                        state.active_step_ids = []
                         # A sibling may settle as UNKNOWN while being cancelled.
                         # Preserve every settled failure, not just the first one.
-                        causes = tuple(task.exception() for task in tasks.values()
-                                       if not task.cancelled() and task.exception() is not None)
+                        causes = tuple(dict.fromkeys([cause, *(task.exception() for task in tasks.values()
+                                       if not task.cancelled() and task.exception() is not None)]))
                         # 进程终止、测试模拟断电等 ``BaseException`` 不能被误标为业务节点
                         # 失败或触发 failed run 投影；让调用栈直接中断，下一进程从持久化边界
                         # 继续。普通 ``Exception`` 仍保留完整的超步失败语义。
@@ -612,32 +675,13 @@ class ACGExecutionGraph:
                             causes=causes,
                         ) from cause
 
-                    completed_ids = sorted(
-                        (step_id for step_id, task in pending_tasks.items() if task in done),
-                        key=ready.index,
-                    )
-                    for step_id in completed_ids:
-                        try:
-                            event, review_payload = self._commit_node_result(
-                                state=state,
-                                route_values=route_values,
-                                step_id=step_id,
-                                result=pending_tasks[step_id].result(),
-                            )
-                        except BaseException:
-                            await cancel_and_wait(pending_tasks.values(), reason="result_commit_failure")
-                            state.active_step_ids = []
-                            raise
-                        yield event
-                        pending_tasks.pop(step_id)
-                        if review_payload is not None:
-                            await cancel_and_wait(pending_tasks.values(), reason="review_interrupt")
-                            from components.recovery.checkpoint import ExecutionInterrupt
-
-                            raise ExecutionInterrupt("execution requires review", review_payload)
+                    if any(task.cancelled() for task in pending_tasks.values()):
+                        await cancel_and_wait(pending_tasks.values(), reason="execution_cancelled")
+                        raise asyncio.CancelledError("node execution cancelled")
             finally:
                 try:
-                    await cancel_and_wait(tasks.values(), reason="graph_closed")
+                    await cancel_and_wait((*tasks.values(), *((failure_task,) if failure_task is not None else ())),
+                                          reason="graph_closed")
                 finally:
                     state.active_step_ids = []
             for step_id in ready:

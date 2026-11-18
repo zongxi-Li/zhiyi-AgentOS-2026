@@ -53,23 +53,56 @@ def _wire(value: Any) -> str:
 class _HeadlessModel(Model):
     """Protocol adapter only; Runner owns when to call the model and tools."""
 
-    def __init__(self, messages, tools, invoke_model, execute_tool, validate_completion, progress_feedback):
+    def __init__(self, messages, tools, invoke_model, execute_tool, validate_completion, progress_feedback,
+                 feedback_allowed=None):
         self.messages = deepcopy(messages)
         self.names = {tool["function"]["name"] for tool in tools}
         self.invoke_model = invoke_model
         self.execute_tool = execute_tool
         self.validate_completion = validate_completion
         self.progress_feedback = progress_feedback
+        self.feedback_allowed = feedback_allowed
         self.last_progress_feedback = None
         self.turn = 0
         self.observations: dict[str, str] = {}
         self.rejected_states: set[str] = set()
+        self.failed_tool_states: set[str] = set()
+        self.failed_tool_batch: list[dict[str, Any]] = []
+        self.successful_observations: dict[str, Any] = {}
         self.pending: list[tuple[int, int, dict[str, Any]]] = []
         self.results: dict[tuple[int, int], str] = {}
         self.responses: dict[int, Any] = {}
         self.final_response = None
         self.failure: BaseException | None = None
         self.host_tasks: set[asyncio.Task[Any]] = set()
+        self.owner_task = asyncio.current_task()
+
+    def _assert_active(self):
+        # The SDK may catch a child callback exception or cancellation. That
+        # cannot reopen a failed host session or admit another paid model call.
+        if self.failure is not None:
+            raise self.failure
+        current = asyncio.current_task()
+        if any(task is not None and task.cancelling() for task in (self.owner_task, current)):
+            raise asyncio.CancelledError("agent session cancellation is pending")
+
+    def _failed_tool_feedback(self):
+        if not self.failed_tool_batch:
+            return
+        states = {sha256(_wire({**failed, "observations": self.successful_observations}).encode("utf-8")).hexdigest()
+                  for failed in self.failed_tool_batch}
+        self.failed_tool_batch.clear()
+        if states & self.failed_tool_states:
+            raise StructuredGenerationError("AGENT_NO_PROGRESS",
+                "unchanged failed tool action after corrective guidance; preserve evidence and revise unresolved work")
+        self.failed_tool_states.update(states)
+        self.messages.append({"role": "user", "content": (
+            "A requested tool action failed. Use its error and the advertised tool schema to correct the "
+            "request or choose a different supported action. Repeating the same failed action with unchanged "
+            "evidence does not advance the task. Preserve all confirmed observations. When useful evidence "
+            "is already available, submit the final JSON matching this node's existing output contract with "
+            "the verified findings and unresolved scope so ACG can review and schedule remaining work. "
+            "A failed action is not evidence that a source was read; do not claim completion of unobserved work.")})
 
     def _flush_results(self):
         for turn, index, call in self.pending:
@@ -82,10 +115,23 @@ class _HeadlessModel(Model):
 
     async def get_response(self, *args, **kwargs):
         try:
+            self._assert_active()
             completed_batch = bool(self.pending)
             self._flush_results()
             turn = self.turn
             self.turn += 1
+            if self.failed_tool_batch:
+                allowed = self.feedback_allowed(deepcopy(self.messages), turn) if self.feedback_allowed else True
+                if inspect.isawaitable(allowed):
+                    allowed = await allowed
+                self._assert_active()
+                if allowed:
+                    self._failed_tool_feedback()
+                else:
+                    # Historical WAL decisions keep their exact transcript.
+                    # They were never shown this guidance, so recurrence there
+                    # cannot establish that the agent ignored it.
+                    self.failed_tool_batch.clear()
             if completed_batch and self.progress_feedback is not None:
                 feedback = self.progress_feedback(deepcopy(self.messages), turn)
                 if inspect.isawaitable(feedback):
@@ -98,7 +144,9 @@ class _HeadlessModel(Model):
                         self.last_progress_feedback = feedback
             # Give the host an independent snapshot: its WAL identity must be the
             # exact input observed here, not later mutations of a shared list.
+            self._assert_active()
             response = await self.invoke_model(deepcopy(self.messages), turn)
+            self._assert_active()
             calls = _field(response, "tool_calls", "toolCalls", []) or []
             if calls and _field(response, "output_error", "outputError"):
                 raise StructuredGenerationError("MODEL_TOOL_CALL_INVALID", "invalid final candidate includes tool calls")
@@ -129,7 +177,8 @@ class _HeadlessModel(Model):
                 total_tokens=int(usage.get("total_tokens", 0) or 0)),
                 response_id=_field(response, "request_id", "requestId"))
         except BaseException as exc:
-            self.failure = exc
+            if self.failure is None:
+                self.failure = exc
             raise
 
     async def stream_response(self, *args, **kwargs):
@@ -140,6 +189,7 @@ class _HeadlessModel(Model):
 
     async def dispatch(self, context, arguments):
         try:
+            self._assert_active()
             address = json.loads(arguments)
             turn, index = address["turn"], address["index"]
             call = next(call for t, i, call in self.pending if (t, i) == (turn, index))
@@ -155,6 +205,7 @@ class _HeadlessModel(Model):
                 # waits for the host's cleanup instead of orphaning the effect.
                 async def invoke_host():
                     try:
+                        self._assert_active()
                         return await self.execute_tool(deepcopy(call), turn, index)
                     except BaseException as exc:
                         if self.failure is None:
@@ -167,6 +218,7 @@ class _HeadlessModel(Model):
                 result = await asyncio.shield(task)
                 if not isinstance(result, str):
                     result = _wire(result)
+            self._assert_active()
             self.results[(turn, index)] = result
             function = call.get("function") or {}
             arguments = function.get("arguments")
@@ -175,10 +227,27 @@ class _HeadlessModel(Model):
             except (TypeError, ValueError):
                 pass
             try:
-                observation = _wire(json.loads(result))
+                parsed_result = json.loads(result)
+                observation = _wire(parsed_result)
             except (TypeError, ValueError):
+                parsed_result = None
                 observation = result
-            self.observations[_wire({"name": name, "arguments": arguments})] = observation
+            action = _wire({"name": name, "arguments": arguments})
+            self.observations[action] = observation
+            error = parsed_result.get("error") if isinstance(parsed_result, dict) else None
+            if isinstance(parsed_result, dict) and (parsed_result.get("status") == "failed" or error):
+                self.failed_tool_batch.append({"action": action,
+                    "errorCode": error.get("code") if isinstance(error, dict) else None,
+                    "output": parsed_result.get("output", {})})
+            else:
+                # Host ToolResult.output is the business observation; transport
+                # call ids and fresh receipts do not establish new evidence.
+                payload = parsed_result.get("output") if isinstance(parsed_result, dict) else observation
+                if isinstance(parsed_result, dict) and "output" not in parsed_result:
+                    payload = {key: value for key, value in parsed_result.items() if key not in {
+                        "requestId", "toolCallId", "receiptRef", "receiptChecksum", "executionId",
+                        "operationId", "attemptId", "commitId", "runId", "bindingId"}}
+                self.successful_observations[action] = payload
             return result
         except BaseException as exc:
             if self.failure is None:
@@ -195,6 +264,7 @@ class _HeadlessModel(Model):
 
     async def check_completion(self, context, arguments):
         try:
+            self._assert_active()
             response = self.responses.pop(json.loads(arguments)["turn"])
             if _field(response, "output_error", "outputError") == "MODEL_OUTPUT_INVALID_JSON":
                 feedback = (
@@ -226,10 +296,12 @@ class _HeadlessModel(Model):
             self.messages.append({"role": "user", "content": feedback})
             return "continue"
         except BaseException as exc:
-            self.failure = exc
+            if self.failure is None:
+                self.failure = exc
             raise
 
     def final_output(self, context, results):
+        self._assert_active()
         return ToolsToFinalOutputResult(is_final_output=self.final_response is not None,
                                        final_output="accepted" if self.final_response is not None else None)
 
@@ -239,8 +311,7 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
                          execute_tool: Callable[[dict[str, Any], int, int], Awaitable[str]],
                          validate_completion: Callable[[Any], Awaitable[str | None] | str | None] | None = None,
                          progress_feedback: Callable[[list[dict[str, Any]], int], Awaitable[str | None] | str | None] | None = None,
-                         max_actions: int | None = None, max_feedback: int | None = None,
-                         max_format_repairs: int | None = None) -> Any:
+                         feedback_allowed: Callable[[list[dict[str, Any]], int], Awaitable[bool] | bool] | None = None) -> Any:
     """Run one headless node and return its original accepted model response.
 
     ``invoke_model(messages, turn)`` owns model routing, WAL and diagnostics.
@@ -251,14 +322,17 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
     ``progress_feedback(messages, turn)`` may describe host-confirmed progress
     after tool results, before the next model snapshot and its WAL identity.
     It never accepts a completion or substitutes for a tool observation.
-    Legacy max_* arguments remain readable but never terminate execution.
+    ``feedback_allowed(messages, turn)`` suppresses new failed-tool guidance
+    while the host replays an exact historical WAL transcript. Suppressed
+    guidance never registers a repeated failure as no progress.
     Repeated rejected candidates with unchanged observations fail as no progress;
     new observations and corrections can continue without a turn-count ceiling.
     """
     names = [tool["function"]["name"] for tool in tools]
     if len(names) != len(set(names)):
         raise ValueError("tool wire names must be unique")
-    model = _HeadlessModel(messages, tools, invoke_model, execute_tool, validate_completion, progress_feedback)
+    model = _HeadlessModel(messages, tools, invoke_model, execute_tool, validate_completion, progress_feedback,
+                           feedback_allowed)
     def internal_tool(name, callback, properties):
         return FunctionTool(name=name, description="Internal execution scheduling adapter.",
             params_json_schema={"type": "object", "properties": properties,
@@ -272,7 +346,7 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
         model_settings=ModelSettings(parallel_tool_calls=False),
         tool_use_behavior=model.final_output)
     try:
-        await run_sdk_agent(agent, [], max_turns=None,
+        await run_sdk_agent(agent, [],
             run_config=RunConfig(tracing_disabled=True, trace_include_sensitive_data=False,
                                  tool_execution=ToolExecutionConfig(max_function_tool_concurrency=1)))
     except BaseException:
@@ -285,6 +359,7 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
         await model.close()
     # SDK's default text output contract stringifies final outputs. The host
     # receives the untouched original response, never that presentation value.
+    model._assert_active()
     if model.final_response is None:
         raise StructuredGenerationError("AGENT_COMPLETION_REQUIREMENTS_UNMET", "node returned without an accepted result")
     return model.final_response

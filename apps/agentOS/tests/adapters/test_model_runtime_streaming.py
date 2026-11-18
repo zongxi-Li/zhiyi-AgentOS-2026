@@ -359,6 +359,43 @@ def test_registered_model_runtime_projects_stream_usage_finish_reason_and_latenc
     }
 
 
+@pytest.mark.parametrize(("delta", "finish_reason", "error_code"), [
+    ('{"answer":{"value":"ok"}', "stop", None),
+    ('{"answer":{"value":"ok"}', None, "MODEL_OUTPUT_INVALID_JSON"),
+    ('{"answer":{"value":"ok"}', "length", "MODEL_OUTPUT_EXHAUSTED"),
+    ('{"answer":{"value":"unfinished', "stop", "MODEL_OUTPUT_INVALID_JSON"),
+])
+def test_stream_recovers_only_a_missing_root_close_after_normal_stop(delta, finish_reason, error_code) -> None:
+    class _PartialJsonAdapter(_ClosingStreamingAdapter):
+        async def astream(self, request: ModelInvocationRequest):
+            yield ModelStreamEvent(
+                requestId=request.request_id, eventType="delta", delta=delta,
+                provider="fixture", model="fixture-model",
+            )
+            yield ModelStreamEvent(
+                requestId=request.request_id, eventType="completed",
+                provider="fixture", model="fixture-model", metadata={"finishReason": finish_reason},
+            )
+
+    registry = ModelCompatibilityRegistry()
+    registry.register(_PartialJsonAdapter())
+    runtime = RegisteredModelRuntime(registry=registry, provider="fixture", model="fixture-model")
+
+    async def collect():
+        return [event async for event in runtime.stream_generate_json(
+            prompt="Return one JSON object", schema={"type": "object"}, run_id="run-partial-json",
+        )]
+
+    if error_code is not None:
+        with pytest.raises(StructuredGenerationError) as failure:
+            asyncio.run(collect())
+        assert failure.value.code == error_code
+    else:
+        completed = asyncio.run(collect())[-1]
+        assert completed.event_type == "model.completed"
+        assert completed.payload["data"] == {"answer": {"value": "ok"}}
+
+
 def test_registered_model_runtime_forwards_reasoning_effort_on_stream() -> None:
     """流式桥接同样必须把显式 reasoning_effort 写入统一请求选项。"""
 

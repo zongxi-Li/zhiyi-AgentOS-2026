@@ -193,7 +193,7 @@ async def test_tool_internal_timeout_is_an_observation_not_session_deadline():
     async def model(turn, messages):
         if turn == 0:
             return response(calls=[READ])
-        result = json.loads(messages[-1]['content'])
+        result = json.loads(next(item for item in reversed(messages) if item['role'] == 'tool')['content'])
         assert result['status'] == 'failed'
         assert result['error']['code'] == 'TOOL_EXECUTION_FAILED'
         return response()
@@ -259,5 +259,3 @@ async def test_workspace_tool_io_timeout_still_requires_settlement():
 
     assert captured.value.code == 'TOOL_TIMEOUT'
     assert len(model_runtime.requests) == 1 and len(tools.calls) == 1
-
-\n

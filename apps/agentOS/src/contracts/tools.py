@@ -6,6 +6,19 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field
 
 
+HOST_TOOL_FAILURE_CODES = frozenset({
+    "EXECUTION_LEASE_LOST", "SCHEDULER_UNAVAILABLE",
+    "EXECUTION_RESOURCE_UNAVAILABLE", "EXECUTION_CAPACITY_UNAVAILABLE",
+    "EXECUTION_AUTHORIZATION_LOST",
+})
+
+
+class ToolExecutionAuthorizationLost(PermissionError):
+    """A live host authority changed; tool arguments cannot restore it."""
+
+    code = "EXECUTION_AUTHORIZATION_LOST"
+
+
 class ToolDefinition(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     name: str

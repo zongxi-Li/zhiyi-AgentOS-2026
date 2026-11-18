@@ -24,6 +24,7 @@ from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
 from app.execution.wiring import (
     GatewayIntentLLM,
     RegisteredPlannerLLM,
+    _build_coordination_client,
     bind_registered_planner_llm,
     build_default_runtime,
     build_model_setup,
@@ -231,6 +232,18 @@ def test_application_wires_an_injected_redis_lease_coordinator(tmp_path: Path) -
     finally:
         close_runtime(runtime)
     assert client.closed is True
+
+
+def test_coordination_redis_io_has_explicit_timeouts() -> None:
+    client = _build_coordination_client({"AGENTOS_COORDINATION_REDIS_URL": "redis://localhost:6379/4"})
+    try:
+        options = client.connection_pool.connection_kwargs
+        assert options["socket_connect_timeout"] == 3
+        assert options["socket_timeout"] == 3
+        assert options["db"] == 4
+        assert options["decode_responses"] is False
+    finally:
+        client.close()
 
 
 def test_model_setup_reuses_the_single_workflow_runtime_registry(tmp_path: Path) -> None:

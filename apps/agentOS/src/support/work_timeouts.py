@@ -1,4 +1,4 @@
-"""Bound active execution time independently from bounded human approval waits."""
+"""Bound active work independently from approval and resource queue waits."""
 import asyncio
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -30,8 +30,8 @@ async def work_timeout(seconds):
 
 
 @contextmanager
-def human_approval_wait():
-    """Pause only registered work deadlines; approval TTL and cancellation stay live."""
+def suspended_work_wait():
+    """Pause registered work deadlines; external deadlines/cancellation stay live."""
     loop = asyncio.get_running_loop()
     paused = []
     for scope in _timeouts.get():
@@ -58,3 +58,9 @@ def human_approval_wait():
             scope.remaining = None
             if scope.active and seconds is not None and not scope.timer.expired():
                 scope.timer.reschedule(loop.time() + seconds)
+
+
+# Preserve the public approval API while sharing its nested/concurrent accounting
+# with capacity waits. Neither waiting for a person nor waiting for a resource
+# consumes the Agent's active-work budget.
+human_approval_wait = suspended_work_wait
