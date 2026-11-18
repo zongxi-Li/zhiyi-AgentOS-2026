@@ -168,18 +168,17 @@ def project_run_capabilities(runtime, run, *, formal_control=None):
             reasons['canRetrySuccessor'] = 'PERMIT_RETRY_REQUIRES_INTERNAL_AUTHORITY'
             try:
                 from runtime.planning_operations import RuntimeTaskOperations
+                from runtime.permit_recovery import interrupted_step_ids
                 operations = RuntimeTaskOperations(runtime)
                 recovery_authorization = operations.assert_current_run_recovery(run)
-                for step in run.steps:
-                    if step.status.value != 'failed':
-                        continue
+                for step_id in interrupted_step_ids(run):
                     try:
                         runtime.runtime_recovery_coordinator.prepare_single_step_retry(
-                            run.run_id, step.step_id, expected_runtime_revision=run.runtime_revision,
+                            run.run_id, step_id, expected_runtime_revision=run.runtime_revision,
                             reuse_source_run=True, validate_only=True,
                             **({'operator_recovery': recovery_authorization} if recovery_authorization else {}))
                         allow('canRecoverCurrentRun')
-                        result['retryStepId'] = step.step_id
+                        result['retryStepId'] = step_id
                         result['retryMode'] = 'current_run'
                         break
                     except EVIDENCE_ERRORS:

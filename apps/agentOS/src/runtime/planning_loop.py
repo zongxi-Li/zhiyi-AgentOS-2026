@@ -7,13 +7,17 @@ The current planning round is durable before the model call and before applicati
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Mapping
 
+from pydantic import ValidationError
+
+from adapters.model_adapter import StructuredGenerationError
 from components.executor import ACGExecutionState
 from contracts.planning import TaskPlan
 from contracts.runtime_planning import (
     RuntimePlanningDecision, RuntimePlanningObservation, RuntimePlanningRound,
-    RuntimePlanningState,
+    RuntimePlanningState, RuntimePlanningFailure,
     RuntimeUserInput,
 )
 from contracts.workflow import RuntimeRunRecord, StepStatus, TraceEventType
@@ -22,6 +26,57 @@ from runtime.planning_observation import RuntimePlanningObservationBuilder
 
 
 REPAIRABLE_PLANNING_REJECTIONS = frozenset({"INVALID_PROPOSAL", "DEPENDENCY_NOT_CLOSED"})
+
+
+def _planning_failure_diagnostics(exc: Exception) -> tuple[RuntimePlanningFailure, dict]:
+    """Preserve typed causes without publishing exception messages or model values."""
+    from components.planner.task_decomposer import planning_validation_failures, safe_validation_failures
+
+    current, seen = exc, set()
+    code, retryable, structured = None, None, None
+    metadata, has_validation_details = {}, False
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        cause_metadata = getattr(current, "metadata", None)
+        cause_metadata = cause_metadata if isinstance(cause_metadata, Mapping) else {}
+        location = safe_validation_failures([cause_metadata])[0]
+        for key in ("stage", "callKey"):
+            if key in cause_metadata and location.get(key) == cause_metadata[key]:
+                metadata.setdefault(key, location[key])
+        for key in ("attemptCount", "retryCount"):
+            count = cause_metadata.get(key)
+            if type(count) is int and count >= 0:
+                metadata.setdefault(key, count)
+        has_validation_details |= (isinstance(current, ValidationError)
+            or bool(getattr(current, "validation_code", None))
+            or bool(cause_metadata.get("validationFailures")))
+        for attribute in ("code", "cause_code"):
+            candidate = getattr(current, attribute, None)
+            if isinstance(candidate, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", candidate):
+                if code is None:
+                    code = candidate
+                elif code.startswith("PLANNER_FORMAL_") and candidate != code:
+                    metadata.setdefault("causeCode", candidate)
+                break
+        if retryable is None and isinstance(getattr(current, "retryable", None), bool):
+            retryable = current.retryable
+        if structured is None and isinstance(current, StructuredGenerationError):
+            structured = current
+        current = current.__cause__
+
+    stage = metadata.get("stage", "runtime_decision")
+    failures = planning_validation_failures(exc, stage=stage, call_key=metadata.get("callKey", "runtime_decision"))
+    if not has_validation_details and not any(item["code"] != "unclassified_validation_error" for item in failures):
+        failures = []
+    failure = RuntimePlanningFailure(
+        errorCode=code or ("PLANNER_DECISION_INVALID" if failures else "PLANNER_UNAVAILABLE"),
+        errorType=type(exc).__name__, retryable=bool(retryable), stage=stage, validationFailures=failures,
+    )
+    diagnostic = {"metadata": metadata} if metadata or structured is not None else {}
+    if structured is not None:
+        from components.planner.complexity import model_invocation_audit
+        diagnostic.update(attempts=structured.attempts, modelAudit=model_invocation_audit(structured.audit))
+    return failure, diagnostic
 
 
 class RuntimePlanningCoordinator(CollaboratorAccess):
@@ -135,6 +190,13 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
             return "continue"
         if state.active_step_ids or state.review_payload:
             raise ValueError("runtime planning requires a quiescent, resolved execution barrier")
+        if reason in {"resume", "restart"}:
+            from runtime.runtime_recovery import pending_retry_dispatch
+            if pending_retry_dispatch(run, state):
+                # The retry authority already chose to execute this pending
+                # frontier. Review its new results at the normal superstep
+                # boundary, rather than asking Planner to re-decide old facts.
+                return "continue"
         if reason == "progress":
             if loop.restart_pending:
                 reason = "restart"
@@ -151,13 +213,20 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
                 if step.output_ref is not None
             } if loop.current is not None else set()
             tool_progress = bool(self._tool_output_refs(run, state) - observed_refs)
-            if not verified_progress and not tool_progress:
+            workspace_progress = False
+            if (run.execution_state.get("workspaceObservations")
+                    and set(state.output_refs.values()) - observed_refs):
+                from contracts.execution_evidence import workspace_observation_progress
+                workspace_progress = any(item.get("complete") is not True for item in
+                    workspace_observation_progress(run, self.execution_value_store))
+            if not verified_progress and not tool_progress and not workspace_progress:
                 return "continue"
             # Explicit verification controls retain local revision authority.
             if state.control_frames:
                 return "continue"
-            # A tool outcome (including a failed/denied call) is a fresh fact,
-            # not permission for the Agent to mutate its own ACG fragment.
+            # A committed understanding result also establishes a new planning
+            # boundary when workspace scope remains. Supplemental acquisition
+            # cannot depend on a tool call that the old plan never declared.
             reason = "verification" if verified_progress else "resume"
             loop = loop.model_copy(update={"last_verification_refs": refs})
         if reason in {"resume", "restart"} and any(s.status == StepStatus.FAILED for s in run.steps):
@@ -196,8 +265,16 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
                 )
                 decision = RuntimePlanningDecision.model_validate(decision)
             except Exception as exc:
-                # Persist a safe wait, not a speculative fallback plan or raw model text.
-                decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=f"Runtime Planner unavailable: {type(exc).__name__}")
+                # A technical failure owns a resumable barrier. Keep its typed
+                # diagnostic distinct from a model-authored external wait.
+                failure, details = _planning_failure_diagnostics(exc)
+                current = current.model_copy(update={"failure": failure})
+                reason = f"Runtime Planner unavailable: {failure.error_type} ({failure.error_code})"
+                diagnostic = {"runtimeEvent": "planner.runtime.failed", "observationId": observation_id,
+                    **failure.model_dump(mode="json", by_alias=True), **details}
+                self.trace_store.append(run, TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                    observation="Runtime Planner decision failed", payload=diagnostic)
+                decision = RuntimePlanningDecision(observationId=observation_id, action="wait", reason=reason)
             if self.decision_gate is not None:
                 from runtime.workspace_review_execution import record_workspace_review
                 record_workspace_review(run, observation, decision, loop)

@@ -14,6 +14,7 @@ from adapters.resource_execution import ResourceExecutionError
 from components.auditor import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.graph import ACGSuperstepError
+from components.executor.memory_input import memory_retrieval_key, memory_retrieval_reference
 from components.executor.value_store import ExecutionValueAccessError, SQLiteExecutionValueStore
 from components.memory import MemoryService
 from components.memory.store import SQLiteMemoryStore
@@ -126,8 +127,27 @@ def test_restart_respects_commit_boundary_without_repeating_agent_effects(stage:
         assert execution.audit_ref
         assert execution.failure_code is None
         assert len(evidence["decisions"]) == 1
-        assert {row[1] for row in evidence["values"]} == {"output", "context"}
-        assert {row[3] for row in evidence["values"]} == {commit_id}
+        memory_ref = memory_retrieval_reference(run.run_id, commit_id)
+        snapshots = [row for row in evidence["values"] if row[0] == memory_ref]
+        assert len(snapshots) == 1
+        _, kind, payload_json, operation_id = snapshots[0]
+        assert kind == "output"
+        assert operation_id is None
+        snapshot = json.loads(payload_json)
+        assert snapshot["identity"] == {
+            "runId": run.run_id, "stepId": "one",
+            "attemptId": execution.attempt_id, "commitId": commit_id,
+        }
+        recovered.execution_value_store.assert_reference(
+            kind="output", run_id=run.run_id, step_id="one", reference=memory_ref,
+        )
+        assert recovered.execution_value_store.get_tool_value(
+            run_id=run.run_id, key=memory_retrieval_key(commit_id),
+        ) == snapshot
+        node_values = [row for row in evidence["values"] if row[0] != memory_ref]
+        assert len(node_values) == 2
+        assert {row[1] for row in node_values} == {"output", "context"}
+        assert {row[3] for row in node_values} == {commit_id}
         ledger = recovered.provenance_store.load_ledger(run_id=run.run_id, mission_id=task.mission_id)
         assert len(ledger.productions) == (0 if stage == "after_values" else 1)
 
@@ -146,7 +166,7 @@ def test_restart_respects_commit_boundary_without_repeating_agent_effects(stage:
         assert failed.execution_state["recoveryOutcome"]["reasonCode"] == "REMOTE_EXECUTION_OUTCOME_UNKNOWN"
         assert not any(event.event_type is TraceEventType.STEP_SUCCEEDED for event in failed.trace)
         assert _durable_evidence(tmp_path, run.run_id) == evidence
-        for reference, kind, _, _ in evidence["values"]:
+        for reference, kind, _, _ in node_values:
             with pytest.raises(ExecutionValueAccessError, match="not committed"):
                 if kind == "output":
                     recovered.execution_value_store.get_output(run_id=run.run_id, output_ref=reference)

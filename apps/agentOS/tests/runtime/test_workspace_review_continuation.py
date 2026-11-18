@@ -41,6 +41,85 @@ def test_legacy_blocked_continuation_is_replanable_without_error_code():
     assert continuation.can_replan(_blocked_workspace_run()) is True
 
 
+@pytest.mark.parametrize("head", [None, "graph:active", "semantic:next", "graph:next"])
+def test_only_the_active_commitment_can_reenter_the_ordinary_planner(head):
+    run = _blocked_workspace_run(mission_id="mission")
+    run.execution_state["graphActivation"]["sourceCommitId"] = "graph:active"
+    ledger = SimpleNamespace(latest=lambda _: SimpleNamespace(commit_id=head) if head else None)
+    continuation = WorkspaceReviewContinuation(SimpleNamespace(
+        planning_commit_authority=SimpleNamespace(store=ledger)))
+    assert continuation.can_replan(run) is (head in {None, "graph:active"})
+
+
+@pytest.mark.parametrize("head", ["semantic:next", "graph:next"])
+def test_accepted_revision_rejection_preserves_the_execution_barrier(tmp_path, monkeypatch, head):
+    from runtime.workspace_review_execution import _TransitionRejected
+
+    run = RuntimeRunRecord(missionId="mission", workflowId="flow", domain="general", runtimeEngine="acg",
+        status=WorkflowStatus.WAITING_REVIEW, reviewMode="auto",
+        input={"workspaceBinding": {"workspaceId": "workspace", "grantId": "grant"}},
+        executionState={
+            "graphId": "graph", "graphVersion": 1, "checkpointId": "checkpoint:active",
+            "executionPermitId": "permit:active", "workspaceObservations": [{"path": "."}],
+            "workspaceReviewContinuation": {"observationId": "observation:1", "sourceGraphVersion": 1,
+                                             "patch": {"metadata": {"workspaceScope": {"version": 1}}}},
+            "planningLoop": {"current": {"observationId": "observation:1"}},
+            "reviewPayload": {"subjectType": "planner", "subjectId": "graph", "observationId": "observation:1"},
+            "graphActivation": {"sourceCommitId": "graph:active", "executionPermit": {"permitId": "permit:active"}},
+        })
+    durable = {"run": run.model_copy(deep=True), "head": "graph:active", "writes": 0}
+
+    def save(current, *, expected_snapshot):
+        assert expected_snapshot == durable["run"]
+        assert current.status == WorkflowStatus.WAITING_REVIEW
+        durable.update(run=current.model_copy(deep=True), writes=durable["writes"] + 1)
+
+    def no_execution(*_, **__):
+        pytest.fail("an accepted but inactive revision must not retry the old graph")
+
+    runtime = SimpleNamespace(
+        workflow_store=SimpleNamespace(db_path=tmp_path / "workflow.sqlite3",
+            get_run=lambda _: durable["run"].model_copy(deep=True), save_run=save,
+            list_planning_inputs=lambda _: []),
+        run_lock_manager=SimpleNamespace(lock_for=lambda _: RLock()),
+        _run_cancellation_requested=lambda _: False,
+        planning_commit_authority=SimpleNamespace(store=SimpleNamespace(
+            latest=lambda _: SimpleNamespace(commit_id=durable["head"]))),
+        graph_materialization_authority=object(), graph_activation_authority=object(),
+        graph_handoff_authority=object(), execution_permit_authority=object(),
+        prepare_planning_commit_rejection_feedback=no_execution,
+        acg_state_persistence=SimpleNamespace(save_checkpoint=no_execution),
+    )
+    continuation = WorkspaceReviewContinuation(runtime)
+    events = []
+    monkeypatch.setattr(continuation, "_publish_status", lambda *args: events.append(args))
+    reason = "the accepted revision cannot preserve the frozen execution prefix"
+
+    def reject_after_acceptance(*_):
+        durable["head"] = head
+        raise _TransitionRejected(SimpleNamespace(code="INVALID_PROPOSAL", reason=reason))
+
+    monkeypatch.setattr(continuation, "_advance", reject_after_acceptance)
+    assert continuation.resume(run) is None
+    held = durable["run"]
+    pending = held.execution_state["workspaceReviewContinuation"]
+    assert pending["blocked"] and pending["errorCode"] == "INVALID_PROPOSAL"
+    assert pending["errorType"] == "_TransitionRejected" and reason in pending["reason"]
+    assert held.execution_state["reviewPayload"] == run.execution_state["reviewPayload"]
+    assert held.execution_state["checkpointId"] == "checkpoint:active"
+    assert held.execution_state["executionPermitId"] == "permit:active"
+    assert not held.execution_state.get("planningCommitRejection")
+    assert durable["writes"] == 1
+    assert events == [(run.run_id, "blocked", "INVALID_PROPOSAL")]
+    assert not continuation.can_replan(held)
+    monkeypatch.setattr(continuation, "_advance", no_execution)
+    assert continuation.resume(held) is None and durable["writes"] == 1
+    # The head is checked again under the Run fence, even if an earlier wake
+    # observed a current graph. No checkpoint or RETRYING projection is made.
+    assert continuation._prepare_replan(held, pending, code="INVALID_PROPOSAL", reason=reason) is None
+    assert durable["writes"] == 1
+
+
 @pytest.mark.parametrize("change", [
     {"reviewPayload": {"subjectType": "node", "subjectId": "A", "observationId": "observation:1"}},
     {"reviewPayload": {"subjectType": "planner", "subjectId": "graph", "observationId": "other"}},
@@ -52,6 +131,44 @@ def test_legacy_blocked_continuation_is_replanable_without_error_code():
 def test_blocked_continuation_requires_current_planner_observation_and_graph(change):
     continuation = WorkspaceReviewContinuation(SimpleNamespace())
     assert continuation.can_replan(_blocked_workspace_run(executionState=change)) is False
+
+
+@pytest.mark.parametrize("change", [
+    {},
+    {"blocked": False},
+    {"observationId": ""},
+    {"observationId": "stale", "sourceGraphVersion": 2},
+    {"observationId": "stale", "sourceGraphVersion": 0},
+    {"observationId": "stale", "sourceGraphVersion": True},
+])
+def test_retirement_never_removes_current_live_or_unowned_proposal(change):
+    from copy import deepcopy
+    from runtime.workspace_review_execution import retire_stale_workspace_continuation
+
+    run = _blocked_workspace_run()
+    run.execution_state["workspaceReviewContinuation"].update(change)
+    before = deepcopy(run.execution_state)
+    store = SimpleNamespace(put_graph_patch=lambda **_: pytest.fail("must not archive this proposal"))
+    assert retire_stale_workspace_continuation(run, value_store=store,
+        step_id="graph", operation_id="current-wake") is None
+    assert run.execution_state == before
+
+
+def test_retirement_storage_failure_preserves_original_live_pointer():
+    from copy import deepcopy
+    from runtime.workspace_review_execution import retire_stale_workspace_continuation
+
+    run = _blocked_workspace_run()
+    run.execution_state["workspaceReviewContinuation"]["observationId"] = "superseded-observation"
+    before = deepcopy(run.execution_state)
+
+    def unavailable(**kwargs):
+        raise OSError("archive storage unavailable")
+
+    with pytest.raises(OSError, match="archive storage unavailable"):
+        retire_stale_workspace_continuation(run, value_store=SimpleNamespace(put_graph_patch=unavailable),
+            step_id="graph", operation_id="current-wake")
+    assert run.execution_state == before
 
 
 @pytest.mark.parametrize("defect,expected_error", [
@@ -208,6 +325,7 @@ def test_paused_handoff_rejection_publishes_actual_authority_reason_without_writ
 @pytest.mark.parametrize("lost_ack", [False, True])
 def test_rejection_feedback_advances_checkpoint_head_when_cleared_body_already_exists(tmp_path, monkeypatch, lost_ack):
     from components.executor import ACGExecutionState
+    from components.executor.value_store import InMemoryExecutionValueStore
     from components.mission_manager.state_machine import StateMachine
     from components.recovery.checkpoint import ACGCheckpointStore
     from runtime.state_persistence import ACGStatePersistenceService
@@ -234,10 +352,16 @@ def test_rejection_feedback_advances_checkpoint_head_when_cleared_body_already_e
     run.execution_state.update(state.model_dump(by_alias=True, mode="json"))
     run.execution_state.update(workspaceObservations=[{"path": "."}], workspaceReviewContinuation=pending)
     version = checkpoints.latest_version(run_id=run.run_id)
+    reason = "  " + "repair proposal " * 100 + "  "
 
-    def prepare_feedback(current, current_state, **_):
+    def prepare_feedback(current, current_state, **feedback):
         current_state.review_payload = None
         current.execution_state.pop("workspaceReviewContinuation")
+        current.execution_state["planningCommitRejection"] = {
+            "observationId": feedback["source_observation_id"],
+            "code": feedback["code"].strip()[:128], "reason": feedback["reason"].strip()[:800],
+            "proposalRef": feedback["proposal_ref"],
+        }
 
     runtime = SimpleNamespace(workflow_store=store, checkpoint_store=checkpoints,
         run_lock_manager=SimpleNamespace(lock_for=lambda _: RLock()),
@@ -245,6 +369,7 @@ def test_rejection_feedback_advances_checkpoint_head_when_cleared_body_already_e
         mission_semantic_service=SimpleNamespace(require_write_access=lambda *_: None),
         _validate_acg_state_references=lambda **_: None,
         prepare_planning_commit_rejection_feedback=prepare_feedback,
+        execution_value_store=InMemoryExecutionValueStore(),
         acg_state_persistence=persistence, state_machine=StateMachine())
     continuation = WorkspaceReviewContinuation(runtime)
     monkeypatch.setattr(continuation, "_publish_status", lambda *_: None)
@@ -258,11 +383,14 @@ def test_rejection_feedback_advances_checkpoint_head_when_cleared_body_already_e
 
         persistence.after_checkpoint_hook = interrupt
         with pytest.raises(LostCheckpointAck):
-            continuation._prepare_replan(run, pending, code="INVALID_PROPOSAL", reason="repair proposal")
+            continuation._prepare_replan(run, pending, code="INVALID_PROPOSAL", reason=reason)
         assert durable["run"].status == WorkflowStatus.WAITING_REVIEW
         persistence.after_checkpoint_hook = None
 
-    prepared = continuation._prepare_replan(run, pending, code="INVALID_PROPOSAL", reason="repair proposal")
+    prepared = continuation._prepare_replan(run, pending, code="INVALID_PROPOSAL", reason=reason)
+    feedback = prepared.execution_state["planningCommitRejection"]
+    archived = runtime.execution_value_store.get_graph_patch(run_id=run.run_id, patch_ref=feedback["proposalRef"])
+    assert archived["rejection"] == {"code": "INVALID_PROPOSAL", "reason": reason.strip()[:800]}
     head, body = checkpoints.load_latest(run_id=run.run_id)
     assert prepared.status == WorkflowStatus.RETRYING
     assert head == prepared.execution_state["checkpointId"] != historical_id

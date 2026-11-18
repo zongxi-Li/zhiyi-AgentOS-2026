@@ -8,16 +8,21 @@ import re
 from uuid import uuid4
 
 from adapters.audited_tool_runtime import AuditedToolRuntime
+from adapters.guarded_tool import ToolInvocationError
 from adapters.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown
 from support.async_tasks import await_settled
 from components.resource.scheduler.binder import LeaseKeepAlive
+from components.resource.scheduler.models import ReadyNodeSchedulingResult
 from components.executor.value_store import SQLiteExecutionValueStore
 from contracts import stable_checksum
 from contracts.execution import NodeExecutionRecord
 from contracts.resource import ExecutionRequirement, RuntimeKind
 from contracts.local_runtime import LocalRuntimeExecutionRequest, LocalRuntimeExecutionLimits
+from contracts.native_retrieval import (
+    RETRIEVAL_COMMIT_SUFFIXES, RETRIEVAL_LEDGER_VERSION, retrieval_operation_key,
+)
 from contracts.runtime_events import RuntimeEvent
-from contracts.tools import hands_tools, ToolExecutionResult
+from contracts.tools import hands_tools, ToolExecutionAuthorizationLost, ToolExecutionResult
 from contracts.communication import validate_contract_payload
 from runtime.live_events import runtime_event_broker
 from app.tools.permissions import get_chat_permission_service, normalize_relative_path
@@ -37,7 +42,7 @@ class FormalWorkspaceTools:
         if not hasattr(runtime,'formal_tool_pending'): runtime.formal_tool_pending = {}
 
     def scoped(self, allowed):
-        return AuditedToolRuntime(delegate=self,allowed_tools=self.allowed_tools.intersection(allowed))
+        return AuditedToolRuntime(delegate=self, allowed_tools=self.allowed_tools).scoped(allowed)
 
     def bind_context(self, context, guard):
         return FormalWorkspaceTools(self.runtime,self.fallback,context,guard)
@@ -49,7 +54,7 @@ class FormalWorkspaceTools:
         return next((tool for tool in self.list_tools() if tool.name == name), None)
 
     def prove_not_dispatched(self, *, run, node, operation, tool, raw_arguments,
-                             workspace, connection, execution_value_store):
+                             workspace, connection, execution_value_store, memory_policy=None):
         """Read the formal write-ahead barrier; never infer an approval decision.
 
         execute() commits its request before dispatch. Only this exact adapter
@@ -69,7 +74,8 @@ class FormalWorkspaceTools:
         database = next((row[2] for row in connection.execute('PRAGMA database_list') if row[1] == 'main'), '')
         if not database or Path(database).resolve() != store.db_path.resolve():
             raise ValueError('tool recovery proof and execution ledger use different databases')
-        empty_session = tool == 'native.tool-session' and operation == node.operation_id and raw_arguments is None
+        retrieval_session = tool == 'native.retrieval.model-session'
+        empty_session = (tool == 'native.tool-session' or retrieval_session) and operation == node.operation_id and raw_arguments is None
         if (workspace != run.input.get('workspaceBinding') or not empty_session and (
                 tool not in {'fs.write', 'fs.patch', 'shell.exec'}
                 or re.fullmatch(re.escape(node.operation_id) + r':tools:\d+:call:\d+', operation) is None)):
@@ -79,17 +85,27 @@ class FormalWorkspaceTools:
         if row is None or NodeExecutionRecord.model_validate_json(row[0]) != node:
             raise ValueError('tool recovery lacks the exact durable node identity')
         if empty_session:
+            from components.executor.memory_input import read_frozen_memory_retrieval
+
+            memory_input = read_frozen_memory_retrieval(connection, run=run, execution=node, policy=memory_policy)
+            internal_refs = {memory_input[0]} if memory_input is not None else set()
+            # Core recovery has already verified these read-only prologue slots.
+            if retrieval_session:
+                internal_refs.update('tool:' + hashlib.sha256((run.run_id + ':' +
+                    retrieval_operation_key(node.operation_id, name) + suffix).encode()).hexdigest()
+                    for name in RETRIEVAL_COMMIT_SUFFIXES for suffix in (':request', ':result'))
             prefix = node.operation_id + ':'
             model_ref = 'tool:' + hashlib.sha256((run.run_id + ':' + node.operation_id + ':tools:0:model-turn').encode()).hexdigest()
-            if connection.execute(
-                    "SELECT 1 FROM execution_values WHERE run_id=? AND reference LIKE 'tool:%' AND ("
+            activity = connection.execute(
+                    "SELECT reference FROM execution_values WHERE run_id=? AND reference LIKE 'tool:%' AND ("
                     "reference=? OR substr(json_extract(payload_json,'$.request.invocationId'),1,?)=? "
                     "OR substr(json_extract(payload_json,'$.response.requestId'),1,?)=? "
                     "OR json_extract(payload_json,'$.identity.commitId')=? "
                     "OR json_extract(payload_json,'$.record.commitId')=? "
-                    "OR json_extract(payload_json,'$.commitId')=?) LIMIT 1",
+                    "OR json_extract(payload_json,'$.commitId')=?)",
                     (run.run_id, model_ref, len(prefix), prefix, len(prefix), prefix,
-                     node.operation_id, node.operation_id, node.operation_id)).fetchone():
+                     node.operation_id, node.operation_id, node.operation_id))
+            if any(reference not in internal_refs for (reference,) in activity):
                 raise ValueError('native session has admitted model or tool work')
             return {'source': 'formal-workspace-write-ahead.v1',
                     'identity': dict(runId=run.run_id, stepId=node.step_id, attemptId=node.attempt_id,
@@ -148,6 +164,48 @@ class FormalWorkspaceTools:
         from runtime.permit_recovery import settled_retry_observations
         return settled_retry_observations(self.runtime, context.run, context.step.step_id)
 
+    async def _execute_retrieval(self, name, arguments, **kwargs):
+        from app.tools.catalog import ReadOnlyToolCatalog
+        from app.tools.contracts import ToolRunResult
+        from app.tools.runtime import AgentsToolRuntime
+
+        # Only the built-in, read-only catalog earns this ledger protocol.
+        fallback = self.fallback
+        if (type(fallback) is not AgentsToolRuntime or 'execute' in vars(fallback)
+                or type(fallback.catalog) is not ReadOnlyToolCatalog or 'execute' in vars(fallback.catalog)):
+            return await fallback.execute(name, arguments, **kwargs)
+        context = self.context
+        if self.guard is not None:
+            try:
+                self.guard()
+            except Exception as exc:
+                raise ToolExecutionAuthorizationLost('Retrieval no longer owns its execution authority') from exc
+        identity = dict(runId=context.run.run_id, stepId=context.step.step_id,
+                        attemptId=context.attempt_id, commitId=context.commit_id)
+        if not all(identity.values()):
+            return await fallback.execute(name, arguments, **kwargs)
+        key = retrieval_operation_key(context.commit_id, name)
+        store = self.runtime.execution_value_store
+        request = {"version": RETRIEVAL_LEDGER_VERSION, "identity": identity, "tool": name,
+                   "callHash": stable_checksum({"arguments": arguments, "options": kwargs})}
+        ownership = dict(run_id=context.run.run_id, step_id=context.step.step_id)
+        store.put_tool_value(**ownership, key=key + ':request', payload=request)
+        cached = store.get_tool_value(run_id=context.run.run_id, key=key + ':result')
+        if cached is not None:
+            result = ToolRunResult.model_validate(cached['result'])
+            if cached != self._retrieval_result(request, result):
+                raise ValueError('retrieval replay result does not match its request')
+            return result
+        result = await fallback.execute(name, arguments, **kwargs)
+        store.put_tool_value(**ownership, key=key + ':result', payload=self._retrieval_result(request, result))
+        return result
+
+    @staticmethod
+    def _retrieval_result(request, result):
+        payload = result.model_dump(by_alias=True, mode='json')
+        return {"identity": request['identity'], "retrievalRequestHash": stable_checksum(request),
+                "resultHash": stable_checksum(payload), "result": payload}
+
     async def execute(self, name, arguments, *, operation_key=None, **kwargs):
         requested_name = name
         definition = self.describe(name)
@@ -158,6 +216,11 @@ class FormalWorkspaceTools:
             elif name != 'shell.exec':
                 name = next(alias for alias, capability in TOOLS.items() if capability == name)
         if name not in TOOLS and name != 'shell.exec':
+            context = self.context
+            if (context is not None and context.step.capability == 'information_retrieval'
+                    and context.commit_id and name in RETRIEVAL_COMMIT_SUFFIXES
+                    and kwargs.get('commit_id') == context.commit_id + RETRIEVAL_COMMIT_SUFFIXES[name]):
+                return await self._execute_retrieval(name, arguments, **kwargs)
             return await self.fallback.execute(name,arguments,**kwargs)
         context,rt = self.context,self.runtime
         if context is None or self.guard is None or not operation_key: raise PermissionError('Formal NodeRunner authority required')
@@ -261,19 +324,34 @@ class FormalWorkspaceTools:
                         approval = rt.formal_tool_pending.get(approval_id)
                         if approval:
                             await emit('approval_resolved', {'approval': {**approval, 'status': 'cancelled'}})
-            self.guard()  # Approval may have yielded while a permit was revoked.
-            if authority: authorization = authority.resolve(context.run)
-            healthy = await rt.local_runtime_health_projector.refresh(rt.local_runtime_transport)
-            if not healthy: raise RuntimeError('Execution resource is not healthy')
+            async def prepare_allocation():
+                nonlocal authorization
+                self.guard()  # Approval or capacity waits may outlive the permit.
+                if authority: authorization = authority.resolve(context.run)
+                healthy = await rt.local_runtime_health_projector.refresh(rt.local_runtime_transport)
+                self.guard()
+                if not healthy:
+                    profile = rt.resource_plane.runtime(rt.local_runtime_resource.profile.runtime_id)
+                    return ReadyNodeSchedulingResult(
+                        status='queued' if profile.enabled and not profile.draining else 'rejected',
+                        reason='EXECUTION_RESOURCE_UNAVAILABLE')
+
             # Every tool operation receives its own terminal capacity lease.
-            scheduled = rt.resource_binder.bind_ready(run_id=run_id,step_id=step_id,
+            # Contention belongs to the scheduler, not the Agent's reasoning or
+            # failure path. Admission still revalidates approval after waiting.
+            scheduled = await rt.resource_binder.wait_ready(run_id=run_id,step_id=step_id,
                 attempt_id=f'{context.attempt_id}:tool:{operation_key}:lease:{uuid4().hex}',
                 requirement=ExecutionRequirement(requiredCapabilities=[TOOLS.get(name,name)],runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
-                    allowedRuntimeIds=[rt.local_runtime_resource.profile.runtime_id]))
-            if scheduled.binding is None or scheduled.lease is None: raise RuntimeError('Hands lease unavailable: '+str(scheduled.reason))
+                    allowedRuntimeIds=[rt.local_runtime_resource.profile.runtime_id]),
+                before_attempt=prepare_allocation,
+                on_queued=lambda decision: emit('capacity_waiting', {'tool': requested_name, 'reason': decision.reason}))
+            if scheduled.binding is None or scheduled.lease is None:
+                if scheduled.reason == 'EXECUTION_RESOURCE_UNAVAILABLE':
+                    raise ToolInvocationError('EXECUTION_RESOURCE_UNAVAILABLE', 'Execution resource is not healthy', retryable=True)
+                raise ToolInvocationError('EXECUTION_CAPACITY_UNAVAILABLE', 'Execution capacity is unavailable', retryable=True)
             keepalive = LeaseKeepAlive(rt.resource_binder.coordinator,scheduled.lease)
-            keepalive.start()
             try:
+                keepalive.start()
                 request = LocalRuntimeExecutionRequest(protocolVersion='1',requestId=operation_key,invocationId=operation_key,
                     resourceId=scheduled.binding.resource_id,capabilityId=TOOLS.get(name,name),authorization=authorization,
                     input=data,limits=LocalRuntimeExecutionLimits(timeoutSeconds=90,maxStdoutBytes=64000,maxStderrBytes=32000),
@@ -350,5 +428,5 @@ class FormalWorkspaceTools:
 
 
 _FORMAL_WRITE_AHEAD_BOUNDARY = tuple((name, getattr(FormalWorkspaceTools, name))
-    for name in ('execute', 'describe', 'list_tools', 'bind_context', 'scoped'))
+    for name in ('execute', '_execute_retrieval', 'describe', 'list_tools', 'bind_context', 'scoped'))
 _SQLITE_TOOL_WRITE_AHEAD = SQLiteExecutionValueStore.put_tool_value

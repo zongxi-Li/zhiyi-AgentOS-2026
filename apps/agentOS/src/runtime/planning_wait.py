@@ -8,7 +8,7 @@ from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
 from runtime.binding import assess_run_requirement
 from runtime.ports import CollaboratorAccess
 from runtime.state_persistence import acg_execution_state_from_run
-from runtime.workspace_review_execution import automatic_workspace_review
+from runtime.workspace_review_execution import automatic_workspace_review, retire_stale_workspace_continuation
 from support.stores._policy import validate_run_state
 
 
@@ -29,6 +29,8 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         existing owners.
         """
         if not automatic_workspace_review(run):
+            return False
+        if (run.execution_state.get("reviewPayload") or {}).get("reasonCode") == "PLANNER_UNAVAILABLE":
             return False
         raw = run.execution_state.get("planningLoop") or {}
         current = raw.get("current") or {}
@@ -191,6 +193,12 @@ class RuntimePlanningWaitService(CollaboratorAccess):
                 and dict(latest, checkpointId=None) != dict(proposed, checkpointId=None)):
             raise ValueError("planning wake found an unrelated checkpoint head")
         self.state_persistence.save_checkpoint(run, state)
+        retired = retire_stale_workspace_continuation(run, value_store=self.execution_value_store,
+            step_id=state.graph_id, operation_id=state.checkpoint_transition_key)
+        if retired is not None:
+            self.trace_store.append(run, TraceEventType.RUNTIME_EVENT_CLASSIFIED,
+                observation="Superseded blocked review proposal archived at the current Planner wake",
+                payload={"runtimeEvent": "planner.runtime.continuation_retired", **retired})
         run.execution_state.update(state.model_dump(by_alias=True, mode="json"))
         run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
         run.current_step_id = None
@@ -204,7 +212,7 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         """Validate a Planner barrier without approving node/control reviews."""
         validate_run_state(run)
         review = run.execution_state.get("reviewPayload") or {}
-        if (review.get("subjectType") != "planner" or review.get("reasonCode") != "PLANNER_WAIT"
+        if (review.get("subjectType") != "planner" or review.get("reasonCode") not in {"PLANNER_WAIT", "PLANNER_UNAVAILABLE"}
                 or review.get("observationId") != observation_id):
             raise ValueError("automatic wake cannot approve a node or control review")
         state = acg_execution_state_from_run(run)

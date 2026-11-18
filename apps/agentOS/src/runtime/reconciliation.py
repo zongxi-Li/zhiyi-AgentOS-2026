@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import nullcontext
 import hashlib
 import json
 import logging
@@ -13,6 +14,7 @@ from contracts.workflow import RuntimeMissionRecord
 from domain.lifecycle_projection import LifecycleProjectionEvent, ProjectionEventStatus
 from domain.models import AttemptStatus, RunStatus, StepExecutionStatus
 from support.acg.schema import RuntimeBlueprintSpec
+from support.run_execution_fence import acquire_run_fence, RunFenceBusy
 from types import SimpleNamespace
 
 from .identity_projection import DEAD_LETTER_MAX_ATTEMPTS, IdentityProjectionBridge
@@ -137,7 +139,20 @@ class IdentityProjectionReconciler:
                         if replacement:
                             self.adapter.on_run_superseded(run.run_id, replacement, str(run.execution_state.get("sourcePatchId") or "reconciliation"))
                     report.repaired_runs += 1
-                self._audit_run(run)
+                # A terminal snapshot alone does not prove its executor died.
+                # The OS fence prevents startup repair from closing live node
+                # identities owned by another service process.
+                database = getattr(workflow_store, "db_path", None)
+                terminal_repair = run.status.value in {"failed", "cancelled", "superseded"}
+                fence = (acquire_run_fence(database, run.run_id)
+                         if database is not None and terminal_repair
+                         else nullcontext())
+                with fence:
+                    if database is not None and terminal_repair:
+                        run = workflow_store.get_run(run.run_id)
+                    self._audit_run(run)
+            except RunFenceBusy:
+                continue  # A live executor owns cleanup; this is not a dead letter.
             except Exception as exc:
                 report.failures.append(f"{run.run_id}: {exc}")
         self._update_backlog_report(workflow_store, report)
@@ -159,7 +174,12 @@ class IdentityProjectionReconciler:
             for summary in summaries:
                 identity = self.adapter.repositories.runs.get(summary.run_id)
                 expected = terminal_statuses.get(summary.status.value)
-                if identity is None or expected is None or identity.status.value != expected:
+                unfinished_nodes = (expected in {"failed", "cancelled", "superseded"}
+                    and any(attempt.status in {AttemptStatus.PENDING, AttemptStatus.RUNNING}
+                        or any(execution.status is StepExecutionStatus.RUNNING
+                            for execution in self.adapter.repositories.step_executions.list_for_attempt(attempt.attempt_id))
+                        for attempt in self.adapter.repositories.attempts.list_for_run(summary.run_id)))
+                if identity is None or expected is None or identity.status.value != expected or unfinished_nodes:
                     yield workflow_store.get_run(summary.run_id)
             if len(summaries) < max(1, limit):
                 return

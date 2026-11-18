@@ -67,7 +67,7 @@ def test_cache_groups_keep_prefix_and_capability_boundaries():
 
 
 @pytest.mark.asyncio
-async def test_resource_usage_routes_project_reported_and_missing_cache(tmp_path):
+async def test_resource_usage_routes_project_reported_and_missing_cache(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
     from app.api.agentos_v2 import create_router
@@ -96,6 +96,13 @@ async def test_resource_usage_routes_project_reported_and_missing_cache(tmp_path
         content_manifest_store=content)
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    # Both usage routes must use the read-only hydration path; repeatedly
+    # parsing large Run payloads for every ledger page delays the Inspector.
+    cached_reads = []
+    def read_cached(run_id):
+        cached_reads.append(run_id)
+        return store.get_run(run_id)
+    monkeypatch.setattr(runtime, 'get_status_cached', read_cached)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             result = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage")
@@ -120,5 +127,6 @@ async def test_resource_usage_routes_project_reported_and_missing_cache(tmp_path
             assert [(item["scope"], item["cacheHitRatio"]) for item in partial.json()["cacheScopes"]] == [
                 ("node", None), ("planning", .5),
             ]
+            assert cached_reads == [run.run_id] * 4
     finally:
         content.close()

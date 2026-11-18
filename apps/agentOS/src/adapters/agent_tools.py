@@ -12,10 +12,10 @@ from adapters.model_diagnostics import safe_stream_diagnostics, safe_transport_d
 from adapters.sdk_agent_loop import run_agent_loop
 from contracts.communication import ContextContractError, apply_contract_defaults, validate_contract_payload
 from contracts.execution_evidence import (
-    node_workspace_acquisition_progress, node_workspace_observation_feedback,
+    node_workspace_acquisition_progress, node_workspace_observation_feedback, node_workspace_page_progress,
     workspace_execution_context, workspace_observation_progress,
 )
-from contracts.tools import ToolResult, model_tool_result
+from contracts.tools import HOST_TOOL_FAILURE_CODES, ToolResult, model_tool_result
 from contracts.capability import ModelInvocationResponse
 from adapters.prompt_runtime import TrustClass, canonical_hash, trust_envelope
 from support.work_timeouts import work_timeout
@@ -34,13 +34,19 @@ def supports_agent_tools(context):
                 and agent_tool_definitions(context))
 
 
+def _workspace_feedback_progress(progress):
+    """Keep the assigned page actionable without appending global paths again."""
+    return {**{key: value for key, value in progress.items() if key != 'remainingScope'},
+        'runCoverage': [{key: value for key, value in scope.items()
+            if key not in {'missingReads', 'missingListings', 'unsupportedEntries'}}
+            for scope in progress['remainingScope']]}
+
+
 class AgentToolSession:
     """All mutable conversation/action state belongs to this node invocation."""
 
-    def __init__(self, context, *, max_actions=None):
+    def __init__(self, context):
         self.context = context
-        # Kept for callers loading old session configuration; never a stop rule.
-        self.max_actions = None
         self.actions = 0
         self.records = []
         self.observations = []
@@ -113,8 +119,35 @@ class AgentToolSession:
             'A partial page or failed read cannot support a claim of complete verification; report gaps explicitly. '
         ) if self.context_tools.list_tools() else ''
         workspace = workspace_execution_context(context.run)
+        acquisition_context_version = 1
         if workspace is not None:
             workspace['observationProgress'] = list(workspace_observation_progress(context.run, self._store))
+            # Preserve the initial request of an already admitted conversation.
+            # Only new sessions, or sessions that recorded this delivery
+            # protocol, receive the local acquisition assignment here.
+            first_key = f'{commit_id or context.commit_id}:tools:0:model-turn'
+            first_turn = self._store.get_tool_value(run_id=context.run.run_id, key=first_key) if self._store else None
+            if (getattr(context.step, 'logical_role', None) == 'workspace_discovery'
+                    and (first_turn is None or first_turn.get('workspaceContextVersion') == 3)):
+                # Discovery chooses observations to ground planning. It is not
+                # an assigned coverage page and must not stop after one list.
+                # Version this delivery in the existing model-turn WAL so
+                # admitted v1/v2 conversations retain their original messages.
+                acquisition_context_version = 3
+                plan = context.run.execution_state.get('taskPlan') or {}
+                stage = (plan.get('metadata') or {}).get('workspaceDiscovery') or {}
+                workspace['assignedDiscovery'] = {'version': 1, 'phase': 'discovery',
+                    'scopeOrigin': stage.get('scopeOrigin',
+                        'explicit' if 'workspaceObservations' in context.run.input else 'inferred')}
+            elif first_turn is None or first_turn.get('workspaceContextVersion') == 2:
+                page_role = ('workspace_review' if getattr(context.step, 'capability', None) == 'verification'
+                    else 'workspace_acquisition')
+                assigned = node_workspace_page_progress(context, self._store, self.records, role=page_role)
+                if assigned is not None:
+                    acquisition_context_version = 2
+                    page_key = 'assignedReview' if page_role == 'workspace_review' else 'assignedAcquisition'
+                    workspace[page_key] = {key: value for key, value in assigned.items()
+                        if key != 'remainingScope'}
         workspace_instructions = (
             'The runtime workspace context describes this Run\'s frozen workspace addressing '
             'and required observations. When its status is bound, "." is the selected workspace root; '
@@ -125,7 +158,36 @@ class AgentToolSession:
             'The addressing snapshot is not a permission grant: tools revalidate authorization, '
             'and actual successful tool observations are still required. '
         ) if workspace is not None else ''
-        if (workspace is not None and context.step.capability == 'information_extraction'
+        if acquisition_context_version == 2:
+            workspace_instructions += (
+                'assignedAcquisition or assignedReview is this node\'s frozen evidence page; '
+                'observationProgress describes the larger Run obligation. Acquisition collects this '
+                'page\'s remainingTargets and submits evidence; review checks this page\'s findings '
+                'against supplied evidence, using context or targeted read tools for specific gaps. '
+                'A verifiedTarget proves an observation occurred, not correctness of an Agent claim. '
+                'Submit supported findings and unresolved scope through the output contract. The '
+                'next ACG round owns other pages. Global gaps are not an instruction to rescan '
+                'the whole workspace inside this node. '
+            )
+        if acquisition_context_version == 3:
+            workspace_instructions += (
+                'assignedDiscovery identifies an adaptive read-only investigation for subsequent planning. '
+                'Use the observed directory structure and mission objective to choose useful project '
+                'configuration, entry points and representative source files, then follow unresolved '
+                'questions with further fs.list/fs.read or authorized context reads. A single directory '
+                'listing does not by itself establish enough knowledge for a grounded formal plan. '
+                'Continue until the available evidence can support the next plan, or submit useful '
+                'partial evidence with the concrete blocker and remaining questions when further '
+                'investigation cannot proceed. Discovery does not require exhausting the larger Run '
+                'observationProgress or recursively traversing every directory. Submit verified '
+                'observations with source references, unresolved scope and reasoned scope suggestions '
+                'through the existing output contract. A scope suggestion is a proposal for ACG, not '
+                'tool authorization or an accepted change to caller requirements. Preserve explicit '
+                'source boundaries and exclusions. Do not run Shell commands, change files, invent '
+                'unread contents or claim that discovery is a completed repository review. '
+            )
+        if (acquisition_context_version != 3 and workspace is not None
+                and getattr(context.step, 'capability', None) == 'information_extraction'
                 and any(not item['complete'] for item in workspace['observationProgress'])):
             workspace_instructions += (
                 'Execute workspace acquisition as one useful work unit: one complete directory listing '
@@ -186,7 +248,13 @@ class AgentToolSession:
                 key = f'{commit_id or context.commit_id}:tools:{turn}:model-turn'
                 return self._store.get_tool_value(run_id=context.run.run_id, key=key) if self._store else None
 
+            def feedback_allowed(current_messages, turn):
+                cached = cached_turn(turn)
+                return cached is None or cached['requestHash'] != request_hash(current_messages)
+
             def acquisition_feedback(current_messages, turn):
+                if acquisition_context_version == 3:
+                    return None
                 progress = node_workspace_acquisition_progress(context, self._store, self.records)
                 if progress is None:
                     return None
@@ -195,6 +263,8 @@ class AgentToolSession:
                     # Replay a historical turn exactly, before this host hook
                     # existed. The first new turn receives the current progress.
                     return None
+                if cached is None or cached.get('workspaceFeedbackVersion') == 2:
+                    progress = _workspace_feedback_progress(progress)
                 guidance = (
                     'All frozen operations in this acquisition batch have complete correlated receipts. '
                     'Submit the final JSON using this node\'s existing output contract, report the verified '
@@ -259,6 +329,9 @@ class AgentToolSession:
                     if self._store:
                         self._store.put_tool_value(run_id=context.run.run_id, step_id=context.step.step_id,
                             key=key+':model-turn', payload={'requestHash':current_hash,
+                                'toolFeedbackVersion': 1,
+                                'workspaceContextVersion': acquisition_context_version,
+                                'workspaceFeedbackVersion': 2,
                                 'response':response.model_dump(by_alias=True, mode='json')})
                 self.actions += len(response.tool_calls)
                 diagnostics = dict(response.metadata.get('requestDiagnostics') or {})
@@ -297,9 +370,19 @@ class AgentToolSession:
                     validate_contract_payload(arguments, definition.parameters,
                         step_id=context.step.step_id, direction='input')
                 except (ValueError, TypeError):
+                    error = {'code': 'TOOL_ARGUMENTS_INVALID'}
+                    # A frozen successor records the observation protocol that
+                    # produced its request hash. Reconstruct its original error
+                    # shape: an existing v1 turn still needs the schema, while
+                    # an unmarked historical turn used the generic error only.
+                    successor = cached_turn(turn + 1)
+                    if definition is not None and (successor is None or successor.get('toolFeedbackVersion') == 1):
+                        error.update(parameters=definition.parameters,
+                            guidance='Correct the arguments to match this tool schema before retrying, '
+                                'or submit existing evidence and the unresolved scope for ACG review.')
                     result = ToolResult(name=definition.name if definition else function['name'],
                         source=definition.source if definition else 'unknown', status='failed',
-                        error={'code': 'TOOL_ARGUMENTS_INVALID'})
+                        error=error)
                 if result is None:
                     try:
                         if definition.name in {tool.name for tool in self.context_tools.list_tools()}:
@@ -321,6 +404,10 @@ class AgentToolSession:
                         code = getattr(exc, 'code', 'TOOL_EXECUTION_FAILED')
                         if code == 'EXECUTION_CANCELLED':
                             raise
+                        if code in HOST_TOOL_FAILURE_CODES:
+                            raise StructuredGenerationError(code,
+                                'Tool execution authority or resource is unavailable; return control to ACG',
+                                retryable=True) from exc
                         if code in {'HANDS_OUTCOME_UNKNOWN', 'TOOL_TIMEOUT'}:
                             raise StructuredGenerationError(code, 'tool execution requires settlement') from exc
                         result = ToolResult(name=definition.name, source=definition.source,
@@ -346,7 +433,7 @@ class AgentToolSession:
             try:
                 await run_agent_loop(messages=messages, tools=tools, invoke_model=invoke_model,
                     execute_tool=execute_tool, validate_completion=validate_completion,
-                    progress_feedback=acquisition_feedback)
+                    progress_feedback=acquisition_feedback, feedback_allowed=feedback_allowed)
             except StructuredGenerationError as exc:
                 self._attach_failure_audit(exc)
                 raise

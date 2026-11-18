@@ -7,7 +7,7 @@ import json
 import logging
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
 from adapters.model.contract_repair import plan_field_repair
@@ -37,6 +37,7 @@ from support.acg.native_capabilities import NATIVE_CAPABILITY_IDS, build_default
 from components.communicator.contracts import ContextPack, input_revision
 from runtime.live_events import runtime_event_broker
 from contracts.runtime_events import TRANSIENT_RUNTIME_EVENT_TYPES
+from contracts.tools import ToolExecutionAuthorizationLost
 
 
 NATIVE_ACG_WORKFLOW_ID = "native_acg_runtime_v1"
@@ -98,6 +99,24 @@ class NativeGeneralAgent(BaseAgent):
         self.capability_catalog = build_default_capability_catalog()
 
     @staticmethod
+    def execution_path_for(
+        capability: str, *, workset: bool = False,
+    ) -> Literal["workset", "retrieval", "calculator", "tool-session"]:
+        """Share actual dispatch branches with evidence-based recovery.
+
+        The ordinary capability path admits external actions only through its
+        AgentToolSession. Retrieval/calculator prologues and material worksets
+        have their own operation identities and need their own recovery proof.
+        """
+        if workset:
+            return "workset"
+        if capability == "information_retrieval":
+            return "retrieval"
+        if capability == "industrial_capacity_analysis":
+            return "calculator"
+        return "tool-session"
+
+    @staticmethod
     def _prompt_context_fields(step_input: dict[str, Any]) -> dict[str, list[str]] | None:
         """Reuse compiled consumption/prefetch contracts; never guess required facts."""
         declared = step_input.get("from")
@@ -154,12 +173,15 @@ class NativeGeneralAgent(BaseAgent):
         upstream = self._upstream_data(context)
         capability = (context.step.capability or "").strip()
 
-        if context.content_workset_session is not None:
+        execution_path = self.execution_path_for(
+            capability, workset=context.content_workset_session is not None,
+        )
+        if execution_path == "workset":
             return await self._run_workset(context)
 
         task_summary = objective if context.mission_intent_basis is not None else str(upstream.get("task_summary") or objective)
         policy = (context.run.acg_blueprint or {}).get("metadata", {})
-        if capability == "information_retrieval":
+        if execution_path == "retrieval":
             if policy.get("evidenceScope") == "task_input_only":
                 # The frozen Planner scope narrows permissions; enabled tools
                 # cannot widen a mission's evidence boundary. Keep original
@@ -244,6 +266,8 @@ class NativeGeneralAgent(BaseAgent):
                                 if isinstance(item, dict)
                                 and str(item.get("content") or item.get("text") or "").strip()
                             )
+                except ToolExecutionAuthorizationLost:
+                    raise
                 except Exception as exc:
                     evidence_gaps.append({
                         "source": "web",
@@ -297,7 +321,7 @@ class NativeGeneralAgent(BaseAgent):
             raise RuntimeError("evidence_analysis requires upstream evidence references")
 
         deterministic_tool_executions: list[dict[str, Any]] = []
-        if capability == "industrial_capacity_analysis":
+        if execution_path == "calculator":
             requested_calculations = context.task.input.get("industrialCalculations") or []
             if requested_calculations and context.tool_runtime is None:
                 raise RuntimeError("industrial calculator runtime is not configured")
@@ -384,7 +408,7 @@ class NativeGeneralAgent(BaseAgent):
             allowed_tools=allowed_tools,
             tool_observations=(
                 [{"kind": "deterministic_calculation", "content": item} for item in calculated]
-                if capability == "industrial_capacity_analysis" else []
+                if execution_path == "calculator" else []
             ) + verified_tool_observations + previous_attempt_observations,
         )
         if previous_attempt_observations:

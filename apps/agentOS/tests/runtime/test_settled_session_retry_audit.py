@@ -162,7 +162,8 @@ def test_proof_rejects_unbound_or_implicit_authorization(store, field, value):
 
 def _authority_services(policy):
     scope = {"workspaceId": "workspace", "grantId": "grant", "resourceId": "hands-resource"}
-    run = SimpleNamespace(mission_id="mission", run_id="run", input={"workspaceBinding": scope})
+    run = SimpleNamespace(mission_id="mission", run_id="run", input={"workspaceBinding": scope},
+        steps=[], completed_step_ids=[], execution_state={})
     services = SimpleNamespace(
         workflow_store=SimpleNamespace(get_task_operator_policy=lambda _: policy),
         workspace_authority=SimpleNamespace(resolve=lambda _: SimpleNamespace(workspace_id="workspace", grant_id="grant")),
@@ -260,3 +261,111 @@ def test_historical_observations_remain_old_attempt_evidence_while_new_attempt_i
     assert observations[0]["result"] == previous["data"]
     assert store.get_tool_value(run_id=run.run_id, key=operation + ":result") == previous
     assert store.get_node_commit(run_id=run.run_id, commit_id=new.operation_id)["stage"] == "prepared"
+
+
+def _parallel_settled_sessions(store):
+    from components.executor.node_runner import ACGNodeRunner
+    from runtime.permit_recovery import _settled_result_data
+
+    services, run, original, operation, auth = _settled_shell(store)
+    run.get_step(original.step_id).status = type(run.get_step(original.step_id).status).FAILED
+    source = {suffix: store.get_tool_value(run_id=run.run_id, key=operation + suffix)
+              for suffix in (":request", ":receipt", ":result")}
+    source_turn = store.get_tool_value(run_id=run.run_id, key=original.operation_id + ":tools:0:model-turn")
+    repos = services.identity_lifecycle.repositories
+    original_attempt = repos.attempts.get(original.attempt_id)
+    original_binding = repos.execution_bindings.get_for_attempt(original.attempt_id)
+    attempts = {original.attempt_id: original_attempt}
+    bindings = {original.attempt_id: original_binding}
+    nodes = [original]
+    for index, step_id in enumerate(("S3", "S4")):
+        terminal = "failed" if index == 0 else "cancelled"
+        run.steps.append(run.steps[0].model_copy(update={"step_id": step_id,
+            "status": type(run.steps[0].status)(terminal)}))
+        commit = ACGNodeRunner._commit_id(run.run_id, step_id, 0, execution_generation="generation")
+        node = original.model_copy(update={"operation_id": commit, "step_id": step_id,
+            "execution_instance_id": f"generation:run:{step_id}:0:root", "attempt_id": f"attempt:{step_id}:1"})
+        nodes.append(node)
+        store.prepare_node_commit(run_id=run.run_id, commit_id=commit)
+        store.transition_node_execution(node)
+        identity = {"runId": run.run_id, "stepId": step_id, "attemptId": node.attempt_id, "commitId": commit}
+        call = commit + ":tools:0:call:0"
+        turn = copy.deepcopy(source_turn)
+        turn["response"]["requestId"] = commit + ":tools:0"
+        tool = "fs.read" if index == 0 else "shell.exec"
+        if tool == "fs.read":
+            turn["response"]["toolCalls"][0]["function"] = {"name": "fs__read", "arguments": json.dumps({"path": "note.txt"})}
+        store.put_tool_value(run_id=run.run_id, step_id=step_id, key=commit + ":tools:0:model-turn", payload=turn)
+        request = copy.deepcopy(source[":request"])
+        request["identity"] = identity
+        request["request"].update(requestId=call, invocationId=call, idempotencyKey=call)
+        if tool == "fs.read": request["request"].update(capabilityId=tool, input={"path": "note.txt"})
+        request_ref = store.put_tool_value(run_id=run.run_id, step_id=step_id, key=call + ":request", payload=request)
+        receipt = copy.deepcopy(source[":receipt"])
+        from uuid import NAMESPACE_URL, uuid5
+        receipt.update(identity=identity, requestId=str(uuid5(NAMESPACE_URL, call)), invocationId=call, idempotencyKey=call)
+        if tool == "fs.read": receipt.update(capabilityId=tool, output={"path": "note.txt", "text": "fixture"})
+        receipt["checksum"] = stable_checksum({key: value for key, value in receipt.items() if key != "checksum"})
+        receipt_ref = store.put_tool_value(run_id=run.run_id, step_id=step_id, key=call + ":receipt", payload=receipt)
+        cached = copy.deepcopy(source[":result"])
+        cached["record"].update(identity, requestRef=request_ref, receiptRef=receipt_ref, receiptChecksum=receipt["checksum"], tool=tool)
+        cached["data"] = _settled_result_data(receipt, cached["record"]["executionId"], tool)
+        store.put_tool_value(run_id=run.run_id, step_id=step_id, key=call + ":result", payload=cached)
+        attempts[node.attempt_id] = SimpleNamespace(run_id=run.run_id, task_id="task:" + step_id, attempt_number=1,
+            status=SimpleNamespace(value=terminal))
+        bindings[node.attempt_id] = SimpleNamespace(acg_node_id=step_id, metadata=original_binding.metadata)
+        run.execution_state["taskSettlement"][node.attempt_id] = {"taskState": "ended", "outcome": terminal}
+    repos.attempts.get = attempts.get
+    repos.execution_bindings.get_for_attempt = bindings.get
+    repos.step_executions.list_for_attempt = lambda key: [SimpleNamespace(run_id=run.run_id,
+        task_id=attempts[key].task_id, status=attempts[key].status)]
+    auth["stepIds"] = [node.step_id for node in nodes]
+    return services, run, nodes, auth
+
+
+def test_one_explicit_operator_receipt_can_preserve_each_settled_parallel_sibling(store):
+    from runtime.permit_recovery import assert_replay_safe_operations
+
+    services, run, nodes, auth = _parallel_settled_sessions(store)
+    settled = []
+    assert len(assert_replay_safe_operations(services, run, operator_recovery=auth, settled_proofs=settled)) == 3
+    assert {item["stepId"] for item in settled} == set(auth["stepIds"])
+    assert all(item["authorization"] == auth for item in settled)
+    assert sorted(item["settledActionCount"] for item in settled) == [0, 1, 1]
+    reference = store.put_tool_value(run_id=run.run_id, step_id=auth["stepId"],
+        key=auth["operationId"] + ":settled-session-authorization", payload={"authorization": auth,
+            "proofs": [{"operationId": proof["operationId"], "evidenceFingerprint": proof["evidenceFingerprint"]}
+                       for proof in settled]})
+    run.execution_state["inPlaceRetryRequests"] = {auth["operationId"]: auth["requestFingerprint"]}
+    run.execution_state["settledSessionRetryProofs"] = {
+        proof["operationId"]: {**proof, "authorizationRef": reference} for proof in settled}
+    repeated = []
+    assert_replay_safe_operations(services, run, settled_proofs=repeated)
+    assert len(repeated) == 3
+    for node in nodes:
+        observations = settled_retry_observations(services, run, node.step_id)
+        assert len(observations) == 1
+        assert observations[0]["record"]["attemptId"] == node.attempt_id
+        assert observations[0]["record"]["stepId"] == node.step_id
+    with store._connection:
+        store._connection.execute("UPDATE execution_values SET step_id=? WHERE reference=?", (nodes[1].step_id, reference))
+    with pytest.raises(ValueError, match="immutable operator receipt"):
+        assert_replay_safe_operations(services, run)
+
+
+@pytest.mark.parametrize("defect", ["unlisted_sibling", "missing_result", "live_sibling", "duplicate_scope", "missing_anchor"])
+def test_batch_recovery_cannot_skip_an_unproven_or_unauthorized_sibling(store, defect):
+    from runtime.permit_recovery import assert_replay_safe_operations
+
+    services, run, nodes, auth = _parallel_settled_sessions(store)
+    if defect == "unlisted_sibling": auth["stepIds"].pop()
+    elif defect == "duplicate_scope": auth["stepIds"].append(auth["stepIds"][0])
+    elif defect == "missing_anchor": auth["stepIds"].remove(auth["stepId"])
+    elif defect == "live_sibling":
+        services.identity_lifecycle.repositories.attempts.get(nodes[-1].attempt_id).status.value = "running"
+    elif defect == "missing_result":
+        with store._connection:
+            store._connection.execute("DELETE FROM execution_values WHERE reference=?",
+                (_key_ref(run, nodes[-1].operation_id + ":tools:0:call:0:result"),))
+    with pytest.raises(ValueError):
+        assert_replay_safe_operations(services, run, operator_recovery=auth)

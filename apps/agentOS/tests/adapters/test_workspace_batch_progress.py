@@ -66,8 +66,10 @@ async def test_complete_listing_batch_prompts_partial_submission_without_claimin
         assert progress['verifiedTargets'] == [LIST_ROOT] and progress['remainingTargets'] == []
         assert progress['verifiedListingCount'] == 1 and progress['verifiedReadCount'] == 0
         assert progress['evidenceStatus'] == 'receipt_verified_not_committed'
-        assert progress['remainingScope'][0]['complete'] is False
-        assert progress['remainingScope'][0]['missingReads'] == ['note.txt']
+        assert 'remainingScope' not in progress
+        assert progress['runCoverage'][0]['complete'] is False
+        assert progress['runCoverage'][0]['missingReadCount'] == 1
+        assert 'missingReads' not in progress['runCoverage'][0]
         assert 'partial' in json.dumps(messages[0]).lower()
         return {'answer': 'Listed this directory; note.txt remains unread for the next ACG batch.'}
 
@@ -81,6 +83,45 @@ async def test_complete_listing_batch_prompts_partial_submission_without_claimin
     assert evaluate_run_workspace_observations(runner.run, runner.value_store) == (
         'workspace_observation_incomplete:0',)
     assert 'grant-one' not in json.dumps(feedbacks(http.requests[1]['messages']))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('role,page_key', [
+    ('workspace_acquisition', 'assignedAcquisition'), ('workspace_review', 'assignedReview'),
+])
+async def test_targeted_repair_receives_its_page_before_first_model_call_and_replays_it(stack, role, page_key):
+    def acquire_assigned_page(payload):
+        requests = [json.loads(message['content']) for message in payload['messages']
+            if message.get('role') == 'user' and str(message.get('content', '')).startswith('{')]
+        workspace = next(item['workspace']['content'] for item in requests
+            if item.get('requestType') == 'WorkspaceExecutionContext')
+        assigned = workspace[page_key]
+        assert assigned['remainingTargets'] == [LIST_ROOT]
+        assert assigned['verifiedTargets'] == [] and not assigned['batchComplete']
+        assert 'remainingScope' not in assigned  # Global scope is delivered once.
+        assert workspace['observationRequirements'][0]['operation'] == 'read'
+        assert workspace['observationProgress'][0]['complete'] is False
+        return [('fs.list', {'path': '.'})]
+
+    runner, _, step, http = node(stack, GeneralAgent(), [acquire_assigned_page,
+        {'answer': 'The assigned listing is complete; source contents remain for ACG.'}])
+    freeze_batch(runner, step, [LIST_ROOT])
+    step.logical_role = role
+    step.capability = 'verification' if role == 'workspace_review' else 'information_extraction'
+    runner.run.execution_state['taskPlan']['nodes'][0]['logicalRole'] = role
+    runner.run.execution_state['taskPlan']['nodes'][0]['metadata'] = {'source': 'planner_targeted_repair'}
+    context = context_for(runner, step)
+    session = AgentToolSession(context)
+    first = await session.generate_json(prompt='Acquire the assigned repair page.', schema=step.output_spec)
+    second = await AgentToolSession(context).generate_json(
+        prompt='Acquire the assigned repair page.', schema=step.output_spec)
+
+    assert first == second and len(http.requests) == 2
+    assert [request['capabilityId'] for request in stack.service.requests] == ['fs.list']
+    if role == 'workspace_acquisition':
+        assert feedbacks(http.requests[-1]['messages'])[-1]['progress']['batchComplete']
+    else:
+        assert not feedbacks(http.requests[-1]['messages'])
 
 
 @pytest.mark.asyncio
@@ -171,6 +212,34 @@ async def test_progress_transcript_replays_without_new_model_or_tool_calls_and_i
         await AgentToolSession(context).generate_json(prompt='Acquire the frozen batch.', schema=step.output_spec)
     assert captured.value.code == 'TOOL_REPLAY_CONTEXT_CHANGED'
     assert len(http.requests) == 2 and len(stack.service.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_full_scope_feedback_replays_without_changing_its_request_hash(stack, monkeypatch):
+    runner, _, step, http = node(stack, GeneralAgent(), [
+        [('fs.list', {'path': '.'})], {'answer': 'Directory inspected; contents remain for ACG.'}])
+    freeze_batch(runner, step, [LIST_ROOT])
+    context = context_for(runner, step)
+    original_put = runner.value_store.put_tool_value
+
+    def legacy_put(**kwargs):
+        payload = dict(kwargs['payload'])
+        payload.pop('workspaceFeedbackVersion', None)
+        return original_put(**{**kwargs, 'payload': payload})
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr('adapters.agent_tools._workspace_feedback_progress', lambda progress: progress)
+        legacy.setattr(runner.value_store, 'put_tool_value', legacy_put)
+        first = await AgentToolSession(context).generate_json(
+            prompt='Acquire the frozen batch.', schema=step.output_spec)
+
+    second = await AgentToolSession(context).generate_json(
+        prompt='Acquire the frozen batch.', schema=step.output_spec)
+
+    assert first == second and len(http.requests) == 2 and len(stack.service.requests) == 1
+    progress = feedbacks(http.requests[-1]['messages'])[-1]['progress']
+    assert progress['remainingScope'][0]['missingReads'] == ['note.txt']
+    assert 'runCoverage' not in progress
 
 
 @pytest.mark.asyncio

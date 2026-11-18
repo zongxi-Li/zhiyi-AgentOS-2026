@@ -73,9 +73,9 @@ class RuntimeTaskOperations:
 
     def assert_current_run_recovery(self, run, step_id=None):
         """Read-only validation shared by previews, offers and recovery commands."""
-        failed = [step.step_id for step in run.steps if step.status.value == "failed"]
-        selected = step_id or (failed[0] if len(failed) == 1 else None)
-        from runtime.permit_recovery import operator_recovery_authorization
+        from runtime.permit_recovery import interrupted_step_ids, operator_recovery_authorization
+        interrupted = interrupted_step_ids(run)
+        selected = step_id or (interrupted[0] if interrupted else None)
         authorization = operator_recovery_authorization(self.runtime, run, selected,
             "recovery-preview", str(run.runtime_revision)) if selected else None
         self._assert_current_run_admission(run).assert_recoverable(run, operator_recovery=authorization)
@@ -164,10 +164,12 @@ class RuntimeTaskOperations:
             if intent.kind == "recover" and run.status != WorkflowStatus.FAILED and not (current_recovery and is_failed_planner_recovery(run)):
                 raise ValueError("失败恢复需要已结束的失败任务；暂停中的任务请回答问题或提交补充要求")
             if intent.kind == "recover" and not step_id:
-                failed = [s.step_id for s in run.steps if s.status.value == "failed"]
-                if len(failed) != 1:
-                    raise ValueError("请明确选择一个失败节点")
-                step_id = failed[0]
+                from runtime.permit_recovery import interrupted_step_ids
+                candidates = (interrupted_step_ids(run) if current_recovery else
+                              [s.step_id for s in run.steps if s.status.value == "failed"])
+                if not candidates or not current_recovery and len(candidates) != 1:
+                    raise ValueError("请明确选择一个失败或中断节点")
+                step_id = candidates[0]
             recovery_authorization = self.assert_current_run_recovery(run, step_id) if current_recovery else None
             runtime.runtime_recovery_coordinator.prepare_single_step_retry(
                 run.run_id, step_id, validate_only=True,

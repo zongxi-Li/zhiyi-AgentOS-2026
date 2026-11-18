@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from contracts.local_runtime import LocalRuntimeAuthorizationRef
-from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, WorkflowStep
+from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, StepStatus, WorkflowStatus, WorkflowStep
 from runtime.permit_recovery import is_failed_planner_recovery, operator_recovery_authorization
 from support.stores.memory_workflow_store import MemoryWorkflowStore
 
@@ -91,16 +91,70 @@ def test_idle_planner_wait_can_offer_explicit_recovery_of_the_single_failed_node
     assert is_failed_planner_recovery(planner_barrier(recovery_scope)) is True
 
 
-@pytest.mark.parametrize("defect", ["question", "node_review", "control_review", "active_run", "active_state", "two_failed", "no_failed", "cancelled"])
-def test_operator_recovery_cannot_skip_a_fact_question_or_node_control_review(recovery_scope, defect):
+@pytest.mark.parametrize("step_status", [StepStatus.FAILED, StepStatus.CANCELLED])
+def test_failed_run_can_replace_its_idle_planner_marker_without_relabeling_history(recovery_scope, step_status):
     run = planner_barrier(recovery_scope)
+    run.status = WorkflowStatus.FAILED
+    run.get_step("review").status = step_status
+    review = run.execution_state["reviewPayload"]
+    review.update(observationId="same-observation", reasonCode="PLANNER_WAIT", question=None)
+    current = run.execution_state["planningLoop"]["current"]
+    current.update(observationId="same-observation", status="applied")
+    current["decision"].update(observationId="same-observation", waitFor=None, question=None)
+    before = run.model_dump(by_alias=True, mode="json")
+    assert is_failed_planner_recovery(run) is True
+    assert run.model_dump(by_alias=True, mode="json") == before
+    assert run.get_step("review").status == step_status
+    assert not any(event.payload.get("decision") == "rejected" for event in run.trace)
+
+
+def test_waiting_planner_with_only_cancelled_steps_keeps_its_existing_pause(recovery_scope):
+    run = planner_barrier(recovery_scope)
+    run.get_step("review").status = StepStatus.CANCELLED
+    assert is_failed_planner_recovery(run) is False
+
+
+@pytest.mark.parametrize("run_status", [WorkflowStatus.WAITING_REVIEW, WorkflowStatus.FAILED])
+@pytest.mark.parametrize("defect", ["question", "marker_question", "condition", "armed_wait", "step_review",
+    "node_review", "control_review", "active_run", "active_state", "no_failed", "cancelled"])
+def test_operator_recovery_cannot_skip_a_fact_question_or_node_control_review(recovery_scope, defect, run_status):
+    run = planner_barrier(recovery_scope)
+    run.status = run_status
+    if run_status is WorkflowStatus.FAILED:
+        run.get_step("review").status = StepStatus.CANCELLED
     if defect == "question":
         run.execution_state["planningLoop"]["current"]["decision"]["question"] = {"prompt": "confirm facts"}
+    elif defect == "marker_question":
+        run.execution_state["reviewPayload"]["question"] = {"prompt": "confirm facts"}
+    elif defect == "condition":
+        run.execution_state["planningLoop"]["current"]["decision"]["waitFor"] = {"kind": "node_available", "nodeId": "node"}
+    elif defect == "armed_wait":
+        run.execution_state["planningLoop"]["waiting"] = {"observationId": "current", "condition": {"kind": "node_available", "nodeId": "node"}}
+    elif defect == "step_review":
+        run.steps.append(run.get_step("review").model_copy(update={"step_id": "node-review", "status": StepStatus.WAITING_REVIEW}))
     elif defect in {"node_review", "control_review"}:
         run.execution_state["reviewPayload"]["subjectType"] = "step" if defect == "node_review" else "control"
     elif defect == "active_run": run.active_step_ids = ["review"]
     elif defect == "active_state": run.execution_state["activeStepIds"] = ["review"]
-    elif defect == "two_failed": run.steps.append(run.steps[0].model_copy(update={"step_id": "other"}))
     elif defect == "no_failed": run.steps = []
     elif defect == "cancelled": run.status = WorkflowStatus.CANCELLED
     assert is_failed_planner_recovery(run) is False
+
+
+def test_idle_planner_can_recover_multiple_interrupted_nodes_with_exact_scope(recovery_scope):
+    s = recovery_scope
+    enable(s)
+    s.run = planner_barrier(s)
+    s.run.steps.extend([
+        s.run.steps[0].model_copy(update={"step_id": "sibling"}),
+        s.run.steps[0].model_copy(update={"step_id": "cancelled-sibling", "status": type(s.run.steps[0].status).CANCELLED}),
+        s.run.steps[0].model_copy(update={"step_id": "completed", "status": type(s.run.steps[0].status).COMPLETED}),
+        s.run.steps[0].model_copy(update={"step_id": "pending", "status": type(s.run.steps[0].status).PENDING}),
+    ])
+    s.run.completed_step_ids = ["completed"]
+    assert is_failed_planner_recovery(s.run) is True
+    auth = operator_recovery_authorization(s.services, s.run, "review", "recover", "hash")
+    assert auth["stepId"] == "review"
+    assert auth["stepIds"] == ["review", "sibling", "cancelled-sibling"]
+    with pytest.raises(ValueError, match="anchor"):
+        operator_recovery_authorization(s.services, s.run, "completed", "recover", "hash")

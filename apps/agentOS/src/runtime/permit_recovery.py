@@ -12,12 +12,14 @@ from uuid import NAMESPACE_URL, uuid5
 
 from components.executor import ACGExecutionState
 from components.executor.node_runner import ACGNodeRunner
+from components.executor.memory_input import effective_memory_policy, projected_memory_manifest, read_frozen_memory_retrieval
 from components.communicator.contracts import ContextPack
 from components.communicator.provenance import provenance_checksum
 from contracts.execution import NodeExecutionRecord
 from contracts.agents import AgentRegistrationRef
 from contracts.capability import ModelInvocationResponse
 from contracts.local_runtime import LocalRuntimeExecutionRequest
+from contracts.native_retrieval import RETRIEVAL_COMMIT_SUFFIXES, RETRIEVAL_LEDGER_VERSION, retrieval_operation_key
 from contracts.execution_evidence import workspace_relative_path
 from contracts.resource import ExecutionBinding
 from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
@@ -31,6 +33,14 @@ from support.acg.schema import RuntimeBlueprintSpec
 
 
 _UNSUCCESSFUL_ATTEMPT_STATES = frozenset({"failed", "cancelled"})
+
+
+def interrupted_step_ids(run):
+    """Candidate scope, failures first; Permit and evidence still decide admission."""
+    settled = set(run.completed_step_ids) | set(run.execution_state.get("skippedStepIds") or ())
+    interrupted = [step for step in run.steps
+                   if step.status.value in _UNSUCCESSFUL_ATTEMPT_STATES and step.step_id not in settled]
+    return [step.step_id for step in sorted(interrupted, key=lambda step: step.status.value != "failed")]
 
 
 def operator_recovery_authorization(services, run, step_id, operation_id, fingerprint):
@@ -55,8 +65,12 @@ def operator_recovery_authorization(services, run, step_id, operation_id, finger
     actor = provider() if callable(provider) else None
     if actor is None or not getattr(actor, "actor_id", None) or not operation_id or not fingerprint:
         raise ValueError("settled-session recovery requires an explicit trusted operator identity")
+    interrupted = interrupted_step_ids(run)
+    if interrupted and step_id not in interrupted:
+        raise ValueError("recovery anchor must belong to the interrupted execution scope")
     return {"intent": "recover", "operationId": operation_id, "requestFingerprint": fingerprint,
         "missionId": run.mission_id, "runId": run.run_id, "stepId": step_id,
+        **({"stepIds": interrupted} if len(interrupted) > 1 else {}),
         "policyRevision": policy.policy_revision,
         "actor": {"userId": actor.actor_id, "tenantId": actor.tenant_id},
         "workspaceScope": {key: binding[key] for key in ("workspaceId", "grantId", "resourceId")},
@@ -64,15 +78,30 @@ def operator_recovery_authorization(services, run, step_id, operation_id, finger
 
 
 def is_failed_planner_recovery(run):
-    """A failed node behind an idle Planner barrier is an explicit retry target."""
+    """An interrupted batch behind an idle Planner barrier can be retried."""
     review = run.execution_state.get("reviewPayload") or {}
     loop = run.execution_state.get("planningLoop") or {}
     current = loop.get("current") or {}
     decision = current.get("decision") or {}
-    return (run.status == WorkflowStatus.WAITING_REVIEW and review.get("subjectType") == "planner"
+    return (run.status in {WorkflowStatus.FAILED, WorkflowStatus.WAITING_REVIEW}
+        and review.get("subjectType") == "planner"
         and not run.active_step_ids and not run.execution_state.get("activeStepIds")
-        and not decision.get("question")
-        and len([step for step in run.steps if step.status.value == "failed"]) == 1)
+        and not review.get("question") and not decision.get("question")
+        and not loop.get("waiting") and not decision.get("waitFor")
+        and not any(step.status.value == "waiting_review" for step in run.steps)
+        and bool(interrupted_step_ids(run))
+        and (run.status == WorkflowStatus.FAILED or any(step.status.value == "failed" for step in run.steps)))
+
+
+def _recovery_authorized_steps(authorization):
+    """Read the exact frozen recovery scope, retaining old single-node receipts."""
+    anchor = authorization.get("stepId")
+    steps = authorization.get("stepIds", [anchor])
+    if (not isinstance(anchor, str) or not anchor or not isinstance(steps, list) or not steps
+            or any(not isinstance(step, str) or not step for step in steps)
+            or len(set(steps)) != len(steps) or anchor not in steps):
+        raise ValueError("settled-session recovery has malformed operator step scope")
+    return steps
 
 
 def _tool_reference(run_id, key):
@@ -91,7 +120,7 @@ def assert_native_readonly_retry_safe(services, run, node, *, connection=None, a
         return _assert_native_readonly_retry_safe(services, run, node,
             connection=connection, allow_historical=allow_historical)
     except (AttributeError, KeyError, TypeError) as exc:
-        raise ValueError("read-only retry evidence is incomplete or malformed") from exc
+        raise ValueError(f"step {node.step_id}: read-only retry evidence is incomplete or malformed") from exc
 
 
 def run_step_readonly_retry_proof(services, run, step_id):
@@ -139,21 +168,60 @@ def _unsuccessful_operation_generation(run, node, attempt, *, allow_historical):
     return generation
 
 
+def _retry_step_contract(services, run, step_id, generation):
+    """Resolve executable semantics from the graph admitted for this Attempt."""
+    state = run.execution_state
+    activation_projection = state.get("graphActivation") or {}
+    issued = activation_projection.get("executionPermit") or {}
+    if not activation_projection or (
+            generation is not None and generation == issued.get("attemptGeneration")
+            and issued.get("graphVersion") == state.get("graphVersion")):
+        return run.get_step(step_id), projected_memory_manifest(run), (run.acg_blueprint or {}).get("metadata", {})
+
+    from runtime.graph_step_projection import project_frozen_graph_steps
+
+    authority = getattr(services, "execution_permit_authority", None)
+    if authority is None:
+        raise ValueError(f"step {step_id}: historical retry lacks its execution permit journal")
+    store = authority.store
+    for activation in store.activations_for_run(run.run_id):
+        permit = store.permit_for_activation(activation.activation_id)
+        if permit is None or permit.attempt_generation != generation:
+            continue
+        materialization = store.get_materialization(activation.materialization_id)
+        if (materialization is None or permit.status != "ISSUED" or activation.status != "ACTIVATED_PAUSED"
+                or permit.run_id != run.run_id or materialization.source_run_id != run.run_id
+                or permit.mission_id != run.mission_id or permit.graph_id != materialization.graph_id
+                or permit.graph_version != materialization.candidate_graph_version
+                or permit.package_checksum != activation.package_checksum
+                or permit.package_checksum != materialization.package_checksum):
+            break
+        if materialization.initial_content is not None:
+            blueprint = materialization.initial_content.blueprint
+        else:
+            commitment = store.get(materialization.source_commit_id)
+            blueprint = commitment.proposal_payload.candidate_graph if commitment else None
+        if (blueprint is None or materialization.package.blueprint_hash !=
+                stable_checksum(blueprint.model_dump(mode="json", by_alias=True))):
+            break
+        step = project_frozen_graph_steps(authority.runtime, run, blueprint).get_step(step_id)
+        return step, materialization.package.memory_manifest, blueprint.metadata
+    raise ValueError(f"step {step_id}: historical retry lacks its admitted graph and memory policy")
+
+
 def _assert_native_readonly_retry_safe(services, run, node, *, connection=None, allow_historical=False,
                                       settled_authorization=None):
     from adapters.model.native import NativeGeneralAgent
 
     repos = services.identity_lifecycle.repositories
     attempt = repos.attempts.get(node.attempt_id)
-    step = run.get_step(node.step_id)
-    if (node.phase.value != "prepared" or node.run_id != run.run_id or node.loop_path
-            or attempt is None or attempt.run_id != run.run_id
-            or attempt.status.value not in _UNSUCCESSFUL_ATTEMPT_STATES
-            # These native branches have no external tool prologue outside the
-            # frozen AgentToolSession. Retrieval/calculator branches do.
-            or step.capability not in {"information_extraction", "verification"}):
-        raise ValueError("read-only retry requires an unsuccessful terminal native tool-session Attempt")
-    _unsuccessful_operation_generation(run, node, attempt, allow_historical=allow_historical)
+    if node.phase.value != "prepared" or node.run_id != run.run_id or node.loop_path:
+        raise ValueError(f"step {node.step_id}: read-only retry requires a prepared root execution of this Run")
+    if (attempt is None or attempt.run_id != run.run_id
+            or attempt.status.value not in _UNSUCCESSFUL_ATTEMPT_STATES):
+        raise ValueError(f"step {node.step_id}: read-only retry requires a failed or cancelled terminal Attempt")
+    generation = _unsuccessful_operation_generation(run, node, attempt, allow_historical=allow_historical)
+    step, memory_manifest, graph_metadata = _retry_step_contract(services, run, node.step_id, generation)
     executions = repos.step_executions.list_for_attempt(node.attempt_id)
     if (len(executions) != 1 or executions[0].status.value != attempt.status.value
             or executions[0].run_id != run.run_id or executions[0].task_id != attempt.task_id):
@@ -177,19 +245,31 @@ def _assert_native_readonly_retry_safe(services, run, node, *, connection=None, 
                   and type(item.implementation) is NativeGeneralAgent
                   and "run" not in vars(item.implementation))]
     if not native:
-        raise ValueError("read-only retry requires the known native Agent implementation")
+        raise ValueError(f"step {node.step_id}: read-only retry requires the known native Agent implementation")
+    execution_path = NativeGeneralAgent.execution_path_for(
+        step.capability, workset=isinstance(step.input.get("workset"), dict),
+    )
+    if execution_path not in {"tool-session", "retrieval"}:
+        raise ValueError(f"step {node.step_id}: native {execution_path} execution requires its own recovery proof")
+    if step.capability not in native[0].implementation.profile.capabilities:
+        raise ValueError(f"step {node.step_id}: capability {step.capability!r} is not registered by its native Agent")
     workspace = run.input.get("workspaceBinding") or {}
     if not workspace.get("workspaceId") or not workspace.get("grantId"):
         raise ValueError("read-only retry requires its frozen workspace binding")
     prover = getattr(services, "tool_non_invocation_prover", None)
+    session_contract = {
+        "memory_policy": effective_memory_policy(step.step_id, step.input, memory_manifest),
+        "retrieval": execution_path == "retrieval",
+        "task_input_only": graph_metadata.get("evidenceScope") == "task_input_only",
+    }
     if connection is None:
         with sqlite3.connect(services.execution_value_store.db_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
             return _native_session_proof(run, node, workspace, conn,
                 non_invocation_prover=prover, execution_value_store=services.execution_value_store,
-                settled_authorization=settled_authorization)
+                settled_authorization=settled_authorization, **session_contract)
     return _native_session_proof(run, node, workspace, connection,
         non_invocation_prover=prover, execution_value_store=services.execution_value_store,
-        settled_authorization=settled_authorization)
+        settled_authorization=settled_authorization, **session_contract)
 
 
 def _readonly_session_proof(run, node, workspace, conn, *, non_invocation_prover=None, execution_value_store=None):
@@ -198,7 +278,8 @@ def _readonly_session_proof(run, node, workspace, conn, *, non_invocation_prover
 
 
 def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=None,
-                          execution_value_store=None, settled_authorization=None):
+                          execution_value_store=None, settled_authorization=None,
+                          memory_policy=None, retrieval=False, task_input_only=False):
     settled = settled_authorization is not None
     frozen_workspace = workspace
     identity = {"runId": run.run_id, "stepId": node.step_id,
@@ -209,7 +290,7 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
                 or settled_authorization.get("mayRepeatSettledActions") is not True
                 or settled_authorization.get("missionId") != run.mission_id
                 or settled_authorization.get("runId") != run.run_id
-                or settled_authorization.get("stepId") != node.step_id
+                or node.step_id not in _recovery_authorized_steps(settled_authorization)
                 or not settled_authorization.get("operationId")
                 or not settled_authorization.get("requestFingerprint")
                 or not (settled_authorization.get("actor") or {}).get("userId")
@@ -227,16 +308,27 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
     def value(key):
         reference = _tool_reference(run.run_id, key)
         if reference not in values:
-            row = conn.execute("SELECT payload_json,step_id,kind FROM execution_values WHERE run_id=? AND reference=?",
+            row = conn.execute("SELECT payload_json,step_id,kind,operation_id FROM execution_values WHERE run_id=? AND reference=?",
                                (run.run_id, reference)).fetchone()
-            if row and settled and (row[1] != node.step_id or row[2] != "output"):
-                raise ValueError("settled-session tool evidence belongs to another node or kind")
+            if row and tuple(row[1:]) != (node.step_id, "output", None):
+                raise ValueError("tool evidence belongs to another node or kind")
             payload = json.loads(row[0]) if row else None
             if payload is not None and not isinstance(payload, dict):
                 raise ValueError("read-only retry has malformed tool activity")
             values[reference] = payload
         return values[reference]
 
+    memory_input = read_frozen_memory_retrieval(conn, run=run, execution=node, policy=memory_policy)
+    internal_refs = set()
+    if memory_input is not None:
+        reference, snapshot = memory_input
+        internal_refs.add(reference)
+        values[reference] = snapshot
+    retrieval_requests = retrieval_results = 0
+    if retrieval:
+        retrieval_refs, retrieval_requests, retrieval_results = _native_retrieval_proof(
+            run.run_id, node, identity, value, task_input_only=task_input_only)
+        internal_refs.update(retrieval_refs)
     prefix = node.operation_id + ":"
     if settled or value(f"{node.operation_id}:tools:0:model-turn") is None:
         # Hashed references cannot be decoded. Cross-check each native turn's
@@ -261,7 +353,7 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
         (run.run_id, len(prefix), prefix, node.operation_id, node.operation_id, node.operation_id, len(prefix), prefix),
     ).fetchall()
 
-    declared, expected_refs, turns = {}, set(), 0
+    declared, expected_refs, turns = {}, set(internal_refs), 0
     while (turn := value(f"{node.operation_id}:tools:{turns}:model-turn")) is not None:
         key = f"{node.operation_id}:tools:{turns}"
         expected_refs.add(_tool_reference(run.run_id, key + ":model-turn"))
@@ -286,13 +378,15 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
         # its first model response. Only the installed write-ahead adapter can
         # prove that this ended Attempt never admitted an external operation.
         # A failed error code or an absent model-turn alone proves nothing.
-        if activity or not callable(non_invocation_prover):
+        if any(ref not in internal_refs for ref, _ in activity) or not callable(non_invocation_prover):
             raise ValueError("native retry lacks a frozen session or a trusted no-dispatch proof")
+        session_type = "native.retrieval.model-session" if retrieval else "native.tool-session"
         proof = non_invocation_prover(run=run, node=node, operation=node.operation_id,
-            tool="native.tool-session", raw_arguments=None, workspace=frozen_workspace,
-            connection=conn, execution_value_store=execution_value_store)
+            tool=session_type, raw_arguments=None, workspace=frozen_workspace,
+            connection=conn, execution_value_store=execution_value_store,
+            **({"memory_policy": memory_policy} if memory_input is not None and memory_policy is not None else {}))
         expected = {"source": "formal-workspace-write-ahead.v1", "identity": identity,
-            "operationKey": node.operation_id, "capabilityId": "native.tool-session",
+            "operationKey": node.operation_id, "capabilityId": session_type,
             "workspaceId": workspace["workspaceId"], "grantId": workspace["grantId"],
             "dispatched": False}
         if proof != expected:
@@ -412,11 +506,50 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
             "modelTurnCount": turns, "toolDeclarationCount": len(declared),
             "readRequestCount": requests, "confirmedReadCount": confirmed,
             "unconfirmedReadCount": unconfirmed, "retrySafe": True,
-            **({"kind": "native_session_not_dispatched"} if not turns else {}),
+            **({"retrievalRequestCount": retrieval_requests, "retrievalResultCount": retrieval_results} if retrieval else {}),
+            **({"kind": "native_retrieval_readonly" if retrieval else "native_session_not_dispatched"} if not turns else {}),
             **({"nonInvocationProofs": non_invocations} if non_invocations else {}),
             **({"kind": "settled_native_session", "authorization": settled_authorization,
                 "settledActionCount": effects, "toolEvidence": tool_evidence} if settled and turns else {}),
             "evidenceFingerprint": stable_checksum(evidence)}
+
+
+def _native_retrieval_proof(run_id, node, identity, value, *, task_input_only):
+    """A request without a result is repeatable, but carries no evidence body."""
+    references, requests, results = set(), 0, 0
+    previous_returned = True
+    for tool in RETRIEVAL_COMMIT_SUFFIXES:
+        key = retrieval_operation_key(node.operation_id, tool)
+        request = value(key + ":request")
+        receipt = value(key + ":result")
+        if request is None:
+            if receipt is not None:
+                raise ValueError("retrieval result has no frozen request")
+            previous_returned = False
+            continue
+        call_hash = request.get("callHash")
+        if (task_input_only or not previous_returned
+                or set(request) != {"version", "tool", "identity", "callHash"}
+                or request["version"] != RETRIEVAL_LEDGER_VERSION or request["tool"] != tool
+                or request["identity"] != identity or not isinstance(call_hash, str) or len(call_hash) != 64
+                or any(char not in "0123456789abcdef" for char in call_hash)):
+            raise ValueError("retrieval request lacks its frozen read-only identity or sequence")
+        references.add(_tool_reference(run_id, key + ":request"))
+        requests += 1
+        previous_returned = receipt is not None
+        if receipt is None:
+            continue
+        result = receipt.get("result")
+        if (set(receipt) != {"identity", "retrievalRequestHash", "resultHash", "result"}
+                or receipt["identity"] != identity or receipt["retrievalRequestHash"] != stable_checksum(request)
+                or not isinstance(result, dict) or not isinstance(result.get("text"), str)
+                or receipt["resultHash"] != stable_checksum(result)):
+            raise ValueError("retrieval result does not match its frozen request")
+        references.add(_tool_reference(run_id, key + ":result"))
+        results += 1
+    if not requests and not task_input_only:
+        raise ValueError(f"step {node.step_id}: native retrieval execution requires its own recovery proof")
+    return references, requests, results
 
 
 def _settled_result_data(receipt, execution_id, tool):
@@ -496,19 +629,22 @@ def assert_replay_safe_operations(services, run, *, readonly_proofs=None, operat
             if node is None or node.phase.value != "prepared":
                 raise ValueError("unsettled external operation requires explicit side-effect reconciliation")
             registered = (run.execution_state.get("settledSessionRetryProofs") or {}).get(node.operation_id)
-            authorization = registered.get("authorization") if registered else None
             if registered:
                 proof = _registered_settled_proof(services, run, node, registered, connection=conn)
             else:
-                try:
+                permitted = operator_recovery and node.step_id in _recovery_authorized_steps(operator_recovery)
+                if permitted:
+                    try:
+                        # Keep complete correlated reads as historical evidence
+                        # as well as settled writes. Unknown read outcomes remain
+                        # retry-safe, but never become confirmed observations.
+                        proof = _assert_native_readonly_retry_safe(services, run, node, connection=conn,
+                            allow_historical=True, settled_authorization=operator_recovery)
+                    except ValueError:
+                        proof = assert_native_readonly_retry_safe(services, run, node, connection=conn, allow_historical=True)
+                else:
                     proof = assert_native_readonly_retry_safe(services, run, node, connection=conn, allow_historical=True)
-                except ValueError:
-                    if not operator_recovery or operator_recovery.get("stepId") != node.step_id:
-                        raise
-                    authorization = operator_recovery
-                    proof = _assert_native_readonly_retry_safe(services, run, node, connection=conn,
-                        allow_historical=True, settled_authorization=authorization)
-            if authorization:
+            if proof.get("authorization"):
                 if settled_proofs is not None:
                     settled_proofs.append(proof)
             else:
@@ -557,7 +693,8 @@ def _registered_settled_proof(services, run, node, registered, *, connection):
     owner = connection.execute("SELECT step_id,kind FROM execution_values WHERE run_id=? AND reference=?",
                                (run.run_id, expected_ref)).fetchone()
     if (registered.get("authorizationRef") != expected_ref or not immutable
-            or owner is None or owner[0] != node.step_id or owner[1] != "output"
+            or owner is None or owner[0] != authorization.get("stepId") or owner[1] != "output"
+            or node.step_id not in _recovery_authorized_steps(authorization)
             or immutable.get("authorization") != authorization
             or {"operationId": node.operation_id, "evidenceFingerprint": registered.get("evidenceFingerprint")}
                 not in immutable.get("proofs", [])):

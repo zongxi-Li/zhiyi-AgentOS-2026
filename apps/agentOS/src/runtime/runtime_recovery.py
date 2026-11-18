@@ -15,7 +15,9 @@ resume 一律只改 concrete runtime 投影，不触碰 TaskPlan、graphVersion 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from copy import deepcopy
+import json
 import logging
 from typing import Any
 
@@ -24,7 +26,7 @@ from contracts.identity import new_attempt_id, new_step_execution_id
 from components.executor import ACGExecutionState, ACGGraphCompiler
 from components.mission_manager.state_machine import StateMachine
 from contracts.execution import WorkflowProgressPhase
-from contracts.resource import ExecutionRequirement
+from contracts.resource import ExecutionBinding, ExecutionRequirement
 from contracts.workflow import (
     RuntimeMissionRecord,
     RuntimeRunRecord,
@@ -49,6 +51,39 @@ class ResourceNotFoundError(KeyError):
 
 def _normalize_runtime_engine(runtime_engine: str) -> str:
     return (runtime_engine or "").strip().lower()
+
+
+def pending_retry_dispatch(run: RuntimeRunRecord, state: ACGExecutionState) -> bool:
+    """A prepared local retry reaches the graph before reviewing old evidence.
+
+    Recovery already resolved the failed execution barrier and retained this
+    prefix. The existing retry facts identify its untouched frontier; after
+    any new result, the prefix comparison stops matching automatically.
+    """
+    retry = run.execution_state.get("singleStepRetry") or {}
+    checkpoint = run.execution_state.get("checkpointResume") or {}
+    in_place = run.execution_state.get("inPlaceRetry") or {}
+    target = retry.get("targetStepId")
+    interrupted = in_place.get("interruptedStepIds", [target])
+    prefix = retry.get("reusedStepIds")
+    loop = run.execution_state.get("planningLoop") or {}
+    if (retry.get("sourceRunId") != run.run_id or checkpoint.get("mode") != "current_run"
+            or checkpoint.get("failedStepId") != target or in_place.get("failedStepId") != target
+            or not isinstance(target, str) or not target or run.recovery_count < 1
+            or not isinstance(prefix, list) or set(prefix) != set(state.completed_step_ids)
+            or set(prefix) != set(run.completed_step_ids)
+            or not isinstance(interrupted, list) or not interrupted or target not in interrupted
+            or not set(interrupted) <= set(checkpoint.get("resumeStepIds") or ())
+            or state.active_step_ids or run.active_step_ids or state.review_payload or state.control_frames
+            or loop.get("userInputPending") or loop.get("waiting")
+            or run.execution_state.get("workspaceReviewContinuation")
+            or run.execution_state.get("planningCommitRejection")):
+        return False
+    steps = {step.step_id: step for step in run.steps}
+    return (all(key in steps and steps[key].status is StepStatus.PENDING and not state.output_refs.get(key)
+                for key in interrupted)
+            and not any(step.status in {StepStatus.FAILED, StepStatus.CANCELLED, StepStatus.WAITING_REVIEW}
+                        for step in run.steps))
 
 
 class RuntimeRecoveryCoordinator(CollaboratorAccess):
@@ -155,7 +190,9 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             WorkflowStatus.CANCELLED,
             WorkflowStatus.SUPERSEDED,
         }:
-            return run
+            if run.status is WorkflowStatus.FAILED:
+                self._settle_interrupted_native_tasks(run.run_id)
+            return self.workflow_store.get_run(run_id)
         error = {"code": error_code, "message": error_message[:500]}
         safe_metadata = {
             key: value
@@ -205,12 +242,14 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             run.runtime_engine
         ) == "acg":
             self._flush_identity_outbox()
-        return run
+        self._settle_interrupted_native_tasks(run.run_id)
+        return self.workflow_store.get_run(run_id)
 
     def close_orphaned_runs(self, *, limit: int = 200) -> list[str]:
         """Close nonterminal Runs whose in-process executor disappeared."""
 
         closed: list[str] = []
+        self._recover_terminal_native_tasks(limit=limit)
         for run in self.workflow_store.list_non_terminal_runs(limit=limit):
             if "graphActivation" in run.execution_state:
                 # A durable pause is an intentional handoff boundary, not an
@@ -248,7 +287,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 WorkflowStatus.RETRYING,
             }:
                 continue
-            self._fail_interrupted_run_after_restart(run)
+            if not self._fail_interrupted_run_after_restart(run):
+                continue
             closed.append(run.run_id)
             logger.warning(
                 "interrupted_run_closed_after_restart",
@@ -303,7 +343,24 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             changed = True
         return changed
 
-    def _fail_interrupted_run_after_restart(self, run: RuntimeRunRecord) -> None:
+    def _fail_interrupted_run_after_restart(self, run: RuntimeRunRecord) -> bool:
+        from support.run_execution_fence import acquire_run_fence, RunFenceBusy
+
+        database = getattr(self.workflow_store, "db_path", None)
+        try:
+            fence = acquire_run_fence(database, run.run_id) if database is not None else nullcontext()
+        except RunFenceBusy:
+            return False
+        with fence:
+            run = self.workflow_store.get_run(run.run_id)
+            if run.status not in {WorkflowStatus.PENDING, WorkflowStatus.PLANNING,
+                                  WorkflowStatus.RUNNING, WorkflowStatus.RETRYING}:
+                return False
+            self._record_restart_interruption(run)
+        self._settle_interrupted_native_tasks(run.run_id)
+        return True
+
+    def _record_restart_interruption(self, run: RuntimeRunRecord) -> None:
         interruption_message = "任务因服务重启而中断。"
         self._terminalize_active_execution(
             run,
@@ -333,6 +390,109 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         run.updated_at = utc_now()
         self.workflow_store.save_run(run)
 
+    def _recover_terminal_native_tasks(self, *, limit: int) -> None:
+        """Repair cleanup omitted by older processes, including already failed Runs."""
+        if self.identity_lifecycle is None or getattr(self.workflow_store, "db_path", None) is None:
+            return
+        candidates, offset = [], 0
+        while True:
+            summaries = self.workflow_store.list_all_run_summaries(offset=offset, limit=max(1, limit))
+            candidates.extend(summary.run_id for summary in summaries if summary.status is WorkflowStatus.FAILED
+                and self.identity_lifecycle.repositories.attempts.list_for_run(summary.run_id))
+            if len(summaries) < max(1, limit):
+                break
+            offset += len(summaries)
+        # Gather before writes so updated_at ordering cannot skip a later page.
+        for run_id in candidates:
+            self._settle_interrupted_native_tasks(run_id)
+
+    def _settle_interrupted_native_tasks(self, run_id: str) -> None:
+        """Record local task death under the same fence used by the executor.
+
+        This closes only the known in-process native Agent session. It neither
+        settles external tool requests nor grants replay authority: those WALs
+        must still pass the existing per-operation recovery proof.
+        """
+        from adapters.model.native import NativeGeneralAgent
+        from components.resource.runtime.embedded_runtime import EMBEDDED_AGENTS_RUNTIME_ID
+        from support.run_execution_fence import acquire_run_fence, RunFenceBusy
+
+        database = getattr(self.workflow_store, "db_path", None)
+        if database is None or self.identity_lifecycle is None:
+            return
+        try:
+            fence = acquire_run_fence(database, run_id)
+        except RunFenceBusy:
+            return  # Its task can still finish through normal executor cleanup.
+        with fence:
+            run = self.workflow_store.get_run(run_id)
+            if run.status is not WorkflowStatus.FAILED or _normalize_runtime_engine(run.runtime_engine) != "acg":
+                return
+            candidate = run.model_copy(deep=True)
+            repos, events, settled_steps = self.identity_lifecycle.repositories, [], set()
+            pending_events = {item["event_id"]: item for item in self.workflow_store.list_outbox(
+                limit=max(1, self.workflow_store.outbox_stats()["backlog"]))}
+            native_definitions = {(item.definition.agent_id, item.definition.digest): frozenset(item.implementation.profile.capabilities)
+                for item in self.agent_registry.registrations()
+                if type(item.implementation) is NativeGeneralAgent and "run" not in vars(item.implementation)
+                and item.definition.source == "native"}
+            for step_id, raw_binding in run.execution_state.get("executionBindings", {}).items():
+                step = run.get_step(step_id)
+                if (step_id in run.completed_step_ids or step.status not in {StepStatus.FAILED, StepStatus.CANCELLED}
+                        or run.execution_state.get("outputRefs", {}).get(step_id)
+                        or NativeGeneralAgent.execution_path_for(step.capability,
+                            workset=isinstance(step.input.get("workset"), dict)) != "tool-session"):
+                    continue
+                binding = ExecutionBinding.model_validate(raw_binding)
+                registration = binding.agent_registration
+                if (binding.run_id != run_id or binding.step_id != step_id
+                        or binding.resource_id != EMBEDDED_AGENTS_RUNTIME_ID or registration is None
+                        or binding.resource_id in self.resource_execution_adapters
+                        or step.capability not in native_definitions.get(
+                            (registration.agent_id, registration.definition_digest), ())
+                        or binding.attempt_id in run.execution_state.get("taskSettlement", {})):
+                    continue
+                attempt = repos.attempts.get(binding.attempt_id)
+                identity_binding = repos.execution_bindings.get_for_attempt(binding.attempt_id)
+                executions = repos.step_executions.list_for_attempt(binding.attempt_id)
+                if (attempt is None or attempt.run_id != run_id or identity_binding is None
+                        or identity_binding.acg_node_id != step_id
+                        or identity_binding.metadata.get("runtimeBindingId") != binding.binding_id
+                        or identity_binding.metadata.get("agentRegistration") != registration.model_dump(by_alias=True, mode="json")
+                        or len(executions) != 1 or executions[0].run_id != run_id
+                        or executions[0].task_id != attempt.task_id
+                        or executions[0].status.value != attempt.status.value
+                        or attempt.status.value not in {"running", "failed", "cancelled"}):
+                    continue
+                execution = executions[0]
+                outcome = ("cancelled" if step.status is StepStatus.CANCELLED else "failed") if attempt.status.value == "running" else attempt.status.value
+                if execution.status.value == "running":
+                    event_type = "step.cancelled" if outcome == "cancelled" else "step.failed"
+                    event_id = f"{event_type}:{execution.step_execution_id}"
+                    existing = pending_events.get(event_id)
+                    events.append({"eventId": event_id, "eventType": event_type, "aggregateId": execution.step_execution_id,
+                        "payload": json.loads(existing["payload"]) if existing else {
+                            "runId": run_id, "attemptId": attempt.attempt_id,
+                            "stepExecutionId": execution.step_execution_id,
+                            "reason": str((run.error or {}).get("message") or "Native session interrupted by service restart"),
+                        }})
+                released = self.resource_binder.release_binding(binding)
+                candidate.execution_state.setdefault("taskSettlement", {})[attempt.attempt_id] = {
+                    "taskState": "ended", "outcome": outcome,
+                    "leaseState": "released" if released else "not_owned",
+                    "leaseId": binding.lease_id, "agentLeaseId": binding.agent_lease_id,
+                    "trigger": "interrupted_after_restart", "source": "run-execution-fence.v1",
+                }
+                settled_steps.add(step_id)
+            if not settled_steps:
+                return
+            candidate.active_step_ids = [key for key in candidate.active_step_ids if key not in settled_steps]
+            candidate.execution_state["activeStepIds"] = [key for key in candidate.execution_state.get("activeStepIds", [])
+                if key not in settled_steps]
+            candidate.updated_at = utc_now()
+            self.workflow_store.save_run_with_events(candidate, events, expected_snapshot=run)
+            self._flush_identity_outbox()
+
     @staticmethod
     def _terminalize_active_execution(
         run: RuntimeRunRecord,
@@ -340,10 +500,21 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         *,
         include_current_pending: bool = False,
     ) -> None:
+        from runtime.binding import queued_step_attempts
+
         active_statuses = {StepStatus.RUNNING, StepStatus.RETRYING}
         current_step_id = run.current_step_id if include_current_pending else None
+        interrupted_waits = set(queued_step_attempts(run))
+        run.execution_state.pop("schedulingStates", None)
         ended_at = utc_now()
         for step in run.steps:
+            if step.step_id in interrupted_waits:
+                # Admission has not begun an Agent execution. Preserve its
+                # absent start time and leave Attempt/tool evidence untouched.
+                step.status = StepStatus.CANCELLED
+                step.error = f"Execution resource wait interrupted: {error_message}"
+                step.completed_at = ended_at
+                continue
             if step.status in active_statuses or (
                 current_step_id
                 and step.step_id == current_step_id
@@ -353,6 +524,13 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 step.error = error_message
                 step.completed_at = ended_at
         run.active_step_ids = []
+        if interrupted_waits:
+            # Executed siblings still need their existing settlement proof;
+            # only pure resource waits can be removed without that proof.
+            run.execution_state["activeStepIds"] = [
+                step_id for step_id in run.execution_state.get("activeStepIds", [])
+                if step_id not in interrupted_waits
+            ]
 
     def prepare_single_step_retry(
         self,
@@ -368,12 +546,12 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         restart_from_step: bool = False,
         operator_recovery: dict | None = None,
     ) -> RuntimeRunRecord:
-        """Prepare a successor Run that resumes from a failed ACG step.
+        """Resume the unfinished ACG scope while retaining committed results.
 
-        The source Run remains immutable.  The child Run reuses only committed
-        upstream output references copied through ``ExecutionValueStore`` and
-        seeds the ACG state so the graph scheduler executes the failed step and
-        every still-unsettled downstream step without replaying completed work.
+        Formal recovery retains its Run and Permit. Every interrupted sibling
+        starts a new Attempt; pending descendants run when their inputs are
+        ready. Legacy recovery can instead prepare a successor Run and copy its
+        confirmed prefix through ``ExecutionValueStore``.
 
         调用方（facade）已持有 source Run 锁；无锁的幂等快路径由锁内的同条件
         复查覆盖，语义不变。
@@ -414,7 +592,10 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED,
         }:
             raise ValueError("node rerun requires a terminal, nonsuperseded source Run")
-        from runtime.permit_recovery import is_failed_planner_recovery
+        from runtime.permit_recovery import (
+            interrupted_step_ids as recovery_interrupted_step_ids,
+            is_failed_planner_recovery,
+        )
         planner_recovery = permit_mode and reuse_source_run and is_failed_planner_recovery(source)
         if not restart_from_step and source.status is not WorkflowStatus.FAILED and not (planner_recovery or
             validate_only and source.status in {WorkflowStatus.RUNNING, WorkflowStatus.WAITING_REVIEW}):
@@ -450,38 +631,30 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             raise ValueError("single-step retry target must be an executable ACG step")
         if target_spec.communication_mode != "STRICT_CONTRACT":
             raise ValueError("single-step retry target must use STRICT_CONTRACT communication")
-        if not restart_from_step and source_step.status is not StepStatus.FAILED:
-            raise ValueError("single-step retry target must be failed")
+        interrupted_target = (reuse_source_run and source.status is WorkflowStatus.FAILED
+                              and source_step.status is StepStatus.CANCELLED)
+        if not restart_from_step and source_step.status is not StepStatus.FAILED and not interrupted_target:
+            raise ValueError("single-step retry target must be failed or interrupted in the current failed Run")
         source_state = acg_execution_state_from_run(source)
         if planner_recovery:
             # An explicit retry replaces the failed Planner barrier. It neither
             # approves a node result nor fabricates an acceptance decision.
             source_state.review_payload = None
-        if (permit_mode and source.status == WorkflowStatus.FAILED
-                and (source_state.review_payload or {}).get("subjectType") == "planner"
-                and any(event.event_type == TraceEventType.REVIEW_DECIDED
-                        and event.step_id == source.current_step_id
-                        and event.payload.get("subjectType") == "planner"
-                        and event.payload.get("decision") == "rejected" for event in source.trace)):
-            # The operator has resolved this strategic barrier by rejection.
-            # A separate explicit retry may clear its marker, never node audit.
-            source_state.review_payload = None
-        if validate_only and (source_state.review_payload or {}).get("subjectType") == "planner":
-            source_state.review_payload = None
         if not restart_from_step and source_state.output_refs.get(step_id):
             raise ValueError("single-step retry target already has a committed output")
 
+        interrupted_step_ids = set(recovery_interrupted_step_ids(source))
+
         stale_active_step_ids = set(source_state.active_step_ids)
         if stale_active_step_ids and (
-            stale_active_step_ids != {step_id}
-            or source_step.status is not StepStatus.FAILED
-            or source_state.output_refs.get(step_id)
+            not stale_active_step_ids <= interrupted_step_ids
+            or any(source_state.output_refs.get(key) for key in stale_active_step_ids)
         ):
             raise ValueError("single-step retry requires no active source steps")
         # A restart can persist the failed target in the ACG state while
         # the authoritative Run projection has already cleared its active
-        # steps.  Only that exact failed, output-less target is safe to
-        # reconcile here; any other active marker remains a hard reject.
+        # steps. Every retained marker must identify an ended, output-less
+        # failed/cancelled node; Permit recovery separately proves every WAL.
         if (
             source_state.control_frames
             or source_state.loop_iterations
@@ -565,6 +738,11 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
 
         if validate_only:
             return source
+
+        from runtime.workspace_review_execution import retire_stale_workspace_continuation
+        retired_continuation = (retire_stale_workspace_continuation(source,
+            value_store=self.execution_value_store, step_id=step_id,
+            operation_id=f"retry:{source.run_id}:{source.recovery_count + 1}") if reuse_source_run else None)
 
         copied_refs: dict[str, str] = {}
         copied_summaries: dict[str, str] = {}
@@ -652,6 +830,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 "targetStepId": step_id,
                 "reason": normalized_reason[:500],
                 "reusedStepIds": sorted(copied_refs),
+                **({"interruptedStepIds": sorted(interrupted_step_ids)} if len(interrupted_step_ids) > 1 else {}),
             },
             "checkpointResume": {
                 "sourceRunId": source.run_id,
@@ -759,6 +938,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             retry.execution_state["inPlaceRetry"] = {
                 "failedStepId": step_id,
                 "reason": normalized_reason[:500],
+                **({"interruptedStepIds": sorted(interrupted_step_ids)} if len(interrupted_step_ids) > 1 else {}),
             }
         persisted_attempt_counts: dict[str, int] = {}
         if reuse_source_run and self.identity_lifecycle is not None:
@@ -799,10 +979,10 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                     child_step.attempt = max(
                         source_unsettled.attempt,
                         source_unsettled.retry_count,
-                    ) + (1 if reuse_source_run and child_step.step_id == step_id else 0)
+                    ) + (1 if reuse_source_run and child_step.step_id in interrupted_step_ids else 0)
                     child_step.retry_count = (
                         source_unsettled.retry_count + 1
-                        if reuse_source_run and child_step.step_id == step_id
+                        if reuse_source_run and child_step.step_id in interrupted_step_ids
                         else source_unsettled.retry_count
                     )
         self.trace_store.append(
@@ -817,6 +997,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 "resumeStepIds": sorted(resumable_step_ids),
                 "reason": normalized_reason[:500],
                 "mode": "current_run" if reuse_source_run else "successor_run",
+                **({"retiredWorkspaceReview": retired_continuation} if retired_continuation is not None else {}),
             },
         )
         retry.updated_at = utc_now()
@@ -847,6 +1028,8 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             self.workflow_store.save_run_with_events(retry, reused_projection_events)
         else:
             self.workflow_store.save_run(retry)
+        from runtime.live_events import runtime_event_broker
+        runtime_event_broker.bind_run(retry.run_id, self.workflow_store, rebase=True)
         if reuse_source_run:
             self._mark_retrying(source.mission_id)
         if self.identity_lifecycle is not None:
