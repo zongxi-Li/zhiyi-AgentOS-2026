@@ -52,6 +52,9 @@ class TaskSemanticProfile(BaseModel):
     workspace_observations: List[WorkspaceObservationRequirement] = Field(
         default_factory=list, alias="workspaceObservations"
     )
+    workspace_scope_origin: Literal["explicit", "inferred"] | None = Field(
+        default=None, alias="workspaceScopeOrigin", exclude_if=lambda value: value is None
+    )
     key_constraints: List[str] = Field(default_factory=list, alias="keyConstraints")
     required_capabilities: List[str] = Field(default_factory=list, alias="requiredCapabilities")
     capability_candidates: List[CapabilityCandidate] = Field(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from components.planner.complexity import assess_complexity
 from components.planner.intent_analyzer import INTENT_PROFILE_PROMPT_VERSION, IntentParser
 from support.acg.models import NATIVE_CAPABILITY_IDS, build_default_capability_catalog
@@ -15,6 +17,71 @@ def test_intent_parser_preserves_typed_evidence_boundary():
     profile = IntentParser(llm=Model()).parse(intent="Use supplied facts")
     assert profile.evidence_scope == "task_input_only"
     assert profile.model_dump(by_alias=True)["webExtraction"] == "snippets"
+
+
+@pytest.mark.parametrize("model_origin,caller_scope,literal_file,expected_origin", [
+    ("inferred", False, False, "inferred"),
+    ("explicit", False, False, "explicit"),
+    ("inferred", True, False, "explicit"),
+    ("explicit", False, True, "explicit"),
+])
+def test_workspace_origin_reaches_discovery_without_overriding_caller_evidence(
+    model_origin, caller_scope, literal_file, expected_origin,
+):
+    from components.planner.workspace_discovery import build_workspace_discovery_plan
+    from contracts.workspace_planning import validate_workspace_plan_revision
+
+    requirement = ({"path": "src/main.py", "kind": "file", "operation": "read"} if literal_file else
+        {"path": ".", "kind": "directory", "operation": "read", "recursive": True})
+
+    class Model:
+        def generate_json(self, prompt, schema, **kwargs):
+            # New model requests make this classification explicit; it is not
+            # inferred from the mere presence of a workspace address by the host.
+            assert "workspaceScopeOrigin" in schema["required"]
+            return {"primaryGoal": "Inspect the requested source", "requiredCapabilities": ["analysis"],
+                "evidenceScope": "authorized_sources", "webExtraction": "snippets",
+                "estimatedComplexity": "medium", "workspaceObservations": [requirement],
+                "workspaceScopeOrigin": model_origin}
+
+    task_input = {"workspaceBinding": {"workspaceId": "selected-folder", "grantId": "grant",
+        "workspaceRoot": "C:/projects/selected-folder"}}
+    if caller_scope:
+        task_input["workspaceObservations"] = [requirement]
+    intent = ("阅读 src/main.py" if literal_file else
+        "Read every file including VCS and caches" if model_origin == "explicit" else
+        "仔细阅读这个文件夹中的代码，梳理依赖并给出勘察报告")
+    profile = IntentParser(llm=Model()).parse(intent=intent, task_input=task_input)
+    plan = build_workspace_discovery_plan("mission_aabbccddeeff", profile, task_input)
+    assert plan.metadata["workspaceDiscovery"]["scopeOrigin"] == expected_origin
+    metadata = {**plan.metadata,
+        "workspaceDiscovery": {**plan.metadata["workspaceDiscovery"], "phase": "formal"},
+        "workspaceScope": {"version": 1, "requirements": [{
+            "path": ".", "kind": "directory", "operation": "read", "recursive": True,
+            "excludePaths": ["src/main.py" if literal_file else ".git"]}],
+            "rationale": "Committed discovery identified the relevant source scope",
+            "sourceRefs": ["output:discovery"]}}
+    if expected_origin == "explicit":
+        with pytest.raises(ValueError, match="cannot reduce explicit"):
+            validate_workspace_plan_revision(plan, metadata)
+    else:
+        assert validate_workspace_plan_revision(plan, metadata) is None
+
+
+def test_workspace_origin_request_contract_keeps_legacy_and_offline_profiles_readable():
+    from components.planner.workspace_discovery import build_workspace_discovery_plan
+    from support.acg.semantic_profile import TaskSemanticProfile
+
+    legacy = {"primaryGoal": "Review source", "workspaceObservations": [
+        {"path": ".", "kind": "directory", "operation": "read", "recursive": True}]}
+    profile = TaskSemanticProfile.model_validate(legacy)
+    assert profile.workspace_scope_origin is None
+    assert "workspaceScopeOrigin" not in profile.model_dump(by_alias=True)
+    task_input = {"workspaceBinding": {"workspaceId": "workspace", "grantId": "grant"}}
+    offline = IntentParser().parse(intent="审查仓库代码依赖", use_llm=False, task_input=task_input)
+    assert offline.workspace_scope_origin is None
+    plan = build_workspace_discovery_plan("mission_aabbccddeeff", offline, task_input)
+    assert plan.metadata["workspaceDiscovery"]["scopeOrigin"] == "inferred"
 
 
 def test_all_existing_capabilities_have_a_versioned_prompt_profile() -> None:

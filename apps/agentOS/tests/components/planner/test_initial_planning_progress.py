@@ -99,7 +99,7 @@ def test_initial_runtime_streams_and_keeps_progress_without_materializing(initia
     assert saved.lifecycle_message == "preserve concurrent state"
     assert ledger.latest(run.mission_id) is not None
     assert not saved.steps and not saved.acg_blueprint and not agent.calls
-    assert "Declare control policies only when the supplied output schema and runtime contract allow them" in llm.requests[1]["system_prompt"]
+    assert "Follow the current stage's output schema" in llm.requests[1]["system_prompt"]
     assert "Use supported verification_loop semantics instead of cycles" not in llm.requests[1]["system_prompt"]
     assert "controlPolicies MUST be []" in llm.requests[1]["prompt"]
     assert llm.requests[1]["schema"]["properties"]["controlPolicies"]["maxItems"] == 0
@@ -133,13 +133,15 @@ def test_initial_validation_retains_first_and_repaired_issues_in_trace_and_sse(i
              "fieldPath": ["tasks", 0, "objective"]}
     repair_start = next(event for event in events if event.get("stage") == "repair" and event.get("status") == "started")
     assert repair_start["validationFailures"] == [first]
-    assert llm.calls == (3 if repair_succeeds else 5) and not agent.calls and not saved.steps
+    # A repeated unchanged invalid candidate stops correction; there is no
+    # fixed repair count to exhaust or to encode in this diagnostic test.
+    assert llm.calls == (3 if repair_succeeds else 4) and not agent.calls and not saved.steps
     if repair_succeeds:
         assert events[-1]["kind"] == "completed" and ledger.latest(run.mission_id)
     else:
         expected = [first, *[{"stage": "repair", "callKey": key, "code": "acceptance_criteria_required",
                              "fieldPath": ["tasks", 0, "acceptanceCriteria"]}
-                            for key in ("repair", "repair:2", "repair:3")]]
+                            for key in ("repair", "repair:2")]]
         assert events[-1]["validationFailures"] == expected
         assert next(event for event in live if event.event_type == "planner.failed").payload["validationFailures"] == expected
         assert "PRIVATE_MODEL_TASK" not in repr(saved.trace)

@@ -140,3 +140,71 @@ def test_handoff_does_not_accept_an_unproved_source_generation(ready_handoff, mo
     assert result.status == "REJECTED", result
     assert ledger.handoff_for(activation_id) is None
     assert workflow.get_run(run_id) == before and agent.calls == ["A", "B"]
+
+
+@pytest.mark.parametrize("tamper", [None, "compiledPackageChecksum", "compiledPackageBlueprintHash"])
+def test_handoff_authenticates_frozen_source_without_recompiling_history(ready_handoff, monkeypatch, tamper):
+    from components.executor.compiler import ACGGraphCompiler
+    rt, workflow, agent, run_id, activation_id, ledger, _, _ = next_activation(ready_handoff)
+    source = next(item for item in ledger.activations_for_run(run_id) if item.candidate_graph_version == 2)
+    frozen = ledger.get_materialization(source.materialization_id).package
+    compile_package = ACGGraphCompiler.compile_package
+
+    def only_compile_candidate(compiler, blueprint, **kwargs):
+        if blueprint.version == 2:
+            pytest.fail("historical package was recompiled instead of authenticated")
+        return compile_package(compiler, blueprint, **kwargs)
+
+    monkeypatch.setattr(ACGGraphCompiler, "compile_package", only_compile_candidate)
+    if tamper is not None:
+        repository = rt.identity_lifecycle.repositories.runs
+        identity = repository.get(run_id)
+        repository.update_blueprint(run_id, identity.blueprint_id, identity.graph_version,
+            planning_metadata={tamper: "0" * 64})
+    before = workflow.get_run(run_id)
+
+    result = rt.prepare_graph_handoff(activation_id, idempotency_key="frozen-source")
+
+    if tamper is None:
+        assert result.status == "STATE_PREPARED", result
+        assert ledger.get_handoff(result.handoff_id).identity_link.source_graph.checksum == frozen.checksum
+    else:
+        assert result.status == "REJECTED", result
+        assert result.reason == "source Identity immutable package mismatch"
+        assert ledger.handoff_for(activation_id) is None
+    assert workflow.get_run(run_id) == before and agent.calls == ["A", "B"]
+
+
+def test_changed_compiler_cannot_remint_an_already_frozen_candidate(ready_handoff, monkeypatch):
+    """A pre-upgrade candidate stays immutable even if it needs explicit migration."""
+    from components.executor.compiler import ACGGraphCompiler
+    from contracts import stable_checksum
+    rt, workflow, agent, run_id, activation_id, ledger, _, _, handoff_id = ready_handoff
+    activation = ledger.get_activation(activation_id)
+    frozen = ledger.get_materialization(activation.materialization_id)
+    compile_package = ACGGraphCompiler.compile_package
+
+    def changed_field_order(compiler, blueprint, **kwargs):
+        package = compile_package(compiler, blueprint, **kwargs)
+        rules = tuple(reversed(package.communication_manifest.rules))
+        changed = package.model_copy(update={"communication_manifest":
+            package.communication_manifest.model_copy(update={"rules": rules})})
+        body = {field.alias or name: getattr(changed, name)
+                for name, field in type(changed).model_fields.items()
+                if name not in {"package_id", "checksum"}}
+        checksum = stable_checksum(body)
+        assert checksum != frozen.package_checksum
+        return changed.model_copy(update={"checksum": checksum,
+            "package_id": f"acgpkg:{blueprint.graph_id}:{blueprint.version}:{checksum[:16]}"})
+
+    monkeypatch.setattr(ACGGraphCompiler, "compile_package", changed_field_order)
+    before = workflow.get_run(run_id)
+    handoff = ledger.get_handoff(handoff_id)
+
+    result = rt.prepare_graph_handoff(activation_id, idempotency_key="permit-handoff")
+
+    assert result.status == "REJECTED", result
+    assert result.reason == "candidate semantics or current compiler changed"
+    assert ledger.get_materialization(activation.materialization_id) == frozen
+    assert ledger.get_handoff(handoff_id) == handoff
+    assert workflow.get_run(run_id) == before and agent.calls == ["A"]

@@ -20,7 +20,7 @@ from support.acg.planning import (
     EvidenceSpec,
     MemoryAccessSpec,
 )
-from support.acg.schema import ACGBlueprint
+from support.acg.schema import ACGBlueprint, EdgeType
 
 from .acg_lowerer import ACGLoweringInput, ACGLoweringStep
 from .cognitive_router import CognitiveRouter
@@ -140,6 +140,8 @@ def build_semantic_patch_lowering_input(
 
     resource_plan = _rebuild_resource_plan(
         current=blueprint.resource_plan,
+        previous_dependencies={(edge.source_id, edge.target_id)
+                               for edge in blueprint.edges_of_type(EdgeType.DEPENDENCY)},
         retained_step_ids={node_id_by_task[key] for key in retained_keys},
         changed_keys=changed_keys,
         node_id_by_task=node_id_by_task,
@@ -198,6 +200,7 @@ def _frozen_steps_by_key(
 def _rebuild_resource_plan(
     *,
     current: ACGResourcePlan,
+    previous_dependencies: set[tuple[str, str]],
     retained_step_ids: set[str],
     changed_keys: set[str],
     node_id_by_task: dict[str, str],
@@ -206,6 +209,14 @@ def _rebuild_resource_plan(
     routed: dict[str, Any],
     output_contracts: dict[str, dict],
 ) -> ACGResourcePlan:
+    dependencies_by_id = {(node_id_by_task[source], node_id_by_task[target])
+                          for target, sources in dependencies.items() for source in sources}
+
+    def retained_dependency(source_id, target_id):
+        return (source_id in retained_step_ids and target_id in retained_step_ids
+                and ((source_id, target_id) not in previous_dependencies
+                     or (source_id, target_id) in dependencies_by_id))
+
     bindings = [
         item for item in current.bindings if item.step_id in retained_step_ids
     ]
@@ -222,13 +233,15 @@ def _rebuild_resource_plan(
     skills = tuple(
         item for item in current.skills if item.step_id in retained_step_ids
     )
-    memory_writes = [
-        item
-        for item in current.memory
-        if item.step_id in retained_step_ids and item.access == "write"
-    ]
+    previous_memory_producers = {item.memory_id: item.step_id for item in current.memory if item.access == "write"}
+    memory = [item for item in current.memory if item.step_id in retained_step_ids
+              and (item.access == "write" or item.memory_id not in previous_memory_producers
+                   or retained_dependency(previous_memory_producers[item.memory_id], item.step_id))]
     evidence = [
-        item.model_copy(update={"consumer_step_ids": ()})
+        item.model_copy(update={"consumer_step_ids": tuple(
+            consumer for consumer in item.consumer_step_ids
+            if consumer in retained_step_ids and (item.producer_step_id is None
+                or retained_dependency(item.producer_step_id, consumer)))})
         for item in current.evidence
         if item.producer_step_id is None or item.producer_step_id in retained_step_ids
     ]
@@ -236,7 +249,7 @@ def _rebuild_resource_plan(
         descriptor = descriptors[key]
         step_id = node_id_by_task[key]
         if descriptor.writes_memory:
-            memory_writes.append(MemoryAccessSpec(
+            memory.append(MemoryAccessSpec(
                 stepId=step_id,
                 memoryId=f"memory::{step_id}",
                 access="write",
@@ -259,33 +272,45 @@ def _rebuild_resource_plan(
         for item in evidence
         if item.producer_step_id is not None
     }
-    evidence_consumers = {item.evidence_id: [] for item in evidence}
+    evidence_consumers = {item.evidence_id: list(item.consumer_step_ids) for item in evidence}
     memory_by_producer = {
-        item.step_id: item.memory_id for item in memory_writes
+        item.step_id: item.memory_id for item in memory if item.access == "write"
     }
-    memory = list(memory_writes)
-    communication: list[CommunicationSpec] = []
+    communication = [item for item in current.communication
+                     if retained_dependency(item.producer_step_id, item.consumer_step_id)
+                     and all(participant in retained_step_ids for participant in item.participant_step_ids)]
+    existing_channels = {(item.producer_step_id, item.consumer_step_id) for item in communication}
+    existing_reads = {(item.step_id, item.memory_id) for item in memory if item.access == "read"}
     for target_key, source_keys in dependencies.items():
         target_id = node_id_by_task[target_key]
         for source_key in source_keys:
             source_id = node_id_by_task[source_key]
-            communication.append(CommunicationSpec(
-                producerStepId=source_id,
-                consumerStepId=target_id,
-                allowedFields=tuple(output_fields(output_contracts[source_key])),
-                channel=f"{source_id}:{target_id}",
-                mode="STRICT_CONTRACT",
-            ))
+            # An unchanged edge keeps its frozen contracts, including an
+            # implicit result pull with no explicit resource declaration.
+            # Rebuilding defaults for it would change settled implementation.
+            if ((source_id, target_id) in previous_dependencies
+                    and source_id in retained_step_ids and target_id in retained_step_ids):
+                continue
+            if (source_id, target_id) not in existing_channels:
+                communication.append(CommunicationSpec(
+                    producerStepId=source_id,
+                    consumerStepId=target_id,
+                    allowedFields=tuple(output_fields(output_contracts[source_key])),
+                    channel=f"{source_id}:{target_id}",
+                    mode="STRICT_CONTRACT",
+                ))
+                existing_channels.add((source_id, target_id))
             evidence_id = evidence_by_producer.get(source_id)
-            if evidence_id is not None:
+            if evidence_id is not None and target_id not in evidence_consumers[evidence_id]:
                 evidence_consumers[evidence_id].append(target_id)
             memory_id = memory_by_producer.get(source_id)
-            if memory_id is not None:
+            if memory_id is not None and (target_id, memory_id) not in existing_reads:
                 memory.append(MemoryAccessSpec(
                     stepId=target_id,
                     memoryId=memory_id,
                     access="read",
                 ))
+                existing_reads.add((target_id, memory_id))
 
     return ACGResourcePlan(
         bindings=tuple(bindings),

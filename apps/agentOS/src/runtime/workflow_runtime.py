@@ -2627,7 +2627,8 @@ class ExecutionRuntime(CollaboratorAccess):
         )
 
     def _planning_engine_for_run(self, run: RuntimeRunRecord):
-        if run.execution_scope is None and not self._react_planning_active():
+        workspace_bound = isinstance(run.input.get("workspaceBinding"), dict)
+        if run.execution_scope is None and not self._react_planning_active() and not workspace_bound:
             return self.planning_engine
         from components.planner.service import PlanningEngine
 
@@ -2651,7 +2652,21 @@ class ExecutionRuntime(CollaboratorAccess):
                 ),
                 intent_llm=self._intent_llm,
             )
-        return self._attach_react_loop(engine, run)
+        if workspace_bound:
+            from runtime.workspace_planning_context import load_workspace_discovery_materials
+
+            basis = run_intent_basis(run)
+            workflow = self._workflow_for_run(run)
+            engine.workspace_planning_input = (planner_input(basis, run.input)
+                if basis is not None else deepcopy(run.input))
+            engine.workspace_planning_domain = workflow.domain
+            engine.workspace_planning_task_type = workflow.intent
+            engine.workspace_context_provider = lambda observation: load_workspace_discovery_materials(
+                self.execution_value_store, observation)
+        engine = self._attach_react_loop(engine, run)
+        if engine.react_loop is not None and workspace_bound:
+            engine.react_loop.workspace_context_provider = engine.workspace_context_provider
+        return engine
 
     def _react_planning_active(self) -> bool:
         """PR-S01-02 opt-in：环境开关打开且注入了意图 LLM 才激活 ReAct 循环。"""

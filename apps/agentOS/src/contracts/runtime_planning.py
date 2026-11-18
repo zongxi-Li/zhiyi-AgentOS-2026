@@ -199,6 +199,9 @@ class RuntimePlanningObservation(PlanningContract):
     # Host-generated bounded progress; paths are workspace-relative and bodies
     # never enter the strategic planning snapshot.
     workspace_observations: tuple[dict, ...] = Field(default=(), alias="workspaceObservations")
+    # Only immutable context references enter the planning journal. Source
+    # bodies are loaded separately for the model's admitted planning request.
+    workspace_discovery: dict | None = Field(default=None, alias="workspaceDiscovery", exclude_if=lambda value: value is None)
     # Host-owned feedback from a rejected semantic revision.  This is a fact
     # for the next Planner round, never an execution or approval instruction.
     planning_commit_rejection: dict | None = Field(default=None, alias="planningCommitRejection")
@@ -289,12 +292,22 @@ class RuntimePlanningDecision(PlanningContract):
         return self
 
 
+class RuntimePlanningFailure(PlanningContract):
+    """Host-recorded diagnostics, never a model proposal or an external wait."""
+    error_code: str = Field(alias="errorCode", pattern=r"^[A-Z][A-Z0-9_]{0,127}$")
+    error_type: str = Field(alias="errorType")
+    retryable: bool = False
+    stage: str = "runtime_decision"
+    validation_failures: tuple[dict, ...] = Field(default=(), alias="validationFailures")
+
+
 class RuntimePlanningRound(PlanningContract):
     observation_id: str = Field(alias="observationId")
     observation: RuntimePlanningObservation
     decision: RuntimePlanningDecision | None = None
     status: Literal["observed", "decided", "applied", "rejected"] = "observed"
     rejection: str | None = None
+    failure: RuntimePlanningFailure | None = None
 
 
 class RuntimePlanningState(PlanningContract):

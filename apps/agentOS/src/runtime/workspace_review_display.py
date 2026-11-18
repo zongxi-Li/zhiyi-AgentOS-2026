@@ -48,17 +48,49 @@ class _WorkspaceReview(_DisplayFact):
     rounds: list[_ReviewRound] = Field(default_factory=list)
 
 
+def workspace_review_status(action, observation_id, graph_version, continuation) -> str:
+    """Only the proposal owned by this observation can keep its review open."""
+    if action == "complete":
+        return "completed"
+    if (isinstance(continuation, dict) and continuation.get("observationId") == observation_id
+            and continuation.get("sourceGraphVersion") == graph_version):
+        return "blocked" if continuation.get("blocked") else "reviewing"
+    if action in {"wait", "abort"}:
+        return "blocked"
+    return "reviewing" if action == "revise" else "reading"
+
+
 def workspace_review_projection(run) -> dict | None:
     """Project only explicit review facts; never infer progress or issue work."""
     raw = run.execution_state.get("workspaceReview")
     if not isinstance(raw, dict):
         return None
     try:
-        return _WorkspaceReview.model_validate(raw).model_dump(by_alias=True, mode="json", exclude_none=True)
+        result = _WorkspaceReview.model_validate(raw).model_dump(by_alias=True, mode="json", exclude_none=True)
     except ValidationError:
         # An incomplete/stale display payload cannot block authorized Run reads
         # or be presented as completed evidence. Execution state is untouched.
         return None
+    # Older writers treated any pending proposal as a live review, even when
+    # recovery had moved to another observation. A matching applied wait is an
+    # explicit current fact; its old proposal's diagnostic is not its cause.
+    state = run.execution_state
+    current = ((state.get("planningLoop") or {}).get("current") or {})
+    review = state.get("reviewPayload") or {}
+    status = getattr(run, "status", None)
+    if (getattr(status, "value", status) == "waiting_review"
+            and result["status"] == "reviewing" and result["graphVersion"] == state.get("graphVersion")
+            and current.get("status") == "applied" and review.get("subjectType") == "planner"
+            and review.get("subjectId") == state.get("graphId")
+            and current.get("observationId") == review.get("observationId")
+            and (current.get("decision") or {}).get("action") == "wait"):
+        for round_ in reversed(result["rounds"]):
+            if (round_["round"] == result["round"] and round_["graphVersion"] == result["graphVersion"]
+                    and round_.get("observationRef") == current.get("observationId")):
+                result["status"] = workspace_review_status(round_["action"], round_["observationRef"],
+                    result["graphVersion"], state.get("workspaceReviewContinuation"))
+                break
+    return result
 
 
 def with_workspace_review(graph: dict | None, run) -> dict | None:

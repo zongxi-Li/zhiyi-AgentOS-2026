@@ -1,4 +1,6 @@
 """Public planning explanations and execution receipts for the task conversation."""
+from pydantic import BaseModel
+
 from contracts.planning import TaskPlan
 from contracts.workflow import WorkflowStatus
 from support.stores._policy import acg_review_subject
@@ -93,6 +95,39 @@ def review_summary(run, current=None):
             reason=reason, displayReason=_revision_failure_reason(reason), canApprove=False, decisionRejected=True)
         if isinstance(matching.get("code"), str):
             review["errorCode"] = matching["code"]
+    elif (planner and not rejected and not payload.get("question")
+            and not getattr(getattr(current, "decision", None), "question", None)
+            and (payload.get("reasonCode") == "PLANNER_UNAVAILABLE"
+                 or str(payload.get("reason") or "").startswith("Runtime Planner unavailable:"))):
+        # A technical planning failure is a retryable planning barrier, not a
+        # declaration that the user must confirm an external fact. Old Runs
+        # retained only this exact host-generated reason prefix.
+        failure = (getattr(current, "failure", None)
+                   if observation_id and getattr(current, "observation_id", None) == observation_id else None)
+        if isinstance(failure, BaseModel):
+            failure = failure.model_dump(mode="json", by_alias=True)
+        failure = failure if isinstance(failure, dict) else {}
+        error_code = payload.get("errorCode") or failure.get("errorCode")
+        review.update(kind="planner_error", reasonCode="PLANNER_UNAVAILABLE", canApprove=True,
+            decisionRejected=False,
+            displayReason="系统未能生成有效的下一步决策，已有结果已保留。可以重新规划。",
+            errorCode=error_code if isinstance(error_code, str) else "PLANNER_UNAVAILABLE")
+        error_type = payload.get("errorType") or failure.get("errorType")
+        if not error_type:
+            legacy_type = review["reason"].removeprefix("Runtime Planner unavailable:").strip()
+            error_type = legacy_type if legacy_type.isidentifier() else None
+        if isinstance(error_type, str):
+            review["errorType"] = error_type
+        failures = failure.get("validationFailures")
+        if isinstance(failures, (list, tuple)):
+            from components.planner.task_decomposer import safe_validation_failures
+
+            failures = safe_validation_failures([
+                item for item in failures[:32]
+                if isinstance(item, dict) and isinstance(item.get("fieldPath"), (list, tuple))
+            ])
+            if failures:
+                review["validationFailures"] = failures
     return review
 
 

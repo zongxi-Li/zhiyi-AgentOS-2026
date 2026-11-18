@@ -291,6 +291,13 @@ class RuntimePlanningCommitProvider:
             if self.payload.base_plan_version != current.plan_version:
                 return reject(Code.STALE_PLAN, "patch bases on another formal plan")
             next_plan = apply_task_plan_patch(current, self.payload, catalog)
+            from contracts.workspace_planning import workspace_planning_phase
+            if (workspace_planning_phase(current) is not None
+                    and workspace_planning_phase(next_plan) == "formal"
+                    and next_plan.metadata.get("workspaceScope") != current.metadata.get("workspaceScope")):
+                from runtime.workspace_planning_context import validate_workspace_scope_sources
+                validate_workspace_scope_sources(run, self.runtime.execution_value_store,
+                    next_plan.metadata["workspaceScope"])
             # The compiler may infer capability/terminal edges absent from the
             # raw patch. Its validated result must preserve settled predecessors.
             prior_incoming = {r for r in current.relations if r.target_key in protected}
@@ -560,10 +567,14 @@ class RuntimePlanningCommitAuthority:
                 "constraintCount": len(profile.key_constraints),
                 "requiredCapabilityCount": len(profile.required_capabilities),
                 "expectedArtifactCount": len(profile.expected_artifacts)})
-            plan = engine.semantic_planner.plan_profile(mission_id=run.mission_id, profile=profile,
-                strategy="initial_commit_candidate", task_input=data,
-                existing_semantic_tasks=self.runtime._existing_semantic_task_catalog(run.mission_id),
-                use_llm=not bool(run.input.get("deterministicIntent")), planning_deadline=deadline, run_id=run_id)
+            from components.planner.workspace_discovery import build_workspace_discovery_plan
+            plan = (build_workspace_discovery_plan(run.mission_id, profile, data)
+                    if workflow.is_native_bootstrap else None)
+            if plan is None:
+                plan = engine.semantic_planner.plan_profile(mission_id=run.mission_id, profile=profile,
+                    strategy="initial_commit_candidate", task_input=data,
+                    existing_semantic_tasks=self.runtime._existing_semantic_task_catalog(run.mission_id),
+                    use_llm=not bool(run.input.get("deterministicIntent")), planning_deadline=deadline, run_id=run_id)
         # Server-owned immutable basis binds the candidate, including template planning.
         nodes = tuple(n.model_copy(deep=True, update={"constraints": [*n.constraints,
             *[dict(type="mission_constraint", value=c.text, constraintId=c.constraint_id,

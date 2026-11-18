@@ -51,6 +51,41 @@ class GraphHandoffAuthority:
             raise HandoffEvidenceError("handoff requires the authoritative Workflow and separate checkpoint stores")
         self.runtime, self.store, self.staged_store = runtime, store, staged_store
 
+    def _source_package(self, run, blueprint):
+        """Read the package that actually executed, including older compilers.
+
+        Recompiling a persisted graph cannot authenticate an immutable source:
+        even an ordering-only compiler fix can produce different package bytes.
+        The activation and materialization journals preserve those exact bytes.
+        Pre-activation legacy sources still require the strict compiler fallback.
+        """
+        sources = [item for item in self.store.activations_for_run(run.run_id)
+                   if item.candidate_graph_version == blueprint.version]
+        if not sources:
+            return ACGGraphCompiler().compile_package(blueprint, run_id=run.run_id)
+        if len(sources) != 1:
+            raise HandoffEvidenceError("source activation identity is ambiguous")
+        activation = sources[0]
+        materialization = self.store.get_materialization(activation.materialization_id)
+        if (activation.status != "ACTIVATED_PAUSED" or activation.mission_id != run.mission_id
+                or activation.graph_id != blueprint.graph_id or materialization is None
+                or materialization.source_run_id != run.run_id or materialization.mission_id != run.mission_id
+                or materialization.graph_id != blueprint.graph_id
+                or materialization.candidate_graph_version != blueprint.version
+                or materialization.source_graph_version != activation.source_graph_version
+                or materialization.source_kind != activation.source_kind
+                or materialization.source_commit_id != activation.source_commit_id
+                or materialization.package_checksum != activation.package_checksum
+                or materialization.commitment_fingerprint != activation.commitment_fingerprint
+                or materialization.proof_fingerprint != activation.proof_fingerprint):
+            raise HandoffEvidenceError("source activation materialization mismatch")
+        package = materialization.package
+        if (package.run_id != run.run_id or package.blueprint_id != blueprint.graph_id
+                or package.blueprint_version != blueprint.version
+                or package.blueprint_hash != stable_checksum(blueprint.model_dump(mode="json", by_alias=True))):
+            raise HandoffEvidenceError("source immutable package blueprint mismatch")
+        return package
+
     def _validated_candidate(self, activation_id, key):
         rt, store = self.runtime, self.store
         authorities = (rt.graph_activation_authority, rt.planning_commit_authority, rt.identity_lifecycle)
@@ -134,7 +169,7 @@ class GraphHandoffAuthority:
                 or old.graph_id != activation.graph_id or old.version != activation.source_graph_version
                 or original_plan.plan_version != source.sources.plan_version):
             raise HandoffEvidenceError("source Identity version mismatch")
-        old_package = ACGGraphCompiler().compile_package(old, run_id=run.run_id)
+        old_package = self._source_package(run, old)
         if any(identity.metadata.get(k) != v for k, v in {
                 "workflowId": run.workflow_id, "runtimeGraphId": old.graph_id,
                 "taskPlanVersion": original_plan.plan_version}.items()):

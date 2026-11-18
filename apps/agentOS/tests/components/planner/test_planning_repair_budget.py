@@ -132,6 +132,8 @@ def test_failed_patch_is_explained_without_rewriting_frozen_tasks(invalid_patch,
     assert detail in llm.calls[2]["prompt"]
     assert '"code": "topology_patch_invalid"' in llm.calls[2]["prompt"]
     assert "Frozen Tasks:" in llm.calls[2]["prompt"]
+    assert 'Frozen task keys (the only legal relation endpoints): ["understand", "other"]' in llm.calls[2]["prompt"]
+    assert "return an empty relation patch/list" in llm.calls[2]["prompt"]
     assert all("operations" in call["schema"]["properties"] for call in llm.calls[1:])
     assert {node.key: node.objective for node in plan.nodes if node.key in {"understand", "other"}} == {
         row["key"]: row["objective"] for row in initial["tasks"]

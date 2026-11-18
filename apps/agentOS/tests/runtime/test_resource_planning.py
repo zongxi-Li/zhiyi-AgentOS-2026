@@ -108,7 +108,7 @@ def test_missing_model_wait_restart_then_recover_without_reexecuting_upstream(tm
     assert agent2.calls == [] and agent3.calls == ["B"]
     assert result.execution_state["outputRefs"]["A"] == upstream_ref
     assert result.execution_state["executionBindings"]["B"]["modelBinding"]["endpointId"] == "model:fixture"
-    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "resume", "exhausted"]
+    assert [o.wake_reason for o in planner.observations] == ["failure", "condition", "exhausted"]
     assert len(result.execution_state["inPlaceRetryRequests"]) == 1
 
 

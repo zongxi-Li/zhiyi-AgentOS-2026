@@ -101,6 +101,68 @@ def test_unrelated_pass_cannot_erase_a_failed_check_or_verify_a_new_revision():
     assert "final_verification_missing:final:revision" in blockers
 
 
+@pytest.mark.parametrize("inherited,delivered,expected_clear", [
+    (False, True, False), (True, False, False), (True, True, True),
+])
+def test_recheck_must_cover_original_obligation_and_receive_current_candidate(inherited, delivered, expected_clear):
+    original = "Dependency declarations agree with the inspected source evidence"
+    run = SimpleNamespace(steps=[
+        SimpleNamespace(step_id="old", capability="verification", logical_role="task",
+            acceptance_criteria=[original], source_refs=["draft"]),
+        SimpleNamespace(step_id="revision", capability="artifact_generation", logical_role="task"),
+        SimpleNamespace(step_id="recheck", capability="verification", logical_role="task",
+            acceptance_criteria=[original] if inherited else ["The report has valid Markdown formatting"],
+            # Merely citing the old verifier cannot erase its requirements.
+            source_refs=["old", "revision"],
+            input={"from": {"revision": ["deliverable"] if delivered else ["verification"]}}),
+        SimpleNamespace(step_id="final", capability="artifact_generation", logical_role="final_synthesis")],
+        acg_blueprint={"edges": [{"sourceId": source, "targetId": target}
+            for source, target in (("old", "revision"), ("revision", "recheck"),
+                                   ("recheck", "final"), ("revision", "final"))]})
+    facts = [SimpleNamespace(step_id=step.step_id, output_ref="output:" + step.step_id,
+        verification_report="failed" if step.step_id == "old" else "passed" if step.step_id == "recheck" else None)
+        for step in run.steps]
+    blockers = RuntimePlanningObservationBuilder._verification_blockers(run, facts, exhausted=True)
+    assert (not blockers) is expected_clear
+    if not expected_clear:
+        assert "verification_failed:old" in blockers
+        assert "final_verification_missing:final:revision" in blockers
+
+
+def test_independent_rechecks_can_jointly_cover_distinct_original_obligations():
+    def verifier(key, criterion, current=False):
+        return SimpleNamespace(step_id=key, capability="verification", logical_role="task",
+            acceptance_criteria=[criterion], source_refs=["revision"] if current else ["draft"],
+            input={"from": {"revision": ["deliverable"]}} if current else {})
+    run = SimpleNamespace(steps=[verifier("dependencies", "Dependency evidence is correct"),
+        verifier("format", "Markdown is valid"),
+        SimpleNamespace(step_id="revision", capability="artifact_generation", logical_role="task"),
+        verifier("dependency_recheck", "Dependency evidence is correct", True),
+        verifier("format_recheck", "Markdown is valid", True),
+        SimpleNamespace(step_id="final", capability="artifact_generation", logical_role="final_synthesis")],
+        acg_blueprint={"edges": [{"sourceId": source, "targetId": target} for source, target in (
+            ("dependencies", "revision"), ("format", "revision"), ("revision", "dependency_recheck"),
+            ("revision", "format_recheck"), ("dependency_recheck", "final"), ("format_recheck", "final"))]})
+    facts = [SimpleNamespace(step_id=step.step_id, output_ref="output:" + step.step_id,
+        verification_report="failed" if step.step_id in {"dependencies", "format"}
+        else "passed" if step.step_id.endswith("_recheck") else None) for step in run.steps]
+    assert RuntimePlanningObservationBuilder._verification_blockers(run, facts, exhausted=True) == []
+
+
+def test_review_summary_alone_cannot_reapprove_the_original_artifact():
+    run = SimpleNamespace(steps=[
+        SimpleNamespace(step_id="draft", capability="artifact_generation", logical_role="task"),
+        SimpleNamespace(step_id="old", capability="verification", acceptance_criteria=["Source facts are supported"]),
+        SimpleNamespace(step_id="recheck", capability="verification", acceptance_criteria=["Source facts are supported"],
+            input={"from": {"old": ["verification"]}})],
+        acg_blueprint={"edges": [{"sourceId": "draft", "targetId": "old"},
+                                  {"sourceId": "old", "targetId": "recheck"}]})
+    facts = [SimpleNamespace(step_id=step.step_id, output_ref="output:" + step.step_id,
+        verification_report="failed" if step.step_id == "old" else "passed" if step.step_id == "recheck" else None)
+        for step in run.steps]
+    assert RuntimePlanningObservationBuilder._verification_blockers(run, facts, exhausted=True) == ["verification_failed:old"]
+
+
 @pytest.mark.parametrize("causal,passed", [(False, False), (False, True), (True, True)])
 def test_committed_verifier_without_status_requires_a_causal_pass(causal, passed):
     run = SimpleNamespace(steps=[SimpleNamespace(step_id=key, capability="verification")

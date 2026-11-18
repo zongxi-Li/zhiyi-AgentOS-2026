@@ -114,10 +114,14 @@ class RuntimePlanningApplication(CollaboratorAccess):
             return "stop"
         # Strategic wait/revision is a durable planning barrier in the existing
         # review lifecycle. It cannot masquerade as approval of a node/control.
+        failure = (loop.current.failure if loop.current is not None
+                   and loop.current.observation_id == observation.fingerprint()
+                   and loop.current.decision == decision and decision.action == "wait" else None)
         state.review_payload = {
             "subjectType": "planner", "subjectId": state.graph_id,
             "observationId": observation.fingerprint(), "reason": decision.reason,
             "reasonCode": ("PLANNING_COMMIT_REJECTED" if commit_rejection is not None else
+                           "PLANNER_UNAVAILABLE" if failure is not None else
                            "PLANNER_REVISION" if decision.action == "revise" else "PLANNER_WAIT"),
             "question": decision.question.model_dump(mode="json") if decision.question else None,
         }
@@ -130,6 +134,7 @@ class RuntimePlanningApplication(CollaboratorAccess):
         run.active_step_ids = []
         self.set_lifecycle(run, status=WorkflowStatus.WAITING_REVIEW, phase=WorkflowProgressPhase.REVIEW,
             message="计划修订被正式校验拒绝，任务已暂停" if commit_rejection is not None else
+                "规划处理失败，已有结果已保留，可重新规划" if failure is not None else
                 "Planner 已暂停任务，等待外部条件或计划修订")
         self.workflow_store.save_run(run)
         self.mission_manager.mark_waiting_review(self.mission_manager.get_mission(run.mission_id))

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from copy import deepcopy
 import random
 import secrets
 from time import monotonic
@@ -132,6 +133,13 @@ class PlanResult:
 class PlanningEngine:
     def decide_runtime(self, *, observation: RuntimePlanningObservation, task_plan: TaskPlan) -> RuntimePlanningDecision:
         """Re-observe current durable state without retaining a conversation."""
+        from .workspace_discovery import workspace_discovery_decision
+
+        discovery = workspace_discovery_decision(observation=observation, task_plan=task_plan,
+            formal_plan_builder=(self._plan_from_workspace_discovery
+                if self.workspace_context_provider is not None else None))
+        if discovery is not None:
+            return discovery
         if self.react_loop is not None:
             return self.react_loop.decide(observation=observation, task_plan=task_plan)
         from .runtime_decision import decide_runtime
@@ -139,7 +147,93 @@ class PlanningEngine:
         return decide_runtime(
             observation=observation, task_plan=task_plan,
             llm=self.intent_parser.llm,
+            workspace_context_provider=self.workspace_context_provider,
         )
+
+    def _plan_from_workspace_discovery(self, *, observation, task_plan):
+        """Reuse semantic planning with the exact, committed discovery inputs."""
+        from .workspace_discovery import formal_workspace_planning_error, workspace_planning_material
+
+        material = self.workspace_context_provider(observation)
+        data = deepcopy(self.workspace_planning_input)
+        data["objective"] = observation.goal
+        from contracts.workspace_planning import explicit_workspace_requirements, validate_workspace_plan_revision
+        explicit_scope = explicit_workspace_requirements(task_plan)
+        if explicit_scope:
+            # The accepted discovery contract can originate in precise caller
+            # wording even when the original Run has no machine scope field.
+            # Give the ordinary intent parser that exact authoritative scope;
+            # a second model inference cannot silently replace its obligations.
+            data["workspaceObservations"] = [item.model_dump(by_alias=True, mode="json")
+                for item in explicit_scope]
+        if observation.task_acceptance is not None:
+            data["taskAcceptance"] = observation.task_acceptance.model_dump(by_alias=True, mode="json")
+        sources = material["sources"]
+        observations = material["observations"]
+        references = list(dict.fromkeys([*(data.get("materialRefs") or ()),
+            *(item["sourceRef"] for item in sources),
+            *(item["receiptRef"] for item in observations)]))
+        data["sourceMaterials"] = {
+            "supplied": data.get("sourceMaterials"),
+            "workspaceDiscovery": {
+                **workspace_planning_material(material),
+                "planningContext": {
+                    "completedTaskKeys": [node.key for node in task_plan.nodes],
+                    **({"planningCommitRejection": observation.planning_commit_rejection}
+                        if observation.planning_commit_rejection is not None else {}),
+                    "purpose": "Plan the remaining work from these actual observations. The completed discovery "
+                        "prefix will be retained, so reuse its evidence. Schedule targeted acquisition, analysis, "
+                        "local review and final delivery as needed; do not repeat discovery without a specific gap. "
+                        "Declare workspaceObservations for the source scope relevant to the original objective. "
+                        "When rejectedProposal is present, inspect its patch and authority feedback and correct "
+                        "the defective remaining work instead of restarting discovery or discarding supported "
+                        "tasks without a specific reason. The rejected proposal never became executable. "
+                        "Use excludePaths for observed irrelevant generated, VCS or cache subtrees when appropriate; "
+                        "preserve all explicitly requested paths, scope and deliverables. Unknown facts require "
+                        "further tool observations. Memory and summaries cannot substitute for file reads.",
+                },
+            },
+        }
+        deadline = monotonic() + self._planning_total_timeout_seconds()
+        use_llm = not bool(data.get("deterministicIntent"))
+        try:
+            profile = self.intent_parser.parse(intent=observation.goal,
+                domain=self.workspace_planning_domain, task_type=self.workspace_planning_task_type,
+                task_input=data, use_llm=use_llm, planning_deadline=deadline, run_id=observation.run_id)
+            if not profile.workspace_observations:
+                raise ACGPlanningError("formal workspace planning must retain a source observation scope")
+        except Exception as exc:
+            raise formal_workspace_planning_error(exc, stage="formal_intent",
+                audit=getattr(self.intent_parser, "last_audit", {})) from exc
+        try:
+            formal = self.semantic_planner.plan_profile(mission_id=observation.mission_id, profile=profile,
+                strategy="workspace_evidence_planning", task_input=data,
+                existing_semantic_tasks=[node.model_dump(by_alias=True, mode="json") for node in task_plan.nodes],
+                use_llm=use_llm, planning_deadline=deadline, run_id=observation.run_id)
+        except Exception as exc:
+            decomposer = getattr(self.semantic_planner, "task_decomposer", None)
+            raise formal_workspace_planning_error(exc, stage="formal_decomposition",
+                audit=getattr(decomposer, "last_audit", {})) from exc
+        formal = formal.model_copy(update={"metadata": {**formal.metadata, "workspaceScope": {
+            "version": 1,
+            "requirements": [item.model_dump(by_alias=True, mode="json") for item in profile.workspace_observations],
+            "rationale": "Source scope selected from committed workspace discovery for the original mission objective; "
+                "explicit caller scope remains authoritative.",
+            "sourceRefs": references,
+        }}})
+        metadata = {**task_plan.metadata, **formal.metadata,
+            "workspaceDiscovery": {**task_plan.metadata["workspaceDiscovery"], "phase": "formal"}}
+        try:
+            validate_workspace_plan_revision(task_plan, metadata)
+        except ValueError as exc:
+            from pydantic import ValidationError
+            violation = ValidationError.from_exception_data("TaskPlan", [{
+                "type": "value_error", "loc": ("metadata", "workspaceScope"),
+                "ctx": {"error": exc},
+            }])
+            raise formal_workspace_planning_error(violation, stage="formal_decomposition",
+                audit=getattr(getattr(self.semantic_planner, "task_decomposer", None), "last_audit", {})) from exc
+        return formal
 
     @staticmethod
     def _plan_progress_payload(task_plan: TaskPlan) -> dict[str, Any]:
@@ -183,6 +277,10 @@ class PlanningEngine:
         intent_llm: Optional[IntentLLM] = None,
         template_threshold: float = 0.85,
         react_loop: Optional[Any] = None,
+        workspace_context_provider: Callable[[RuntimePlanningObservation], dict[str, Any]] | None = None,
+        workspace_planning_input: Mapping[str, Any] | None = None,
+        workspace_planning_domain: str = "general",
+        workspace_planning_task_type: str = "general",
     ):
         self.capability_catalog = capability_catalog or build_default_capability_catalog()
         self.intent_parser = IntentParser(intent_llm, self.capability_catalog)
@@ -197,6 +295,10 @@ class PlanningEngine:
         # PR-S01-02 opt-in：装配方显式挂接 BoundedReActPlanningLoop 后，
         # decide_runtime 走受限工具循环；默认 None 保持既有单次决策路径。
         self.react_loop = react_loop
+        self.workspace_context_provider = workspace_context_provider
+        self.workspace_planning_input = deepcopy(dict(workspace_planning_input or {}))
+        self.workspace_planning_domain = workspace_planning_domain
+        self.workspace_planning_task_type = workspace_planning_task_type
 
     def plan(
         self,
@@ -330,32 +432,26 @@ class PlanningEngine:
                     notes=[f"matched template by {match.matched_by}"],
                 )
 
-        # 动态补位
-        stable_network = self.cognitive_router.route(profile, domain=domain)
-        if stable_network.unresolved_capabilities:
-            raise ACGPlanningError(
-                "No registered Agent can execute capabilities: "
-                + ", ".join(stable_network.unresolved_capabilities)
+        # Route only the accepted semantic work, including the discovery prefix.
+        # A broad intent can mention later capabilities before repository facts
+        # exist; it must not veto an executable acquisition plan at this stage.
+        from .workspace_discovery import build_workspace_discovery_plan
+        task_plan = build_workspace_discovery_plan(mission_id, profile, task_input)
+        if task_plan is None:
+            task_plan = self.semantic_planner.plan_profile(
+                mission_id=mission_id,
+                profile=profile,
+                strategy="dynamic_generation",
+                task_input={
+                    **dict(task_input or {}),
+                    "_effectiveCapabilityProfile": effective_profile,
+                },
+                reasoning_effort=reasoning_effort,
+                use_llm=not deterministic_intent,
+                existing_semantic_tasks=existing_semantic_tasks,
+                planning_deadline=planning_deadline,
+                run_id=run_id,
             )
-        if stable_network.over_budget:
-            raise ACGPlanningError(
-                f"Estimated entropy {stable_network.estimated_entropy} exceeds budget "
-                f"{stable_network.entropy_budget}"
-            )
-        task_plan = self.semantic_planner.plan_profile(
-            mission_id=mission_id,
-            profile=profile,
-            strategy="dynamic_generation",
-            task_input={
-                **dict(task_input or {}),
-                "_effectiveCapabilityProfile": effective_profile,
-            },
-            reasoning_effort=reasoning_effort,
-            use_llm=not deterministic_intent,
-            existing_semantic_tasks=existing_semantic_tasks,
-            planning_deadline=planning_deadline,
-            run_id=run_id,
-        )
         # The decomposer may materialize catalog capabilities that were not
         # present in the initial intent profile (for example, a required
         # dependency or a task-specific capability). Bind against the final
@@ -659,6 +755,13 @@ def apply_task_plan_patch(
         raise ACGPlanningError("TaskPlanPatch belongs to another Mission")
     if current.plan_version != patch.base_plan_version:
         raise ACGPlanningError("TaskPlanPatch basePlanVersion is stale")
+    from contracts.workspace_planning import validate_workspace_plan_revision
+    metadata = {**current.metadata, **patch.metadata}
+    validate_workspace_plan_revision(current, metadata)
+    expected_artifacts = (patch.expected_artifacts
+        if patch.expected_artifacts is not None else current.expected_artifacts)
+    if not set(current.expected_artifacts) <= set(expected_artifacts):
+        raise ACGPlanningError("TaskPlanPatch cannot discard existing expected artifacts")
     nodes = {node.key: node for node in current.nodes}
     current_keys = set(nodes)
     missing_retire_keys = set(patch.retire_keys) - current_keys
@@ -726,14 +829,14 @@ def apply_task_plan_patch(
             if patch.control_policies is not None
             else current.control_policies
         ),
-        expected_artifacts=current.expected_artifacts,
+        expected_artifacts=expected_artifacts,
         relation_origin=EdgeOrigin.PLAN_PATCH,
         producer_kind="patch",
         catalog_source=(catalog_source or (
             "injected" if capability_catalog is not None else "default_compatibility"
         )),
         audit_sink=audit_sink,
-        metadata={**current.metadata, **patch.metadata},
+        metadata=metadata,
     )
 
 

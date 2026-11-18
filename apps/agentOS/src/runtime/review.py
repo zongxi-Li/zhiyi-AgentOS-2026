@@ -18,6 +18,7 @@ from components.memory import MemoryService, StructuredMemoryEvent
 from components.mission_manager.state_machine import StateMachine
 from contracts.execution import WorkflowProgressPhase
 from contracts.memory import MemoryPolicy, MemoryType
+from contracts.runtime_planning import RuntimePlanningState
 from contracts.workflow import (
     ReviewDecision,
     ReviewDecisionType,
@@ -130,6 +131,22 @@ class ReviewService(CollaboratorAccess):
         # WAITING_REVIEW step in an otherwise completed persisted run.
         if step is not None:
             self._transition_step(step, StepStatus.COMPLETED)
+        if subject_type == "planner":
+            review = restored.review_payload or {}
+            loop = RuntimePlanningState.model_validate(run.execution_state.get("planningLoop") or {})
+            current = loop.current
+            if (current is not None and current.observation_id == review.get("observationId")
+                    and current.decision is not None and current.decision.action == "wait"
+                    and not current.decision.question
+                    and (current.failure is not None or review.get("reasonCode") == "PLANNER_UNAVAILABLE"
+                         or str(review.get("reason") or "").startswith("Runtime Planner unavailable:"))):
+                # This request retries failed planning, rather than confirming
+                # an external condition. Reusing an applied wait would never
+                # ask Planner again when the evidence fingerprint is unchanged.
+                run.execution_state["planningLoop"] = loop.model_copy(update={
+                    "current": None, "waiting": None, "restart_pending": True,
+                    "parent_observation_id": current.observation_id,
+                }).model_dump(mode="json", by_alias=True)
         self.trace_store.append(
             run,
             event_type=TraceEventType.REVIEW_DECIDED,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from copy import deepcopy
 from enum import Enum
 from typing import Any, Literal
 
@@ -24,6 +26,7 @@ _ALLOWED_METADATA_KEYS = {
     "planningBudget", "reasoningEffort", "reasoningPolicyReason",
     "requestedCapabilityProfile", "effectiveCapabilityProfile", "capabilityProfileReason",
     "missionIntentBasisRef",
+    "workspaceDiscovery", "workspaceScope",
 }
 
 
@@ -225,6 +228,25 @@ class TaskPlan(BaseModel):
         return self
 
 
+def inherit_task_plan_constraints(current: TaskPlan, nodes: Sequence[PlannedTask]) -> tuple[PlannedTask, ...]:
+    """Carry accepted caller constraints to added work without trusting a model.
+
+    Mission requirements and human review are server-owned. Model-generated
+    constraints of those types are replaced by the accepted plan's exact values;
+    the new task's other semantic constraints remain intact.
+    """
+    reserved = {"mission_constraint", "user_human_review"}
+    inherited = []
+    for node in current.nodes:
+        for constraint in node.constraints:
+            if constraint.get("type") in reserved and constraint not in inherited:
+                inherited.append(constraint)
+    return tuple(node.model_copy(deep=True, update={"constraints": deepcopy([
+        *[constraint for constraint in node.constraints if constraint.get("type") not in reserved],
+        *inherited,
+    ])}) for node in nodes)
+
+
 class TaskImplementationBinding(BaseModel):
     """Builder-owned mapping from a semantic plan key to an executable ACG node."""
 
@@ -257,6 +279,9 @@ class TaskPlanPatch(BaseModel):
     relations: tuple[TaskPlanRelation, ...] = Field(default_factory=tuple)
     control_policies: tuple[VerificationLoopPolicy, ...] | None = Field(
         default=None, alias="controlPolicies"
+    )
+    expected_artifacts: tuple[str, ...] | None = Field(
+        default=None, alias="expectedArtifacts", exclude_if=lambda value: value is None
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -329,4 +354,5 @@ __all__ = [
     "TaskPlanRelation",
     "VerificationLoopPolicy",
     "WorksetSpec",
+    "inherit_task_plan_constraints",
 ]

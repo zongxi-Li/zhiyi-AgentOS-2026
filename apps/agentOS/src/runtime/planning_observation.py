@@ -118,6 +118,10 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
         from contracts.execution_evidence import (evaluate_run_workspace_observations,
                                                   workspace_observation_progress)
         workspace_progress = workspace_observation_progress(run, self.execution_value_store)
+        from runtime.workspace_planning_context import workspace_discovery_snapshot
+        discovery = workspace_discovery_snapshot(run, self.execution_value_store)
+        if discovery is not None and discovery["phase"] == "discovery" and not remaining:
+            blockers.append("workspace_discovery_planning_pending")
         if not remaining:
             blockers.extend(f"task_acceptance_{r.outcome}:{r.criterion_id}"
                 for r in acceptance_results if r.outcome != "passed")
@@ -197,6 +201,7 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             resourceRequirements=tuple(resource_facts), resourceFailovers=failovers,
             taskAcceptance=acceptance, taskAcceptanceResults=acceptance_results,
             workspaceObservations=workspace_progress,
+            workspaceDiscovery=discovery,
             planningCommitRejection=run.execution_state.get("planningCommitRejection"),
             conditionWake=planning.waiting.wake if reason == "condition" and planning.waiting else None,
             humanAnswers=planning.human_answers,
@@ -229,14 +234,57 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
                 reachable[step_id] = seen
             return reachable[step_id]
         by_id = {fact.step_id: fact for fact in facts}
+        steps = {step.step_id: step for step in run.steps}
         verifiers = {step.step_id for step in run.steps if step.capability == "verification"}
         passed = {step_id for step_id in verifiers
                   if by_id[step_id].output_ref and by_id[step_id].verification_report == "passed"}
+
+        def criteria(step_id):
+            # These are the frozen task obligations, not the verifier's own
+            # claim that it checked them. Preserve semantic text without
+            # guessing equivalence from titles, keywords or model prose.
+            return {" ".join(str(item).split()).casefold()
+                    for item in getattr(steps[step_id], "acceptance_criteria", ()) if str(item).strip()}
+
+        def covers_review(previous_id, current_id):
+            if current_id not in descendants(previous_id):
+                return False
+            previous, current = criteria(previous_id), criteria(current_id)
+            if previous:
+                return previous <= current
+            # Truly undeclared legacy review contracts retain their causal
+            # compatibility. Once a new scoped contract exists, a path alone
+            # cannot prove what the old review required.
+            return not current and not getattr(steps[previous_id], "source_refs", ())
+
+        def receives_artifact(producer_id, verifier_id):
+            if verifier_id not in descendants(producer_id):
+                return False
+            declared = getattr(steps[verifier_id], "input", {}).get("from")
+            if isinstance(declared, dict) and declared:
+                fields = declared.get(producer_id, ())
+                return bool(set(fields) & {"deliverable", "final_answer", "artifact"})
+            # Old graphs may not persist field channels. A direct producer
+            # dependency is their existing data contract; an arbitrary path
+            # through summaries or a final synthesizer is insufficient.
+            return verifier_id in successors.get(producer_id, ())
+
+        def covers_candidate(previous_id, current_id):
+            if not covers_review(previous_id, current_id):
+                return False
+            candidates = {step_id for step_id, step in steps.items()
+                if step.capability == "artifact_generation"
+                and (step_id in descendants(previous_id) or previous_id in descendants(step_id))
+                and current_id in descendants(step_id)}
+            latest = {step_id for step_id in candidates
+                if not (descendants(step_id) & candidates)}
+            return all(receives_artifact(step_id, current_id) for step_id in latest)
+
         blockers = []
         for step_id in sorted(verifiers):
             report = by_id[step_id].verification_report
             if (by_id[step_id].output_ref and report in {None, "partial", "failed"}
-                    and not (descendants(step_id) & passed)):
+                    and not any(covers_candidate(step_id, current_id) for current_id in passed)):
                 blockers.append(f"verification_{report or 'unverified'}:{step_id}")
         if not exhausted:
             return blockers
@@ -258,7 +306,11 @@ class RuntimePlanningObservationBuilder(CollaboratorAccess):
             # passed report must cover each current producer before synthesis.
             if latest_producers:
                 for producer_id in sorted(latest_producers):
-                    if not (descendants(producer_id) & passed & upstream):
+                    obligations = {step_id for step_id in verifiers if producer_id in descendants(step_id)}
+                    current_reviews = {current_id for current_id in passed & upstream
+                        if receives_artifact(producer_id, current_id)}
+                    if not current_reviews or any(not any(covers_review(previous_id, current_id)
+                            for current_id in current_reviews) for previous_id in obligations):
                         blockers.append(f"final_verification_missing:{final_id}:{producer_id}")
             elif verifiers and not (passed & upstream):
                 blockers.append(f"final_verification_missing:{final_id}")

@@ -27,11 +27,13 @@ from contracts.artifacts import (
     canonicalize_final_synthesis_nodes,
 )
 from components.planner.topology import (
-    REPAIR_PATCH_SCHEMA, EdgeOrigin, TaskPlanTopologyCompiler, TopologyCompileError, TopologyConflictCode,
+    REPAIR_PATCH_SCHEMA, EdgeMutationPolicy, EdgeOrigin, TaskPlanTopologyCompiler, TopologyCompileError,
+    TopologyConflictCode, TopologyEdge,
     apply_repair_patch, conflict_context, is_model_repair_eligible,
     validate_task_plan_for_execution,
     failed_topology_audit, successful_topology_audit,
 )
+from components.planner.topology.validator import validate_relation_endpoints
 from support.acg.capabilities import CapabilityCatalog
 from support.acg.semantic_profile import TaskSemanticProfile
 
@@ -43,17 +45,32 @@ from .complexity import (
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v9"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v11"
 TASK_PLAN_MAX_REPAIRS = None  # Legacy import; validation corrections have no count ceiling.
 INITIAL_DAG_CONTRACT = (
     "INITIAL DAG CONTRACT: this Run's formal initial graph materializer accepts a DAG only. "
     "controlPolicies MUST be []. Do not create verification_loop, backward edges or control nodes. "
     "Preserve all requested checks, correction requirements and acceptance criteria. "
     "Represent the current check/correction/recheck work as forward-dependent tasks. "
+    "A correction changes the candidate and must be independently checked again before final synthesis. "
     "The runtime can add supplemental work from real remaining evidence gaps after review. "
     "Stop only when acceptance passes, external input is needed, or the semantic state cannot progress. "
     "Never silently remove a user requirement or invent successful verification."
 )
+_DAG_ONLY_STRATEGIES = frozenset({"initial_commit_candidate", "workspace_evidence_planning"})
+
+
+def _dag_contract(strategy: str) -> str:
+    if strategy == "workspace_evidence_planning":
+        return ("FORMAL WORKSPACE DAG CONTRACT: graph revision and safe-cut accept a DAG only. "
+            "controlPolicies MUST be []. Preserve checks, corrections and acceptance criteria as forward "
+            "tasks. Runtime review adds local acquisition/correction/review nodes from actual gaps until "
+            "acceptance; do not encode a backward edge or a control loop. "
+            "Declare only the remaining tasks. Every relation endpoint and parentKey must use an exact key "
+            "declared in this candidate's tasks. Completed discovery tasks are evidence context. "
+            "Cite their committed evidence where relevant. Runtime connects the completed discovery prefix "
+            "to the candidate's entry tasks.")
+    return INITIAL_DAG_CONTRACT
 
 _SCHEMA = {
     "type": "object",
@@ -145,9 +162,10 @@ _VALIDATION_CODES = frozenset(get_args(ErrorType)) | frozenset(code.value for co
     "task_key_required", "frozen_task_count", "constraint_array_required", "constraint_item_invalid",
     "MODEL_OUTPUT_INVALID_JSON", "MODEL_OUTPUT_SCHEMA_INVALID", "unclassified_validation_error",
 })
-_VALIDATION_FIELDS = frozenset("tasks nodes relations controlPolicies key parentKey title objective capabilityId capabilityRequirements acceptanceCriteria sourceRefs decompositionRationale logicalRole workset sourceManifestRefs unitKind cursorStrategy packingPolicy parallelismPolicy estimatedUnitCount constraints type sourceKey targetKey relationType bodyEntryKey bodyExitKey conditionSourceKey statusPointer repeatValues maxRevisions onExhausted expectedArtifacts metadata missionId planVersion assignments sourceRef taskKey rationale operations relationIndex".split())
+_VALIDATION_FIELDS = frozenset("tasks nodes relations controlPolicies key parentKey title objective capabilityId capabilityRequirements acceptanceCriteria sourceRefs decompositionRationale logicalRole workset sourceManifestRefs unitKind cursorStrategy packingPolicy parallelismPolicy estimatedUnitCount constraints type sourceKey targetKey relationType bodyEntryKey bodyExitKey conditionSourceKey statusPointer repeatValues maxRevisions onExhausted expectedArtifacts metadata missionId planVersion assignments sourceRef taskKey rationale operations relationIndex observationId action reason taskPlanPatch basePlanVersion addNodes retireKeys replaceKeys removeRelations waitFor question kind nodeId stepId requirementId notBefore expiresAt prompt choices".split())
+_VALIDATION_FIELDS |= frozenset("primaryGoal requiredCapabilities estimatedComplexity evidenceScope webExtraction workspaceObservations workspaceScopeOrigin workspaceScope requirements path operation recursive excludePaths".split())
 _VALIDATION_FIELDS |= frozenset(re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower() for key in _VALIDATION_FIELDS)
-_VALIDATION_STAGE = re.compile(r"(?:validation|sources|intent_profile|decompose|repair|repair_coverage|outline(?:\.repair)?|detail(?::[1-9][0-9]{0,5})?(?:\.repair)?|relations(?:\.(?:repair|cycle-repair|initial-dag-repair))?)(?::[1-9][0-9]{0,5})?\Z")
+_VALIDATION_STAGE = re.compile(r"(?:validation|sources|intent_profile|formal_intent|formal_decomposition|decompose|repair|repair_coverage|runtime_decision(?:\.repair)?|outline(?:\.repair)?|detail(?::[1-9][0-9]{0,5})?(?:\.repair)?|relations(?:\.(?:repair|cycle-repair|initial-dag-repair))?)(?::[1-9][0-9]{0,5})?\Z")
 
 
 def safe_validation_failures(value: object) -> list[dict[str, Any]]:
@@ -192,7 +210,8 @@ def planning_validation_failures(
         elif getattr(current, "validation_code", None):
             issues = [{"code": current.validation_code, "fieldPath": (*prefix, *current.field_path)}]
         elif isinstance(current, TopologyCompileError):
-            issues = [{"code": current.conflict.code.value, "fieldPath": ["relations"]}]
+            issues = [{"code": current.conflict.code.value, "fieldPath": path}
+                      for path in (current.conflict.field_paths or (("relations",),))]
         elif isinstance(getattr(current, "code", None), str) and current.code in _VALIDATION_CODES:
             issues = [{"code": current.code, "fieldPath": []}]
         else:
@@ -404,18 +423,39 @@ class TaskDecomposer:
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
         feedback = self._repair_feedback(latest_error, payload, attempt, label="TaskPlan")
         common = dict(reasoning_effort=reasoning_effort, planning_deadline=planning_deadline, run_id=run_id)
+        frozen_keys = tuple(
+            str(item.get("key") or "").strip()
+            for item in (frozen_tasks if frozen_tasks is not None else payload.get("tasks", []))
+            if isinstance(item, dict) and str(item.get("key") or "").strip()
+        )
+        key_contract = (
+            "\nFrozen task keys (the only legal relation endpoints): "
+            + json.dumps(frozen_keys, ensure_ascii=False)
+            + ". Never invent, restore or rename a task key. If no safe relation correction is possible, "
+            "return an empty relation patch/list and preserve the frozen tasks.\n"
+        ) if frozen_keys else ""
         if isinstance(validation_error, TopologyCompileError):
             conflict = conflict_context(validation_error.conflict)
+            endpoint_error = validation_error.conflict.code == TopologyConflictCode.UNKNOWN_TASK_REFERENCE
+            repair_instruction = (
+                "The compiler found a relation endpoint that is not one of the frozen task keys. "
+                "Use the listed originalRelationIndex to replace that relation with exact existing task keys, "
+                "or remove it if no valid prerequisite relation is justified. Preserve every other valid edge; "
+                "do not invent, rename, or rewrite tasks.\n"
+                if endpoint_error
+                else "Return patch operations only. Never change frozen tasks, capability requirements, "
+                     "source identities, or catalog edges. Use originalRelationIndex.\n"
+            )
             patch = self._call_llm(
                 stage="relations.repair",
                 prompt="Patch only the model relation/control proposal using this compiler conflict.\n"
                 + f"Frozen Tasks: {json.dumps(payload.get('tasks', []), ensure_ascii=False)}\n"
                 + f"Current model relations: {json.dumps(payload.get('relations', []), ensure_ascii=False)}\n"
                 + f"Current control policies: {json.dumps(payload.get('controlPolicies', []), ensure_ascii=False)}\n"
+                + key_contract
                 + f"Structured conflict: {json.dumps(conflict, ensure_ascii=False)}\n"
-                + "Return patch operations only. Never change frozen tasks, capability requirements, "
-                "source identities, or catalog edges. Use originalRelationIndex.\n"
-                + (INITIAL_DAG_CONTRACT if strategy == "initial_commit_candidate" else
+                + repair_instruction
+                + (_dag_contract(strategy) if strategy in _DAG_ONLY_STRATEGIES else
                    "Express feedback with add_verification_loop when an acceptance-driven loop is needed.")
                 + feedback,
                 schema=REPAIR_PATCH_SCHEMA,
@@ -428,6 +468,18 @@ class TaskDecomposer:
             ):
                 raise TaskDecompositionError("repair patch operations must be an array of objects",
                     validation_code="topology_patch_invalid", field_path=("operations",))
+            if endpoint_error:
+                invalid_indices = {edge.original_relation_index for edge in validation_error.conflict.repairable_edges}
+                corrected = set()
+                for index, operation in enumerate(patch_payload["operations"]):
+                    relation_index = operation.get("relationIndex")
+                    if (operation.get("op") not in ("remove_relation", "replace_relation")
+                            or type(relation_index) is not int or relation_index not in invalid_indices
+                            or relation_index in corrected):
+                        raise TaskDecompositionError(
+                            "endpoint repair can only replace or remove each flagged relation once",
+                            validation_code="topology_patch_invalid", field_path=("operations", index))
+                    corrected.add(relation_index)
             try:
                 relations, policies = apply_repair_patch(
                     relations=list(payload.get("relations", [])), control_policies=list(payload.get("controlPolicies", [])),
@@ -448,7 +500,7 @@ class TaskDecomposer:
             )
         if frozen_tasks is not None:
             repaired = self._call_llm(
-                stage="relations.repair", prompt=prompt + "\nKeep frozen tasks unchanged." + feedback,
+                stage="relations.repair", prompt=prompt + "\nKeep frozen tasks unchanged." + key_contract + feedback,
                 schema=schema, prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.repair{attempt}",
                 call_key=self._repair_call_key("relations.repair", attempt), **common,
             )
@@ -456,7 +508,7 @@ class TaskDecomposer:
             return {"tasks": frozen_tasks, "relations": result.get("relations", []),
                     "controlPolicies": result.get("controlPolicies", [])}
         return self._call_llm(
-            stage="repair", prompt=prompt + feedback, schema=schema,
+            stage="repair", prompt=prompt + key_contract + feedback, schema=schema,
             prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.repair{attempt}",
             call_key=self._repair_call_key("repair", attempt), **common,
         )
@@ -468,7 +520,7 @@ class TaskDecomposer:
         planning_deadline: float | None = None, run_id: str | None = None,
     ) -> TaskPlan:
         planning_schema = deepcopy(_SCHEMA)
-        if strategy == "initial_commit_candidate":
+        if strategy in _DAG_ONLY_STRATEGIES:
             planning_schema["properties"]["controlPolicies"]["maxItems"] = 0
         self.last_audit = {
             "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION, **planner_prompt_metadata(),
@@ -487,9 +539,10 @@ class TaskDecomposer:
             planning_deadline = monotonic() + (
                 PLANNING_TOTAL_TIMEOUT_SECONDS if PLANNING_TOTAL_TIMEOUT_SECONDS > 0 else PLANNING_WATCHDOG_SECONDS
             )
-        prompt = self.build_prompt(profile=profile, task_input=task_input, existing_semantic_tasks=existing_semantic_tasks)
-        if strategy == "initial_commit_candidate":
-            prompt += "\n" + INITIAL_DAG_CONTRACT
+        prompt = self.build_prompt(profile=profile, task_input=task_input,
+                                   existing_semantic_tasks=existing_semantic_tasks, strategy=strategy)
+        if strategy in _DAG_ONLY_STRATEGIES:
+            prompt += "\n" + _dag_contract(strategy)
         if (task_input or {}).get("_effectiveCapabilityProfile") == "full":
             return self._decompose_staged(
                 mission_id=mission_id, profile=profile, strategy=strategy, task_input=task_input,
@@ -554,6 +607,8 @@ class TaskDecomposer:
                 def validate_detail(raw):
                     rows = self._validated_detail_tasks(raw, batch)
                     self._validate_workset_sources(rows, task_input)
+                    if strategy == "workspace_evidence_planning":
+                        self._validate_formal_parents(rows, set(keys))
                     return rows
 
                 _, rows = self._generate_validated(
@@ -561,7 +616,9 @@ class TaskDecomposer:
                     prompt="STAGE DETAIL: expand exactly this outline batch into complete TaskPlan task objects. "
                     "Preserve every key and capabilityId exactly; return no other tasks and no relations. "
                     "Every task needs a business objective, acceptance criteria, source refs and rationale.\n"
-                    f"Mission planning context: {prompt}\nFrozen outline batch: {json.dumps(batch, ensure_ascii=False)}",
+                    f"Mission planning context: {prompt}\nFrozen outline batch: {json.dumps(batch, ensure_ascii=False)}"
+                    + (f"\nAllowed parent keys from the entire outline: {json.dumps(keys, ensure_ascii=False)}"
+                       if strategy == "workspace_evidence_planning" else ""),
                     validate=validate_detail, **common,
                 )
                 detailed_tasks.extend(rows)
@@ -571,13 +628,13 @@ class TaskDecomposer:
                 "relations": deepcopy(_SCHEMA["properties"]["relations"]),
                 "controlPolicies": deepcopy(_SCHEMA["properties"]["controlPolicies"]),
             }, "required": ["relations", "controlPolicies"]}
-            if strategy == "initial_commit_candidate":
+            if strategy in _DAG_ONLY_STRATEGIES:
                 relation_schema["properties"]["controlPolicies"]["maxItems"] = 0
             compact = [{key: item.get(key, "task" if key == "logicalRole" else "")
                         for key in ("key", "capabilityId", "logicalRole", "objective")} for item in detailed_tasks]
             relation_prompt = (
                 "STAGE RELATIONS: create the acyclic prerequisite-to-dependent topology for these frozen tasks. "
-                + (INITIAL_DAG_CONTRACT + "\n" if strategy == "initial_commit_candidate" else
+                + (_dag_contract(strategy) + "\n" if strategy in _DAG_ONLY_STRATEGIES else
                    "Add a verification_loop only when a refinement-to-verification region is present; use maxRevisions=null.\n")
                 + f"Tasks: {json.dumps(compact, ensure_ascii=False)}"
             )
@@ -790,6 +847,7 @@ class TaskDecomposer:
         profile: TaskSemanticProfile,
         task_input: Mapping[str, Any] | None,
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
+        strategy: str | None = None,
     ) -> str:
         catalog = []
         visible_capabilities = self.capability_catalog.expand_dependencies(
@@ -806,6 +864,7 @@ class TaskDecomposer:
                 "qualityCriteria": item.prompt_profile.quality_criteria,
                 "dependsOn": list(item.depends_on),
                 "optionalDependencies": list(item.optional_dependencies),
+                "inputFields": list(item.input_contract.get("properties", {})),
                 "outputFields": list(item.output_contract.get("properties", {})),
             })
         material_refs = tuple(
@@ -835,6 +894,17 @@ class TaskDecomposer:
             "operation": "task_decomposition",
             "planningRequest": contract,
             "semanticProfile": profile.model_dump(by_alias=True, mode="json"),
+            "capabilitySelectionPolicy": {
+                "profileCapabilities": "candidate execution capabilities, not a checklist of business tasks",
+                "taskBasis": "mission objective, required inputs, committed evidence, declared outputs and acceptance criteria",
+                "mandatoryDependencies": "supply the input contracts of the tasks actually selected",
+                "existingTasks": (
+                    "committed evidence context; reference outputs in sourceRefs and declare only remaining work"
+                    if strategy == "workspace_evidence_planning"
+                    else "reuse committed work and its outputs; add work only for a distinct remaining responsibility"
+                ),
+                "acceptance": "test evidence and impact without presupposing that a suspected defect exists",
+            },
             "capabilityCatalog": catalog,
             "existingSemanticTasks": list(existing_semantic_tasks),
         })
@@ -873,10 +943,12 @@ class TaskDecomposer:
         existing_semantic_tasks: tuple[Mapping[str, Any], ...] = (),
     ) -> TaskPlan:
         payload = raw.get("data", raw) if isinstance(raw, dict) else {}
-        if strategy == "initial_commit_candidate" and isinstance(payload, dict) and payload.get("controlPolicies"):
+        if strategy in _DAG_ONLY_STRATEGIES and isinstance(payload, dict) and payload.get("controlPolicies"):
             raise TaskDecompositionError(
-                "INITIAL_CONTROL_GRAPH_UNSUPPORTED: formal initial graphs require controlPolicies=[]. "
-                "Preserve verification/correction obligations with a forward-only initial task sequence; "
+                ("INITIAL_CONTROL_GRAPH_UNSUPPORTED: " if strategy == "initial_commit_candidate"
+                 else "FORMAL_CONTROL_GRAPH_UNSUPPORTED: ")
+                + "Formal graph materialization requires controlPolicies=[]. "
+                "Preserve verification/correction obligations with a forward-only task sequence; "
                 "runtime review may add work for verified remaining gaps until acceptance.",
                 validation_code="initial_dag_required", field_path=("controlPolicies",))
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
@@ -943,6 +1015,8 @@ class TaskDecomposer:
                 raise
             except ValidationError as exc:
                 raise TaskDecompositionError("task schema validation failed", field_path=("tasks", task_index)) from exc
+        if strategy == "workspace_evidence_planning":
+            self._validate_formal_parents(tasks, set(key_map))
         nodes = [
             node.model_copy(update={
                 "parent_key": key_map.get(raw_parent, raw_parent) if raw_parent else None,
@@ -968,15 +1042,21 @@ class TaskDecomposer:
                     "source_refs": tuple(dict.fromkeys((*nodes[preferred].source_refs, *material_refs))),
                 }
             )
-        self._complete_missing_capability_tasks(nodes, profile, strategy)
+        proposal_relations = [
+            (str(item.get("sourceKey") or "").strip(), str(item.get("targetKey") or "").strip(), item.get("relationType"))
+            for item in payload.get("relations", [])
+        ]
+        if strategy == "workspace_evidence_planning":
+            validate_relation_endpoints(set(key_map), (
+                TopologyEdge(source, target, relation_type,
+                    EdgeOrigin.MODEL, EdgeMutationPolicy.REPAIRABLE, original_relation_index=index)
+                for index, (source, target, relation_type) in enumerate(proposal_relations)
+            ))
         raw_relations = [
-                TaskPlanRelation(
-                    sourceKey=key_map.get(str(item.get("sourceKey") or "").strip(), str(item.get("sourceKey") or "").strip()),
-                    targetKey=key_map.get(str(item.get("targetKey") or "").strip(), str(item.get("targetKey") or "").strip()),
-                    relationType=item.get("relationType"),
-                )
-                for item in payload.get("relations", [])
-            ]
+            TaskPlanRelation(sourceKey=key_map.get(source, source), targetKey=key_map.get(target, target),
+                             relationType=relation_type)
+            for source, target, relation_type in proposal_relations
+        ]
         nodes = canonicalize_final_synthesis_nodes(nodes, raw_relations)
         nodes = self._ensure_expected_artifact_producer(
             nodes=nodes,
@@ -1003,6 +1083,8 @@ class TaskDecomposer:
             for item in payload.get("controlPolicies", [])
             if isinstance(item, dict)
         )
+        self._complete_artifact_rechecks(nodes, raw_relations, control_policies, strategy)
+        self._complete_missing_capability_tasks(nodes, strategy)
         try:
             compile_result = TaskPlanTopologyCompiler(self.capability_catalog).compile(
                 nodes=nodes, raw_relations=raw_relations, control_policies=control_policies
@@ -1047,6 +1129,15 @@ class TaskDecomposer:
         return plan
 
     @staticmethod
+    def _validate_formal_parents(tasks: list[dict[str, Any]], keys: set[str]) -> None:
+        for index, task in enumerate(tasks):
+            parent = task.get("parentKey")
+            if parent is not None and (not isinstance(parent, str) or parent not in keys):
+                raise TaskDecompositionError(
+                    "parentKey must match a task declared in the formal candidate",
+                    validation_code="unknown_task_reference", field_path=("tasks", index, "parentKey"))
+
+    @staticmethod
     def _validate_workset_sources(tasks, task_input) -> None:
         allowed = set((task_input or {}).get("materialRefs") or ())
         for index, task in enumerate(tasks):
@@ -1071,8 +1162,16 @@ class TaskDecomposer:
         if not isinstance(source_refs, (list, tuple)):
             legacy_manifest_id = str(raw.get("manifestId") or "").strip()
             source_refs = [legacy_manifest_id] if legacy_manifest_id else []
+        normalized_source_refs = [str(value).strip() for value in source_refs if str(value).strip()]
+        # A workset is meaningful only when it names at least one registered
+        # source manifest.  Models sometimes emit an empty workset for tasks
+        # whose inputs are the workspace or upstream outputs; treating that
+        # shape as omitted keeps the optional contract optional while still
+        # allowing non-empty references to be validated below.
+        if not normalized_source_refs:
+            return None
         canonical: dict[str, Any] = {
-            "sourceManifestRefs": [str(value) for value in source_refs if str(value).strip()],
+            "sourceManifestRefs": normalized_source_refs,
         }
         for key in (
             "unitKind", "cursorStrategy", "packingPolicy",
@@ -1242,9 +1341,6 @@ class TaskDecomposer:
                 acceptanceCriteria=(
                     "Every declared Mission deliverable is present in the final output.",
                 ),
-                sourceRefs=tuple(
-                    f"artifact:{index}" for index, _ in enumerate(expected, start=1)
-                ),
                 producedArtifacts=expected,
                 decompositionRationale=(
                     "Existing terminal completion mechanism materialized the missing "
@@ -1276,21 +1372,20 @@ class TaskDecomposer:
     def _complete_missing_capability_tasks(
         self,
         nodes: list[PlannedTask],
-        profile: TaskSemanticProfile,
         strategy: str,
     ) -> None:
-        """Materialize catalog-required capabilities without adding domain logic."""
+        """Supply mandatory inputs of selected work, never expand intent hints.
+
+        The intent profile predicts useful execution capabilities. It is not a
+        business-work specification: turning every prediction into a task adds
+        unrelated work and repeats already committed discovery. Only a task's
+        selected capability can require a missing producer through its declared
+        input contract. Optional dependencies remain optional.
+        """
         present = {node.capability_requirements[0] for node in nodes}
         used_keys = {node.key for node in nodes}
-        # The model may omit an indirect prerequisite even when the intent
-        # profile lists only the requested leaf capabilities.  Materialize the
-        # catalog's full required-dependency closure here so the subsequent
-        # topology pass never has to invent a domain-specific fallback.
-        requested_capabilities = list(profile.required_capabilities)
-        if profile.expected_artifacts and "artifact_generation" not in requested_capabilities:
-            requested_capabilities.append("artifact_generation")
         required_capabilities = self.capability_catalog.expand_dependencies(
-            requested_capabilities
+            tuple(node.capability_requirements[0] for node in nodes)
         )
         for capability in required_capabilities:
             if capability in present:
@@ -1306,8 +1401,9 @@ class TaskDecomposer:
                 key=key,
                 title=descriptor.display_name,
                 objective=(
-                    f"Apply {descriptor.display_name} as a required prerequisite for: "
-                    f"{profile.primary_goal}"
+                    f"Produce the {', '.join(descriptor.output_contract.get('properties', {})) or capability} "
+                    "required by the declared downstream tasks, using the Mission inputs and committed evidence. "
+                    "Preserve known facts, unknowns and caller requirements without repeating source acquisition."
                 ),
                 capabilityRequirements=(capability,),
                 acceptanceCriteria=(
@@ -1315,17 +1411,8 @@ class TaskDecomposer:
                     if descriptor.prompt_profile.quality_criteria
                     else "The capability output satisfies its declared contract.",
                 ),
-                producedArtifacts=(
-                    tuple(profile.expected_artifacts)
-                    if capability == "artifact_generation"
-                    else ()
-                ),
                 decompositionRationale="Capability catalog required this missing prerequisite.",
-                logicalRole=(
-                    FINAL_SYNTHESIS_LOGICAL_ROLE
-                    if capability == "artifact_generation"
-                    else "prerequisite"
-                ),
+                logicalRole="prerequisite",
                 metadata={
                     "plannerStrategy": strategy,
                     "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
@@ -1333,6 +1420,69 @@ class TaskDecomposer:
             ))
             present.add(capability)
             used_keys.add(key)
+
+    @staticmethod
+    def _complete_artifact_rechecks(
+        nodes: list[PlannedTask],
+        relations: list[TaskPlanRelation],
+        control_policies: tuple[VerificationLoopPolicy, ...],
+        strategy: str,
+    ) -> None:
+        """Close a declared review/refinement path over its current candidate.
+
+        A review of the draft says nothing about a later revision. Preserve the
+        existing independent-review obligation by giving an unreviewed revised
+        artifact its own verifier and data channel to final synthesis. Ordinary
+        single-producer plans retain their contract; explicit loop controls
+        already own their review cycle. No retry count or domain conclusion is
+        inferred here.
+        """
+        if control_policies:
+            return
+        final = next((node for node in nodes if node.logical_role == FINAL_SYNTHESIS_LOGICAL_ROLE), None)
+        verifiers = [node for node in nodes if node.capability_requirements == ("verification",)]
+        if final is None or not verifiers:
+            return
+        producers = [node for node in nodes if node.key != final.key
+            and node.capability_requirements == ("artifact_generation",)]
+
+        def reaches(source, target):
+            return TaskPlanTopologyCompiler._has_path(relations, source, target)
+
+        used_keys = {node.key for node in nodes}
+        for producer in producers:
+            if any(other.key != producer.key and reaches(producer.key, other.key) for other in producers):
+                continue
+            ancestors = [node for node in verifiers if reaches(node.key, producer.key)]
+            prior = [node for node in ancestors if not any(
+                other.key != node.key and reaches(node.key, other.key) for other in ancestors)]
+            if not prior or any(reaches(producer.key, node.key) for node in verifiers):
+                continue
+            base = f"review:{producer.key}"
+            if len(base) > 190:
+                base = "review:revised_artifact"
+            key, suffix = base, 2
+            while key in used_keys:
+                key = f"{base}:{suffix}"
+                suffix += 1
+            used_keys.add(key)
+            nodes.append(PlannedTask(
+                key=key, title="复验更新后的交付内容",
+                objective="Independently verify the current artifact from " + producer.key
+                    + " against the Mission and the existing review criteria. Inspect the revised content and "
+                    "its evidence; an earlier draft's review cannot approve this candidate. Report supported, "
+                    "failed and unresolved criteria without rewriting the artifact or presupposing a defect.",
+                capabilityRequirements=("verification",),
+                acceptanceCriteria=tuple(dict.fromkeys(
+                    criterion for node in prior for criterion in node.acceptance_criteria)),
+                sourceRefs=(producer.key, *(node.key for node in prior)),
+                decompositionRationale="The declared review precedes a new artifact candidate; its result requires independent re-verification.",
+                logicalRole="verification",
+                metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
+            ))
+            relations.extend(TaskPlanRelation(sourceKey=source, targetKey=target, relationType="depends_on")
+                for source, target in ((producer.key, key),
+                    *((node.key, key) for node in prior), (key, final.key)))
 
     @staticmethod
     def _validate_coverage(plan: TaskPlan, profile: TaskSemanticProfile) -> None:

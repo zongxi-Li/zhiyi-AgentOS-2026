@@ -13,13 +13,20 @@ from components.executor.value_store import SQLiteExecutionValueStore
 from components.planner.intent_analyzer import IntentParser, _PROFILE_SCHEMA
 from contracts.execution_evidence import (
     WorkspaceObservationRequirement,
+    _is_scoped_observation,
+    _progress,
     evaluate_run_workspace_observations,
     freeze_workspace_observations,
+    node_workspace_acquisition_progress,
     node_workspace_observation_feedback,
+    verified_node_workspace_receipts,
+    workspace_coverage_fingerprint,
     workspace_observation_progress,
     workspace_observation_requirements,
     workspace_execution_context,
+    workspace_requirement_contains_path,
 )
+from contracts import stable_checksum
 from contracts.workflow import RuntimeRunRecord, StepStatus, WorkflowStep
 from support.acg.semantic_profile import TaskSemanticProfile
 from types import SimpleNamespace
@@ -139,6 +146,145 @@ def test_legacy_run_without_explicit_requirements_is_unchanged(evidence):
     assert evidence.progress() == ()
     assert evidence.blockers() == ()
     assert workspace_observation_progress(evidence.run, None) == ()
+
+
+def test_empty_workspace_exclusions_preserve_historical_serialization_and_hash():
+    historical = {"path": ".", "kind": "directory", "operation": "read", "recursive": True}
+    for raw in (historical, {**historical, "excludePaths": []}):
+        requirement = WorkspaceObservationRequirement.model_validate(raw)
+        assert requirement.exclude_paths == ()
+        assert requirement.model_dump(mode="json", by_alias=True) == historical
+        assert stable_checksum(requirement.model_dump(mode="json", by_alias=True)) == stable_checksum(historical)
+        assert stable_checksum(requirement) == stable_checksum({"kind": "directory", "recursive": True})
+
+
+def test_exclusions_have_canonical_literal_prefixes():
+    requirement = WorkspaceObservationRequirement(kind="directory", recursive=True,
+        excludePaths=[".\\src\\generated\\", "src/generated/deep", "./vendor//deps", "vendor/deps"])
+    assert requirement.exclude_paths == ("src/generated", "vendor/deps")
+    assert requirement.model_dump(mode="json", by_alias=True)["excludePaths"] == ["src/generated", "vendor/deps"]
+    assert WorkspaceObservationRequirement.model_validate_json(requirement.model_dump_json(by_alias=True)) == requirement
+    assert not workspace_requirement_contains_path(requirement, "src/generated")
+    assert not workspace_requirement_contains_path(requirement, "src/generated/file.py")
+    assert workspace_requirement_contains_path(requirement, "src/generated-backup/file.py")
+    assert workspace_requirement_contains_path(requirement, "vendor/deps.py")
+
+
+@pytest.mark.parametrize("path", ["", ".", "./", "..", "a/../b", "/secret", "C:\\secret",
+    "\\\\host\\share", "file*", "file?", "a\x00b"])
+def test_exclusions_cannot_remove_root_escape_or_use_globs(path):
+    with pytest.raises(ValueError):
+        WorkspaceObservationRequirement(kind="directory", excludePaths=[path])
+
+
+@pytest.mark.parametrize("scope", [
+    {"kind": "directory", "path": "src", "excludePaths": ["src"]},
+    {"kind": "directory", "path": "src", "excludePaths": ["docs"]},
+    {"kind": "directory", "path": "src", "excludePaths": ["."]},
+    {"kind": "file", "path": "src/main.py", "excludePaths": ["src/main.py/cache"]},
+    {"kind": "directory", "excludePaths": "cache"},
+    {"kind": "directory", "excludePaths": [None]},
+])
+def test_exclusions_are_arrays_of_descendants_of_a_directory_scope(scope):
+    with pytest.raises(ValueError):
+        WorkspaceObservationRequirement.model_validate(scope)
+
+
+def test_coverage_ignores_explicit_excluded_files_directories_and_links(evidence):
+    evidence.require({"kind": "directory", "path": ".", "recursive": True,
+        "excludePaths": [".git", ".cache", "external", "secret.txt"]})
+    evidence.commit({"tool": "fs.list", "path": ".", "output": {"entries": [
+        {"name": ".git", "type": "directory"}, {"name": ".cache", "type": "directory"},
+        {"name": "external", "type": "symlink"}, {"name": "secret.txt", "type": "file"},
+        {"name": ".gitignore", "type": "file"}, {"name": "main.py", "type": "file"}]}},
+        {"path": "main.py"}, {"path": ".git/config"}, {"tool": "fs.list", "path": ".cache"})
+    progress = evidence.progress()[0]
+    assert progress["missingReads"] == [".gitignore"]
+    assert progress["missingListings"] == progress["unsupportedEntries"] == []
+    assert progress["verifiedReadCount"] == progress["verifiedListingCount"] == 1
+    evidence.commit({"path": ".gitignore"}, step_id="finish")
+    assert evidence.blockers() == ()
+
+
+def test_excluded_observations_cannot_satisfy_scoped_progress_or_change_coverage():
+    requirement = WorkspaceObservationRequirement(kind="directory", recursive=True, excludePaths=[".git"])
+    before = _progress((requirement,), ())
+    receipts = (("fs.list", ".git", {"entries": []}), ("fs.read", ".git/config", {"text": "private"}))
+    assert _progress((requirement,), receipts) == before
+    assert not any(_is_scoped_observation(requirement, tool, path) for tool, path, _ in receipts)
+    assert _is_scoped_observation(requirement, "fs.list", ".")
+    assert _is_scoped_observation(requirement, "fs.read", ".gitignore")
+
+
+def test_full_workspace_scope_never_automatically_excludes_git_or_cache():
+    requirement = WorkspaceObservationRequirement(kind="directory", recursive=True)
+    progress = _progress((requirement,), (("fs.list", ".", {"entries": [
+        {"name": ".git", "type": "directory"}, {"name": ".cache", "type": "directory"}]}),))[0]
+    assert progress["missingListings"] == [".cache", ".git"]
+    assert "excludePaths" not in progress
+
+
+def test_exclusion_in_one_requirement_cannot_erase_an_independent_file_obligation():
+    requirements = (WorkspaceObservationRequirement(kind="directory", excludePaths=["secret.txt"]),
+        WorkspaceObservationRequirement(kind="file", path="secret.txt"))
+    progress = _progress(requirements, (("fs.list", ".", {"entries": [
+        {"name": "secret.txt", "type": "file"}]}),))
+    assert progress[0]["complete"] is True
+    assert progress[1]["missingReads"] == ["secret.txt"]
+
+
+def test_accepted_inferred_scope_controls_context_coverage_and_local_acquisition_feedback(evidence):
+    from contracts.planning import PlannedTask, TaskImplementationBinding, TaskPlan
+
+    evidence.require({"kind": "directory", "path": ".", "recursive": True})
+    frozen = deepcopy(evidence.run.execution_state["workspaceObservations"])
+    evidence.commit({"tool": "fs.list", "path": ".", "output": {"entries": [
+        {"name": ".git", "type": "directory"}, {"name": "source.py", "type": "file"}]}}, step_id="list-root")
+    requirement = {**frozen[0], "excludePaths": [".git"]}
+    evidence.run.mission_id = "mission_aabbccddeeff"
+    task = PlannedTask(key="acquire", title="Read source", objective="Read this accepted source page",
+        capabilityRequirements=("information_extraction",), logicalRole="workspace_acquisition",
+        constraints=[{"workspaceReview": {"targets": [{"operation": "read", "path": "source.py"}]}}])
+    plan = TaskPlan(missionId=evidence.run.mission_id, nodes=(task,), metadata={
+        "workspaceDiscovery": {"version": 1, "phase": "formal", "scopeOrigin": "inferred"},
+        "workspaceScope": {"version": 1, "requirements": [requirement], "rationale": "Review source code"}})
+    binding = TaskImplementationBinding(planNodeKey=task.key, acgNodeId="active-reader")
+    evidence.run.execution_state.update(taskPlan=plan.model_dump(mode="json", by_alias=True),
+        taskBindings=[binding.model_dump(mode="json", by_alias=True)])
+    context = SimpleNamespace(run=evidence.run,
+        step=SimpleNamespace(step_id="active-reader", capability="information_extraction"))
+
+    assert workspace_execution_context(evidence.run)["observationRequirements"] == [requirement]
+    assert evidence.progress()[0]["missingListings"] == []
+    assert evidence.progress()[0]["missingReads"] == ["source.py"]
+    excluded = evidence.record("active-reader", "pending", 40, {"path": ".git/config"})
+    assert node_workspace_observation_feedback(context, evidence.store, [excluded])
+    source = evidence.record("active-reader", "pending", 41, {"path": "source.py"})
+    assert node_workspace_observation_feedback(context, evidence.store, [source]) is None
+    progress = node_workspace_acquisition_progress(context, evidence.store, [source])
+    assert progress["batchComplete"] is True
+    assert progress["remainingScope"][0]["complete"] is True
+    assert progress["remainingScope"][0]["excludePaths"] == [".git"]
+    assert evidence.run.execution_state["workspaceObservations"] == frozen
+
+
+@pytest.mark.parametrize("protection", ["legacy", "explicit-origin", "explicit-input"])
+def test_scope_metadata_cannot_shrink_legacy_or_explicit_workspace_obligations(evidence, protection):
+    evidence.require({"kind": "directory", "path": ".", "recursive": True})
+    frozen = deepcopy(evidence.run.execution_state["workspaceObservations"])
+    metadata = {"workspaceScope": {"version": 1,
+        "requirements": [{**frozen[0], "excludePaths": [".git"]}], "rationale": "Review source code"}}
+    if protection != "legacy":
+        metadata["workspaceDiscovery"] = {"version": 1, "phase": "formal",
+            "scopeOrigin": "explicit" if protection == "explicit-origin" else "inferred"}
+    if protection == "explicit-input":
+        evidence.run.input["workspaceObservations"] = deepcopy(frozen)
+    evidence.run.execution_state["taskPlan"] = {"metadata": metadata}
+    evidence.commit({"tool": "fs.list", "path": ".", "output": {"entries": [
+        {"name": ".git", "type": "directory"}]}})
+    assert workspace_execution_context(evidence.run)["observationRequirements"] == frozen
+    assert evidence.progress()[0]["missingListings"] == [".git"]
+    assert evidence.run.execution_state["workspaceObservations"] == frozen
 
 
 def test_every_explicit_workspace_scope_survives_profile_freeze_and_runtime_observation(evidence):
@@ -497,12 +643,64 @@ def test_cyclic_reuse_lineage_is_rejected(evidence):
 def test_mutation_invalidates_earlier_reads_until_complete_reread(evidence, tool):
     evidence.require({"kind": "file", "path": "source.py"})
     evidence.commit({}, step_id="first-read")
-    evidence.commit({"tool": tool, "started": "2026-11-16T01:00:03+00:00",
-        "ended": "2026-11-16T01:00:04+00:00"}, step_id="mutate")
+    mutation = evidence.commit({"tool": tool, "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00"}, step_id="mutate")[0]
     assert evidence.blockers()
+    assert evidence.progress()[0]["coverageInvalidation"] == {
+        "tool": tool, "receiptRef": mutation["receiptRef"], "completedAt": "2026-11-16T01:00:04+00:00",
+        "invalidatedReadCount": 1, "invalidatedListingCount": 0,
+        "reasonCode": "WORKSPACE_OBSERVATIONS_INVALIDATED"}
+    assert verified_node_workspace_receipts(evidence.run, evidence.store) == ()
     evidence.commit({"started": "2026-11-16T01:00:05+00:00",
         "ended": "2026-11-16T01:00:06+00:00"}, step_id="reread")
     assert evidence.blockers() == ()
+
+
+def test_invalidation_facts_are_scoped_and_do_not_expose_command_or_source_bodies(evidence):
+    evidence.require({"kind": "directory", "path": "src", "recursive": True},
+        {"kind": "file", "path": "outside.py"}, {"kind": "directory", "path": "docs"})
+    evidence.commit({"tool": "fs.list", "path": "src"},
+        {"tool": "fs.list", "path": "src/nested"},
+        {"path": "src/a.py", "text": "source-body-secret"}, {"path": "src/a.py"},
+        {"path": "src/nested/b.py"}, {"path": "outside.py"})
+    mutation = evidence.commit({"tool": "shell.exec", "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00", "request": {"input": {"command": "host-command-secret"}},
+        "output": {"command": "host-command-secret", "stdout": "shell-output-secret"}}, step_id="shell")[0]
+    src, outside, docs = evidence.progress()
+    assert src["coverageInvalidation"]["receiptRef"] == mutation["receiptRef"]
+    assert src["coverageInvalidation"]["invalidatedReadCount"] == 2
+    assert src["coverageInvalidation"]["invalidatedListingCount"] == 2
+    assert outside["coverageInvalidation"]["invalidatedReadCount"] == 1
+    assert outside["coverageInvalidation"]["invalidatedListingCount"] == 0
+    assert "coverageInvalidation" not in docs
+    assert all(secret not in repr(evidence.progress())
+               for secret in ("host-command-secret", "source-body-secret", "shell-output-secret"))
+
+
+def test_invalidation_diagnostics_do_not_create_a_new_coverage_frontier(evidence):
+    evidence.require({"kind": "file", "path": "source.py"})
+    empty = evidence.progress()
+    assert "coverageInvalidation" not in empty[0]
+    evidence.commit({}, step_id="read")
+    assert "coverageInvalidation" not in evidence.progress()[0]
+    latest = evidence.commit({"tool": "shell.exec", "started": "2026-11-16T01:00:05+00:00",
+        "ended": "2026-11-16T01:00:06+00:00"}, step_id="latest")[0]
+    evidence.commit({"tool": "fs.write", "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00"}, step_id="earlier-enumerated-last")
+    invalidated = evidence.progress()
+    assert invalidated[0]["coverageInvalidation"]["receiptRef"] == latest["receiptRef"]
+    assert invalidated[0]["coverageFingerprint"] == empty[0]["coverageFingerprint"]
+    assert workspace_coverage_fingerprint(invalidated) == workspace_coverage_fingerprint(empty)
+
+
+def test_read_that_starts_during_mutation_is_identified_as_invalidated(evidence):
+    evidence.require({"kind": "file", "path": "source.py"})
+    evidence.commit({"started": "2026-11-16T01:00:04+00:00",
+        "ended": "2026-11-16T01:00:07+00:00"}, step_id="overlapping-read")
+    evidence.commit({"tool": "shell.exec", "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00"}, step_id="shell")
+    assert evidence.progress()[0]["coverageInvalidation"]["invalidatedReadCount"] == 1
+    assert evidence.blockers()
 
 
 def test_mutation_also_requires_fresh_directory_listing(evidence):
@@ -516,6 +714,161 @@ def test_mutation_also_requires_fresh_directory_listing(evidence):
     assert evidence.progress()[0]["missingListings"] == ["."]
 
 
+@pytest.mark.parametrize("tool", ["fs.write", "fs.patch"])
+def test_file_update_invalidates_only_the_file_and_its_immediate_directory_listing(evidence, tool):
+    evidence.require({"kind": "file", "path": "src/changed.py"},
+        {"kind": "file", "path": "src/unchanged.py"}, {"kind": "file", "path": "docs/notes.txt"})
+    evidence.commit({"tool": "fs.list", "path": "."}, {"tool": "fs.list", "path": "src"},
+        {"tool": "fs.list", "path": "src/nested"}, {"tool": "fs.list", "path": "docs"},
+        {"path": "src/changed.py"}, {"path": "src/unchanged.py"}, {"path": "docs/notes.txt"})
+    evidence.commit({"tool": tool, "path": "src/changed.py", "output": {"operation": "update"},
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="update")
+
+    observed = {(tool, path) for tool, path, _ in verified_node_workspace_receipts(evidence.run, evidence.store)}
+    assert observed == {("fs.read", "src/unchanged.py"), ("fs.read", "docs/notes.txt"),
+        ("fs.list", "."), ("fs.list", "src/nested"), ("fs.list", "docs")}
+    changed, unchanged, docs = evidence.progress()
+    assert not changed["complete"] and changed["coverageInvalidation"]["invalidatedReadCount"] == 1
+    assert unchanged["complete"] and docs["complete"]
+    assert "coverageInvalidation" not in unchanged and "coverageInvalidation" not in docs
+
+
+@pytest.mark.parametrize("operation", ["create", None])
+def test_creating_a_file_or_legacy_write_rechecks_ancestor_listings_but_preserves_other_evidence(evidence, operation):
+    evidence.require({"kind": "file", "path": "src/existing.py"})
+    evidence.commit({"tool": "fs.list", "path": "."}, {"tool": "fs.list", "path": "src"},
+        {"tool": "fs.list", "path": "src/new"}, {"tool": "fs.list", "path": "src/unrelated"},
+        {"tool": "fs.list", "path": "docs"}, {"path": "src/existing.py"})
+    output = {} if operation is None else {"operation": operation}
+    evidence.commit({"tool": "fs.write", "path": "src/new/file.py", "output": output,
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="create")
+
+    assert {(tool, path) for tool, path, _ in verified_node_workspace_receipts(evidence.run, evidence.store)} == {
+        ("fs.list", "src/unrelated"), ("fs.list", "docs"), ("fs.read", "src/existing.py")}
+    assert evidence.blockers() == ()
+
+
+@pytest.mark.parametrize("change", [
+    {"omit_output": ("path",)}, {"output": {"path": "different.py"}},
+    {"output": {"path": "../escape.py"}}, {"path": "."},
+    {"output": {"operation": "unrecognized"}},
+])
+def test_file_mutation_without_correlated_path_remains_unknown_and_invalidates_global_evidence(evidence, change):
+    evidence.require({"kind": "file", "path": "source.py"}, {"kind": "file", "path": "unrelated.py"})
+    evidence.commit({}, {"path": "unrelated.py"})
+    evidence.commit({"tool": "fs.write", "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00", **change}, step_id="uncorrelated-write")
+    assert all(not item["complete"] and item["coverageInvalidation"] == {
+        "status": "unknown", "reasonCode": "WORKSPACE_OBSERVATION_EFFECTS_UNKNOWN"}
+        for item in evidence.progress())
+
+
+def test_normalized_file_mutation_path_matches_the_observed_file(evidence):
+    evidence.require({"kind": "file", "path": "src/source.py"})
+    evidence.commit({"path": "src/source.py"})
+    evidence.commit({"tool": "fs.patch", "path": "src/source.py",
+        "request": {"input": {"path": ".\\src\\source.py"}},
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="patch")
+    assert evidence.progress()[0]["coverageInvalidation"]["tool"] == "fs.patch"
+    assert evidence.blockers()
+
+
+@pytest.mark.parametrize("tool", ["fs.write", "fs.patch"])
+def test_windows_case_alias_mutation_invalidates_original_file_and_parent_listing(evidence, tool):
+    evidence.require({"kind": "file", "path": "src/source.py"})
+    evidence.commit({"path": "src/source.py"}, {"tool": "fs.list", "path": "src"},
+        {"path": "docs/unchanged.py"}, {"tool": "fs.list", "path": "."})
+    evidence.commit({"tool": tool, "path": "SRC/SOURCE.PY", "output": {"operation": "update"},
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="update")
+    assert {(tool, path) for tool, path, _ in verified_node_workspace_receipts(evidence.run, evidence.store)} == {
+        ("fs.read", "docs/unchanged.py"), ("fs.list", ".")}
+    progress = evidence.progress()[0]
+    assert progress["path"] == "src/source.py" and progress["missingReads"] == ["src/source.py"]
+    assert progress["coverageInvalidation"]["invalidatedReadCount"] == 1
+
+
+def test_case_folding_cannot_prove_read_coverage_or_change_literal_coverage_identity(evidence):
+    evidence.require({"kind": "file", "path": "src/source.py"})
+    empty = evidence.progress()
+    evidence.commit({"path": "SRC/SOURCE.PY"})
+    assert evidence.progress() == empty
+    assert [(tool, path) for tool, path, _ in verified_node_workspace_receipts(evidence.run, evidence.store)] == [
+        ("fs.read", "SRC/SOURCE.PY")]
+    evidence.commit({"tool": "fs.patch", "path": "src/source.py",
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="update")
+    progress = evidence.progress()
+    assert progress[0]["missingReads"] == ["src/source.py"]
+    assert progress[0]["coverageFingerprint"] == empty[0]["coverageFingerprint"]
+    assert workspace_coverage_fingerprint(progress) == workspace_coverage_fingerprint(empty)
+
+
+def test_parallel_mutations_use_the_latest_relevant_path_instead_of_the_latest_global_time(evidence):
+    evidence.require({"kind": "file", "path": "source.py"}, {"kind": "file", "path": "other.py"})
+    evidence.commit({}, {"path": "other.py"}, step_id="initial-read")
+    later = evidence.commit({"tool": "fs.patch", "path": "other.py",
+        "started": "2026-11-16T01:00:07+00:00", "ended": "2026-11-16T01:00:08+00:00"}, step_id="later")[0]
+    earlier = evidence.commit({"tool": "fs.patch", "path": "source.py",
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="earlier")[0]
+    source, other = evidence.progress()
+    assert source["coverageInvalidation"]["receiptRef"] == earlier["receiptRef"]
+    assert other["coverageInvalidation"]["receiptRef"] == later["receiptRef"]
+    evidence.commit({"started": "2026-11-16T01:00:05+00:00", "ended": "2026-11-16T01:00:06+00:00"}, step_id="reread")
+    source, other = evidence.progress()
+    assert source["complete"] and not other["complete"]
+
+
+def test_repeated_change_to_the_same_file_invalidates_an_intermediate_reread_across_graph_reuse(evidence):
+    evidence.require({"kind": "file", "path": "source.py"}, {"kind": "file", "path": "unchanged.py"})
+    evidence.commit({}, {"path": "unchanged.py"}, step_id="initial-read")
+    evidence.commit({"tool": "fs.patch", "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00"}, step_id="first-change")
+    evidence.commit({"started": "2026-11-16T01:00:05+00:00", "ended": "2026-11-16T01:00:06+00:00"},
+        step_id="intermediate-read")
+    later = evidence.commit({"tool": "fs.patch", "started": "2026-11-16T01:00:07+00:00",
+        "ended": "2026-11-16T01:00:08+00:00"}, step_id="second-change")[0]
+    successor = evidence.successor()
+    source, unchanged = successor.progress()
+    assert not source["complete"] and unchanged["complete"]
+    assert source["coverageInvalidation"]["receiptRef"] == later["receiptRef"]
+    successor.commit({"started": "2026-11-16T01:00:09+00:00", "ended": "2026-11-16T01:00:10+00:00"},
+        step_id="fresh-read")
+    assert successor.blockers() == ()
+
+
+def test_model_claimed_update_cannot_suppress_directory_creation_effects(evidence):
+    evidence.require({"kind": "directory", "path": ".", "operation": "list"})
+    evidence.commit({"tool": "fs.list", "path": "."})
+    evidence.commit({"tool": "fs.write", "path": "new/source.py",
+        "request": {"input": {"path": "new/source.py", "operation": "update"}},
+        "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}, step_id="write")
+    assert evidence.progress()[0]["missingListings"] == ["."]
+    assert evidence.progress()[0]["coverageInvalidation"]["invalidatedListingCount"] == 1
+
+
+@pytest.mark.parametrize("started,ended,complete", [
+    ("2026-11-16T01:00:02+00:00", "2026-11-16T01:00:03+00:00", False),
+    ("2026-11-16T01:00:03+00:00", "2026-11-16T01:00:06+00:00", False),
+    ("2026-11-16T01:00:04+00:00", "2026-11-16T01:00:06+00:00", False),
+    ("2026-11-16T01:00:05+00:00", "2026-11-16T01:00:06+00:00", True),
+])
+def test_path_mutation_requires_observation_to_start_after_its_completion(evidence, started, ended, complete):
+    evidence.require({"kind": "file", "path": "source.py"})
+    evidence.commit({"started": started, "ended": ended}, step_id="read")
+    evidence.commit({"tool": "fs.patch", "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00"}, step_id="patch")
+    assert evidence.progress()[0]["complete"] is complete
+
+
+def test_shell_with_success_or_read_only_claim_still_invalidates_all_earlier_paths(evidence):
+    evidence.require({"kind": "file", "path": "source.py"}, {"kind": "file", "path": "other.py"})
+    evidence.commit({}, {"path": "other.py"})
+    evidence.commit({"tool": "shell.exec", "request": {"input": {"command": "Get-ChildItem", "readOnly": True}},
+        "output": {"exitCode": 0, "readOnly": True}, "started": "2026-11-16T01:00:03+00:00",
+        "ended": "2026-11-16T01:00:04+00:00"}, step_id="shell")
+    assert all(not item["complete"] and item["coverageInvalidation"]["tool"] == "shell.exec"
+               for item in evidence.progress())
+
+
 @pytest.mark.parametrize("change", [{"record": {"status": "failed"}},
     {"receipt": {"status": "failed"}}, {"corrupt_checksum": True}])
 def test_failed_or_unverified_mutation_cannot_leave_prior_read_coverage_valid(evidence, change):
@@ -524,6 +877,8 @@ def test_failed_or_unverified_mutation_cannot_leave_prior_read_coverage_valid(ev
     evidence.commit({"tool": "fs.write", "started": "2026-11-16T01:00:03+00:00",
         "ended": "2026-11-16T01:00:04+00:00", **change}, step_id="uncertain-mutation")
     assert evidence.blockers()
+    assert evidence.progress()[0]["coverageInvalidation"] == {
+        "status": "unknown", "reasonCode": "WORKSPACE_OBSERVATION_EFFECTS_UNKNOWN"}
 
 
 def test_local_agent_feedback_requires_scoped_progress_and_accepts_supplement(evidence):
@@ -714,6 +1069,33 @@ def test_initial_model_list_scope_cannot_weaken_explicit_source_review(intent):
     assert profile.workspace_observations[0].operation == "read"
     if "审查" in intent or "Review" in intent:
         assert profile.workspace_observations[0].recursive
+
+
+def test_initial_source_read_promotion_preserves_model_exclusions():
+    class Model:
+        def generate_json(self, prompt, schema, **kwargs):
+            return {"primaryGoal": "review repository", "requiredCapabilities": ["analysis"],
+                "estimatedComplexity": "simple", "evidenceScope": "authorized_sources",
+                "webExtraction": "snippets", "workspaceObservations": [
+                    {"path": ".", "kind": "directory", "operation": "list", "excludePaths": [".git", "build"]}]}
+    profile = IntentParser(llm=Model()).parse(intent="Review the source repository")
+    requirement = profile.workspace_observations[0]
+    assert requirement.operation == "read" and requirement.recursive
+    assert requirement.exclude_paths == (".git", "build")
+
+
+def test_explicit_full_scope_cannot_be_shrunk_by_model_exclusions():
+    class Model:
+        def generate_json(self, prompt, schema, **kwargs):
+            return {"primaryGoal": "review repository", "requiredCapabilities": ["analysis"],
+                "estimatedComplexity": "simple", "evidenceScope": "authorized_sources",
+                "webExtraction": "snippets", "workspaceObservations": [
+                    {"path": ".", "kind": "directory", "recursive": True, "excludePaths": [".git"]}]}
+    explicit = [{"path": ".", "kind": "directory", "operation": "read", "recursive": True}]
+    profile = IntentParser(llm=Model()).parse(intent="Review the source repository",
+        task_input={"workspaceObservations": explicit})
+    assert profile.workspace_observations == list(workspace_observation_requirements(explicit))
+    assert profile.workspace_observations[0].exclude_paths == ()
 
 
 def test_repository_review_with_bound_workspace_has_initial_read_scope_even_if_model_omits_it():
