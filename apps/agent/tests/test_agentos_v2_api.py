@@ -632,6 +632,35 @@ async def test_v2_projects_scheduling_and_versioned_evolution_without_bodies(tmp
         assert rolled_back.json()["version"] == 2
 
 
+async def test_v2_evolution_receipt_survives_replay_and_rollback(tmp_path) -> None:
+    runtime = _runtime(tmp_path)
+    proposal = runtime.evolution_service.propose(
+        [Trajectory(trajectoryId=f"receipt-{i}", outcome={"status": "completed"}) for i in range(3)],
+        PolicyMutation(mutationType="budget_adjustment", target="memory_token_budget", value=768),
+    )
+    assert proposal is not None
+    app = FastAPI()
+    app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+    path = f"/agentos/v2/evolution/proposals/{proposal.proposal_id}"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get(path + "/receipt")).status_code == 404
+        first = await client.post(path + "/approve", json={"reviewer": "reviewer"})
+        assert first.status_code == 200
+        receipt = await client.get(path + "/receipt")
+        assert receipt.status_code == 200
+        assert receipt.json()["proposalId"] == proposal.proposal_id
+        assert receipt.json()["policyVersion"] == 1
+        replay = await client.post(path + "/approve", json={"reviewer": "reviewer"})
+        assert replay.json() == first.json()
+        conflict = await client.post(path + "/approve", json={"reviewer": "another"})
+        assert conflict.status_code == 409
+        rolled_back = await client.post("/agentos/v2/evolution/rollback",
+                                       json={"targetVersion": 0, "reviewer": "reviewer"})
+        assert rolled_back.status_code == 200
+        after_rollback = await client.get(path + "/receipt")
+        assert after_rollback.json() == receipt.json()
+
+
 async def test_v2_legacy_outputs_are_read_only_and_only_available_without_refs(tmp_path) -> None:
     runtime = _runtime(tmp_path)
     task = runtime.create_mission("Legacy API projection", workflow_id="api-workflow")

@@ -16,8 +16,8 @@ from adapters.transport.local_runtime import LocalRuntimeClient
 from components.auditor.decision_store import SQLiteDecisionStore
 from components.communicator.provenance_store import SQLiteProvenanceStore
 from components.executor.value_store import SQLiteExecutionValueStore
-from components.evolution.service import EvolutionService
-from components.evolution.store import SQLiteEvolutionStore
+from components.evolution.policy import EvolutionService
+from components.evolution.infrastructure.sqlite import SQLiteEvolutionStore
 from components.memory.store import SQLiteMemoryStore
 from components.environment.content import SQLiteContentManifestStore
 from components.attachments import (

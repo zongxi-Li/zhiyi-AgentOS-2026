@@ -77,7 +77,6 @@ agentOS/
 │  │                                      工具执行环境归 environment，图编译算法归 planner
 │  │
 │  └─ support/                           历史兼容与通用技术配套；不新增业务权威
-│     ├─ acg/                            迁移期兼容入口；合同归 contracts，规划规则归 planner
 │     ├─ packs/                          Pack Manifest 发现与注册基础设施
 │     ├─ skills/                         BaseSkill、NoOpSkill 与注册表基础设施
 │     ├─ stores/                         历史 WorkflowStore 实现；与 storage 的 schema 隔离

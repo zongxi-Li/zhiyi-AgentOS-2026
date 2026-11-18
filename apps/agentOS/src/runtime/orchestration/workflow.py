@@ -35,7 +35,9 @@ from components.executor import (
     ExecutionValueStore,
     SQLiteExecutionValueStore,
 )
-from components.evolution.service import EvolutionService
+from components.evolution.policy import EvolutionService
+from components.evolution.integration.runs import propose_from_run
+from runtime.composition.evolution import build_default_evolution_service
 from contracts.evolution import (
     EvolutionPolicyVersion,
     EvolutionProposal,
@@ -334,7 +336,7 @@ class RuntimeApplication(CollaboratorAccess):
         self.workflow_registry = workflow_registry or WorkflowRegistry()
         self.model_max_concurrency = int(model_max_concurrency)
         self.model_min_interval_seconds = float(model_min_interval_seconds)
-        self.evolution_service = evolution_service or EvolutionService()
+        self.evolution_service = evolution_service if evolution_service is not None else build_default_evolution_service()
         self.plugin_manifests = tuple(plugin_manifests)
         self.require_planner_identity = require_planner_identity
         self.mission_semantic_service = mission_semantic_service
@@ -2351,7 +2353,8 @@ class RuntimeApplication(CollaboratorAccess):
         if run.status is not WorkflowStatus.COMPLETED:
             raise ValueError("only a completed workflow run can produce an evolution proposal")
         ledger = self.provenance_store.load_ledger(run_id=run.run_id, mission_id=run.mission_id)
-        return self.evolution_service.propose_from_run(
+        return propose_from_run(
+            self.evolution_service,
             run,
             provenance_events=ledger.trace_events(),
         )

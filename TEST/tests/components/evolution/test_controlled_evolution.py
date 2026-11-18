@@ -44,8 +44,7 @@ def test_unapproved_proposal_does_not_change_active_policy_and_approval_uses_cas
 
     approved = service.approve(proposal, approved_by="reviewer")
     assert approved.version == 1
-    with pytest.raises(ValueError, match="stale"):
-        service.approve(proposal, approved_by="reviewer")
+    assert service.approve(proposal, approved_by="reviewer") == approved
 
 
 def test_rollback_creates_a_new_version_without_rewriting_history() -> None:

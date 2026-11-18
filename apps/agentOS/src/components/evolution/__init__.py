@@ -1,16 +1,20 @@
-"""图与 Skills 自进化业务部件的公共服务入口。"""
+"""Stable evolution entries; importing the package does not load storage adapters."""
+from importlib import import_module
 
-from components.evolution.graph_service import GraphEvolutionService
-from components.evolution.skill_service import SkillEvolutionService
+_EXPORTS = {
+    "EvolutionService": (".service", "EvolutionService"),
+    "GraphEvolutionService": (".graph_service", "GraphEvolutionService"),
+    "SkillEvolutionService": (".skill_service", "SkillEvolutionService"),
+    "EvolutionStore": (".ports.store", "EvolutionStore"),
+    "EvolutionVersionConflict": (".ports.store", "EvolutionVersionConflict"),
+    "InMemoryEvolutionStore": (".infrastructure.memory", "InMemoryEvolutionStore"),
+    "SQLiteEvolutionStore": (".infrastructure.sqlite", "SQLiteEvolutionStore"),
+}
+__all__ = list(_EXPORTS)
 
-__all__ = ["GraphEvolutionService", "SkillEvolutionService"]
-from .service import EvolutionService
-from .store import EvolutionStore, EvolutionVersionConflict, InMemoryEvolutionStore, SQLiteEvolutionStore
 
-__all__ = [
-    "EvolutionService",
-    "EvolutionStore",
-    "EvolutionVersionConflict",
-    "InMemoryEvolutionStore",
-    "SQLiteEvolutionStore",
-]
+def __getattr__(name):
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    module, attribute = _EXPORTS[name]
+    return getattr(import_module(module, __name__), attribute)

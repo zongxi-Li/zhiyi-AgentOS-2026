@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from math import isfinite
 from typing import Literal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EvolutionAction(str, Enum):
@@ -51,6 +52,13 @@ class PolicyMutation(BaseModel):
     target: str = Field(min_length=1)
     value: int | float | str | list[str]
 
+    @field_validator("value", mode="before")
+    @classmethod
+    def finite_non_boolean_value(cls, value):
+        if isinstance(value, bool) or (isinstance(value, float) and not isfinite(value)):
+            raise ValueError("mutation value must be finite and not boolean")
+        return value
+
 
 class EvolutionProposal(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
@@ -75,6 +83,18 @@ class EvolutionPolicyVersion(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), alias="createdAt")
     approved_by: str | None = Field(default=None, alias="approvedBy")
     status: Literal["active", "superseded"] = "active"
+
+
+class EvolutionPublicationReceipt(BaseModel):
+    """Durable result of one atomic approval; never rewritten by rollback."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    proposal_id: str = Field(alias="proposalId", min_length=1)
+    proposal_checksum: str = Field(alias="proposalChecksum", pattern=r"^[0-9a-f]{64}$")
+    policy_version: int = Field(alias="policyVersion", ge=1)
+    approved_by: str = Field(alias="approvedBy", min_length=1)
+    published_at: datetime = Field(alias="publishedAt")
 
 
 class TrajectoryStep(BaseModel):
@@ -155,8 +175,44 @@ class GraphEvolutionProposal(BaseModel):
     evidence_trajectory_ids: list[str] = Field(default_factory=list, alias="evidenceTrajectoryIds")
 
 
+class GraphEvolutionEvaluation(BaseModel):
+    """Paired offline results for exactly one candidate and evaluator version."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True, allow_inf_nan=False)
+
+    proposal_id: str = Field(alias="proposalId", min_length=1)
+    proposal_checksum: str = Field(alias="proposalChecksum", pattern=r"^[0-9a-f]{64}$")
+    sample_ids: tuple[str, ...] = Field(alias="sampleIds", min_length=1)
+    evaluator_version: str = Field(alias="evaluatorVersion", min_length=1)
+    baseline_quality: float = Field(alias="baselineQuality", ge=0, le=1)
+    candidate_quality: float = Field(alias="candidateQuality", ge=0, le=1)
+    baseline_cost: float = Field(alias="baselineCost", ge=0)
+    candidate_cost: float = Field(alias="candidateCost", ge=0)
+
+    @field_validator("sample_ids")
+    @classmethod
+    def unique_samples(cls, values):
+        if len(set(values)) != len(values) or any(not value.strip() for value in values):
+            raise ValueError("paired evaluation needs distinct non-empty sample identities")
+        return values
+
+
+class GraphEvolutionPublicationReceipt(BaseModel):
+    """Reference from the external graph version authority, not a Run execution permit."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    proposal_id: str = Field(alias="proposalId", min_length=1)
+    proposal_checksum: str = Field(alias="proposalChecksum", pattern=r"^[0-9a-f]{64}$")
+    graph_id: str = Field(alias="graphId", min_length=1)
+    graph_version: int = Field(alias="graphVersion", ge=1)
+    approved_by: str = Field(alias="approvedBy", min_length=1)
+    publication_ref: str = Field(alias="publicationRef", min_length=1)
+
+
 __all__ = [
-    "EvolutionAction", "EvolutionPolicyVersion", "EvolutionProposal", "EvolutionProposalStatus", "GraphEvolutionProposal", "PolicyMutation", "SkillCandidate",
+    "EvolutionAction", "EvolutionPolicyVersion", "EvolutionPublicationReceipt", "EvolutionProposal", "EvolutionProposalStatus", "GraphEvolutionProposal", "PolicyMutation", "SkillCandidate",
+    "GraphEvolutionEvaluation", "GraphEvolutionPublicationReceipt",
     "SkillEvolutionProposal", "SkillLifecycleState", "Trajectory",
     "TrajectoryEvaluation", "TrajectoryStep",
 ]

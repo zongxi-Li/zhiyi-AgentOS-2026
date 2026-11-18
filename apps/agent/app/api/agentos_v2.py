@@ -3721,6 +3721,14 @@ def create_router(
             raise HTTPException(status_code=409, detail="evolution approval conflict") from exc
         return version.model_dump(by_alias=True, mode="json")
 
+    @router.get("/evolution/proposals/{proposal_id}/receipt")
+    async def get_evolution_publication_receipt(proposal_id: str):
+        try:
+            receipt = runtime.evolution_service.store.get_receipt(proposal_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="evolution publication receipt not found") from exc
+        return receipt.model_dump(by_alias=True, mode="json")
+
     @router.post("/evolution/rollback")
     async def rollback_evolution_policy(request: EvolutionRollbackRequest):
         try:
