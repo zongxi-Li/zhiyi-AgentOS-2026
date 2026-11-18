@@ -102,21 +102,18 @@
 | `graph_patch.py` | Models | 语义图修订边界共享错误 |
 | `orphan_cleaner.py` | Domain engine | `ExecutionOrphanCleaner`：执行正文孤儿延迟清理 |
 
-### 1.6 communicator（受控低熵通信；13 文件）
+### 1.6 communicator（按图投递与血缘；10 个 Python 文件）
 | 文件 | 层 | 职责 |
 | --- | --- | --- |
-| `service.py` | Facade | `CommunicatorService` |
+| `service.py` | Facade | `CommunicatorService`：消息封装及生产/消费/交互血缘记录，不读取或组装正文 |
 | `models.py` | Models | 公开的消息/上下文/血缘模型 |
-| `contracts.py` | Models | 内部低熵上下文合同（`ContextPack`/`estimate_tokens`） |
+| `contracts.py` | Models | 上下文包与统计（`ContextPack`/`estimate_tokens`/`input_revision`） |
 | `manifest.py` | Models | `CommunicationManifest`：通信拓扑/字段许可/预算声明 |
-| `algorithms.py` | Algorithms | `select_fields`/`low_entropy_choice`：内容选择纯函数 |
-| `assembler.py` | Domain engine | `ContextAssembler`：字段白名单上下文装配 |
-| `compressor.py` | Domain engine | `compress_text`：保守本地压缩 |
-| `broker.py` | Domain engine | `CommunicationBroker`：运行期受控按需读取 |
-| `reader.py` | Domain engine | `CommunicationReader`：Agent 补读已授权上游引用 |
+| `broker.py` | Domain engine | `CommunicationBroker`：唯一正文读取与上下文装配核心，校验图依赖/字段许可，支持完整读取及带游标的分页 |
+| `reader.py` | Domain engine | `CommunicationReader`：把 Broker 绑定到当前节点及其上游引用，供 Agent 补读 |
 | `provenance.py` | Domain engine | `ProvenanceLedger`：生产/消费/交互可验证血缘账本 |
 | `provenance_store.py` | Store | `SQLiteProvenanceStore`：血缘账本持久化 |
-| `reliable.py` | Domain engine/Store | `ReliableCommunicationStore`/`DebateCoordinator`：高级模式的持久引用通信（黑板/辩论） |
+| `reliable.py` | Domain engine/Store | 持久引用队列、黑板及共享的 `next_debate_phase`；队列默认返回全部待处理消息 |
 
 ### 1.7 memory（记忆；10 文件）
 | 文件 | 层 | 职责 |

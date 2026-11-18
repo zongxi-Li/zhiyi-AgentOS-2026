@@ -2,6 +2,8 @@
 
 > 视角：一次 ACG 请求从输入、规划、执行到输出与审计的真实主链。
 > 原则：`ExecutionRuntime` 是唯一执行真源；Identity V2 只做身份一致性、投影与查询。
+>
+> Task / Step、AgentPool、资源调度、上下文、审查与局部修订的职责见 [ACG 器件协作合同](acg-component-coordination.md)。
 
 ```mermaid
 flowchart TB
