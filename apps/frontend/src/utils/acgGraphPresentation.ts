@@ -7,7 +7,6 @@ export const normalizeNodeStatus = (value?: string) => {
 }
 
 const SETTLED_NODE_STATUSES = new Set(['completed', 'committed', 'skipped_by_condition', 'cancelled'])
-const ACTIVE_NODE_STATUSES = new Set(['running', 'retrying', 'waiting_review'])
 
 /** Unversioned stream phases add activity; persisted facts own the execution outcome. */
 export const resolveNodeStatus = (step?: Pick<AcgStepState, 'status'>, runtimePhase?: string, completed = false) => {
@@ -15,9 +14,9 @@ export const resolveNodeStatus = (step?: Pick<AcgStepState, 'status'>, runtimePh
   const live = normalizeNodeStatus(runtimePhase)
   if (SETTLED_NODE_STATUSES.has(durable)) return durable
   if (completed) return 'completed'
-  if (ACTIVE_NODE_STATUSES.has(durable) || durable === 'failed') return durable
-  if (durable && (SETTLED_NODE_STATUSES.has(live) || live === 'failed')) return durable
-  return live || durable || 'pending'
+  // A pending step may belong to a newer recovery Attempt than the last SSE
+  // frame. Unversioned activity can never promote that step back to running.
+  return durable || live || 'pending'
 }
 
 export const mapNodeVisualState = (step?: AcgStepState) => ({

@@ -1,8 +1,9 @@
 import { mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick, ref, shallowRef } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import GraphEditor from './GraphEditor.vue'
 import GraphVersionToolbar from './GraphVersionToolbar.vue'
+import { graphVersionsKey, type GraphVersionsController } from './graphVersions'
 import type { GraphProjection, WorkspaceGraphNode } from '@/services/api/agentos'
 import type { RuntimeObservation } from '@/workbench/runtime/observation'
 
@@ -42,6 +43,45 @@ const mountEditor = (extraProps: Record<string, unknown> = {}) => mount(GraphEdi
 beforeEach(() => { vi.clearAllMocks() })
 
 describe('GraphEditor', () => {
+  it('renders only one canvas state while a historical snapshot loads, fails and recovers', async () => {
+    const displayGraph = shallowRef<GraphProjection | null>(null)
+    const snapshotLoading = ref(true)
+    const snapshotError = ref('')
+    const versions = { displayGraph, snapshotLoading, snapshotError,
+      historical: ref(true), selectedKey: ref('historical-v1'),
+      difference: ref(null), previousGraph: ref(null) } as unknown as GraphVersionsController
+    const wrapper = mount(GraphEditor, {
+      props: { graph, graphNodes, selectedSemanticTaskKey: null, focusNodeId: null },
+      global: { provide: { [graphVersionsKey as symbol]: versions },
+        stubs: { AcgTopologyGraph: topologyStub, GraphVersionToolbar: true } }
+    })
+    expect(wrapper.findComponent(topologyStub).exists()).toBe(false)
+    expect(wrapper.get('[role="status"]').text()).toContain('正在加载图快照')
+    expect(wrapper.get('[role="status"]').text()).not.toContain('没有可展示')
+    snapshotLoading.value = false
+    snapshotError.value = '图快照加载失败，请重试'
+    await nextTick()
+    expect(wrapper.findComponent(topologyStub).exists()).toBe(false)
+    expect(wrapper.get('[role="status"]').text()).toContain('图快照加载失败，请重试')
+    displayGraph.value = graph
+    snapshotError.value = ''
+    await nextTick()
+    expect(wrapper.findComponent(topologyStub).props('blueprint')).toEqual(graph)
+    expect(wrapper.find('.graph-editor__empty').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('shows the current recovery message while cleanup is active and clears it when execution resumes', async () => {
+    const message = '节点执行失败，正在停止并行执行并等待清理'
+    const run = { ...observedRun, lifecyclePhase: 'recovery', lifecycleMessage: message,
+      activeStepIds: ['node_1'], steps: observedRun.steps.map(step => ({ ...step, status: 'failed' })) }
+    const wrapper = mountEditor({ runId: 'run_1', runtimeObservation: observation(run) })
+    expect(wrapper.get('.graph-editor__runtime').text()).toContain(message)
+    expect(wrapper.get('.graph-editor__runtime').text()).not.toContain('当前执行')
+    expect(wrapper.get('.graph-editor__runtime button').text()).toBe('定位当前节点')
+    await wrapper.setProps({ runtimeObservation: observation({ ...run, lifecyclePhase: 'executing' }) })
+    expect(wrapper.get('.graph-editor__runtime').text()).toContain('当前执行')
+    expect(wrapper.get('.graph-editor__runtime').text()).not.toContain(message)
+  })
   it('locates the active execution on every click even when external selection stays unchanged', async () => {
     const wrapper = mountEditor({ runId: 'run_1', focusNodeId: 'node_1',
       graph: { ...graph, nodes: [...graph.nodes, { nodeId: 'node_2', nodeType: 'step', name: '补读剩余范围' }] },

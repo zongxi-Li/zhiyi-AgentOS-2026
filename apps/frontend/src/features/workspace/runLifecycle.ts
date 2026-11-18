@@ -49,6 +49,17 @@ export const lifecycleDescriptions: Record<LifecyclePhase, string> = {
   SUPERSEDED: '后续运行已接替本次运行，可以继续查看原有记录。',
   UNKNOWN: '暂时无法确认运行状态，请等待记录刷新后再操作。'
 }
+export function runningRecoveryMessage(run: WorkflowRun | null | undefined): string | null {
+  if (!run || !['running', 'retrying'].includes(run.status) || run.lifecyclePhase !== 'recovery') return null
+  const message = run.lifecycleMessage?.trim()
+  const awaitingHandoff = message === 'Graph activated; awaiting verified execution handoff.'
+    || message === 'Initial graph activated paused; no execution permit.'
+  // Activation history can outlive the Permit and subsequent execution. Keep
+  // actual cleanup progress, but never promote the old activation note over it.
+  if (awaitingHandoff && (run.formalControl?.permitStatus === 'ISSUED' || run.activeStepIds?.length
+    || run.steps?.some(step => step.status === 'running' || step.status === 'failed'))) return null
+  return message || '正在处理执行恢复'
+}
 export function mapRunPhase(rawStatus: string | null, run: WorkflowRun | null, selectedRunId: string | null, hasMission: boolean) {
   const status = rawStatus?.toLowerCase() || 'unknown'
   const control = run?.formalControl
@@ -59,7 +70,7 @@ export function mapRunPhase(rawStatus: string | null, run: WorkflowRun | null, s
   else if (status === 'cancelled') { phase = 'CANCELLED'; reason = 'Run was cancelled' }
   else if (status === 'failed' || run?.failureCode || run?.error?.code) { phase = 'FAILED'; reason = run?.lifecycleMessage || run?.failureCode || run?.error?.code || 'Run failed' }
   else if (status === 'waiting_review') { phase = 'WAITING_REVIEW'; reason = run?.review?.reasonCode || 'An explicit review decision is required' }
-  else if (status === 'retrying' || (status === 'running' && run?.lifecyclePhase === 'recovery')) { phase = 'RECOVERING'; reason = 'Runtime reports recovery in progress' }
+  else if (status === 'retrying' || (status === 'running' && runningRecoveryMessage(run))) { phase = 'RECOVERING'; reason = 'Runtime reports recovery in progress' }
   else if (status === 'running') { phase = 'RUNNING'; reason = 'Runtime reports execution in progress' }
   else if (['pending', 'planning'].includes(status) && control?.dispatch?.runId === selectedRunId) {
     phase = 'DISPATCHED'; reason = `Dispatch ${control.dispatch.status}; acceptance is not completion`

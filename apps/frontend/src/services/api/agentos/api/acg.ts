@@ -1,6 +1,6 @@
 import { agentosRequest } from '../client'
 import type { GraphVersionHistory } from '../types'
-import type { GraphProjection, AcgDeliverable, AcgFinalArtifact, AcgStepState, AcgView, NodeExecutionPhase, ProvenanceConsumption, ProvenanceProduction, RunExecutionNode, RunExecutionTree, RuntimeInteraction, StepStatus, WorkflowRun, WorkflowTraceExport } from '../types'
+import type { GraphProjection, AcgDeliverable, AcgFinalArtifact, AcgStepState, AcgView, ProvenanceConsumption, ProvenanceProduction, RunExecutionNode, RunExecutionTree, RuntimeInteraction, StepStatus, WorkflowRun, WorkflowTraceExport } from '../types'
 import { runPath } from '../paths'
 import axios from 'axios'
 import { isRunDeliverableEntry } from '@/workbench/runtime/deliverableIdentity'
@@ -67,16 +67,6 @@ const provenanceProjection = (raw: {
   return { schemaVersion: raw.schemaVersion, integrityStatus: raw.integrityStatus, productions, consumptions, interactions }
 }
 
-const identityStepStatus = (phase: NodeExecutionPhase): StepStatus => ({
-  prepared: 'running',
-  executed: 'running',
-  audited: 'running',
-  committed: 'completed',
-  waiting_review: 'waiting_review',
-  failed: 'failed',
-  cancelled: 'cancelled'
-}[phase] as StepStatus)
-
 const projectIdentityStepState = (
   base: AcgStepState,
   identityNode: RunExecutionNode | undefined,
@@ -99,9 +89,10 @@ const projectIdentityStepState = (
   const stepExecutions = attempts.flatMap(item => item.executions || [])
   return {
     ...base,
-    status: latestExecution ? identityStepStatus(latestExecution.phase) : base.status,
-    attempt: latestAttempt?.attempt.attemptNumber ?? base.attempt,
-    retryCount: Math.max(0, attempts.length - 1),
+    // Identity records enrich history. The current formal Run owns status and
+    // may already have admitted a recovery Attempt absent from that history.
+    attempt: Math.max(base.attempt || 0, latestAttempt?.attempt.attemptNumber || 0),
+    retryCount: Math.max(base.retryCount || 0, attempts.length - 1),
     resourceUse: latestAttempt?.resourceUse || base.resourceUse,
     attempts: attempts.map(item => ({
       attemptId: item.attempt.attemptId,
@@ -118,7 +109,8 @@ const projectIdentityStepState = (
     identityAttempts: attempts,
     stepExecutions,
     nodeExecutions,
-    errorSummary: latestExecution?.failureCode || latestAttempt?.attempt.failureReason || base.errorSummary
+    errorSummary: base.status === 'failed'
+      ? latestExecution?.failureCode || latestAttempt?.attempt.failureReason || base.errorSummary : base.errorSummary
   }
 }
 
