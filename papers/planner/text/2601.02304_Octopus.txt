@@ -1,0 +1,949 @@
+                                         Octopus: Agentic Multi-Table Discovery over Tabular Data Lakes
+                                                                       Wen-Zhi Li                                                       Sainyam Galhotra
+                                                                   Cornell University                                                     Cornell University
+                                                                      Ithaca, USA                                                            Ithaca, USA
+                                                                 wenzhi@cs.cornell.edu                                                    sg@cs.cornell.edu
+
+                                         ABSTRACT                                                                   where answers may either emerge from several standalone tables
+                                         Tabular data discovery aims to identify the tables relevant to a           or from combining complementary ones. Table 1 summarizes how
+                                         natural-language question from a large collection of heterogeneous         our setting extends the scope of existing systems.
+                                         data. Existing systems typically assume that a question is answered           Most existing data discovery systems rely on time- and memory-
+                                         by a single table and rely on retrieval pipelines constructed through      intensive offline preparation, including costly training or index-
+arXiv:2601.02304v2 [cs.DB] 28 Oct 2026
+
+
+
+
+                                         substantial offline preprocessing. These assumptions become restric-       ing [24, 47, 48], which can hinder deployment and transfer across
+                                         tive when relevant information is distributed across multiple tables.      domains. Recent advances in large language models (LLMs) [1, 6, 46]
+                                         In this paper, we present Octopus, a lightweight agentic framework         and retrieval-augmented generation (RAG) [27] mitigate this limi-
+                                         for multi-table data discovery. Octopus follows a thin-harness de-         tation by leveraging LLMs to directly retrieve relevant information
+                                         sign that combines lightweight offline semantic guidance with adap-        from natural-language queries, as exemplified by the state-of-the-
+                                         tive access to raw tabular data. At query time, an LLM agent dynam-        art system Pneuma [7]. However, Pneuma indexes only a sampled
+                                         ically orchestrates semantic column search, structured tabular oper-       subset of rows to reduce memory usage, which can fail when user
+                                         ations, and general-purpose execution to locate and verify relevant        queries refer to specific values absent from the sampled rows. More
+                                         tables based on intermediate observations. We further introduce            fundamentally, RAG systems rely on a relatively static retrieval
+                                         a benchmark that explicitly evaluates multi-table data discovery,          mechanism that matches queries against indexed table chunks us-
+                                         covering both settings where multiple tables independently answer          ing lexical or semantic retrievers. Such a mechanism cannot easily
+                                         a question and settings where multiple tables must be joined. Ex-          adapt to complex reasoning tasks, and chunks filtered out at an
+                                         perimental results across four independent-discovery datasets and          early retrieval stage cannot be recovered later.
+                                         two join-based datasets show that Octopus achieves the highest                Entering the agentic era [29, 51], a new paradigm of retrieval
+                                         macro-F1 on all six datasets. It also substantially reduces offline pre-   agents offers a promising direction for lightweight data discov-
+                                         processing overhead relative to Pneuma and online latency and API          ery. Instead of relying on a predefined retrieval pipeline, these
+                                         cost relative to Claude Code. When coupled with the same NL2SQL            agents can directly interact with the raw corpus through general-
+                                         agent, Octopus yields substantially higher downstream question-            purpose tools, such as file reads, grep, and executable shell com-
+                                         answering F1 than Claude Code, showing that improved table dis-            mands [2, 36]. Powered by the capability of backbone LLMs, they
+                                         covery provides more complete evidence for downstream analytics.           can autonomously plan retrieval strategies and synthesize exe-
+                                         Code is available at https://github.com/wenzhilics/octopus.                cutable retrieval primitives on-the-fly. Also, by observing interme-
+                                                                                                                    diate execution results, they can iteratively refine the plans and
+                                         1   INTRODUCTION                                                           primitives to adapt dynamically to the query and the underlying
+                                                                                                                    data [49]. The potential of such agentic interaction has already been
+                                         Tabular data constitute a fundamental form of information across
+                                                                                                                    demonstrated in domains such as software engineering [25, 36]
+                                         large repositories such as data lakes, databases, and cloud storage
+                                                                                                                    and complex, long-horizon tasks in interactive terminal environ-
+                                         systems [5, 14, 35]. Among the vast number of available tables, only
+                                                                                                                    ments [31]. This capability opens up a new possibility for light-
+                                         a small subset is typically relevant to a given user intent. Identifying
+                                                                                                                    weight data discovery over raw tables, where retrieval strategies
+                                         such relevant tables defines the data discovery problem [15, 23, 33],
+                                                                                                                    can be synthesized and adapted on demand rather than predefined
+                                         a critical preprocessing step for downstream data analytics and
+                                                                                                                    in advance.
+                                         integration tasks.
+                                                                                                                       However, while agentic retrieval largely eliminates the heavy
+                                            Recent data discovery systems have introduced natural language
+                                                                                                                    offline preparation required by conventional indexing pipelines
+                                         (NL) interfaces that allow users to express intent in free-form
+                                                                                                                    and provides the flexibility to access arbitrary values, it can still be
+                                         queries [7, 48]. However, these systems often assume that each
+                                                                                                                    expensive at scale. In particular, repeatedly running grep or custom
+                                         question can be answered by a single table—an assumption that
+                                                                                                                    shell commands over a large data lake incurs substantial cost. This
+                                         rarely holds in practice. In many cases, multiple tables can inde-
+                                                                                                                    raises a natural question: Can a lightweight offline investment make
+                                         pendently provide valid answers, and returning all of them may
+                                                                                                                    agentic data discovery practical in terms of both accuracy and cost?
+                                         yield complementary insights. In others, a question can only be
+                                                                                                                       Through our study, we find that column-header embeddings
+                                         answered by combining information across multiple tables (e.g., via
+                                                                                                                    provide an effective and lightweight form of semantic guidance for
+                                         joins), where no individual table alone suffices. Ideally, a system
+                                                                                                                    agentic data discovery. Given these precomputed embeddings, the
+                                         should return all tables relevant to the question. Subsequently, for
+                                                                                                                    agent can invoke a semantic column-search tool using arbitrary
+                                         specific downstream tasks, the user may expect the system to return
+                                                                                                                    concepts or entities that it derives from the original question. This
+                                         analytical insights extracted from the discovered tables [50]. In this
+                                                                                                                    provides the agent with targeted semantic guidance and avoids
+                                         paper, unlike prior systems that assume a single-table setting, we
+                                                                                                                    inefficient blind search, where the agent must repeatedly revise
+                                         study both multi-table independent and multi-table join scenarios,
+                                                                                                                           Wen-Zhi Li and Sainyam Galhotra
+
+
+Table 1: Comparison of the problem settings supported by existing data discovery systems, NL2SQL methods, and our system
+Octopus. Data Source indicates whether a method is designed to operate over a curated database or a large-scale heterogeneous
+data lake. Ground Truth Tables indicates whether the target consists of a single table, multiple tables that must be joined to
+answer the query, or multiple tables that can independently answer the query.
+
+                                                            Data Source                                  Ground Truth Tables
+                     Methods
+                                                  Curated Database         Data Lake     Single   Multi. (requires join)    Multi. (independent)
+      Data Discovery Systems [7, 24, 47, 48]               ✓                  ✓            ✓                ✗                          ✗
+      NL2SQL [20, 38, 39, 42]                              ✓                  ✗            ✓                ✓                          ✗
+      Octopus                                              ✓                  ✓            ✓                ✓                          ✓
+
+
+keywords and rerun grep when earlier searches fail to match the                        • We construct a comprehensive benchmark for multi-table
+desired values.                                                                          data discovery, comprising four datasets for multi-table
+   Building on these observations, we introduce Octopus, a mini-                         independent discovery and two datasets for multi-table
+malist agentic framework for tabular data discovery in both multi-                       join discovery.
+table independent and multi-table join settings. Octopus adopts a                      • Extensive experiments show that Octopus achieves the
+“thin harness” design [44]: rather than prescribing a fixed retrieval                    highest macro-F1 across all six datasets and the highest
+pipeline, it exposes complementary information-access mechanisms                         exact-match rate on both join-based datasets. Octopus
+through a compact set of tools and delegates their orchestration                         further reduces offline preprocessing overhead relative to
+to the agent. These tools include column-level semantic search,                          Pneuma and online latency and API cost relative to Claude
+domain-specific operators for exploring tabular data, and general-                       Code. When coupled with the same NL2SQL agent, Octo-
+purpose primitives such as grep and executable shell commands.                           pus yields higher downstream question-answering F1 than
+This design preserves the flexibility of agentic retrieval while provid-                 Claude Code across all six datasets.
+ing the structured access needed to make large-scale data discovery
+                                                                                  The remainder of this paper is organized as follows. We first
+both effective and efficient.
+                                                                               introduce the preliminaries and the formal problem definition in
+   To comprehensively evaluate Octopus under this new setting,
+                                                                               Section 2. We then introduce Octopus in Section 3. Next, we in-
+we introduce a new benchmark tailored to both multi-table indepen-
+                                                                               troduce how we generate the benchmark to evaluate Octopus in
+dent and multi-table join discovery. Although several benchmarks
+                                                                               Section 4. Then, we provide empirical evaluation in Section 5. Fi-
+have been developed for table discovery and related tabular reason-
+                                                                               nally, we discuss related work in Section 6 and conclude the paper
+ing tasks [7, 17, 24, 28, 34, 37, 50], they do not jointly cover the two
+                                                                               in Section 7.
+forms of multi-table discovery studied in this work: retrieving mul-
+tiple independently sufficient tables and discovering a set of tables
+that must be joined to answer the question. Our benchmark com-                 2    PRELIMINARIES
+prises four datasets for multi-table independent discovery, where              In this section, we formalize different types of tabular data discov-
+multiple tables can independently answer a query; and two datasets             ery tasks considered in this work and illustrate each setting with
+for multi-table join discovery, where information from multiple                motivating examples.
+tables must be combined to derive the answer. Across all datasets,
+Octopus consistently achieves the highest F1 scores while incur-                  Definition 2.1 (Single-Table Discovery). Let T = {𝑇1, . . . ,𝑇𝑛 }
+ring substantially lower computational overhead. Moreover, when                be a collection of 𝑛 tables, and let 𝑄 be an NL question that is relevant
+integrated with the same NL2SQL agent, the tables retrieved by Oc-             to exactly one table 𝑇𝑄 ∈ T . A table discovery system 𝑆 aims to
+topus yield substantially higher downstream question-answering                 identify this relevant table: 𝑇ˆ𝑄 = 𝑆 (𝑄, T ) ≈ 𝑇𝑄 .
+F1 than those retrieved by Claude Code, demonstrating that its
+                                                                                  Example 2.1. The question “What is the population of New York
+retrieval gains translate to downstream task performance.
+                                                                               City in 2020?” can be answered by a single U.S. Census table containing
+   We summarize the main contributions of this work as follows:
+                                                                               city populations by year.
+     • We extend the data discovery problem beyond the conven-
+       tional single-table setting and formulate a unified multi-                 Definition 2.2 (Multi-Table Independent Discovery). Let
+       table discovery setting that covers both independent and                T = {𝑇1, . . . ,𝑇𝑛 } be a collection of tables, and let 𝑄 be an NL question
+       join-based scenarios.                                                   that can be independently answered by one or more tables T𝑄 =
+     • We identify fine-grained, precomputed column-header em-                 {𝑇𝑄 1 , . . . ,𝑇𝑄𝑚 } ⊆ T , where 𝑚 ≥ 1. The goal of a table discovery
+       beddings as a particularly effective and lightweight form               system 𝑆 is to retrieve all such relevant tables: T̂𝑄 = 𝑆 (𝑄, T ) ≈ T𝑄 .
+       of offline preparation for agentic tabular data discovery.              The case 𝑚 = 1 reduces to single-table discovery.
+       Building on this finding, we propose Octopus, a minimalist
+       agentic framework that combines semantic column search,                    Example 2.2. The question “What is the GDP of France in 2020?”
+       domain-specific data-access tools, and general-purpose ter-             can be answered independently by a World Bank table or an IMF table,
+       minal primitives under a thin-harness design.                           each providing valid but slightly different statistics.
+Octopus : Agentic Multi-Table Discovery over Tabular Data Lakes
+
+
+
+
+                                                                       Online Agentic Loop
+
+
+                                                          Toolbox
+                                                                              Natural-Language Question
+
+                                                            Value
+                 Offline Preparation                       Search         Data Discovery Agent
+
+                                                          Semantic                        Plan
+                                                                                                                        Downstream NL2SQL
+                           Column-Semantic Index           Column
+                                                           Search
+          Data Lake                                                                                                    Discovered                        Final
+                                                                          Invoke                       Refine                        NL2SQL Agent
+                                                                                                                         Tables                         Answer
+                                                         Joinability
+                            Joinability Metadata
+                                                          Search
+                                                                                                                        End-to-end question answering
+          Precomputed metadata over the data lake
+                                                                                       Observe
+                                                           Table
+                                                         Inspection
+
+
+
+                                                            Shell      Agent iteratively refines discovery decisions
+                                                          Execution
+
+                                                             …
+
+Figure 1: System overview of Octopus. Octopus consists of a lightweight offline preparation stage that constructs reusable
+semantic and joinability metadata over the data lake, and an online agentic discovery stage that follows a thin-harness design,
+allowing the agent to iteratively plan, invoke tools, observe intermediate results, and refine its retrieval decisions. The discovered
+tables can further be passed to a downstream NL2SQL agent for end-to-end question answering.
+
+
+   Definition 2.3 (Multi-Table Join Discovery). Let T ={𝑇1, . . . ,𝑇𝑛 }                   design is motivated by a tension between two common paradigms
+be a collection of tables, and let 𝑄 be an NL question whose an-                          for data discovery. Index-based retrieval systems invest substan-
+swer requires combining information across multiple tables T𝑄 =                           tial computation and storage in offline preprocessing to provide
+{𝑇𝑄 1 , . . . ,𝑇𝑄𝑚 } ⊆ T . The goal of a table discovery system 𝑆 is to                   efficient access through a retrieval mechanism fixed in advance.
+identify all such tables that jointly contribute to answering 𝑄: T̂𝑄 =                    At the other extreme, general-purpose coding agents can directly
+𝑆 (𝑄, T ) ≈ T𝑄 .                                                                          inspect raw data through tools such as file search, shell commands,
+                                                                                          or executable code, but lack corpus-specific guidance and may re-
+   Example 2.3. The question “Which authors have published papers
+                                                                                          quire repeated trial-and-error exploration over a large data lake.
+in both SIGMOD and VLDB?” requires joining an Authorship table
+                                                                                          Octopus is designed to occupy the middle ground between these
+(author–paper relationships) with a Venue table (paper–conference
+                                                                                          two paradigms.
+mappings). Neither table alone suffices to produce the complete answer.
+                                                                                             The central principle of Octopus is to separate semantic guid-
+   Definition 2.4 (Tabular Question Answering). Let T =                                   ance from data inspection. Semantic information that is reusable
+{𝑇1, . . . ,𝑇𝑛 } be a collection of tables and 𝑄 an NL question. Let 𝐴𝑄 de-               across queries but expensive to rediscover repeatedly is precom-
+note the ground-truth answer derived from the relevant tables T𝑄 ⊆ T ,                    puted as lightweight column-level metadata. In contrast, table con-
+possibly through filtering, aggregation, or joins. A tabular question                     tents remain directly accessible at query time and are inspected
+answering system 𝑆 aims to produce 𝐴ˆ𝑄 = 𝑆 (𝑄, T ) ≈ 𝐴𝑄 .                                 only when demanded. Given access to the necessary information
+   Example 2.4. The question “What was the total sales amount                             sources through a small set of high-leverage primitives, a backbone
+for product ‘shoes’ in 2024?” requires retrieving the relevant Sales                      LLM is responsible for deciding how they should be used according
+table, filtering the corresponding records, and aggregating their sales                   to the query and intermediate observations, rather than imposing
+amounts.                                                                                  a fixed retrieval pipeline.
+                                                                                             Figure 1 illustrates the overall architecture for Octopus. We first
+   In this work, we primarily focus on the multi-table independent
+                                                                                          describe the design principles and lightweight offline preparation
+and multi-table join settings introduced above. We additionally con-
+                                                                                          in Sections 3.1 and 3.2. We then introduce the agentic data-access
+sider downstream question answering: after the relevant tables are
+                                                                                          mechanisms in Section 3.3, followed by their instantiation for inde-
+identified, an NL2SQL agent extracts fine-grained answers from the
+                                                                                          pendent and join-based multi-table discovery in Section 3.4. Finally,
+discovered tables. This evaluation measures whether the retrieved
+                                                                                          Section 3.5 describes how the discovered tables can be reused for
+tables provide sufficient evidence for downstream analytical tasks.
+                                                                                          downstream question answering via NL2SQL.
+3    OCTOPUS
+Octopus is a lightweight agentic framework for discovering rele-
+vant tabular data from large and heterogeneous table collections. Its
+                                                                                                                   Wen-Zhi Li and Sainyam Galhotra
+
+
+3.1    Design Overview                                                  Table 2: Main information-access primitives exposed by Oc-
+                                                                        topus. Join-specific primitives are enabled for multi-table
+Let T = {𝑇1, . . . ,𝑇𝑛 } denote a collection of tables and let 𝑄 be
+                                                                        join-based discovery.
+a natural-language question. Octopus receives 𝑄 together with
+access to T and aims to identify either a set of independently
+relevant tables or a group of tables that jointly support the answer,    Primitive                  Purpose
+depending on the discovery setting defined in Section 2.                 General
+   In general, Octopus follows a thin-harness design. The harness        Semantic column search     Retrieve columns semantically related to an
+does not prescribe a fixed sequence of retrieval stages. Instead, it                                agent-specified natural-language phrase.
+provides the LLM agent with a compact collection of complemen-           Value search               Search raw table contents for a particular
+tary access mechanisms:                                                                             value.
+                                                                         Table inspection           Inspect table schemas, column domains, and
+• Semantic schema access, which retrieves columns and tables                                        representative rows.
+  according to the semantic meaning of arbitrary natural-language        SQL execution              Execute SQL queries over candidate tables.
+  phrases;                                                               Shell execution            Perform arbitrary programmatic operations
+• Direct tabular data access, which allows the agent to inspect                                     over the data lake directory.
+  schemas, values, rows, and query results in the underlying tables;     Join-specific
+• General-purpose execution, which allows open-ended explo-              Join-column lookup         Find tables containing a column name.
+  ration through shell commands when the predefined tabular              Joinability search         Retrieve columns in other tables with high
+  primitives are insufficient.                                                                      estimated value overlap with MinHash.
+                                                                         Overlap verification       Compute the value overlap between a sus-
+The backbone LLM receives the original user question, the tool                                      pected pair of join columns.
+definitions, and observations returned from previous tool calls. At
+each step, it determines which operation to invoke next, observes
+the execution result, and continues until sufficient evidence has       𝑠 (𝑞, 𝑐𝑖 ) = (z𝑞⊤ h𝑖 )/(∥z𝑞 ∥ 2 ∥h𝑖 ∥ 2 ). The system returns the highest-
+been collected to produce the discovery result. This design allows      scoring column names satisfying the configured similarity criterion,
+different questions to induce different execution trajectories, which   together with the tables containing those columns. The maximum
+are determined online by the agent.                                     number of unique column names returned and the similarity thresh-
+   The design therefore separates two roles that are often coupled      old are exposed as tool arguments and can be adjusted by the agent.
+in conventional retrieval systems. The offline component provides       The agent subsequently decides how to use the retrieved evidence.
+lightweight semantic guidance, while the online agent remains free          In our implementation, we use BGE [10] as the lightweight en-
+to inspect arbitrary raw data and adapt its retrieval strategy to       coder. The semantic index is computed once for a table collection
+the current question. This separation is particularly important in      and reused for all subsequent questions.
+tabular data lakes, where schemas are relatively compact but cell       Joinability Metadata. Identifying joinable columns in heteroge-
+contents may be orders of magnitude larger and considerably more        neous data lakes remains a non-trivial problem [19, 23], as seman-
+dynamic.                                                                tically corresponding columns frequently use different names. To
+                                                                        support such cases without constructing a full content index, Oc-
+3.2    Lightweight Offline Preparation                                  topus precomputes a lightweight MinHash [8] signature for each
+The main problem of a general-purpose agent is that shell or file-      column based on its set of unique values. Specifically, for the dis-
+access operations provide little semantic guidance. Pure lexical        tinct value set 𝑉 (𝑇 , 𝑐) = {𝑣 | 𝑣 occurs in column 𝑐 of 𝑇 } of column
+search via grep may therefore require multiple reformulations be-       𝑐 in table 𝑇 , a MinHash signature m(𝑇 , 𝑐) = MinHash(𝑉 (𝑇 , 𝑐))
+fore the agent locates the relevant schema. Octopus addresses this      provides an inexpensive approximation to value-set overlap and is
+problem by precomputing lightweight column-level representations        used to identify candidate joinable columns across tables.
+that expose schema semantics directly to the agent.                        In this way, Octopus contains two forms of lightweight offline
+                                                                        preparation for the join-based setting. Column embeddings capture
+Column-Semantic Index. Let C = {𝑐 1, . . . , 𝑐 𝑁 } be the set of col-   schema semantics, while MinHash signatures capture approximate
+umn headers appearing in data lake T . Octopus encodes each             column joinability. It is worth noting that neither structure stores
+column header once using a lightweight text encoder 𝑓enc : h𝑖 =         dense representations of individual rows or cells, and both struc-
+𝑓enc (𝑐𝑖 ) ∈ R𝑑 , and stores the resulting embedding matrix H =         tures can be precomputed with low computational overhead, as
+[h1 ; . . . ; h𝑁 ] ∈ R𝑁 ×𝑑 .                                            evaluated in detail in Section 5.
+   This column-semantic index is the only offline structure required
+for independent table discovery. Unlike approaches that encode          3.3    Agent Harness for Data Discovery
+rows, cells, or table-level textual narrations, Octopus does not        The offline structures described above are exposed to the LLM
+construct a dense content index over the data lake. At query time,      through a complementary set of information-access primitives:
+the agent may invoke semantic search with any natural-language          semantic schema access provides broad guidance, direct tabular data
+phrase 𝑞 that it considers informative. The phrase is encoded us-       access exposes precise information from the raw data, and general-
+ing the same encoder as z𝑞 = 𝑓enc (𝑞) and matched against the           purpose execution covers operations that cannot be anticipated by
+precomputed column representations using cosine similarity as           the harness. Table 2 summarizes the main tool families.
+Octopus : Agentic Multi-Table Discovery over Tabular Data Lakes
+
+
+Semantic Schema Access. The column-semantic index intro-                   Octopus does not impose a fixed target cardinality or require the
+duced in Section 3.2 provides the primary source of corpus-level           same number of retrieval steps for every question. Questions with
+guidance. The corresponding semantic-search primitive accepts              a single relevant table and questions with many independently an-
+a natural-language phrase supplied by the agent and returns se-            swerable tables are handled through the same interface. The agent
+mantically related column names, their similarity scores, and all          terminates once it determines that the accumulated evidence is
+tables containing those columns. The agent may issue multiple se-          sufficient and outputs the discovered table set. This setting high-
+mantic searches, alter a search phrase after inspecting intermediate       lights the advantage of adaptive access over a fixed top-𝑘 retrieval
+results, or bypass semantic search entirely if lexical or structural       pipeline [7], where the number and type of operations can vary
+evidence is already sufficient. This flexibility is important when         according to the ambiguity of the question and the structure of the
+table schemas contain abbreviations, overloaded terms, or domain-          underlying data rather than being predetermined by the system.
+specific conventions that are difficult to resolve in a single retrieval
+                                                                           Join-Based Discovery. For the join-based discovery, no individual
+operation.
+                                                                           table contains all information required by the question. Octopus
+Direct Tabular Data Access. Semantic similarity identifies plausi-         must instead identify a group of tables in the data lake that collec-
+ble locations in the data lake, but it does not by itself establish that   tively contain the required information and can be meaningfully
+a candidate table satisfies the semantics of the question. Octopus         joined. As discussed in Section 3.3, the agent retains all primitives
+therefore gives the agent direct access to the underlying tabular          available in independent discovery and is additionally given three
+data to search for specific value mentions, check table schemas, or        join-specific access mechanisms. As elsewhere in Octopus, this
+execute SQL on the data lake. Specifically, the join-based setting re-     progression is not encoded as a mandatory sequence. The agent
+quires three additional join-specific tools, which form a progressive      decides when each type of evidence is required based on the current
+join-exploration strategy: exact schema correspondence provides            question and its intermediate findings.
+the cheapest signal; MinHash-based retrieval broadens the search
+to differently named but value-compatible columns; and exact value         3.5    Application to Downstream NL2SQL
+comparison verifies a small number of promising candidates. Com-           Table discovery identifies where the information required by a ques-
+bined together, these primitives allow the agent to move from broad        tion resides, whereas downstream analytical tasks may ultimately
+semantic candidates to increasingly specific evidence without re-          require query results rather than table identities. We therefore ad-
+quiring the entire table collection to be indexed in advance.              ditionally consider an optional NL2SQL stage over the discovered
+                                                                           tables. Given the user question together with the retrieved tables
+General-Purpose Execution. A fixed collection of structured
+                                                                           and their schemas, a separate question-answering agent generates
+tools cannot anticipate every operation that may be useful for
+                                                                           and executes SQL to extract the final answer. This downstream
+data discovery. Therefore, Octopus additionally exposes a general-
+                                                                           stage allows us to evaluate whether differences in table discovery
+purpose bash interface operating over the data lake directory to
+                                                                           translate into differences in answer-level performance.
+perform a custom analysis not directly supported by the structured
+primitives. Importantly, general-purpose execution complements             4     MULTI-TABLE DATA DISCOVERY
+rather than replaces the semantic schema access and direct tabular
+data access tools. Blind shell exploration over a large data lake can            BENCHMARK
+be expensive because the agent must repeatedly guess lexical forms         Existing tabular data discovery benchmarks suffer from several
+and inspect broad regions of the corpus. The semantic column               limitations. Traditional table question answering benchmarks [24,
+index provides targeted guidance for common semantic retrieval             34, 37] scope the task to question answering over a single given
+needs, while structured tabular tools simplify frequent inspection         table thus assuming that the relevant table is already known. In
+operations. The shell interface preserves open-endedness when              contrast, data discovery benchmarks [7, 17] operate over a collec-
+neither is sufficient. This combination is central to the thin-harness     tion of tables, but they suffer from other issues: some incur high
+philosophy of Octopus: the harness exposes a compact set of high-          false-negative rates [17], since multiple tables beyond the annotated
+leverage capabilities without constraining the agent to a closed           ground truth may also correctly answer the question; others incur
+retrieval procedure.                                                       high false-positive rates [7], since certain questions may not be
+                                                                           answerable by any table in the collection. Existing data-discovery
+3.4     Multi-Table Discovery                                              benchmarks primarily focus on independently sufficient answer
+                                                                           tables, whereas NL2SQL benchmarks [28, 50] include join-based
+Octopus is given the natural-language question 𝑄, the offline
+                                                                           questions but assume that the relevant database is already given.
+column-semantic index introduced in Section 3.2, and access to
+                                                                           Neither setting directly evaluates the discovery of a jointly required
+the primitives discussed in Section 3.3. The same agent harness is
+                                                                           table set from a large heterogeneous table collection. Furthermore,
+used for both multi-table discovery settings introduced in Section 2,
+                                                                           existing data-discovery benchmarks primarily evaluate table-level
+where independent discovery seeks all tables that can satisfy the
+                                                                           retrieval and do not jointly assess the downstream answers obtain-
+question individually, and join-based discovery seeks a collection
+                                                                           able from the discovered evidence.
+of mutually joinable tables whose information is jointly sufficient.
+                                                                              To address these issues, we introduce a new benchmark for
+Independent Discovery. For independent discovery, the goal is              tabular data discovery with two complementary components: (1)
+to identify a set of tables in the data lake where each of them in-        independent benchmark, where one or more tables can indepen-
+dependently contains the necessary information required by 𝑄.              dently provide valid answers for the questions; and (2) join-based
+                                                                                                                                                                                                                                                          Wen-Zhi Li and Sainyam Galhotra
+
+
+                            Public BI                                                                Chicago Open Data                                          ChEMBL                                                                Adventure Works
+                 103
+
+
+
+                 102
+       # Questions
+
+
+
+
+                 101
+
+
+
+                 100
+                                   0    25       50       75   100   125   150   175   200           0        20       40           60       80        100                 2.5   5.0      7.5       10.0   12.5   15.0   17.5             0    5         10    15       20       25       30
+                                             # Ground Truth Tables                                                # Ground Truth Tables                                          # Ground Truth Tables                                                 # Ground Truth Tables
+
+                           Figure 2: Distribution of the number of ground-truth tables per question in the independent benchmark.
+
+                               200
+                                       Spider                                                            Bird                                                                Spider                                                           Bird
+                                                                                                 1350                                                                  240                                                            1350
+                               175                                                               1200                                                                                                                                 1200
+                                                                                                                                                                       210
+
+
+
+
+                                                                                                                                                             # Questions
+
+
+
+
+                                                                                                                                                                                                                            # Questions
+                     # Questions
+
+
+
+
+                                                                                       # Questions
+
+
+
+
+                               150                                                               1050                                                                  180                                                            1050
+                               125                                                                900                                                                  150                                                             900
+                               100                                                                750                                                                                                                                  750
+                                                                                                  600                                                                  120                                                             600
+                                75                                                                                                                                      90
+                                                                                                  450                                                                                                                                  450
+                                50                                                                300                                                                   60                                                             300
+                                25                                                                150                                                                   30                                                             150
+                                 0                                                                  0                                                                    0                                                               0
+                                        2    3        4                          11                       2   3    4        6   7        9        11                             2              3          4         5                             2       3        4        5        6
+                                       Minimum Degree in Join Graph                                      Minimum Degree in Join Graph                                                  # Tables per Query                                               # Tables per Query
+                                                          (a) Minimum degree distribution.                                                                                           (b) Number of answer tables distribution.
+
+                                                                                       Figure 3: Dataset distribution on join-based benchmark.
+
+
+benchmark, where multiple tables must be combined together to                                                                                                        table after this refinement. Such cases correspond to the single-table
+answer the questions.                                                                                                                                                special case of independent discovery and are therefore retained in
+                                                                                                                                                                     the benchmark. Figure 2 shows the distribution of the number of
+                                                                                                                                                                     answer tables per question.
+4.1    Independent Benchmark
+The most relevant benchmark to our setting is Pneuma [7], which
+provides four datasets containing roughly 1,000 NL questions each.                                                                                                   4.2             Join-based Benchmark
+In Pneuma, each record is generated from a SQL-based interme-                                                                                                       To construct a dataset where answering a question requires com-
+diate representation together with a corresponding NL question.                                                                                                     bining multiple tables, we need databases containing joinable tables
+Additional answer tables are annotated by checking whether they                                                                                                     and questions that reference columns across multiple joinable tables.
+satisfy the query metadata. However, inspection of the released                                                                                                     Existing NL2SQL benchmarks such as Spider [50] and Bird [28]
+construction code shows that only equality predicates (“=”) in the                                                                                                  provide NL questions over databases with primary key–foreign
+filtering clause are checked, while other comparison operators, such                                                                                                key (PK-FK) relationships. However, as NL2SQL benchmarks, their
+as “<” and “>”, are ignored. This procedure can therefore intro-                                                                                                    scope is limited to a single database at a time involving only a small
+duce false-positive answer-table annotations when not all query                                                                                                     number of relevant tables. Moreover, in the data lake scenario we
+constraints are verified.                                                                                                                                           study, explicit PK–FK relationships are often not available.
+    To obtain more execution-consistent annotations, we revisit all                                                                                                     We construct both join-based datasets from the training splits
+four Pneuma datasets: Public BI, Chicago Open Data, ChEMBL,                                                                                                         of Spider and Bird. First, we flatten all tables from all databases
+and Adventure Works. For each record, we reconstruct an exe-                                                                                                        in the training split into a single global table collection. We then
+cutable SQL query from the released SQL metadata, including the                                                                                                     randomly shuffle the resulting CSV files and rename them sequen-
+SELECT, WHERE, GROUP BY, HAVING, ORDER BY, and LIMIT clauses                                                                                                        tially as table_0.csv and so on. This removes the original database
+when present. For quoted-string equality predicates, we use ILIKE                                                                                                   boundaries and table identities from the agent-visible corpus, while
+instead of “=” to reduce sensitivity to capitalization. We then ex-                                                                                                 preserving column names and cell contents. PK-FK relationships
+ecute the reconstructed query on each answer table annotated in                                                                                                     are not exposed to the discovery system; the original database struc-
+the original benchmark. Tables on which the query cannot produce                                                                                                    ture, PK-FK annotations, and gold SQL queries are retained only for
+valid answer are removed from the answer-table set, and ques-                                                                                                       benchmark construction and ground-truth derivation. Second, we
+tions for which the query fails on all annotated answer tables are                                                                                                  filter out questions whose associated SQL queries do not involve
+discarded. For downstream question answering, we concatenate                                                                                                        explicit JOIN operations, and if multiple questions correspond to
+the query outputs obtained from all retained answer tables. These                                                                                                   the same SQL, we retain only one. Third, we further discard queries
+records are subsequently normalized and deduplicated to form the                                                                                                    with overly simple joins to make the datasets more challenging.
+reference answer for each question.                                                                                                                                 Specifically, for the latent PK-FK joinable relationship, if the mini-
+    Although the resulting benchmark is designed for multi-table                                                                                                    mum degree of any table involved in the query is less than 2, we
+independent discovery, some questions have only one valid answer                                                                                                    exclude the query. This filtering increases join-partner ambiguity
+Octopus : Agentic Multi-Table Discovery over Tabular Data Lakes
+
+
+           Table 3: Statistics of datasets used in the paper.                     • LlamaIndex [30]: An approach that treats each row as a record
+                                                                                     and encodes records into dense vectors with a sentence encoder.
+                                   Avg.        Avg.                                  Tables are retrieved by aggregating record-level similarities to
+    Name                #Tables   # Rows    # Attributes    Size    # Questions      the query embedding.
+    Independent                                                                   • Pneuma [7]: A state-of-the-art retrieval-augmented generation
+    Public BI            203         20         66         2.2 MB      951
+    Chicago Open Data    802       2,812        17         829 MB      835
+                                                                                     (RAG)-based approach that combines full-text search and vector
+    ChEMBL               78        5,161        7           67 MB      958           search with LLM-based relevance judgment to retrieve the most
+    Adventure Works      88        9,127        8          102 MB      693           relevant tables.
+    Join-based                                                                    • Claude Code [2]: A state-of-the-art coding agent that performs
+    Spider               782       1,879         5         95 MB        305          agentic search through direct corpus interaction.
+    Bird                 427      830,504        7         15 GB       1,716
+                                                                                     For downstream question answering, we compare Octopus with
+                                                                                  Claude Code and apply the same NL2SQL agent with Claude Haiku
+by ensuring that each query-relevant table has multiple candidate                 4.5 [3] as the backbone to the tables returned by each discovery
+neighbors in the latent join graph. For downstream question an-                   method to ensure a fair comparison.
+swering, we execute the original gold SQL query on the correspond-                Evaluation Metrics. Unlike prior table discovery evaluations that
+ing source database and use the resulting records as the reference                only use hit rate [7], our settings require metrics that reflect multi-
+answer.                                                                           table answers and answer-level evidence. For table discovery, we
+   Figure 3 reports the distributions of (1) the minimum degree                   compute Precision, Recall, and F1 for each question based on the
+of query-related tables in terms of latent PK-FK join graph and                   predicted and ground-truth table sets, and report their macro aver-
+(2) the number of tables per query for the refined Spider and Bird                ages: 𝑃 = 𝑁1 𝑖 𝑃𝑖 , 𝑅 = 𝑁1 𝑖 𝑅𝑖 , 𝐹 1 = 𝑁1 𝑖 𝐹 1𝑖 . For the join-based
+                                                                                               Í              Í               Í
+datasets. These statistics demonstrate that the retained queries are              benchmark, we additionally report Success Rate, defined as the frac-
+both structurally diverse and sufficiently challenging, forming a                 tion of questions for which all ground-truth tables are retrieved,
+more suitable benchmark for multi-table discovery.                                and Exact Match, defined as the fraction for which the predicted
+                                                                                  and ground-truth table sets are identical. For downstream ques-
+5     EVALUATION                                                                  tion answering, we compare the answer records produced by the
+In this section, we evaluate the effectiveness of Octopus by an-                  NL2SQL agent against the reference answer associated with each
+swering the following research questions:                                         question. Both reference and predicted records are normalized and
+ RQ1: How effective is Octopus at table-level discovery in both                   deduplicated before comparison. We then compute record-level
+      independent and join-based settings?                                        Precision, Recall, and F1 for each question and report their macro
+ RQ2: Do improvements in table discovery translate into better                    averages.
+      downstream NL2SQL performance?                                              Implementation Configurations. For agent-based methods Claude
+ RQ3: How efficient is Octopus in terms of offline preprocessing                  Code and Octopus, we set the execution cap for each question to be
+      time and storage, as well as online latency and API cost?                   300s and 30 turns, and use Claude Haiku 4.5 as the default backbone
+ RQ4: Can the Column-Semantic Index serve as a reusable re-                       LLM with temperature 0.0. We also use lightweight BGE model [10]
+      trieval primitive for off-the-shelf coding agents?                          as the text encoder for header embeddings for Octopus. For non-
+ RQ5: How does the choice of backbone LLM affect the effective-                   agentic retrieval systems Full-Text Search, LlamaIndex, and Pneuma,
+      ness and efficiency of Octopus?                                             the number of returned tables 𝑘 must be specified in advance. We
+ RQ6: How does Octopus use its different information-access                       therefore evaluate 𝑘 ∈ {1, 5, 10} on the independent benchmark
+      mechanisms during table discovery?                                          and 𝑘 ∈ {1, 2, 5, 10} on the join-based benchmark. For Pneuma in
+                                                                                  particular, we set the balancing parameter 𝛼 = 0.5 and the initial-
+5.1        Experimental Setup                                                     retrieval multiplier 𝑛 = 5, and use Qwen2.5-7B-Instruct [45] as the
+Datasets. We conduct experiments on the benchmarks introduced                     LLM judge, following the settings recommended in the original
+in Section 4. Specifically, for independent benchmark, we have busi-              paper [7]. All experiments are conducted on a Linux server with
+ness intelligence dataset Public BI [40], government open dataset                 one A6000 GPU and Python 3.12.2.
+Chicago Open Data [12], biochemical dataset ChEMBL [21], and
+enterprise operation dataset Adventure Works [32]. For join-based                 5.2    Table Discovery Evaluation
+benchmark, we have two large-scale complex and cross-domain                       In this section, we evaluate Octopus for table discovery on both
+semantic parsing and NL2SQL datasets Spider [50] and Bird [28].                   independent and join-based benchmarks.
+Table 3 shows the statistics for these datasets.
+                                                                                  Independent Benchmark. We report macro-Precision, Recall,
+Baselines. We compare Octopus against tabular data discovery                      and F1 on the four independent-discovery datasets in Table 4. For
+methods and general coding agents that generalize to arbitrary                    non-agentic retrieval methods that require the number of returned
+table collections without task-specific training for table retrieval:             tables 𝑘 to be specified in advance, we evaluate 𝑘 ∈ {1, 5, 10}. In
+• Full-Text Search: A naive approach that treats table contents                   contrast, Claude Code and Octopus determine the number of re-
+  as plain text. BM25 [41] is leveraged to retrieve tables based on               turned tables adaptively during the agentic search process. Since
+  string-level match between table contents and NL user questions.                LlamaIndex requires encoding every row in the corpus, it does not
+                                                                                                                       Wen-Zhi Li and Sainyam Galhotra
+
+
+Table 4: Table retrieval results on the independent benchmark in terms of macro Precision, Recall, and F1. T/O indicates that
+the method did not complete within 20 hours and is therefore omitted.
+
+                                        Public BI           Chicago Open Data                ChEMBL               Adventure Works
+          Method                  P        R         F1      P       R       F1        P        R        F1        P         R        F1
+          Full-Text Search
+          𝑘 =1                  0.493     0.177     0.222   0.044   0.040   0.041    0.146    0.142    0.143     0.286     0.247    0.257
+          𝑘 =5                  0.435     0.452     0.353   0.019   0.066   0.027    0.096    0.459    0.157     0.126     0.491    0.189
+          𝑘 = 10                0.379     0.596     0.363   0.013   0.089   0.021    0.080    0.742    0.142     0.089     0.639    0.145
+          LlamaIndex
+          𝑘 =1                  0.423     0.131     0.163   T/O     T/O      T/O      T/O      T/O      T/O      T/O       T/O       T/O
+          𝑘 =5                  0.417     0.204     0.214   T/O     T/O      T/O      T/O      T/O      T/O      T/O       T/O       T/O
+          𝑘 = 10                0.412     0.239     0.234   T/O     T/O      T/O      T/O      T/O      T/O      T/O       T/O       T/O
+          Pneuma
+          𝑘 =1                  0.593     0.155     0.199   0.434   0.287   0.304    0.770    0.746    0.752     0.641     0.558    0.576
+          𝑘 =5                  0.601     0.414     0.398   0.308   0.493   0.299    0.296    0.950    0.439     0.330     0.896    0.446
+          𝑘 = 10                0.579     0.564     0.470   0.243   0.566   0.255    0.155    0.970    0.262     0.192     0.948    0.293
+          Claude Code           0.476    0.494      0.473   0.140   0.170   0.143    0.390    0.455    0.403    0.417      0.483    0.432
+          Octopus               0.916    0.945      0.913   0.392   0.433   0.389    0.915    0.954    0.921    0.882      0.922    0.889
+
+
+complete within 20 hours on Chicago Open Data, ChEMBL, and                  a query in this setting requires retrieving a group of tables that
+Adventure Works; we therefore report these cases as “T/O”.                  collectively contains all necessary information. Agentic methods,
+   Overall, Octopus achieves the highest macro-F1 on all four               including Claude Code and Octopus, can determine the table group
+datasets. The gains are particularly pronounced on Public BI and            adaptively during the discovery process. For non-agentic methods,
+Adventure Works, where Octopus improves macro-F1 over the                   the number of returned tables must instead be specified in advance;
+strongest baseline by 0.440 and 0.313, respectively. Moreover, Oc-          we therefore evaluate 𝑘 ∈ {1, 2, 5, 10}. Pneuma is originally de-
+topus substantially outperforms the general-purpose Claude Code             signed to judge whether an individual table is sufficient to answer
+agent on every dataset, indicating that direct agentic access to            a question. To adapt it to the join setting, we modify its LLM judge
+the raw corpus alone is less effective for reliable table discovery.        from “Is the table relevant to answer the question?” to “Are some
+The lightweight semantic guidance and structured tabular access             columns in the table relevant to answer the question?” LlamaIndex
+provided by Octopus allow the agent to narrow the search space              does not finish within 20 hours on either data lake and is therefore
+while retaining the flexibility to inspect and verify candidate tables      omitted.
+adaptively.                                                                     Overall, Octopus achieves the highest F1 and Exact Match on
+   The results also highlight an inherent limitation of fixed-𝑘 re-         both datasets, which indicates that Octopus is substantially more
+trieval. Increasing 𝑘 can improve recall by returning more candidate        effective at identifying a compact set of tables for multi-table reason-
+tables, but often at the expense of substantially lower precision. For      ing, rather than merely retrieving individually plausible candidates.
+example, on ChEMBL, Pneuma with 𝑘 = 10 achieves slightly higher             For the non-agentic baselines, increasing 𝑘 retrieves more ground-
+recall than Octopus (0.970 vs. 0.954). However, its precision drops         truth tables and therefore improves recall and Success Rate, but at
+to 0.155, compared with 0.915 for Octopus, resulting in a much              the cost of introducing more irrelevant tables.
+lower F1 score (0.262 vs. 0.921). Thus, aggressively increasing the             A closer look at the baselines reveals why they struggle with
+retrieval set can improve recall without yielding accurate table dis-       this trade-off. Full-Text Search performs poorly across all metrics,
+covery. More fundamentally, requiring users to specify 𝑘 is poorly          with F1 remaining below 0.08 on both datasets even at larger val-
+suited to data discovery as the number of relevant tables varies sub-       ues of 𝑘. This is expected because lexical relevance alone provides
+stantially across questions and is generally unknown beforehand             little evidence about whether independently retrieved tables can be
+for an end user. By contrast, agent-based methods Claude Code and           meaningfully combined. Pneuma performs substantially better at
+Octopus do not assume a predetermined answer cardinality to con-            identifying semantically relevant tables, but its table-wise retrieval
+tinue gathering and verifying evidence until the agent determines           formulation still does not explicitly model whether the retrieved
+that the relevant table set is sufficiently supported. This adaptive        candidates together form the required join group. In contrast, Octo-
+stopping behavior allows Octopus to maintain a substantially bet-           pus augments semantic discovery with join-specific primitives for
+ter precision–recall balance across datasets with heterogeneous             identifying and verifying joinable columns, allowing the agent to
+answer cardinalities.                                                       reason over both table relevance and cross-table connectivity. The
+                                                                            large gap between Octopus and Claude Code further suggests that
+Join-based Benchmark. We report the results on the two join-                general-purpose agentic exploration alone is less effective in this
+based datasets in Table 5. Unlike independent discovery, answering
+Octopus : Agentic Multi-Table Discovery over Tabular Data Lakes
+
+
+Table 5: Table retrieval results on the join-based benchmark in terms of macro Precision, Recall, F1, Success Rate, and Exact
+Match.
+
+                                                                        Spider                                                Bird
+                      Method                      P           R             F1        Succ       EM          P         R          F1     Succ       EM
+                     Full-Text Search
+                     𝑘 =1                       0.036       0.018       0.024         0.000     0.000     0.027     0.013     0.018      0.000     0.000
+                     𝑘 =2                       0.030       0.028       0.029         0.007     0.007     0.025     0.024     0.024      0.000     0.000
+                     𝑘 =5                       0.054       0.125       0.075         0.020     0.000     0.018     0.040     0.024      0.004     0.000
+                     𝑘 = 10                     0.043       0.197       0.070         0.039     0.000     0.013     0.060     0.022      0.013     0.000
+                     Pneuma
+                     𝑘 =1                       0.541       0.259       0.349         0.000     0.000     0.480     0.225     0.305      0.000     0.000
+                     𝑘 =2                       0.512       0.381       0.425         0.112     0.112     0.475     0.370     0.404      0.074     0.074
+                     𝑘 =5                       0.324       0.618       0.421         0.380     0.000     0.309     0.566     0.394      0.290     0.004
+                     𝑘 = 10                     0.200       0.726       0.311         0.544     0.000     0.199     0.689     0.305      0.453     0.000
+                      Claude Code               0.201       0.191       0.194         0.157     0.154     0.202     0.193     0.195      0.167     0.160
+                      Octopus                   0.688       0.674       0.675         0.554     0.515     0.455     0.443     0.445      0.401     0.385
+
+Table 6: Downstream question answering evaluation on the independent benchmark in terms of macro Precision, Recall, and
+F1.
+
+                                          Public BI                 Chicago Open Data                            ChEMBL                 Adventure Works
+              Method                  P       R          F1             P         R            F1        P         R         F1         P         R         F1
+              Claude Code        0.914      0.411       0.415       0.910        0.158        0.158     0.893     0.313     0.315      0.872     0.374     0.360
+              Octopus            0.813      0.616       0.625       0.792        0.267        0.269     0.799     0.628     0.631      0.755     0.634     0.593
+
+
+Table 7: Downstream question answering evaluation on the                                        them through lightweight tools. Specifically, it can inspect sample
+join-based benchmark in terms of macro Precision, Recall,                                       rows and column values, generate and execute SQL queries over
+and F1.                                                                                         the retrieved tables using DuckDB, and refine its queries based
+                                                                                                on the execution results. Once it identifies an answer, the agent
+                              Spider                              Bird                          returns the resulting query records for evaluation. We fix Claude
+                                                                                                Haiku 4.5 as the backbone for the NL2SQL agent for both discovery
+  Method                P         R        F1           P           R            F1
+                                                                                                methods, such that the downstream reasoning capability remains
+  Claude Code        0.870     0.137      0.134       0.862       0.085      0.083              identical and the primary difference lies in the evidence supplied
+  Octopus            0.590     0.482      0.466       0.687       0.197      0.194              by the preceding table-discovery stage.
+                                                                                                   For both Claude Code and Octopus, we directly pass the com-
+                                                                                                plete table set returned by the discovery agent without imposing an
+setting, and that the additional corpus-specific and join-oriented                              additional cardinality constraint. The NL2SQL agent is restricted
+access mechanisms provided by Octopus are beneficial for multi-                                 to these retrieved tables and cannot access other tables in the data
+table discovery.                                                                                lake. Therefore, relevant evidence missed during table discovery
+                                                                                                cannot be recovered in the downstream stage.
+5.3     NL2SQL Evaluation
+                                                                                                NL2SQL Evaluation Results. Table 6 and Table 7 report macro-
+We further evaluate whether the improvement in table discovery
+                                                                                                Precision, Recall, and F1 for the independent and join-based bench-
+translates into better downstream question answering by applying
+                                                                                                marks, respectively. Overall, Octopus achieves higher answer-level
+the same NL2SQL agent to the tables retrieved in the previous stage.
+                                                                                                F1 than Claude Code across all evaluated datasets, showing that
+For this evaluation, we compare Octopus with Claude Code, as
+                                                                                                its gains in table discovery translate directly into more effective
+both methods adaptively determine the returned table set rather
+                                                                                                downstream question answering. The precision-recall pattern is
+than requiring a predefined retrieval cardinality 𝑘.
+                                                                                                particularly consequential in the join setting, since missing even
+NL2SQL Agent. The NL2SQL agent follows the same thin-harness                                    one table participating in the required join may prevent the down-
+principle as Octopus. Given a natural-language question and the                                 stream agent from reconstructing the complete answer. The higher
+tables retrieved in the previous stage, the agent is provided with                              recall obtained with Octopus indicates that its discovery stage
+the schemas of all candidate tables and iteratively interacts with                              provides the downstream agent with more complete evidence.
+                                                                                                                                                                                                                                         Wen-Zhi Li and Sainyam Galhotra
+
+
+                                                                                                                                                    300
+
+
+
+
+                                                             Offline Storage (MB)
+                     4443                                                                        231                                                                  276                         275        275                                   0.109
+Offline Time (s)
+
+
+
+
+                                                                                                                                       Online Time (s)
+                                                                                                                                                                                       248
+
+
+
+
+                                                                                                                                                                                                                     Online Cost ($)
+              4000                                                             200                                                                         229          236 242                                                   0.10                                                     0.097
+                                                                                                                                                                                                                                                             0.085     0.080     0.084
+                                                                                                                                                    200                                                        176
+                            2510                                                                                                                                                                                                         0.066
+                                                                                                                                                                                                                                                     0.050
+              2000                                                             100                                                                                                                                                0.05     0.039                                   0.039
+                                                                                                                                                    100                                                                                                        0.027     0.030               0.032
+                                                                                       41                                                                                                               40
+                                                    405308                                  20         20       18   21                                          34               23         25
+                                              232                                                           6             8   17
+                                                                                                                                   6
+                   0 lic 13 go 30 48L 8 50re 15 er 25 d                             0 lic go L 1 re 1 er                                                 0 lic go L re er                                                         0.00 lic go L re er
+                   Pub ChicaChEMABdventu Spid Bir                                   Pub ChicaChEMABdventu Spid Bird                                      Pub ChicaChEMABdventu Spid Bird                                             Pub ChicaChEMABdventu Spid Bird
+                                                                                                            Pneuma                 Claude Code                              Octopus
+
+Figure 4: Efficiency comparison of Octopus and the baselines. (Left two): Offline efficiency measured by preparation time and
+storage footprint. (Right two): Online efficiency measured by processing time and cost per question.
+
+
+    Notably, Claude Code achieves higher answer-level precision                                                                                    decreases from 242 seconds per question for Claude Code to 23
+than Octopus across all datasets, but its recall is substantially lower.                                                                           seconds for Octopus, corresponding to a 10.5× speedup.
+This suggests that retrieving a small set of highly plausible tables                                                                                  A similar trend holds for API usage. Across all datasets, Octopus
+is insufficient when relevant evidence is omitted. By recovering a                                                                                 reduces the per-question API cost compared with Claude Code.
+more complete set of relevant tables, Octopus provides the down-                                                                                   These savings indicate that the efficiency gain is not merely due
+stream NL2SQL agent with better evidence coverage, resulting in                                                                                    to faster execution of the same agent trajectory. Rather, Octopus
+substantially higher F1 across all datasets. Since the same NL2SQL                                                                                 generally incurs less API cost to locate the relevant evidence.
+agent is used for both discovery methods and is restricted to the                                                                                     We attribute these improvements to the role of the Column-
+tables supplied by the discovery stage, these results further show                                                                                 Semantic Index as lightweight corpus-specific guidance. A general-
+that downstream reasoning cannot fully compensate for missing                                                                                      purpose agent such as Claude Code can inspect arbitrary files and
+upstream evidence.                                                                                                                                 execute flexible search operations, but without semantic knowl-
+                                                                                                                                                   edge of the data lake it may need to repeatedly formulate lexical
+5.4                  Efficiency Analysis                                                                                                           queries, inspect broad regions of the corpus, and revise unsuccess-
+                                                                                                                                                   ful searches. In contrast, Octopus can directly query the precom-
+We compare the efficiency of Octopus in both the offline prepa-
+                                                                                                                                                   puted semantic index to identify columns and tables related to an
+ration and online processing stages. Figure 4 reports offline pre-
+                                                                                                                                                   agent-specified concept, and then use direct table inspection or
+processing time and storage footprint against Pneuma, and per-
+                                                                                                                                                   general-purpose execution only when further verification is neces-
+question online execution time and API cost against Claude Code.
+                                                                                                                                                   sary. The offline semantic index therefore reduces expensive blind
+Offline Efficiency. Octopus requires substantially less offline                                                                                    exploration without restricting the flexibility of the agentic search
+preprocessing than Pneuma across all datasets. In particular, on                                                                                   process.
+Public BI, the offline preparation time decreases from 4443 seconds
+for Pneuma to only 13 seconds for Octopus, corresponding to a
+342× speedup. In terms of storage, Octopus consistently main-                                                                                      5.5            Ablation Study
+tains a smaller footprint, with the largest reduction occurring on                                                                                We study how the design choices of Octopus, particularly the
+Adventure Works, where it requires approximately 18× less storage.                                                                                Column-Semantic Index introduced in Section 3.2, affect its retrieval
+   This efficiency follows directly from the lightweight offline de-                                                                              effectiveness and efficiency. We further investigate whether the
+sign of Octopus. For independent discovery, Octopus only embeds                                                                                   semantic index can benefit a general-purpose coding agent, and
+column headers once and reuses these representations across all                                                                                   how different backbone LLMs affect the behavior of Octopus.
+subsequent queries. Even in the join-based setting, it supplements
+these embeddings only with lightweight MinHash signatures for es-
+timating column joinability. It therefore avoids constructing dense                                                                                Column-Semantic Index. We first ablate the Column-Semantic
+representations over individual rows or cells. Pneuma, by contrast,                                                                                Index while keeping the remaining agent harness and tools un-
+invokes an LLM to generate table-level schema narrations and                                                                                       changed. The results are shown in Table 8. Removing the semantic
+constructs additional retrieval indexes over table content. Conse-                                                                                 index consistently degrades retrieval quality while substantially
+quently, its preprocessing cost grows with the amount of table                                                                                     increasing online search cost.
+content that must be represented and indexed, whereas the offline                                                                                     These results show that the Column-Semantic Index serves two
+structures of Octopus remain comparatively compact.                                                                                                complementary roles. First, it improves retrieval effectiveness by
+                                                                                                                                                   providing the agent with semantic schema evidence that may be
+Online Efficiency. The lightweight semantic guidance also sub-                                                                                     difficult to recover through lexical search alone. Second, it substan-
+stantially reduces the cost of online agentic exploration. As shown                                                                                tially reduces the amount of blind exploration required over the
+in Figure 4, Octopus is faster than Claude Code on all six datasets,                                                                               raw data lake. Without the index, the agent must rely more heavily
+while simultaneously incurring lower API cost. The largest latency                                                                                 on repeated value searches, file inspection, and general-purpose ex-
+reduction occurs on ChEMBL, where the average processing time                                                                                      ecution to locate relevant schema evidence. The larger degradation
+Octopus : Agentic Multi-Table Discovery over Tabular Data Lakes
+
+
+Table 8: Ablation study of the Column-Semantic Index tool on the independent and join-based benchmarks. For the independent
+setting, we report table-level retrieval performance on Public BI; for the join-based setting, we report table-level retrieval
+performance on Spider.
+
+              Variant                                         P                 R                   F1                     Time (s)                     Cost ($)
+              Independent (Public BI)
+              Octopus                                      0.916              0.945             0.913                       34.1                       0.039
+                w/o Column-Semantic Index              0.879 (−4.0%)      0.870 (−7.9%)     0.855 (−6.4%)             79.1 (+132.0%)               0.050 (+28.2%)
+              Join-based (Spider)
+              Octopus                                      0.688              0.674             0.675                      39.2                        0.039
+                w/o Column-Semantic Index              0.625 (−9.2%)     0.603 (−10.5%)     0.608 (−9.9%)            136.1 (+247.2%)               0.043 (+10.3%)
+
+
+Table 9: Effect of the Column-Semantic Index on Claude Code                         Table 10: Model-backbone ablation for Octopus on the Public
+on the Public BI benchmark.                                                         BI dataset.
+
+  Method                       P         R        F1      Time (s)   Cost ($)        Model                                P         R            F1           Time (s)            Cost ($)
+  Claude Code                0.476     0.494     0.473      228.5      0.066
+                                                                                     Claude Haiku 4.5                0.916       0.945          0.913            34.1                 0.039
+    with Semantic Index      0.542     0.573     0.544      222.7      0.064
+    Δ                       +13.9%    +16.0%    +15.0%      −2.5%      −3.0%         Claude Sonnet 4.5               0.920       0.911          0.898            62.6                 0.146
+                                                                                     DeepSeek V3.2                   0.329       0.339          0.330            147.2                0.166
+                                                                                     GLM-5                           0.728       0.711          0.707            79.6                 0.182
+
+on Spider further suggests that semantic guidance becomes particu-
+larly useful in the join setting, where the agent must locate multiple              Semantic Column Search                                                                93.3%
+complementary tables before reasoning about their joinability.
+   Furthermore, the Column-Semantic Index is not specific to the                           Table Inspection                                                                   99.7%
+Octopus harness. We expose the same semantic-search primitive                               SQL Execution                                                    71.5%
+to Claude Code through the Model Context Protocol (MCP) and                                   Value Search                              41.1%
+evaluate it on Public BI. Claude Code can invoke the tool during its
+native exploration process to retrieve query-relevant columns and                                                                               54.3%
+                                                                                            Shell Execution
+their associated tables, while retaining its existing file-access and
+reasoning capabilities. This integration requires no modification to                                          0       20           40            60            80           100
+                                                                                                                              Questions using tool (%)
+the internal agent implementation, making the index a lightweight                                Semantic schema access         Direct tabular data access           General-purpose execution
+and reusable retrieval primitive for general-purpose agents.
+   Table 9 shows that adding the Column-Semantic Index improves
+                                                                                    Figure 5: Tool usage frequency of Octopus on the Public BI
+Claude Code across all retrieval metrics. Macro-Precision increases
+                                                                                    benchmark.
+from 0.476 to 0.542, Recall from 0.494 to 0.573, and F1 from 0.473
+to 0.544, corresponding to a 15.0% relative improvement in F1.
+Importantly, this improvement does not come at the expense of
+                                                                                    a final table set for more than 96% of questions, whereas DeepSeek-
+efficiency: average execution time decreases slightly from 228.5 to
+                                                                                    V3.2 submits on only approximately 34%. For many remaining cases,
+222.7 seconds, while API cost decreases from $0.066 to $0.064. Thus,
+                                                                                    the latter continues searching or verifying candidates until the turn
+even for an independently developed coding agent, lightweight
+                                                                                    budget is exhausted without producing a final answer. Therefore,
+semantic guidance enables more accurate discovery while slightly
+                                                                                    the backbone comparison reflects not only semantic reasoning abil-
+reducing the amount of exploration required. This result shows
+                                                                                    ity, but also how reliably a model decides that sufficient evidence
+that the Column-Semantic Index can also benefit a general-purpose
+                                                                                    has been collected and terminates the agentic search process. In-
+coding agent outside the Octopus harness, rather than serving
+                                                                                    vestigating how model training affects such stopping behavior is
+only as an Octopus-specific optimization.
+                                                                                    beyond the scope of this work.
+Choice of LLM. We further evaluate the sensitivity of Octopus
+to its backbone LLM by replacing Claude Haiku 4.5 with Claude                       5.6      Agent Behavior Analysis
+Sonnet 4.5 [4], DeepSeek-V3.2 [13], and GLM-5 [22] on Public BI.                    To understand how Octopus uses the complementary access mech-
+Table 10 shows that a more expensive backbone does not necessarily                  anisms provided by its thin harness, we analyze the complete tool-
+yield better retrieval performance.                                                 interaction traces of all 951 Public BI questions using Claude Haiku
+   Our execution traces further indicate that these differences are                 4.5 as the backbone LLM. Figure 5 summarizes how often the dif-
+strongly affected by the models’ agentic control behavior, particu-                 ferent information-access tools are used across questions. Direct
+larly their termination decisions. The Anthropic backbones submit                   tabular access is broadly used in practice: table inspection appears
+                                                                                                                          Wen-Zhi Li and Sainyam Galhotra
+
+
+in 99.7% of questions, and SQL execution appears in 71.5%. Seman-       search. Unlike conventional data discovery systems that rely on
+tic schema access is also widely exercised, with semantic column        fixed retrieval pipelines and substantial offline indexing, Octopus
+search used in 93.3% of questions, showing that lightweight se-         performs adaptive discovery over large, heterogeneous tabular data
+mantic guidance plays an important role in orienting the search         lakes using an LLM agent. At the same time, unlike approaches
+process. General-purpose execution remains complementary but            based purely on direct corpus interaction, Octopus does not rely
+still substantial, with shell execution used in 54.3% of questions.     solely on unguided exploration of raw data. Instead, it combines
+Overall, these results show that all three access mechanisms are ac-    lightweight, reusable semantic schema guidance with direct access
+tively used in practice while serving distinct roles: semantic search   to raw tables, allowing a small amount of offline structure to guide,
+provides corpus-level guidance, direct tabular operations support       rather than constrain, agentic search. Its thin harness exposes com-
+candidate inspection and verification, and general-purpose execu-       plementary table-specific primitives for semantic column search,
+tion preserves open-endedness beyond the predefined structured          value and schema inspection, SQL execution, and, in the join-based
+primitives.                                                             setting, discovering and verifying joinable columns, while leaving
+                                                                        their composition and ordering to the agent. This enables Octopus
+6   RELATED WORK                                                        to support both multi-table independent discovery and join-based
+Tabular Data Discovery. Tabular data discovery aims to retrieve         discovery without assuming a fixed retrieval cardinality.
+tables relevant to a user need from large table collections [7, 9,
+15, 18, 19, 23, 24, 47, 53]. Natural language has emerged as an in-     7    CONCLUSIONS
+creasingly common interface for broad audiences [7, 24, 47, 48].        In this work, we extend tabular data discovery to multi-table set-
+However, existing systems typically incur substantial offline or on-    tings in which relevant information may reside independently in
+line costs: many require training or schema/content indexing at         multiple tables or require composition through joins. We intro-
+scale (long offline time and large storage footprint), while others     duce Octopus, a lightweight agentic framework that combines
+rely on expensive LLM judgments during retrieval (high online           reusable column-level semantic guidance, structured tabular op-
+latency). Moreover, most discovery methods ultimately rank tables       erations, general-purpose execution, and lightweight joinability
+independently and are not designed to recover a jointly required ta-    metadata while leaving retrieval decisions to the LLM agent. We
+ble set, whether the relevant tables provide independently sufficient   also construct a benchmark covering four independent-discovery
+evidence or must be composed through joins.                             datasets and two join-based datasets. Across all six datasets, Octo-
+Tabular Question Answering. Tabular question answering fo-              pus achieves the highest table-discovery macro-F1 and the highest
+cuses on producing answers to NL questions given one or more            exact-match rate on both join-based benchmarks, while reducing of-
+provided tables. Recent state-of-the-art approaches increasingly        fline preprocessing overhead relative to Pneuma and online latency
+leverage LLMs for language understanding and table reasoning,           and API cost relative to Claude Code. Its retrieval improvements
+including NL2SQL-style pipelines and tool-augmented prompt-             also translate into higher downstream question-answering F1 when
+ing [11, 16, 52]. While these methods target final answers, they        the same NL2SQL agent is applied to the discovered tables.
+presuppose access to the relevant tables and therefore do not ad-
+dress the upstream problem of discovering evidence within large,        REFERENCES
+heterogeneous repositories.                                              [1] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Floren-
+                                                                             cia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal
+Agentic Search. Recent advances in LLM agents have shifted re-               Anadkat, et al. 2023. Gpt-4 technical report. arXiv preprint arXiv:2303.08774
+                                                                             (2023).
+trieval from a single-shot retrieve-then-reason paradigm toward          [2] Anthropic. 2025. Claude 3.7 Sonnet and Claude Code. https://www.anthropic.
+iterative search, where an agent can interleave reasoning, tool              com/news/claude-3-7-sonnet. Accessed: 2026-08-20.
+invocation, and observations to progressively refine its informa-        [3] Anthropic. 2025. Introducing Claude Haiku 4.5. https://www.anthropic.com/
+                                                                             news/claude-haiku-4-5
+tion needs [49]. Recent retrieval agents further train or prompt         [4] Anthropic. 2025. Introducing Claude Sonnet 4.5. https://www.anthropic.com/
+LLMs to autonomously formulate and reformulate queries over                  news/claude-sonnet-4-5.
+multiple search rounds [26]. While these approaches make the re-         [5] Michael Armbrust, Ali Ghodsi, Reynold Xin, Matei Zaharia, et al. 2021. Lakehouse:
+                                                                             a new generation of open platforms that unify data warehousing and advanced
+trieval process adaptive, corpus access is typically still mediated          analytics. In Proceedings of CIDR, Vol. 8. 28.
+by a predefined search engine or retriever. More recently, direct        [6] Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan,
+                                                                             Wenbin Ge, Yu Han, Fei Huang, et al. 2023. Qwen technical report. arXiv preprint
+corpus interaction has emerged as an alternative interface for agen-         arXiv:2309.16609 (2023).
+tic search. Recent work [29] shows that capable agents can by-           [7] Muhammad Imam Luthfi Balaka, David Alexander, Qiming Wang, Yue Gong,
+pass conventional retrievers and directly search raw corpora using           Adila Krisnadhi, and Raul Castro Fernandez. 2025. Pneuma: Leveraging LLMs
+                                                                             for Tabular Data Representation and Retrieval in an End-to-End System. Proc.
+general-purpose primitives such as grep, file reads, and shell com-          ACM Manag. Data 3, 3 (2025), 200:1–200:28.
+mands. Related work similarly demonstrates that agentic keyword          [8] Andrei Z Broder. 1997. On the resemblance and containment of documents. In Pro-
+search can provide competitive document retrieval and question-              ceedings. Compression and Complexity of SEQUENCES 1997 (Cat. No. 97TB100171).
+                                                                             IEEE, 21–29.
+answering performance without maintaining a vector database [43].        [9] Sonia Castelo, Rémi Rampin, Aécio S. R. Santos, Aline Bessa, Fernando Chirigati,
+These results highlight the flexibility of exposing fine-grained cor-        and Juliana Freire. 2021. Auctus: A Dataset Search Engine for Data Discovery
+                                                                             and Augmentation. Proc. VLDB Endow. 14, 12 (2021), 2791–2794.
+pus access directly to LLM agents.                                      [10] Jianlv Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. 2024.
+                                                                             Bge m3-embedding: Multi-lingual, multi-functionality, multi-granularity text
+Positioning of Octopus. Octopus sits at the intersection of tab-             embeddings through self-knowledge distillation. arXiv preprint arXiv:2402.03216
+ular data discovery, question answering, and emerging agentic                (2024).
+Octopus : Agentic Multi-Table Discovery over Tabular Data Lakes
+
+
+[11] Zhoujun Cheng, Tianbao Xie, Peng Shi, Chengzu Li, Rahul Nadkarni, Yushi Hu,          [33] Renée J Miller, Fatemeh Nargesian, Erkang Zhu, Christina Christodoulakis, Ken Q
+     Caiming Xiong, Dragomir Radev, Mari Ostendorf, Luke Zettlemoyer, Noah A.                  Pu, and Periklis Andritsos. 2018. Making open data transparent: Data discovery
+     Smith, and Tao Yu. 2023. Binding Language Models in Symbolic Languages. In                on open data. IEEE Data Eng. Bull. 41, 2 (2018), 59–70.
+     ICLR. OpenReview.net.                                                                [34] Linyong Nan, Chiachun Hsieh, Ziming Mao, Xi Victoria Lin, Neha Verma, Rui
+[12] Chicago Data Portal. n.d.. Chicago Data Portal. https://data.cityofchicago.org/.          Zhang, Wojciech Kryscinski, Hailey Schoelkopf, Riley Kong, Xiangru Tang,
+[13] DeepSeek-AI. 2025. DeepSeek-V3.2: Pushing the Frontier of Open Large Language             Mutethia Mutuma, Ben Rosand, Isabel Trindade, Renusree Bandaru, Jacob Cun-
+     Models. arXiv preprint arXiv:2512.02556 (2025).                                           ningham, Caiming Xiong, and Dragomir R. Radev. 2022. FeTaQA: Free-form
+[14] AnHai Doan, Alon Halevy, and Zachary Ives. 2012. Principles of data integration.          Table Question Answering. Trans. Assoc. Comput. Linguistics 10 (2022), 35–49.
+     Elsevier.                                                                            [35] Fatemeh Nargesian, Erkang Zhu, Renée J Miller, Ken Q Pu, and Patricia C Arocena.
+[15] Grace Fan, Roee Shraga, and Renée J. Miller. 2024. Gen-T: Table Reclamation in            2019. Data lake management: challenges and opportunities. Proceedings of the
+     Data Lakes. In ICDE. IEEE, 3532–3545.                                                     VLDB Endowment 12, 12 (2019), 1986–1989.
+[16] Meihao Fan, Ju Fan, Nan Tang, Lei Cao, Guoliang Li, and Xiaoyong Du. 2025.           [36] OpenAI. 2025. Introducing Codex. https://openai.com/index/introducing-codex/.
+     AutoPrep: Natural Language Question-Aware Data Preparation with a Multi-                  Accessed: 2026-08-20.
+     Agent Framework. Proc. VLDB Endow. 18, 10 (2025), 3504–3517.                         [37] Simone Papicchio, Paolo Papotti, and Luca Cagliero. 2023. QATCH: Benchmark-
+[17] Yanlin Feng, Sajjadur Rahman, Aaron Feng, Vincent Chen, and Eser Kandogan.                ing SQL-centric tasks with Table Representation Learning Models on Your Data.
+     2024. CMDBench: A Benchmark for Coarse-to-fine Multimodal Data Discovery                  In NeurIPS.
+     in Compound AI Systems. In GUIDE-AI@SIGMOD. ACM, 16–25.                              [38] Mohammadreza Pourreza, Hailong Li, Ruoxi Sun, Yeounoh Chung, Shayan Talaei,
+[18] Raul Castro Fernandez, Ziawasch Abedjan, Famien Koko, Gina Yuan, Samuel                   Gaurav Tarlok Kakkar, Yu Gan, Amin Saberi, Fatma Ozcan, and Sercan Ö. Arik.
+     Madden, and Michael Stonebraker. 2018. Aurum: A data discovery system. In 2018            2025. CHASE-SQL: Multi-Path Reasoning and Preference Optimized Candidate
+     IEEE 34th International Conference on Data Engineering (ICDE). IEEE, 1001–1012.           Selection in Text-to-SQL. In ICLR. OpenReview.net.
+[19] Sainyam Galhotra, Yue Gong, and Raul Castro Fernandez. 2023. Metam: Goal-            [39] Mohammadreza Pourreza and Davood Rafiei. 2023. DIN-SQL: Decomposed
+     oriented data discovery. In 2023 IEEE 39th International Conference on Data               In-Context Learning of Text-to-SQL with Self-Correction. In NeurIPS.
+     Engineering (ICDE). IEEE, 2780–2793.                                                 [40] Public BI Benchmark. n.d.. Public BI Benchmark. https://github.com/cwida/
+[20] Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun, Yichen Qian, Bolin Ding, and               public_bi_benchmark.
+     Jingren Zhou. 2024. Text-to-SQL Empowered by Large Language Models: A                [41] Stephen Robertson and Hugo Zaragoza. 2009. The probabilistic relevance frame-
+     Benchmark Evaluation. Proc. VLDB Endow. 17, 5 (2024), 1132–1145.                          work: BM25 and beyond. Foundations and trends® in information retrieval 4, 1-2
+[21] Anna Gaulton, Louisa J Bellis, A Patricia Bento, Jon Chambers, Mark Davies,               (2009), 1–174.
+     Anne Hersey, Yvonne Light, Shaun McGlinchey, David Michalovich, Bissan               [42] Vladislav Shkapenyuk, Divesh Srivastava, Theodore Johnson, and Parisa Ghane.
+     Al-Lazikani, et al. 2012. ChEMBL: a large-scale bioactivity database for drug             2025. Automatic Metadata Extraction for Text-to-SQL. CoRR abs/2505.19988
+     discovery. Nucleic acids research 40, D1 (2012), D1100–D1107.                             (2025).
+[22] GLM-5 Team. 2026. GLM-5: from Vibe Coding to Agentic Engineering. arXiv              [43] Shreyas Subramanian, Adewale Akinfaderin, Yanyan Zhang, Ishan Singh, Mani
+     preprint arXiv:2602.15763 (2026).                                                         Khanuja, Sandeep Singh, and Maira Ladeira Tanke. 2025. Keyword search is all
+[23] Yue Gong, Zhiru Zhu, Sainyam Galhotra, and Raul Castro Fernandez. 2023. Ver:              you need: Achieving RAG-Level Performance without vector databases using
+     View Discovery in the Wild. In ICDE. IEEE, 503–516.                                       agentic tool use. arXiv preprint arXiv:2602.23368 (2025).
+[24] Jonathan Herzig, Thomas Müller, Syrine Krichene, and Julian Martin Eisenschlos.      [44] Garry Tan. 2026. Thin Harness, Fat Skills. https://github.com/garrytan/gbrain/
+     2021. Open Domain Question Answering over Tables via Dense Retrieval. In                  blob/master/docs/ethos/THIN_HARNESS_FAT_SKILLS.md. Accessed: 2026-08-
+     NAACL-HLT. Association for Computational Linguistics, 512–519.                            20.
+[25] Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir          [45] Qwen Team. 2024. Qwen2.5: A Party of Foundation Models. https://qwenlm.
+     Press, and Karthik Narasimhan. 2024. SWE-bench: Can Language Models Resolve               github.io/blog/qwen2.5/
+     Real-World GitHub Issues?. In International Conference on Learning Representa-       [46] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne
+     tions.                                                                                    Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal
+[26] Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang,                 Azhar, et al. 2023. Llama: Open and efficient foundation language models. arXiv
+     Hamed Zamani, and Jiawei Han. 2025. Search-r1: Training llms to reason                    preprint arXiv:2302.13971 (2023).
+     and leverage search engines with reinforcement learning. arXiv preprint              [47] Fei Wang, Kexuan Sun, Muhao Chen, Jay Pujara, and Pedro A. Szekely. 2021.
+     arXiv:2503.09516 (2025).                                                                  Retrieving Complex Tables with Multi-Granular Graph Representation Learning.
+[27] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir                    In SIGIR. ACM, 1472–1482.
+     Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim               [48] Qiming Wang and Raul Castro Fernandez. 2023. Solo: Data Discovery Using
+     Rocktäschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-Augmented                 Natural Language Questions Via A Self-Supervised Approach. Proc. ACM Manag.
+     Generation for Knowledge-Intensive NLP Tasks. In NeurIPS.                                 Data 1, 4 (2023), 262:1–262:27.
+[28] Jinyang Li, Binyuan Hui, Ge Qu, Jiaxi Yang, Binhua Li, Bowen Li, Bailin Wang,        [49] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+     Bowen Qin, Ruiying Geng, Nan Huo, Xuanhe Zhou, Chenhao Ma, Guoliang Li,                   and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language
+     Kevin Chen-Chuan Chang, Fei Huang, Reynold Cheng, and Yongbin Li. 2023.                   Models. In International Conference on Learning Representations.
+     Can LLM Already Serve as A Database Interface? A BIg Bench for Large-Scale           [50] Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga, Dongxu Wang, Zifan Li,
+     Database Grounded Text-to-SQLs. In NeurIPS.                                               James Ma, Irene Li, Qingning Yao, Shanelle Roman, Zilin Zhang, and Dragomir R.
+[29] Zhuofeng Li, Haoxiang Zhang, Cong Wei, Pan Lu, Ping Nie, Yi Lu, Yuyang                    Radev. 2018. Spider: A Large-Scale Human-Labeled Dataset for Complex and
+     Bai, Shangbin Feng, Hangxiao Zhu, Ming Zhong, et al. 2026. Beyond semantic                Cross-Domain Semantic Parsing and Text-to-SQL Task. In EMNLP. Association
+     similarity: Rethinking retrieval for agentic search via direct corpus interaction.        for Computational Linguistics, 3911–3921.
+     arXiv preprint arXiv:2605.05242 (2026).                                              [51] Alex L Zhang, Tim Kraska, and Omar Khattab. 2025. Recursive language models.
+[30] Jerry Liu. 2022. LlamaIndex. https://doi.org/10.5281/zenodo.1234                          arXiv preprint arXiv:2512.24601 (2025).
+[31] Mike A. Merrill, Alexander G. Shaw, Nicholas Carlini, Boxuan Li, Harsh Raj, Ivan     [52] Yunjia Zhang, Jordan Henkel, Avrilia Floratou, Joyce Cahoon, Shaleen Deep, and
+     Bercovich, et al. 2026. Terminal-Bench: Benchmarking Agents on Hard, Realistic            Jignesh M Patel. 2024. ReAcTable: enhancing ReAct for table question answering.
+     Tasks in Command Line Interfaces. arXiv preprint arXiv:2601.11868 (2026).                 Proceedings of the VLDB Endowment 17, 8 (2024), 1981–1994.
+[32] Microsoft. 2024. Adventure Works. https://learn.microsoft.com/en-us/sql/             [53] Yi Zhang and Zachary G Ives. 2020. Finding related tables in data lakes for
+     samples/adventureworks-install-configure?view=sql-server-ver16&tabs=ssms.                 interactive data science. In Proceedings of the 2020 ACM SIGMOD International
+                                                                                               Conference on Management of Data. 1951–1966.
+

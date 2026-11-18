@@ -1,0 +1,1748 @@
+                                         RealHiTBench: A Comprehensive Realistic Hierarchical Table Benchmark
+                                                       for Evaluating LLM-Based Table Analysis
+                                                      Pengzuo Wu1* , Yuhang Yang1* , Guangcheng Zhu1 , Chao Ye1 , Hong Gu2 ,
+                                                                  Xu Lu1 , Ruixuan Xiao1 , Bowen Bao 1 , Yijing He1 ,
+                                                             Liangyu Zha3 , Wentao Ye1 , Junbo Zhao1 , Haobo Wang1†
+                                                           1
+                                                             Zhejiang University 2 vivo Mobile Communication Co., Ltd
+                                                               3
+                                                                 Institute of Computing Innovation, Zhejiang University
+                                                               {wupengzuo, yangyuhang, wanghaobo}@zju.edu.cn
+
+                                                                                                      For Children under 18, which exact activity of Household costs the most time of Mothers when
+                                                                  Abstract                            Mother part time and Father full time?
+
+
+                                             With the rapid advancement of Large Language
+arXiv:2506.13405v2 [cs.CL] 14 Dec 2025
+
+
+
+
+                                             Models (LLMs), there is an increasing need for
+                                             challenging benchmarks to evaluate their capa-
+                                             bilities in handling complex tabular data. How-
+                                             ever, existing benchmarks are either based on
+                                             outdated data setups or focus solely on simple,
+                                             flat table structures. In this paper, we introduce
+                                             RealHiTBench, a comprehensive benchmark
+                                             designed to evaluate the performance of both
+                                             LLMs and Multimodal LLMs (MLLMs) across
+                                             a variety of input formats for complex tabular
+                                             data, including LaTeX, HTML, and PNG. Re-
+                                             alHiTBench also includes a diverse collection
+                                                                                                               Hierarchical Column Header                          Hierarchical Row Header
+                                             of tables with intricate structures, spanning a
+                                                                                                               Nested Sub-Tables                                   Implicit Multi-Table Join
+                                             wide range of task types. Our experimental
+                                             results, using 25 state-of-the-art LLMs, demon-
+                                             strate that RealHiTBench is indeed a challeng-       Figure 1: A complex table example with typical com-
+                                             ing benchmark. Moreover, we also develop             plex structures and a question-answer example.
+                                             TreeThinker, a tree-based pipeline that orga-
+                                             nizes hierarchical headers into a tree structure
+                                                                                                  further enhances models’ capability of table com-
+                                             for enhanced tabular reasoning, validating the
+                                             importance of improving LLMs’ perception of          prehension. Given these advancements, the rapid
+                                             table hierarchies. We hope that our work will        development of LLMs and the continuous emer-
+                                             inspire further research on tabular data reason-     gence of diverse tabular data in real-world scenar-
+                                             ing and the development of more robust mod-          ios have highlighted the need for a comprehensive
+                                             els. The code and data are available at https:       evaluation of LLMs’ table understanding capabili-
+                                             //github.com/cspzyy/RealHiTBench.                    ties, putting forward new requirements on the rele-
+                                                                                                  vant benchmarks.
+                                         1   Introduction
+                                                                                                     Unfortunately, we find that the current tabular
+                                         In recent years, there has been a lot of work            data benchmarks, such as TAT-QA (Zhu et al.,
+                                         on table analysis (Li et al., 2024b; Zhao et al.,        2021), TableBench (Wu et al., 2024), and InfiAgent-
+                                         2024). Specifically, an increasing number of stud-       DABench (Hu et al., 2024), largely consist of
+                                         ies discuss table question answering (TableQA)           flat tables. More concretely, in such tables, each
+                                         tasks. (Yang et al., 2024b; Sarkar and Lausen,           column represents an attribute, each row repre-
+                                         2023; Zhou et al., 2024; Nguyen et al., 2024; Li         sents a record, and all data are stored in a simple
+                                         et al., 2024a). Additionally, the introduction of        one-dimensional format; see Figure 13 for visual
+                                         large language models (LLMs), including close-           demonstration. However, in practical applications,
+                                         source models such as GPT-4o (OpenAI, 2023)              humans often organize relatively complex tables to
+                                         and Gemini-1.5-Pro (Anil et al., 2023), and table-       represent multifaceted relationships between vari-
+                                         oriented models like TableGPT (Su et al., 2024)          ables. Such hierarchically structured tables are
+                                             *
+                                                 Equal contribution.                              popular in various domains, including economy,
+                                             †
+                                                 Corresponding author.                            science, and employment, on public data platforms.
+   To address this issue, some benchmarks               ing from 7.27 to 56.95. Importantly, overall low
+have considered hierarchical tables, such as            scores (mainly below 70) highlight that the ability
+HiTab (Cheng et al., 2022) and SciTab (Lu et al.,       of LLMs to comprehend and process intricate table
+2023). However, these benchmarks fail to compre-        structures remains an area in need of significant im-
+hensively present the LLMs’ understanding capa-         provement. We also develop a tree-based pipeline
+bilities of complex table structures. For example,      (dubbed TreeThinker) that automatically injects ta-
+SciTab (Lu et al., 2023) and AIT-QA (Katsis et al.,     ble hierarchies into instructions. Empirically, we
+2022) only consider tables of the scientific and air-   show that, with self-emphasized table hierarchies,
+line domains, respectively. MM-Tab (Zheng et al.,       LLMs’ structural understanding ability can indeed
+2024) provides only image-based input, while hi-        be enhanced.
+erarchical tables in realistic applications are also
+presented in a textual way. SpreadSheetBench (Ma        2   Related Work
+et al., 2024) focuses on the operation of tables.       Table Analysis. Table analysis is pivotal across
+HiTab (Cheng et al., 2022) organizes its tables         numerous domains (He et al., 2024), while table
+with lossy JSON format, only contains fundamen-         question answering (TableQA) can effectively as-
+tal QA tasks, and provides incomplete supervision.      sess analytical capabilities (Müller et al., 2019).
+More importantly, most of these benchmarks focus        Recently, there has been a growing number of stud-
+primarily on relatively simple hierarchical tables,     ies focusing on the ability of LLMs to compre-
+particularly those with a basic column hierarchy,       hend tabular data (Singha et al., 2023; Nguyen
+where the hierarchy typically does not exceed two       et al., 2024; Deng et al., 2024). However, the
+levels. To date, there is still a lack of dedicated     development of LLMs leads to the emergence of
+benchmarks for comprehensively evaluating LLMs’         different branches. Common tabular data are in
+ability to understand complex tabular hierarchies.      text form to be processed by LLMs (Anil et al.,
+   To this end, we propose RealHiTBench, a chal-        2023; Yang et al., 2024a; Dubey et al., 2024), while
+lenging Realistic Hierarchical Table Benchmark          other image-based tables are suited to be processed
+based on complex tables and tasks. (i) Complex Ta-      by MLLMs (Wang et al., 2024; Liu et al., 2024).
+ble Structures: Our benchmark includes complex          Additionally, some table-oriented LLMs for both
+tables with intricate features (partially depicted in   modalities have also been proposed (Su et al., 2024;
+Figure 1), which are commonly found in real-world       Zheng et al., 2024). Therefore, the flourishing
+scenarios but often overlooked in existing bench-       development of LLMs makes challenging bench-
+marks. (ii) Modal and Format Diversity: We              marks for tabular data increasingly important.
+explore the performance of both text and image
+approaches while others focusing solely on one of       Table Analysis Benchmarks. An increasing
+them. Our benchmark provides LLMs and MLLMs             number of benchmarks for table analysis are dis-
+to be tested with various input formats, such as La-    cussed (Chen et al., 2020; Nan et al., 2022). How-
+TeX, HTML, and PNG. (iii) Question Diversity:           ever, a proportion of benchmarks focus more on
+RealHiTBench covers a wide range of question            other aspects, such as reasoning methods and su-
+types, each designed to test different aspects of       pervision fine-tuning, while overlooking the struc-
+a model’s ability. Especially a type called Struc-      tural complexity of the data, especially the table
+ture Comprehending is designed on the basis of          dimensions (Wu et al., 2024; Zheng et al., 2024).
+complex parts. (iv) Accurate and Efficient Anno-        Although some recent benchmarks have introduced
+tation: Our benchmark employs a rigorous annota-        the concepts of hierarchical tables (Cheng et al.,
+tion process. GPT-based automated annotation and        2022; Katsis et al., 2022; Ma et al., 2024), and a
+human checks ensure the accuracy and reliability        complex question answering benchmark has been
+of the questions and answers.                           proposed to bridge the gap between theoretical and
+   We conducted a comprehensive evaluation of           real-world tabular data (Wu et al., 2024), the tables
+abundant types of models consisting of table-           in these benchmarks are not complex enough and
+oriented LLMs, and open-source/closed-source            there has been no detailed discussion of the tables.
+generic LLM/MLLMs. In addition, we tested a cou-           Therefore, in order to introduce a benchmark that
+ple of table reasoning tasks with different proper      can effectively evaluate current LLMs, we propose
+metrics. The performance of different models dif-       RealHiTBench consisting of complex tables and
+fers greatly, with average scores of all tasks rang-    TableQA, which evaluates LLMs and MLLMs, as
+well as textual and visual input data. Furthermore,       1. Data Collection          2. Question Generation
+                                                                    Table             2.1 Generate Attribution ⇐ Task Definition
+we look forward to the possible future development                 Collection
+directions of LLMs in table reasoning.                            Structure
+                                                                                                 Complexity, Diversity, Specificity, Real-World
+                                                                                                 Relevance, Anomalies, Length, Writing Style ...
+                                                                  Taxonomy
+                                                                                      2.2 Generate Question ⇐ Selected Attributions & Table
+3     RealHiTBench                                                   Data                        [Question]: Which TV site showed the greatest
+                                                                   Processing                    decrease in human concentration from September
+                                                                                                 to December 2023 in Northern Europe? ...
+In practical applications, tabular data holds sig-                  Format
+                                                                   Converting         3. Question Review
+nificant value. Numerous previous studies have                                                                1
+                                                                                                                  Completeness
+                                                                                                                                  2
+                                                                                                                                       Relevance
+
+proposed a series of benchmarks (Zhu et al., 2021;                   Data                                     3
+                                                                                                                   Feasibility
+                                                                                                                                  4
+                                                                                                                                        Clarity
+                                                                   Validation
+Parikh et al., 2020), which have effectively pro-
+                                                          4. Answer Annotation with Verification
+pelled research in this field. However, as applica-
+                                                                                                                                 ComplexBench
+tion scenarios become increasingly complex and                                  Answer1            GPT EVAL
+
+large language models (LLMs) gradually emerge as
+                                                                                Answer2              Score                            Human
+the mainstream method for table reasoning (Yang                                                    Calculation                        Check
+
+et al., 2024b), the previous benchmarks struggle to
+                                                                                Answer3                Score                           Final
+provide a comprehensive and accurate assessment                                                       Ranking                         Answer
+                                                                               LLMs
+of model capabilities. Hence, there is an urgent
+need for a new, realistic, and challenging bench-
+                                                         Figure 2: The construction process of RealHiTBench.
+mark to evaluate the progress of research methods
+in this field. We propose RealHiTBench focusing          structure types as following definitions. Most types
+on complex structures and tasks. Complex tables,         of complex structure are presented in Figure 1.
+including hierarchical tables, are widely used in var-
+ious domains (Lu et al., 2023; Katsis et al., 2022).     (1) Hierarchical Column Header. A column
+We propose such a challenging benchmark full of          header, typically located at the top of a table, serves
+complex tables and corresponding difficult tasks to      as the title for each column. It identifies the cate-
+assess the upper bound of the comprehension capa-        gory, attribute, or subject of the data in that column
+bility of LLMs, which may further inspire future         and provides a structured organization of the table
+research on processing tables with LLM.                  data. In most cases, the feature of the complex
+                                                         column header is cell merging, which leads to the
+3.1    Table Collection and Process                      complex header hierarchy in the table (the cells
+To construct a realistic and comprehensive dataset,      with green background in Figure 1).
+all tables in our benchmark are raw from 13 differ-      (2) Hierarchical Row Header. A row header is a
+ent open platforms and cover 24 different domains        label or identifier for each row in a table, typically
+like economy, society, science, and so on (shown         located at the beginning of the row. In realistic
+in the Appendix A.1 and A.3). In real applications,      tables. Row headers sometimes use indentation
+table-related benchmarks are presented in either         or clustering to present classified semantics. The
+textual (Cheng et al., 2022; Parikh et al., 2020) or     common hierarchical row header is presented by
+visual (Kim et al., 2024) manner. However, there is      indentation within a single column (the cell groups
+still no fixed format for complex table understand-      in blue within Figure 1). Moreover, the hierarchical
+ing. Therefore, we explore the influence of textual      row header is also presented by multiple columns,
+and visual ways. Specifically, we also explore the       with a large merged cell corresponding to several
+influence of different input formats, including La-      subcategory cells in horizontal direction.
+TeX, HTML, CSV, Markdown, and PNG, whose
+performance is shown in Figure A.2.                      (3) Nested Sub-Tables. Sometimes, due to se-
+                                                         mantic requirements, a whole table consists of sev-
+3.2    Complex Structures                                eral areas with vertical segmentations. Typical pre-
+                                                         sentation is that there are horizontal cells spanning
+In actual scenarios, we often encounter tables
+                                                         the full width of the table (the cells in orange within
+that show structural and even semantic complexity.
+                                                         Figure 1). These full-width cells divide the root
+However, current benchmarks (Cheng et al., 2022;
+                                                         table into nested sub-tables.
+Lu et al., 2023) have not adequately discussed the
+complexity of table structure. Concentrating on          (4) Multi-Table Join. Speaking of the dimen-
+complexity in tabular data, we define 5 complex          sions of a table, single-table scenarios cannot nec-
+Table 1: Comparison with existing datasets in Dataset Information, Task Types, and Input Formats. Here are
+abbreviations inside and their meanings: FC stands for Fact Checking, NR for Numerical Reasoning, DA for Data
+Analysis, CG for Chart Generation, and SC for Structure Comprehending.
+
+                                           Dataset Information                           Task Type            Data Format
+     Benchmark       Year
+                            Hierarchy   #Table   #QA pairs   Source    Domain   FC   NR    DA    CG      SC   Text   Image
+       HiTab         2022     High      3,597     10,672         2       28     ✓    ✓      ✘        ✘   ✘     ✓      ✘
+      AIT-QA         2022     High       116       515           1       1      ✘    ✓      ✘        ✘   ✘     ✓      ✘
+    MultiHierTT      2022     High      1,800     10,440         1       1      ✘    ✓      ✘        ✘   ✘     ✓      ✘
+
+     TableBench      2024     Low        586       3,544         6       18     ✓    ✓      ✓        ✓   ✘     ✓      ✘
+ InfiAgent-QABench   2024     Low         52       257           1       9      ✘    ✓      ✓        ✘   ✘     ✓      ✘
+  TableVQA-Bench     2024     Low        894       1,500         3       4      ✓    ✓      ✘        ✘   ✘     ✓      ✓
+    Text2Analysis    2024     Low        347       2,249         1       1      ✘    ✘      ✓        ✓   ✘     ✓      ✘
+
+   RealHiTBench      2025     High       708       3,752         13      24     ✓    ✓      ✓        ✓   ✓     ✓      ✓
+
+
+
+essarily reflect the complexity of real-world appli-         a restricted focus on three domains, a simplistic
+cations, and multi-table tasks have been proposed            QA task, and incomplete supervision.
+in recent work (Wu et al., 2025). We extend the
+representation of multiple tables to two refined             3.3      Complex Tasks
+categories: (i) Explicit Multi-Table Join: We de-
+fine the majority of the multi-tables that have been         In order to evaluate the model’s abilities compre-
+discussed as Explicit Multi-Table (shown in Fig-             hensively, we define 5 primary types following
+ure 14). (ii) Implicit Multi-Table Join: However,            TableBench (Wu et al., 2024): Fact Checking (FC),
+we notice other special multi-tables in our dataset.         Numerical Reasoning (NR), Data Analysis (DA),
+As depicted with red box in Figure 1, there are sub-         Chart Generation (CG), and Structure Compre-
+tables with the same structures, especially column           hending (SC) (in the Table 2). More detailed sub-
+headers. The implicit Multi-Table type looks not             types (shown in Appendix B.1) are derived from the
+different from a normal single table, but in fact,           above types. Notably, we extend one type named
+it is in the form of multiple tables. Interestingly,         Structure Comprehending, which is tailored for
+this type sometimes contains additional semantics,           complex tables. This kind of task provides the new
+such as comparisons, but is not easy to detect when          table by exchanging some complex parts of the
+comprehending tables.                                        source table. Then we ask LLMs the same question
+                                                             with two similar tabular input to evaluate the ability
+(5) Miscellanies. We also find that some other               of LLMs to comprehend structures.
+special contents obtain a part of the tabular infor-            Based on the question types above, we metic-
+mation, including additional explanatory texts out-          ulously design pretty difficult questions for each
+side the table and cell background colors. These             complex structure. We take questions generated
+nonstructural elements also play a certain role in           from the table in Figure 1 as an example: (i)
+complex tables.                                              Header Hierarchy: For the characteristics of
+                                                             header hierarchy, a possible question is: For Chil-
+Remark. It is worth noting that the hierarchical             dren under 18, which exact activity of Household
+information we consider also appears in some exist-          cost the most time of Mothers when both full time?
+ing benchmarks. However, we include tables with              It is difficult to identify the scale of columns and
+higher complexity (see Table 8 for more details).            rows with classification and hierarchy. (ii) Nested
+Notably, it is necessary to clarify some differences         Sub-Tables: several segments of a whole table
+between our work and the previous HiTab (Cheng               lead to interesting semantic tricks. One challeng-
+et al., 2022) benchmark. First, HiTab pre-extracts           ing question is: How much total time costs Mothers
+the tree structure of hierarchical tables in JSON for-       in Both full time for all the children recorded in
+mat, which prevents effective evaluation of whether          the table? The correct conclusion is to just sum
+LLMs can directly understand structural informa-             up total time for children under 18, instead of the
+tion from table inputs. Additionally, it suffers from        whole table. Such summing questions with content
+partition tests if models thoroughly understand the     them for further exploration. (4) We introduce a
+inclusion relationships among sub-tables.               couple of challenging task types. The tasks of struc-
+                                                        ture comprehending prove to be difficult for LLMs
+3.4   Annotation Generation                             (shown in section 5.3). The above characteristics
+Question Generation. Following the previous             are shown in Figure 1 and Table 1.
+work (Yu et al., 2023a), we select some attributes
+that we also agree are important as the core for        4     TreeThinker
+question construction from what GPT-4o considers.       Beyond benchmark, we propose TreeThinker, a
+After feeding different prompts of each question        understanding-augmented pipeline that enhances
+type and acquiring generated questions, we conduct      the model’s ability in complex hierarchical tables
+manual question review according to four factors:       question answering. As shown in Figure 3, we
+Relevance, Completeness, Feasibility, and Clarity.      first prompt the model to automatically organiz-
+After the first turn of annotation, we swap questions   ing hierarchical headers into Tree Structure, then
+of each other to check the rationality.                 aligning keywords from questions with the tree
+Answer Generation. To eliminate the instabil-           headers, and efficiently locating sub-table relevant
+ity of GPT generation, we generate answers with         to the question.
+GPT-4o based on well-designed answer prompt and
+                                                        4.1    Tree Generation
+innovate the pipeline: We feed a table with prompts
+to several models, acquiring multiple results and       Complex tables often contain multi-level row and
+the frequency of occurrence of each result. Then        column headers, making it difficult for models to
+the results are input into the G-Eval (Liu et al.,      accurately analyze their intricate hierarchical rela-
+2023) module and scored for each result. Thus,          tionships. Therefore, to enhance the model’s abil-
+final scores of each result can be figured out with     ity in understanding complex table structures, we
+initial score and frequency. The result with the        prompt model to explain the table’s headers struc-
+highest final score becomes the candidate answer.       ture and organize them into tree structure.
+We also conduct careful human check again that the
+                                                        Explanation. We first enable the model to self-
+table expert is dedicated to check answers one by
+                                                        explain the structural information of the table head-
+one according to the question and exact table con-
+                                                        ers, including their meanings, scopes of influ-
+tent. Furthermore, we employ a tree-based method
+                                                        ence, hierarchical structure, and relationships be-
+to enhance our annotation process, finding that the
+                                                        tween headers. Referring to the previous approach
+automatic annotation accuracy is further improved.
+                                                        (Zhao et al., 2023), we prompt the model by en-
+3.5   Dataset Statistics                                coding each node of the table header as a tuples
+                                                        T = (t1 , t2 , t3 , t4 ). Specifically, the first element
+We propose RealHiTBench containing 708 tables           represents row header (R) or column header (C),
+and 3,752 questions. RealHiTBench completely            along with its corresponding level. And the second
+focuses on discussing complex tables with such          and third elements represent its start and end posi-
+characteristics: (1) Tables in our benchmark are        tions, while the fourth element contains the content
+totally raw from available public platforms, and        of the cell.
+our benchmark totally consists of complex tables           For example, a tuple (R0, 1, 2, City) indicates
+in structure or semantics. Thus, we organize 6 uni-     that it is a row header (R) at level 0, spanning
+versity students as annotators spending 150 hours       from row 1 to row 2, with the value City. This
+each person on collecting these tables. By the way,     approach compresses header information into a
+annotators spend 480 hours each person on ques-         tuple list L = [T1 , T2 , · · · , Tn ], enables the model
+tion answering annotations. (2) Compared to work        to more clearly identify the hierarchical structure
+involving complex tables such as HiTab (Cheng           and generating a "Structural Blueprint" of the table
+et al., 2022) and MultiHierTT (Zhao et al., 2022)       that effectively guides subsequent reasoning.
+before, the tables in our dataset are more complex
+(quantized in Table 8), even the median sizes of the    Generation. The tree structure, with its clear
+tables are larger than tables in other works (Wu        parent-child connections, can accurately repre-
+et al., 2024). (3) We systematically define differ-     sents the hierarchical relationships of table headers,
+ent types of complex tabular structure and classify     while making table data organization and retrieval
+                                                      TreeThinker                             to decompose the question Q into several keywords
+                                          1. Explain and Generate
+                                                                                              K = [k1 , k2 , ..., km ], helping it focus on the most
+                                          Column Headers: [(C0, 0, 0, Grade) , …]             critical aspects of the question.
+                                First     Row Headers: [(R0, 1, 3, 1) , …]
+                               Round
+                                                                                              Aligning and Reasoning. Once the question de-
+                                          2.1. Decompose and Align                            composition is finished, we instruct the model
+                                        Keywords: male, students, female, Grade 2
+                                        Relevant Column Headers: [(C0, 0, 0, Grade), …]
+                                                                                              to align keywords with header tuples, enabling
+                                        Relevant Row Headers: [(R0, 4, 6, 2), …]
+                                                                                              it to accurately pinpoint the headers relevant to
+        How many more male
+        students than female
+                              Second      2.2. Reason and Refine
+                                                                                              the question. Specifically, given the keywords
+        students in Grade 2 ?
+                               Round
+                                        Relevant Sub-Table: \begin{tabular}{ccc} …            K and the header tuples H, the goal of Align-
+       [Final Answer]: 1575
+                                        Thought: I now need to calculate the difference …
+                                        Action: Perform the calculation of the difference …
+                                                                                              ing is to build a Keyword-Header Tree H ′ =
+                                        Result: Calculate the difference: 1575
+                                                                                              select(T, AlignLM (T, k) > θ), T ∈ H, k ∈ K.
+      Column Header                                                  Sub-Table                The function AlignLM (T, k) calculate the degree
+                                        Column Root
+      Row Header                                                   Tree Structure             of matching between header tuple T and keyword
+      Data Cell                                           Total Students                      k. The select() function then chooses the header
+                       Grade      Gender
+                                                    Number                   Percent          T whose matching degree with keyword k exceeds
+                                   Male               5749                    57.9            the threshold θ and add them to the Keyword-
+   Row Root              2
+                                  Female              4174                    42.1            Header Tree H ′ . After that, we incorporate H ′
+                                                                                              in prompts, guiding the LLM to retrieve essential
+  Figure 3: The overall framework of TreeThinker.                                             information, e.g. relevant sub-tables, from tables
+                                                                                              with improved reasoning abilities.
+                                                                                                 Lastly, we also supplement a React-Style multi-
+more intuitive and efficient. Therefore, we ask the                                           round refinement strategy — through multiple
+model to organize the scattered header list L based                                           rounds of Thought, Action and Result, ultimately
+on their hierarchical relationships into the Table-                                           outputting the final answer. Full prompts are shown
+Header Tree H with following steps: (1) Divide                                                in Table 17 and 18.
+the tuple list L into groups according to their lev-
+els, such that all tuples with the same level are                                             5     Experiment
+grouped together. Add a special ROOT node Lev-
+                                                                                              5.1    Experimental Setup
+eled "-1" for rows and columns. (2) For each tuple
+A ∈ L. If the start and end positions of A are                                                Baselines. We evaluated 25 models, including
+equal (At2 = At3 ), mark A as a leaf node. (3)                                                different modalities, with parameters ranging from
+Otherwise, compare its t2 and t3 values with every                                            7B to 90B across four categories: (1) Close-source
+closest higher level and same flag tuple B. If tuple                                          models, including GPT-o1 (OpenAI, 2024), GPT-
+A is within the range of tuple B (At2 ≥ Bt2 and                                               4o (OpenAI, 2023), Deepseek-R1-API(Guo et al.,
+At3 ≤ Bt3 ), then B is the parent-header of A. (4)                                            2025), Gemini-1.5-pro (Anil et al., 2023), QwQ
+Repeat steps 2 and 3 iteratively until all tuples in L                                        (Team, 2024) and Doubao-1.5-pro (Team, 2025)
+are linked to their respective parent nodes (Tuples                                           . (2) Open-source language models, including
+without parent node are linked to the ROOT node),                                             Llama3s (Dubey et al., 2024), Qwen2.5s (Yang
+forming a hierarchical Table-Header Tree H.                                                   et al., 2024a), Mistral (Jiang et al., 2023) and
+                                                                                              Deepseek-R1-Distalls (Guo et al., 2025). (3) Open-
+4.2    Tree-based Reasoning                                                                   source multimodal models, including LLaVA-1.5
+Previous studies (Shi et al., 2023) have shown that                                           (Liu et al., 2024), mPLUG-owl3 (Ye et al., 2024),
+LLMs are often distracted by irrelevant informa-                                              mPLUG-owl2 (Ye et al., 2023), and Llama3-
+tion. To address this issue, we prompt the model to                                           Visions. (4) Table-oriented models, including
+decompose question into keywords and align them                                               TableGPT (Su et al., 2024), TableLLMs (Wu et al.,
+with the table headers, thereby helping it accurately                                         2024), TableLlama (Zhang et al., 2024), and Table-
+identify the sub-table relevant to the question.                                              LLaVA (Zheng et al., 2024).
+
+Decomposition. Decomposing questions into                                                     Metrics. For Fact Checking, Numerical Reason-
+more fine-grained components can simplify the rea-                                            ing and Structure Comprehending, we refer to pre-
+soning process required and enhance the model’s                                               vious work (Zhao et al., 2022) using F1 and EM as
+performance. Therefore, we first prompt the model                                             score metric for these tasks. For chart generation,
+          Table 2: The evaluation results of advanced models with Text and Image Inputs on RealHiTBench.
+
+                                           Fact Checking      Numerical Reasoning                           Structure Comprehending                               Data Analysis                      Chart Generation
+            Model              Input
+                                          EM          F1         EM          F1                                EM                        F1              GPT-EVAL                  ROUGE          PASS@1                ECR
+
+                                                                   Table-oriented Models
+      TableGPT2-7B              Text      46.10     53.80       29.31        39.81       48.23                                          56.68                   62.76              33.25             32.47             67.53
+        TableLlama              Text      14.30     19.35        7.26        12.63       36.31                                          42.91                   24.73               7.89                0                0
+  TableLLM-Llama3.1-8B          Text      33.44     39.49       13.36        21.02       53.28                                          58.72                   47.86              27.26              6.49             22.73
+   TableLLM-Qwen2-7B            Text      33.53     40.41       22.05        29.04       36.09                                          44.75                   47.30              18.86              4.55             10.39
+     Table-LLava-7B            Image       4.19      7.05       2.98          5.59        7.38                                          11.83                   22.46               8.72                0              1.30
+
+                                                            Open-source Large Language Models
+   Llama3.1-8B-Instruct         Text      30.32     44.93       14.53       27.21      35.90                                            50.80                   60.12              32.25              4.55             13.64
+   Qwen2.5-7B-Instruct          Text      18.65     38.39        5.32       19.75      23.48                                            44.81                   40.17              24.17             15.58             48.70
+  Mistral-7B-Instruct-v0.3      Text      15.61     31.88        3.37       16.10      21.21                                            49.62                   57.74              19.84              7.14             18.18
+  Llama3.3-70B-Instruct         Text      53.08     64.53       36.58       48.99      55.81                                            68.93                   52.26              27.98             24.03             50.65
+   Qwen2.5-72B-Instruct         Text      51.93     62.15       26.98       39.23      54.55                                            68.34                   68.45              35.90             14.29             27.27
+
+                                                      Open-source Multimodal Large Language Models
+      LLaVa-v1.5-7B            Image      5.51       9.37       1.17       6.54        13.23       30.51                                                        26.60              17.74               0               11.04
+     mPLUG-Owl3-7B             Image      8.71      14.34        4.02      12.72       41.24       48.86                                                        30.71              18.53             3.25               6.49
+Llama3.2-11B-Vision-Instruct    Text      18.41     38.44        9.86      22.97       23.39       43.22                                                        52.75              30.59             4.55              17.53
+Llama3.2-11B-Vision-Instruct   Image      15.84     26.55        9.59      18.49       20.87       32.57                                                        41.32              22.75             1.95              20.78
+Llama3.2-11B-Vision-Instruct Image+Text   19.39     32.54       10.89      20.94       27.99       43.85                                                        39.98              22.43             6.49              35.71
+Llama3.2-90B-Vision-Instruct    Text      52.10     61.84       28.15      41.21       58.52       69.57                                                        57.28              31.87             7.79              22.73
+Llama3.2-90B-Vision-Instruct   Image      23.75     36.08       25.46      28.05       33.33       46.40                                                        41.18              25.46             5.19              16.23
+Llama3.2-90B-Vision-Instruct Image+Text   55.60     65.19       38.65      49.71       59.80       70.23                                                        53.06              32.36             13.64             39.61
+
+                                                                   Close-source Models
+          GPT4o                 Text      60.31     68.97       38.65       50.12                             63.04                     71.14                   73.37              36.36             20.13             40.26
+          GPT4o                Image      43.39     51.87       27.63       36.68                             42.68                     52.89                   65.24              33.10             10.39             25.32
+          GPT4o              Image+Text   62.45     69.01       41.37       49.59                             65.91                     74.49                   72.05              35.25             14.29             30.52
+        Gemini1.5-pro           Text      59.08     66.14       35.54       43.74                             63.64                     69.71                   70.72              36.17              9.74             25.32
+        Gemini1.5-pro          Image      50.37     57.62       25.42       33.76                             41.52                     50.23                   67.22              36.26              7.79             38.96
+        Gemini1.5-pro        Image+Text   62.04     68.08       37.61       45.62                             56.74                     65.80                   74.80              36.26              9.09             24.03
+        DeepSeek-R1             Text      70.91     79.45       70.31       72.54                             82.71                     84.62                   79.55              42.59              7.14             32.14
+
+                                                                 Models with TreeThinker
+      GPT4o(TreeThinker)        Text      64.50     72.41       53.34       65.08      64.40                                            75.67                   77.26              37.63             39.47             67.76
+      GPT4o(TreeThinker)       Image      44.13     52.41       40.57       49.35      49.21                                            58.32                   70.83              34.44             19.61             67.32
+      GPT4o(TreeThinker)     Image+Text   65.82     73.32       55.60       64.28      66.31                                            77.42                   79.45              37.08             33.55             65.13
+
+
+
+
+                                                                                                       70
+we calculate the ECR to assess code executabil-                                                                                                                                                                       Latex
+                                                                                                       60                                                         57.5759.04           57.34                          Html
+ity, extract y-axis values to compare with reference                                                          53.07
+                                                                                                                   51.24
+                                                                                                                                                                                            53.41
+                                                                                                                                                                                                 50.62
+                                                                                                                                                                                                                      Markdown
+                                                                                                       50                                                                      48.71                  48.03           CSV
+data, and compute PASS@1 to evaluate the pass
+                                                                                  Task Average Score
+
+
+
+
+                                                                                                                           42.6 42.78     42.07                            42.21
+                                                                                                                                               39.86
+                                                                                                       40
+rate. For Data Analysis, we calculate ROUGE-L                                                                                                      34.6434.72
+
+                                                                                                       30                                                                                                     28.57
+(Lin, 2004) to evaluate the objective similarity be-
+                                                                                                                                                                                                                  20.2718.92
+tween generated and reference answers. Inspired                                                        20                                                                                                                      16.9
+
+
+by G-EVAL(Liu et al., 2023), we also design an                                                         10
+
+evaluation template using GPT-4o to evaluate the                                                        0
+                                                                                                                   Fact                     Numerical              Structure                Data                 Chart
+                                                                                                                 Checking                   Reasoning            Comprehending             Analysis            Generation
+scores of model answers. A detailed evaluation
+prompt template can be found in Appendix C.3.                                     Figure 4: The comparison of average scores for different
+                                                                                  text formats across various tasks.
+5.2      Implementation Details
+We deploy open-source models on 8 H800 GPUs                                       maximum output length to 4,096 tokens, balancing
+using the Transformer library, while closed-source                                detail and efficiency. In order to focus on the hi-
+models are accessed through official APIs in accor-                               erarchical characteristics, we separate long tables
+dance with their documentation. For table input                                   from normal-size tables in experiment, but we still
+formats, we tested GPT-4’s performance on La-                                     keep long tables in our dataset. For more details,
+TeX, HTML, Markdown, and CSV formats as text                                      please refer to the appendix C.
+modality input, with LaTeX outperforming the oth-
+ers, as shown in the figure 4. Therefore we select                                5.3                          Main Results
+Latex for text modality input. Meanwhile, we se-                                  ① Overall Performance. The results in Table 2
+lected PNG format tables for visual modality input.                               highlight the limitations of current LLMs in han-
+Additionally, we set the model’s temperature to 0                                 dling realistic hierarchical table analysis. For our
+to ensure deterministic outputs and configured the                                tasks, the EM metric of almost all models remains
+is relatively low, with the highest not exceeding         within a single conversation during evaluation. We
+70. Plus, all models demonstrate remarkably low           extracted the impact of different table sizes on the
+outcomes in Chart Generation, with code execu-            performance of various modal models, which indi-
+tion accuracy below 30. Interestingly, many Table-        cates that long table sizes do affect models’ table
+oriented models exhibit pronounced overfitting.           comprehension abilities, with a more pronounced
+However, TableGPT2 delivers the most impressive           impact on visual modality models. Given that long
+results among 7B-level models. For models with            tables can exhibit unique complexities, we consider
+over 10B parameters, GPT-4o and LLama show                breaking down the large-scale content and inputting
+comparable performance. It’s worth mentioning             them into LLMs with multi-turn dialogues, which
+that DeepSeek-R1 achieves the most outstanding            are likely to disrupt the tabular information of the
+results among all models. Although this might be          tables, which is unacceptable. Therefore, we hope
+attributed to its 671B MoE architecture, it also, to      that future works can develop reasonable methods
+some extent, indicates the potential of reasoning for     to fully utilize the value of these long tables, or that
+large models in addressing hierarchical structures.       future LLMs can support the input requirements
+                                                          for enormous tables due to real usage requirements.
+② The text modality outperforms the vision
+modality as an input. On average, GPT-4o with
+                                                          Table 4: The ablation results of TreeThinker when using
+text input outperforms image input by 15, while
+                                                          GPT-4o and Llama3.3-70b-Instruct as base models.
+Gemini-Pro with text input exceeds image input by
+10. Similarly, open-source MLLMs generally lag                                             GPT-4o             Llama3-70b
+                                                           Components of TreeThinker
+behind their backbone LLMs. Some table-oriented                                        Avg Score   Delta    Avg Score   Delta
+MLLMs like Table-LLaVa also perform worse than             All                           63.29       0        62.23      0
+other textual ones. The performance of image in-           w/o Tree Generation           55.27      -8.02     54.04     -8.19
+puts is not as good as that of text inputs, but they       w/o Tree-based Reasoning      60.75      -2.54     54.58     -7.65
+may serve as a complementary to text inputs.
+
+③ Automatic tree reasoning significantly en-              ⑤ Each TreeThinker component enhances the
+hances structure understanding ability. Com-              model’s effectiveness. As indicated in Table 4,
+pared to the baseline, GPT-4o with our Tree-              we conduct ablation studies on GPT-4o and
+Thinker method demonstrates consistent improve-           Llama3-70b to assess the impact of various com-
+ments across different input modalities, achieving        ponents on the performance of TreeThinker. We
+the best performance in RealHiTBench. For exam-           find that each component contributes to the model’s
+ple, GPT-4o in the Chart Generation, the PASS@1           effectiveness, with Tree Generation playing a par-
+for text+image input increased from 14.29 to 33.55,       ticularly crucial role in enhancing the model’s un-
+marking a 134.7% improvement. Even for text-              derstanding of realistic complex hierarchical table.
+only input, TreeThinker enhances performance in           Note: We place more experimental results in the
+NR, raising F1 from 36.68 to 49.35.                       Appendix D.
+
+                                                          6      Conclusions and Future Directions
+Table 3: The evaluation results of advanced models with
+Text and Image Inputs on RealHiTBench.                    In this paper, we establish a new benchmark for
+                                                          evaluating modern LLMs’ ability to handle com-
+                                Table Tokens              plex hierarchical tables. Our results with 25 LLMs
+    Model      Input
+                        <10K     10K-20K       >20K       suggest that it is still challenging for LLMs to un-
+    GPT-4o      Text    56.45       40         30.77
+                                                          derstand realistic complex hierarchical table anal-
+    GPT-4o     Image    42.54      21.83       13.48      ysis. Based on our full empirical findings, we an-
+    Llama3      Text     50.9      39.14       27.78      ticipate further research in table analysis would
+   Llama3V     Image    30.03       18         9.01       consider some promising directions such as (i)-
+                                                          improving the visual structure understanding abil-
+④ Too long table size still matters. While han-           ity of MLLMs; (ii)-developing better tree-based
+dling tables, we identify 127 tables with complex         structural reasoning techniques; (iii)-scaling LLMs
+structures that are significantly larger, making it       to handle very long tables.
+impossible for LLMs to take in the complete table
+Limitations                                                ily of highly capable multimodal models. CoRR,
+                                                           abs/2312.11805.
+We discover some limitations during benchmark
+construction. (i) We recruit and train 6 college         Wenhu Chen, Hongmin Wang, Jianshu Chen, Yunkai
+                                                          Zhang, Hong Wang, Shiyang Li, Xiyou Zhou, and
+students, who spent 540 hours each on data collec-        William Yang Wang. 2020. Tabfact: A large-scale
+tion, processing, and annotation. We focus on the         dataset for table-based fact verification. In 8th Inter-
+complexity of the tables and the accuracy of the          national Conference on Learning Representations,
+annotations, so there is still room for improvement       ICLR 2020, Addis Ababa, Ethiopia, April 26-30,
+                                                          2020. OpenReview.net.
+in terms of data volume. (ii) In the TreeThinker
+pipeline, we implement a multi-turn prompting ap-        Zhoujun Cheng, Haoyu Dong, Zhiruo Wang, Ran Jia,
+proach, which significantly enhances the model’s           Jiaqi Guo, Yan Gao, Shi Han, Jian-Guang Lou, and
+ability to understand table structures. However,           Dongmei Zhang. 2022. Hitab: A hierarchical table
+                                                           dataset for question answering and natural language
+this slows down the process of applying the Tree-          generation. In Proceedings of the 60th Annual Meet-
+Thinker pipeline, presenting a trade-off.                  ing of the Association for Computational Linguistics
+                                                           (Volume 1: Long Papers), ACL 2022, Dublin, Ireland,
+Ethical Considerations                                     May 22-27, 2022, pages 1094–1110. Association for
+                                                           Computational Linguistics.
+RealHiTBench, an open English benchmark that
+                                                         Irwin Deng, Kushagra Dixit, Vivek Gupta, and Dan
+supports research in the field of table analysis. Our       Roth. 2024.     Enhancing temporal understand-
+table data sources are all from well-known public           ing in llms for semi-structured tables. CoRR,
+data platforms on the Internet, and the data are fully      abs/2407.16030.
+usable. To ensure that our dataset does not contain
+                                                         Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey,
+any sensitive information, we establish strict re-         Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman,
+view rules for annotators and set up 3 rounds of           Akhil Mathur, Alan Schelten, Amy Yang, Angela
+human checks throughout the annotation process,            Fan, et al. 2024. The llama 3 herd of models. arXiv
+corresponding to the table, question, and answer,          preprint arXiv:2407.21783.
+respectively. Therefore, we propose a benchmark          Virginia K. Felkner, Jennifer A. Thompson, and
+that is clean and free from any ethical issues. More       Jonathan May. 2024. GPT is not an annotator: The
+details about our dataset and annotation are in Sec-       necessity of human annotation in fairness bench-
+                                                           mark construction. In Proceedings of the 62nd
+tion 3 and Appendix A and B.
+                                                           Annual Meeting of the Association for Computa-
+                                                           tional Linguistics (Volume 1: Long Papers), ACL
+Acknowledgments                                            2024, Bangkok, Thailand, August 11-16, 2024, pages
+                                                           14104–14115. Association for Computational Lin-
+This work is supported by NSFC under Grants (No.           guistics.
+U24A201401) and partially supported by Pioneer
+                                                         Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song,
+R&D Program of Zhejiang (No. 2024C01035).
+                                                           Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma,
+                                                           Peiyi Wang, Xiao Bi, et al. 2025. Deepseek-r1: In-
+                                                           centivizing reasoning capability in llms via reinforce-
+References                                                 ment learning. arXiv preprint arXiv:2501.12948.
+Rohan Anil, Sebastian Borgeaud, Yonghui Wu, Jean-        Xinyi He, Mengyu Zhou, Xinrun Xu, Xiaojun Ma,
+  Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan         Rui Ding, Lun Du, Yan Gao, Ran Jia, Xu Chen,
+  Schalkwyk, Andrew M. Dai, Anja Hauth, Katie Mil-         Shi Han, Zejian Yuan, and Dongmei Zhang. 2024.
+  lican, David Silver, Slav Petrov, Melvin Johnson,        Text2analysis: A benchmark of table question an-
+  Ioannis Antonoglou, Julian Schrittwieser, Amelia         swering with advanced data analysis and unclear
+  Glaese, Jilin Chen, Emily Pitler, Timothy P. Lilli-      queries. In Thirty-Eighth AAAI Conference on Artifi-
+  crap, Angeliki Lazaridou, Orhan Firat, James Molloy,     cial Intelligence, AAAI 2024, Thirty-Sixth Conference
+  Michael Isard, Paul Ronald Barham, Tom Henni-            on Innovative Applications of Artificial Intelligence,
+  gan, Benjamin Lee, Fabio Viola, Malcolm Reynolds,        IAAI 2024, Fourteenth Symposium on Educational
+  Yuanzhong Xu, Ryan Doherty, Eli Collins, Clemens         Advances in Artificial Intelligence, EAAI 2014, Febru-
+  Meyer, Eliza Rutherford, Erica Moreira, Kareem           ary 20-27, 2024, Vancouver, Canada, pages 18206–
+  Ayoub, Megha Goel, George Tucker, Enrique Pi-            18215. AAAI Press.
+  queras, Maxim Krikun, Iain Barr, Nikolay Savinov,
+  Ivo Danihelka, Becca Roelofs, Anaïs White, Anders      Xueyu Hu, Ziyu Zhao, Shuang Wei, Ziwei Chai, Qianli
+  Andreassen, Tamara von Glehn, Lakshman Yagati,           Ma, Guoyin Wang, Xuwu Wang, Jing Su, Jingjing
+  Mehran Kazemi, Lucas Gonzalez, Misha Khalman,            Xu, Ming Zhu, Yao Cheng, Jianbo Yuan, Jiwei Li,
+  Jakub Sygnowski, and et al. 2023. Gemini: A fam-         Kun Kuang, Yang Yang, Hongxia Yang, and Fei Wu.
+  2024. Infiagent-dabench: Evaluating agents on data         Zeyao Ma, Bohan Zhang, Jing Zhang, Jifan Yu, Xi-
+  analysis tasks. In Forty-first International Confer-         aokang Zhang, Xiaohan Zhang, Sijia Luo, Xi Wang,
+  ence on Machine Learning, ICML 2024, Vienna, Aus-            and Jie Tang. 2024. Spreadsheetbench: Towards chal-
+  tria, July 21-27, 2024. OpenReview.net.                      lenging real world spreadsheet manipulation. CoRR,
+                                                               abs/2406.14991.
+Albert Q. Jiang, Alexandre Sablayrolles, Arthur Men-
+  sch, Chris Bamford, Devendra Singh Chaplot, Diego          Thomas Müller, Francesco Piccinno, Peter Shaw, Mas-
+  de Las Casas, Florian Bressand, Gianna Lengyel,              simo Nicosia, and Yasemin Altun. 2019. Answering
+  Guillaume Lample, Lucile Saulnier, Lélio Re-                 conversational questions on structured data without
+  nard Lavaud, Marie-Anne Lachaux, Pierre Stock,               logical forms. In Proceedings of the 2019 Confer-
+  Teven Le Scao, Thibaut Lavril, Thomas Wang, Timo-            ence on Empirical Methods in Natural Language Pro-
+  thée Lacroix, and William El Sayed. 2023. Mistral            cessing and the 9th International Joint Conference
+  7b. CoRR, abs/2310.06825.                                    on Natural Language Processing, EMNLP-IJCNLP
+Yannis Katsis, Saneem A. Chemmengath, Vishwa-                  2019, Hong Kong, China, November 3-7, 2019, pages
+  jeet Kumar, Samarth Bharadwaj, Mustafa Canim,                5901–5909. Association for Computational Linguis-
+  Michael R. Glass, Alfio Gliozzo, Feifei Pan, Jay-            tics.
+  deep Sen, Karthik Sankaranarayanan, and Soumen             Linyong Nan, Chiachun Hsieh, Ziming Mao, Xi Victo-
+  Chakrabarti. 2022. AIT-QA: question answering                ria Lin, Neha Verma, Rui Zhang, Wojciech Kryscin-
+  dataset over complex tables in the airline industry.         ski, Hailey Schoelkopf, Riley Kong, Xiangru Tang,
+  In Proceedings of the 2022 Conference of the North           Mutethia Mutuma, Ben Rosand, Isabel Trindade,
+  American Chapter of the Association for Computa-             Renusree Bandaru, Jacob Cunningham, Caiming
+  tional Linguistics: Human Language Technologies:             Xiong, and Dragomir R. Radev. 2022. Fetaqa: Free-
+  Industry Track, NAACL 2022, Hybrid: Seattle, Wash-           form table question answering. Trans. Assoc. Com-
+  ington, USA + Online, July 10-15, 2022, pages 305–           put. Linguistics, 10:35–49.
+  314. Association for Computational Linguistics.
+Yoonsik Kim, Moonbin Yim, and Ka Yeon Song.                  Giang Nguyen, Ivan Brugere, Shubham Sharma, San-
+  2024. Tablevqa-bench: A visual question answer-              jay Kariyappa, Anh Totti Nguyen, and Freddy Lécué.
+  ing benchmark on multiple table domains. CoRR,               2024. Interpretable llm-based table question answer-
+  abs/2404.19205.                                              ing. CoRR, abs/2412.12386.
+
+Qianlong Li, Chen Huang, Shuai Li, Yuanxin Xiang,            OpenAI. 2023. GPT-4 technical report.            CoRR,
+  Deng Xiong, and Wenqiang Lei. 2024a. Graphot-                abs/2303.08774.
+  ter: Evolving llm-based graph reasoning for complex
+  table question answering. CoRR, abs/2412.01230.            OpenAI. 2024. Introducing openai o1-preview: A new
+                                                               series of reasoning models for solving hard problems.
+Zhenyu Li, Xiuxing Li, Sunqi Fan, and Jianyong Wang.           available now.
+  2024b. Optimization techniques for unsupervised
+  complex table reasoning via self-training framework.       Ankur P. Parikh, Xuezhi Wang, Sebastian Gehrmann,
+  IEEE Trans. Knowl. Data Eng., 36(12):8996–9010.              Manaal Faruqui, Bhuwan Dhingra, Diyi Yang, and
+                                                               Dipanjan Das. 2020. Totto: A controlled table-to-text
+Chin-Yew Lin. 2004. Rouge: A package for automatic             generation dataset. In Proceedings of the 2020 Con-
+  evaluation of summaries. In Text summarization               ference on Empirical Methods in Natural Language
+  branches out, pages 74–81.                                   Processing, EMNLP 2020, Online, November 16-20,
+Haotian Liu, Chunyuan Li, Yuheng Li, Bo Li, Yuanhan            2020, pages 1173–1186. Association for Computa-
+  Zhang, Sheng Shen, and Yong Jae Lee. 2024. Llava-            tional Linguistics.
+  next: Improved reasoning, ocr, and world knowledge.
+                                                             Soumajyoti Sarkar and Leonard Lausen. 2023. Test-
+Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang,                 ing the limits of unified sequence to sequence LLM
+  Ruochen Xu, and Chenguang Zhu. 2023. G-eval:                 pretraining on diverse table data tasks. CoRR,
+  NLG evaluation using gpt-4 with better human align-          abs/2310.00789.
+  ment. In Proceedings of the 2023 Conference on
+  Empirical Methods in Natural Language Process-             Freda Shi, Xinyun Chen, Kanishka Misra, Nathan
+  ing, EMNLP 2023, Singapore, December 6-10, 2023,             Scales, David Dohan, Ed H. Chi, Nathanael Schärli,
+  pages 2511–2522. Association for Computational               and Denny Zhou. 2023. Large language models can
+  Linguistics.                                                 be easily distracted by irrelevant context. In Interna-
+                                                               tional Conference on Machine Learning, ICML 2023,
+Xinyuan Lu, Liangming Pan, Qian Liu, Preslav Nakov,            23-29 July 2023, Honolulu, Hawaii, USA, volume
+  and Min-Yen Kan. 2023. SCITAB: A challenging                 202 of Proceedings of Machine Learning Research,
+  benchmark for compositional reasoning and claim              pages 31210–31227. PMLR.
+  verification on scientific tables. In Proceedings of the
+  2023 Conference on Empirical Methods in Natural            Ananya Singha, José Cambronero, Sumit Gulwani,
+  Language Processing, EMNLP 2023, Singapore, De-              Vu Le, and Chris Parnin. 2023. Tabular representa-
+  cember 6-10, 2023, pages 7787–7813. Association              tion, noisy operators, and impacts on table structure
+  for Computational Linguistics.                               understanding tasks in llms. CoRR, abs/2310.10358.
+Aofeng Su, Aowen Wang, Chao Ye, Chen Zhou,                Qinghao Ye, Haiyang Xu, Jiabo Ye, Ming Yan, Anwen
+  Ga Zhang, Gang Chen, Guangcheng Zhu, Haobo                Hu, Haowei Liu, Qi Qian, Ji Zhang, Fei Huang, and
+  Wang, Haokai Xu, Hao Chen, Haoze Li, Haoxuan              Jingren Zhou. 2023. mplug-owl2: Revolutionizing
+  Lan, Jiaming Tian, Jing Yuan, Junbo Zhao, Jun-            multi-modal large language model with modality col-
+  lin Zhou, Kaizhe Shou, Liangyu Zha, Lin Long,             laboration. CoRR, abs/2311.04257.
+  Liyao Li, Pengzuo Wu, Qi Zhang, Qingyi Huang,
+  Saisai Yang, Tao Zhang, Wentao Ye, Wufang Zhu,          Yue Yu, Yuchen Zhuang, Jieyu Zhang, Yu Meng,
+  Xiaomeng Hu, Xijun Gu, Xinjie Sun, Xiang Li,              Alexander J. Ratner, Ranjay Krishna, Jiaming Shen,
+  Yuhang Yang, and Zhiqing Xiao. 2024. Tablegpt2: A         and Chao Zhang. 2023a. Large language model as
+  large multimodal model with tabular data integration.     attributed training data generator: A tale of diversity
+  CoRR, abs/2411.02059.                                     and bias. In Advances in Neural Information Pro-
+                                                            cessing Systems 36: Annual Conference on Neural
+Doubao Team. 2025. Doubao-1.5-pro.                          Information Processing Systems 2023, NeurIPS 2023,
+                                                            New Orleans, LA, USA, December 10 - 16, 2023.
+Qwen Team. 2024. Qwq: Reflect deeply on the bound-
+  aries of the unknown.                                   Yue Yu, Yuchen Zhuang, Jieyu Zhang, Yu Meng,
+                                                            Alexander J. Ratner, Ranjay Krishna, Jiaming Shen,
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhi-          and Chao Zhang. 2023b. Large language model as
+  hao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin       attributed training data generator: A tale of diversity
+  Wang, Wenbin Ge, Yang Fan, Kai Dang, Mengfei              and bias. In Advances in Neural Information Pro-
+  Du, Xuancheng Ren, Rui Men, Dayiheng Liu, Chang           cessing Systems 36: Annual Conference on Neural
+  Zhou, Jingren Zhou, and Junyang Lin. 2024. Qwen2-         Information Processing Systems 2023, NeurIPS 2023,
+  vl: Enhancing vision-language model’s perception of       New Orleans, LA, USA, December 10 - 16, 2023.
+  the world at any resolution. CoRR, abs/2409.12191.
+                                                          Tianshu Zhang, Xiang Yue, Yifei Li, and Huan Sun.
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten            2024. Tablellama: Towards open large generalist
+   Bosma, Brian Ichter, Fei Xia, Ed H. Chi, Quoc V. Le,     models for tables. In Proceedings of the 2024 Con-
+   and Denny Zhou. 2022. Chain-of-thought prompting         ference of the North American Chapter of the As-
+   elicits reasoning in large language models. In Ad-       sociation for Computational Linguistics: Human
+   vances in Neural Information Processing Systems 35:      Language Technologies (Volume 1: Long Papers),
+  Annual Conference on Neural Information Process-          NAACL 2024, Mexico City, Mexico, June 16-21, 2024,
+   ing Systems 2022, NeurIPS 2022, New Orleans, LA,         pages 6024–6044. Association for Computational
+   USA, November 28 - December 9, 2022.                     Linguistics.
+
+Jian Wu, Linyi Yang, Dongyuan Li, Yuliang Ji, Manabu      Bowen Zhao, Changkai Ji, Yuejie Zhang, Wen He, Ying-
+   Okumura, and Yue Zhang. 2025. MMQA: Evaluat-             wen Wang, Qing Wang, Rui Feng, and Xiaobo Zhang.
+   ing LLMs with multi-table multi-hop complex ques-        2023. Large language models are complex table
+   tions. In The Thirteenth International Conference on     parsers. In Proceedings of the 2023 Conference on
+   Learning Representations.                                Empirical Methods in Natural Language Process-
+                                                            ing, EMNLP 2023, Singapore, December 6-10, 2023,
+Xianjie Wu, Jian Yang, Linzheng Chai, Ge Zhang, Ji-         pages 14786–14802. Association for Computational
+  aheng Liu, Xinrun Du, Di Liang, Daixin Shu, Xi-           Linguistics.
+  anfu Cheng, Tianzhen Sun, Guanglin Niu, Tongliang
+  Li, and Zhoujun Li. 2024. Tablebench: A compre-         Yilun Zhao, Lyuhao Chen, Arman Cohan, and Chen
+  hensive and complex benchmark for table question          Zhao. 2024. Tapera: Enhancing faithfulness and in-
+  answering. CoRR, abs/2408.09174.                          terpretability in long-form table QA by content plan-
+                                                            ning and execution-based reasoning. In Proceedings
+An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui,          of the 62nd Annual Meeting of the Association for
+  Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu,           Computational Linguistics (Volume 1: Long Papers),
+  Fei Huang, Haoran Wei, et al. 2024a. Qwen2. 5             ACL 2024, Bangkok, Thailand, August 11-16, 2024,
+  technical report. arXiv preprint arXiv:2412.15115.        pages 12824–12840. Association for Computational
+                                                            Linguistics.
+Bohao Yang, Chen Tang, Kun Zhao, Chenghao Xiao,
+  and Chenghua Lin. 2024b. Effective distillation of      Yilun Zhao, Yunxiang Li, Chenying Li, and Rui Zhang.
+  table-based reasoning ability from llms. In Proceed-       2022. Multihiertt: Numerical reasoning over multi
+  ings of the 2024 Joint International Conference on         hierarchical tabular and textual data. In Proceedings
+  Computational Linguistics, Language Resources and          of the 60th Annual Meeting of the Association for
+  Evaluation, LREC/COLING 2024, 20-25 May, 2024,            Computational Linguistics (Volume 1: Long Papers),
+  Torino, Italy, pages 5538–5550. ELRA and ICCL.            ACL 2022, Dublin, Ireland, May 22-27, 2022, pages
+                                                             6588–6600. Association for Computational Linguis-
+Jiabo Ye, Haiyang Xu, Haowei Liu, Anwen Hu, Ming             tics.
+   Yan, Qi Qian, Ji Zhang, Fei Huang, and Jingren Zhou.
+   2024. mplug-owl3: Towards long image-sequence          Mingyu Zheng, Xinwei Feng, Qingyi Si, Qiaoqiao She,
+   understanding in multi-modal large language models.      Zheng Lin, Wenbin Jiang, and Weiping Wang. 2024.
+   CoRR, abs/2408.04840.                                    Multimodal table understanding. In Proceedings of
+                       Data Source                        of datasets across various domains. The data on
+                                                          Kaggle is generally considered to be of high qual-
+                                                          ity and reliable, as it sourced from various places,
+                                                          including public datasets, partner datasets, and user-
+                                                          generated datasets.
+
+                                                          USDA.gov. The U.S. Department of Agriculture
+                                                          website provides a wealth of data related to the
+                                                          food, agriculture, and rural sectors. The data are
+                                                          of high quality and reliability, as they follow strict
+                                                          quality standards and are used to inform and en-
+Figure 5: All data sources of tables in RealHiTBench.
+                                                          hance public and private decision-making on eco-
+                                                          nomic and policy issues. It is an authoritative
+    the 62nd Annual Meeting of the Association for Com-   source for agricultural data.
+    putational Linguistics (Volume 1: Long Papers), ACL
+    2024, Bangkok, Thailand, August 11-16, 2024, pages    Catalog.data.gov. This is a catalog of datasets
+    9102–9124. Association for Computational Linguis-     from the US government. It offers a wide range
+    tics.
+                                                          of data resources that are reliable and valuable for
+Yitong Zhou, Mingyue Cheng, Qingyang Mao, Qi Liu,         research and analysis in various fields. Data are
+   Feiyang Xu, Xin Li, and Enhong Chen. 2024. En-         collected and maintained by government agencies,
+   hancing table recognition with vision llms: A bench-
+   mark and neighbor-guided toolchain reasoner. CoRR,
+                                                          ensuring their authority.
+   abs/2412.20662.
+                                                          Borealisdata. Borealis, the Canadian Dataverse
+Fengbin Zhu, Wenqiang Lei, Youcheng Huang, Chao           Repository, is a bilingual, multidisciplinary, se-
+  Wang, Shuo Zhang, Jiancheng Lv, Fuli Feng, and          cure, Canadian research data repository. It is sup-
+  Tat-Seng Chua. 2021. TAT-QA: A question answer-
+  ing benchmark on a hybrid of tabular and textual
+                                                          ported by academic libraries and research institu-
+  content in finance. In Proceedings of the 59th An-      tions across Canada, providing reliable and valu-
+  nual Meeting of the Association for Computational       able data for researchers. Data are managed ac-
+  Linguistics and the 11th International Joint Confer-    cording to the FAIR principles for scientific data
+  ence on Natural Language Processing, ACL/IJCNLP
+                                                          management.
+  2021, (Volume 1: Long Papers), Virtual Event, Au-
+  gust 1-6, 2021, pages 3277–3287. Association for
+  Computational Linguistics.
+                                                          Arcgis. Arcgis provides geospatial data and tools
+                                                          for mapping and analysis. Data are reliable and
+A     More Dataset Details                                widely used in various industries, such as urban
+                                                          planning, environmental management, and trans-
+In this section, we explain some details of our
+                                                          portation. It offers valuable insights through its
+dataset. First, we investigate existing open plat-
+                                                          geospatial capabilities.
+forms containing tables before collecting the data.
+Then, to build a unified dataset, we process the          ExcelGuru. This platform focuses on Excel-
+collected tables. Finally, we tally up the domains        related data and resources. Although not as com-
+involved in the table content and topics to cover as      prehensive as some other platforms, it can provide
+many real-world application scenarios as possible.        valuable data and tips for Excel users, especially in
+                                                          the context of data analysis and management.
+A.1     Data Sources
+The tables in our dataset are raw from 13 open plat-      Bureau of Labor Statistics. It is a principal sta-
+forms. We investigate these platforms in advance          tistical agency of the US Federal Statistical System.
+to ensure the authority and rationality of the data.      The data provided by the Bureau of Labor Statis-
+Introduction of the sources is as following.              tics are highly reliable and authoritative, covering
+                                                          various aspects of labor economics and statistics,
+Kaggle. Kaggle is a valuable platform in the field
+of data science and machine learning. It hosts a              https://www.usda.gov/
+                                                              https://catalog.data.gov/
+variety of competitions that involve solving real-            https://borealisdata.ca/
+world problems. It also provides a vast repository            https://hub.arcgis.com/
+                                                              https://www.excelguru.ca/
+      https://www.kaggle.com/                                 https://www.bls.gov/
+such as employment, unemployment, inflation, and        Textual Formats. In order to explore the perfor-
+productivity.                                           mance of textual input formats, we transform our
+                                                        xlsx tables into various textual formats, including
+OECD. The Organization for Economic Co-                 LaTeX, HTML, CSV, Markdown. We conduct a
+operation and Development (OECD) provides a             preliminary rationality analysis of these formats.
+wide range of data on economic, social, and envi-       Formats like CSV and Markdown use simple de-
+ronmental issues. Data are collected from member        limiters to represent structural information, which
+countries and are of high quality and reliability,      are unlikely to obtain complex tabular and sup-
+making it a valuable resource for policy-making         plementary information. And LaTeX and HTML
+and research.                                           seem capable to comprehensively exhibit abundant
+                                                        information in complex tables. Thus, we conduct
+Gov.UK. The UK government’s website pro-
+                                                        experiment (shown in Figure 4) to compare the per-
+vides data on various topics, such as government
+                                                        formance of these textual formats, including CSV
+reference data, statistics, and reports. The data
+                                                        and Markdown to be rigorous. The result shows the
+is reliable and authoritative, as it is collected and
+                                                        LaTeX outperforms among these formats. There-
+maintained by government departments.
+                                                        fore, we choose LaTeX as our textual input format.
+Censtatd.gov.hk. The Census and Statistics De-
+partment of Hong Kong provides data on Hong             Visual Format. Image-based representations
+Kong’s economy, population, and social affairs.         have effectiveness on table reasoning, so we also ex-
+The data is reliable and valuable for understanding     plore the performance of visual format on the same
+the local situation and making informed decisions.      benchmark as textual formats. We convert Excel
+                                                        tables into PNG image format and provide them to
+MrExcel. Similar to ExcelGuru, MrExcel fo-              MLLMs along with corresponding prompts. How-
+cuses on Excel - related content. It can offer valu-    ever, we discover a shortcoming of image format
+able data and insights for Excel users, especially      of table representations. For some enormous ta-
+in terms of advanced Excel techniques and applica-      bles in our collections, image format either cannot
+tions.                                                  cover complete data in the table or makes the pic-
+Office for National Statistics (UK). It is the na-      ture fuzzy in the vision of MLLMs, which makes
+tional statistics office of the UK. The data provided   it much difficult to understand long tables with
+by the Office for National Statistics is highly re-     image formats. Nevertheless, we conduct experi-
+liable and authoritative, covering a wide range of      ments both on text and image, finding that although
+topics, such as population, economy, and society.       the image modality performs worse than the text
+                                                        modality, the image can bring auxiliary improve-
+Figshare. Figshare is a repository for research         ments to the text in understanding complex tables.
+data and outputs. It allows researchers to store,
+share, and publish their data, making it a valuable
+                                                        A.3   Data Domains
+resource for the research community. The data
+on figshare is diverse and can be used for various      We are devoted to constructing a realistic bench-
+research purposes.                                      mark to reflect the complexity of tables in real
+                                                        scenarios. However, open-domain tables typically
+A.2     Data Formats
+                                                        exhibit much simpler structures than the complex
+With the current development of large language          structures found in specific domains. Tables in spe-
+models (LLMs) and Multimodal Large Language             cific domains commonly obtain characteristics that
+Models (MLLMs), it is necessary to explore the          they contain domain-specific terms and typically
+performance of textual and visual models and input      not accompanied by domain-specific labeled data.
+formats.                                                Thus, it is not promising to conduct supervised fine-
+                                                        tuning on models for TableQA tasks (Katsis et al.,
+      https://www.oecd.org/
+      https://www.gov.uk/                               2022). Therefore, we cover 24 domains (shown in
+      https://www.censtatd.gov.hk/                      Figure 6) to align with real-world application sce-
+      https://www.mrexcel.com/
+      https://www.ons.gov.uk/                           narios. And we maintain a balance in the number
+      https://figshare.com/                             of tables under each domain as much as possible.
+                                                                                                                   is straightforward and focuses on direct com-
+                                                                       Society
+                  Economy
+                                                                                                                   parisons between the values in the table and
+                                                              11.31%                 Productivity                  the values mentioned in the question. For ex-
+                                19.49%
+                                                                                                                   ample, verifying the number of employees
+                                                                                                 Science
+                                                                                   10.83%
+                                                                                                                   in a specific department would involve value-
+Activitytime
+Agriculture         1.20%
+                   1.56%
+                                                                                                                   matching.
+   Biology        1.32%
+                                                                                         1.44%     Religion
+ Business         2.17%
+                                                                                         2.29%     Welfare       • Inference-based Fact Checking This in-
+                   5.17%                                                             2.05%
+                                                                                                  Transport
+ Education                                                                                        Sport            volves verifying the accuracy of an answer
+                                                                                    2.65%
+    Geography           4.81%
+                                                                                 3.01%
+                                                                                               Military            that requires logical reasoning or inference
+                                                                                              Medical
+    Employment                                                                                                     based on the information provided in the ta-
+                                                                                             Manufacture
+                                 6.86%
+               Energy                                              9.39%
+                                                                                                                   ble. It is more complex than value-matching
+                                          1.68%           2.05%
+                                                  6.50%
+                Environment                                                  Labor                                 because it requires drawing conclusions from
+                                   Food                       Injuries
+                                            Health                                                                 the data in the table rather than simply match-
+                                                                                                                   ing values. For example, verifying the impli-
+    Figure 6: All domains of tables in RealHiTBench.                                                               cations of a certain trend in the data would
+                                                                                                                   involve inference-based fact checking.
+B       More Annotation Details                                                                               Numerical Reasoning. Numerical Reasoning in
+B.1       Task types                                                                                          TableQA tasks involves solving problems that re-
+                                                                                                              quire numerical calculations or analyses based on
+We are devoted to evaluate the performance of
+                                                                                                              the data in a table. It encompasses tasks that involve
+LLMs in table understanding and reasoning com-
+                                                                                                              arithmetic operations, comparisons, and other nu-
+prehensively. And table question answering
+                                                                                                              merical computations to derive meaningful insights
+(TableQA) is one of the most common applica-
+                                                                                                              or answers from the tabular data.
+tions about tables. Thus, referring to the previous
+work (Wu et al., 2024), we introduce 5 primary task                                                              • Multi-hop Numerical Reasoning This in-
+types and a couple of more specific subtypes. Here                                                                 volves solving numerical problems that re-
+we explain each type to avoid ambiguity.                                                                           quire information from multiple cells or rows
+Fact Checking. Fact Checking in TableQA tasks                                                                      in a table. It is more complex than single-
+is the process of verifying the accuracy and con-                                                                  hop numerical reasoning because it involves
+sistency of information within a table. It involves                                                                cross-referencing different parts of the table to
+assessing whether the data presented in the table                                                                  derive the final answer. For example, calculat-
+aligns with real-world facts or external sources of                                                                ing the total sales of a product across multiple
+information. This category focuses on ensuring                                                                     regions would require multi-hop numerical
+that the table’s content is reliable and free from                                                                 reasoning.
+errors or inconsistencies.
+                                                                                                                 • Counting This involves determining the num-
+     • Multi-hop Fact Checking This involves ver-                                                                  ber of occurrences of a specific value or con-
+       ifying the accuracy of a statement or answer                                                                dition in a table. It is straightforward and
+       that requires information from multiple cells                                                               focuses on counting the instances that meet
+       or rows in a table. It is more complex than                                                                 the specified criteria. For example, counting
+       single-hop fact checking because it involves                                                                the number of employees with a specific job
+       cross-referencing different parts of the table                                                              title would involve counting.
+       to ensure consistency and correctness. For ex-
+       ample, verifying the relationship between two                                                             • Sorting This involves arranging the data in a
+       different data points in a table would require                                                              table in a specific order based on a particular
+       multi-hop fact checking.                                                                                    attribute or condition. It is used to organize the
+                                                                                                                   data in a way that makes it easier to analyze
+     • Value-Matching This involves checking                                                                       or answer questions. For example, arranging
+       whether a specific value or set of values in                                                                sales data in descending order to identify the
+       a table matches the requirements or condi-                                                                  top three highest sales figures would involve
+       tions specified in a question or statement. It                                                              sorting.
+   • Comparison This involves comparing the val-            • Exploratory Analysis This involves exam-
+     ues of different cells or rows in a table to de-         ining the data in a table to identify patterns,
+     termine their relative magnitudes or relation-           relationships, or anomalies that may not be
+     ships. It is used to answer questions that re-           immediately obvious. It is used to answer
+     quire identifying the highest, lowest, or other          questions that require a deeper understanding
+     comparative relationships between data points.           of the data and often involves visualizations or
+     For example, determining which product has               statistical techniques to explore the data. For
+     the highest sales would involve comparison.              example, analyzing the relationship between
+                                                              employee performance and job satisfaction
+   • Calculation This involves performing math-               would involve exploratory analysis.
+     ematical operations on the data in a table to
+     derive a final answer. It is used to answer ques-      • Anomaly Analysis This involves identifying
+     tions that require arithmetic operations such            and analyzing data points in a table that de-
+     as addition, subtraction, multiplication, or di-         viate significantly from the norm or expected
+     vision. For example, calculating the average             values. It is used to answer questions that
+     sales per region would involve calculation.              require identifying outliers or unusual data
+                                                              points that may indicate errors or special cases.
+Data Analysis. Data Analysis in TableQA tasks                 For example, identifying any unusual sales
+is the process of extracting meaningful insights              figures in a table would involve anomaly anal-
+and patterns from the data in a table. It involves            ysis.
+tasks such as identifying trends, relationships, and
+                                                         Chart Generation. Chart Generation in
+anomalies within the data. This category focuses
+                                                         TableQA tasks involves creating visual representa-
+on understanding the data’s underlying structure
+                                                         tions of the data in a table to make it more intuitive
+and using it to answer more complex questions or
+                                                         and easier to understand. It includes generating
+make predictions.
+                                                         various types of charts and graphs, such as line
+                                                         charts, bar charts, scatter charts, and pie charts.
+   • Rudimentary Analysis This involves per-
+                                                         This category helps users quickly grasp the key
+     forming basic analytical tasks on the data in a
+                                                         information and trends in the data.
+     table, such as identifying patterns, trends, or
+     simple relationships between data points. It           • LineChart Generation This involves creat-
+     is straightforward and focuses on providing a            ing a line chart to visually represent the data
+     basic understanding of the data. For example,            in a table, typically to show trends or changes
+     identifying the most common job title in a de-           over time. It is used to answer questions that
+     partment would involve rudimentary analysis.             require a clear and intuitive display of how
+                                                              data points change over a period. For exam-
+   • Summary Analysis This involves providing
+                                                              ple, visualizing sales trends over the past year
+     a concise summary of the data in a table, high-
+                                                              would involve line chart generation.
+     lighting key findings or insights. It is used to
+     answer questions that require a brief overview         • BarChart Generation This involves creating
+     of the data rather than detailed calculations or         a bar chart to visually represent the data in a
+     in-depth analysis. For example, providing a              table, typically to compare the values of differ-
+     summary of sales performance across differ-              ent categories or groups. It is used to answer
+     ent regions would involve summary analysis.              questions that require a clear and intuitive dis-
+                                                              play of the relative magnitudes of different
+   • Predictive Analysis This involves using the              data points. For example, visualizing sales
+     data in a table to make predictions about fu-            figures across different regions would involve
+     ture trends or outcomes. It is more complex              bar chart generation.
+     and often involves statistical or machine learn-
+     ing techniques to model the data and make              • ScatterChart Generation This involves cre-
+     predictions. For example, making a predic-               ating a scatter chart to visually represent the
+     tion of future sales based on historical data            data in a table, typically to show the relation-
+     would involve predictive analysis.                       ship between two variables. It is used to an-
+      swer questions that require a clear and intu-      needed table only. Finally, we convert the source
+      itive display of the correlation or pattern be-    table into chosen textual format LaTeX and visual
+      tween two sets of data points. For example,        format PNG (The reasons to choose these two for-
+      visualizing the relationship between employee      mats have been clarified in Appendix 4). Then a
+      performance and job satisfaction would in-         qualified table is added into our dataset.
+      volve scatter chart generation.
+                                                         Question Generation. In order to display the
+   • PieChart Generation This involves creating          complexity in our dataset comprehensively, we in-
+     a pie chart to visually represent the data in a     troduce LLM to assist in generating annotations.
+     table, typically to show the proportion of each     Before generating questions, we interact with GPT
+     category or group relative to the whole. It is      to acquire some inspirations about the attribute di-
+     used to answer questions that require a clear       mensions of question that are vital for constructing
+     and intuitive display of the distribution of data   tasks in tabular reasoning (Yu et al., 2023b). We
+     points across different categories. For exam-       select some points from the GPT answers, includ-
+     ple, visualizing the distribution of employees      ing Complexity, Diversity, Real-World Relevance,
+     across different departments would involve          and Length. Then, we design our prompt templates
+     pie chart generation.                               from these dimensions (shown in Table 9). More-
+                                                         over, we also design different prompt templates
+Structure Comprehending. Structure compre-               for each task type to ensure highlighting the char-
+hending involves providing a new table that is cre-      acteristics of each type. Eventually, we combine
+ated by exchanging some complex parts of the             the prompt template with the exact question type
+source table and then asking the model the same          and table content (xlsx format to simulate human
+question with two similar tabular inputs. The goal       intuitive vision) as input for GPT, acquiring the
+is to evaluate whether the model can accurately          generated answer.
+comprehend the structural changes and provide the
+correct answer. This type of task is particularly        Question Review. Referring to the previous
+challenging because it requires the model to not         work, the LLM-assisted annotation is likely to lead
+only understand the data but also the intricate rela-    to the bias or instability of benchmark (Felkner
+tionships and hierarchies within the table structure.    et al., 2024). Therefore, we set question review
+                                                         step to ensure the rationality of questions generated
+B.2    QA Annotation                                     by GPT. We set four attributes of a reasonable ques-
+Complex tables alone cannot fully present the chal-      tion for annotators. Then we provide the tables and
+lenges in RealHiTBench. Therefore, we meticu-            questions along with these attributes as review stan-
+lously design an annotation process that is suited       dard to annotators to confirm rationality or adjust
+for question answering tasks on complex tables.          the questions.
+Specifically, we apply LLMs to initial question an-
+                                                         Answer Annotation with Verification. Simi-
+swering (QA) generation to increase annotation
+                                                         larly, we also design a prompt template for answer
+efficiency, and we keep the accuracy of annotations
+                                                         generation (shown in Table 13). We combine the
+by careful multi-turn human check. The complete
+                                                         prompt template, table content (LaTeX format to
+process diagram is depicted as Figure 7, and intro-
+                                                         simulate careful observation), and question as ini-
+duced as below:
+                                                         tial input for models. Then we feed these input to
+Data Collection and Process. Initially, we col-          various models and acquire some answers. At the
+lect tabular data from various sources. Then we di-      same time, the occurrence times of each answer
+vide the tables into different categories according to   can be automatically counted as their frequency.
+their structures. To tables with complex structures,     Then we input all the generated answers along with
+we process tables before accepting them. Specifi-        initial answers into GPT-Eval module, and gain the
+cally, first we check whether table content contains     score of each answer. We multiply each score by
+no improper information. When content is done,           the occurrence frequency of the answer to obtain a
+we adjust the unrestricted structures to emphasize       final score. The answer with the highest final score
+the complex parts. Because we collect tables as          becomes the candidate answer. Finally, the candi-
+xlsx format, which allows a file to contain multi-       date answer is provided to annotators for human
+ple sheets, we conduct sheet division to keep the        check and the corrected final answer can be filled
+                     Step1: Data Collection and Process                                                                    Step2: Question Generation
+      Data Source           Complex Table Taxonomy                   Data Process                          [Task Definition]: [Task Definition]
+                                                                                                                                                                 [Question1]: Which site
+                                                                                                           Which attribute dimensions of question do you
+                                                                                                                                                                 showed the greatest decrease
+                                                                                                           think are vital for constructing a [QuestionType]
+                                                                                                                                                                 in human concentration from
+                              ColumnHeaderHierarchy                  Content Check                         task in tabular reasoning?
+                                                                                                                                                                 September to October 2023?
+                                                                                                                                                                 [Question2]: What is the
+                                                                                              Complexity, Diversity, Specificity, Real-World                     average lead concentration
+                               RowHeaderHierarchy                    Structure Adjust         Relevance, Anomalies, Length, Writing Style, ......                in ARGAUM soil during
+                                                                                                                                                                 January to June 2023?
+                                                                                                                                                                 [Question3]: Provide a
+                                 ContentPartition                      Sheet Divide                        Please generate 5-10 [QuestionType] questions in      summary of the table,
+                                                                                                           table following the requirements below:               focusing on the time points
+                                                                                                           1. Complexity: The question should contain …          and fold changes and any
+                                   Multi-Table                       Format Convert                        2. Length: Question should between 20 and 50 …        trends observed in the TNF
+                                                                                                           [Table Content]                                       response over time.
+                                                                                                                                                                 ……
+
+
+                                           Step4: Answer Annotation with Verification                                            Human Check                   Step3: Question Review
+  Answer Prompt
+  Suppose you are
+                                Answer: 55    0.33                            Score: 98/100         Final Answer
+  expert in table.
+  [Thoughts]                                                                                  Add          55
+
+
+
+
+                                                                                                      63.
+                                                                                                       9
+  Let’s start !                               0.33      GPT EVAL
+                                Answer: 55                                    Score: 95/100                                                                      1
+                                                                                                                                ComplexBench                         Relevance
+                                                       You will receive
+                                                       answers given by                                                 • 708 Complex Tables from                           2
+                                Answer: Yes   0.16                            Score: 10/100                Yes
+
+
+
+
+                                                                                                     1.6
+         [Table]                                       different models                                                  real world across 24 domains                           Completeness
+       Economy-1                                       under a table                                                    • Rows per Table is 45.6 and
+                                                                                                                         Columns per Table is 11.9              3
+  [Question]                                           question. Please                                                                                              Feasibility
+  What is number                                       rate them on the                                                 • 2929 QA for five different
+                                 Answer:                                                                                 task types
+  of workers in                               0.16     following metrics      Score: 40/100                121
+
+
+
+
+                                                                                                     6.4
+                                  121                                                                                   • Question average Length per                       4
+  Company 2021?                                                                                                                                                                    Clarity
+                     LLMs                                                                                                 Table is 17.3
+
+
+
+
+                                 Figure 7: Process diagram of our dataset construction process.
+
+
+into the annotation field.                                                                C       More Implementation Details
+
+B.3     QA prompt                                                                         C.1        Omit Long Tables
+                                                                                         We collect as much difficult tables as we can so that
+Question Prompt. We introduce question
+                                                                                         some enormous tables are in our dataset. However,
+prompts to generate diverse questions with GPT.
+                                                                                         considering the structural complexity, we are also
+Considering the uniqueness of different task types,
+                                                                                         devoted to multimodal exploration. Unfortunately,
+we meticulously design different prompts for
+                                                                                         it seems impossible to input some enormous tables
+each type according to corresponding attribute
+                                                                                         in realistic applications into MLLMs because of
+dimensions (have been explained above). we
+                                                                                         the oversize. Therefore, we omit long tables in our
+provide our complete prompts from Table 9 to
+                                                                                         experiment, but we still keep them for future use.
+Table 12.
+                                                                                          C.2        Chart Generation
+Answer Prompt. We also introduce answer
+prompts to generate various questions according                                          As shown in Table 2, Chart Generation is too diffi-
+to different task type with GPT. Apart from the                                          cult, leading to the PASS@1 results for some mod-
+fundamental prompt parts, such as Role Play and                                          els being 0. We investigate executable python codes
+Output Control, we apply COT (Wei et al., 2022)                                          generated by models, finding that DataFrame, a
+to the answer prompt to improve the capability of                                        common python module, exists in most of these
+understanding. All answer prompts are presented                                          codes. However, we find it difficult for python mod-
+from Table 13 to Table 16. Notably, because the                                          ule DataFrame to represent hierarchical table struc-
+answer content and formats obviously vary among                                          tures in detail, obscuring models from meaningful
+different subtypes of Data Analysis, we design de-                                       hierarchical information. Finally, non-functional
+tailed answer prompt for each subtype (Here we                                           codes are generated.
+just display the prompt of rudimentary analysis.).
+                                                                                          C.3        GPT-Eval Prompts
+Tree-Based Answer Prompt. We introduce                                                   As demonstrated above, we utilize GPT-Eval to
+TreeThinker 4, a two-round prompt pipeline that                                          assess the reliability of answers to some open ques-
+enhances the model’s ability in table understanding,                                     tions (in the Data Analysis task). Thus, we also
+whose performance is shown the experimental re-                                          design a series of prompts to evaluate different
+sults above. Here, we provide the detailed prompts                                       task types. The example prompt is presented in
+in Table 17 and Table 18, respectively.                                                  Table 19, which is a representative of the GPT-Eval
+             Table 5: The more results of advanced models with Text and Image Inputs on RealHiTBench.
+
+                                                  Fact Checking       Numerical Reasoning          Structure Comprehending     Data Analysis    Chart Generation
+             Model                    Method
+                                                   F1        EM         F1           EM             F1          EM           ROUGE   GPT-EVAL   ECR      PASS
+
+           QwQ-32B                     Text       43.13      28.95    33.57          17.94         37.96       12.99         20.86     68.66    31.25    12.50
+       Doubao-1.5-pro-32k              Text       66.34      59.65    53.77          45.40         72.45       65.90         36.01     75.21    25.97    14.94
+ DeepSeek-R1-Distill-Qwen-1.5B         Text       17.75      11.18    15.74          7.13          19.93        9.92         16.24     38.02    14.94     0
+ DeepSeek-R1-Distill-Qwen-7B           Text       34.53      28.10    24.96          17.64         28.10       19.08         25.19     54.39    39.61    6.49
+ DeepSeek-R1-Distill-Llama-8B          Text       33.29      22.43    24.64          15.18         26.66       14.76         26.98     54.55    12.99    5.19
+        mPLUG-Owl2-7B                  Image       7.23      3.46       4.72         1.15          14.21        9.14         12.13     25.46    1.53      0
+      Qwen2-VL-7B-Instruct             Image      38.34      28.50    22.88          9.34          55.99       45.29         24.30     37.41    16.23    5.84
+      Qwen2-VL-7B-Instruct        Image+Text      45.19      32.79    24.97          11.54         60.42       48.60         25.39     39.69    25.32    9.09
+
+
+
+
+Table 6: The evaluation results of reasoning models on                                       D.3      TreeThinker on open-source models.
+RealHiTBench.
+                                                                                             As shown in the table 7, we evaluated TreeThinker
+    Models        Method
+                                                  Avg Score                                  on open-source models, specifically Llama3.1-8B-
+                                 FC        NR           SC       DA            CG            Instruct and Llama3.3-70B-Instruct, across mul-
+                     CoT       70.61      63.08     78.72       54.02        28.73
+                                                                                             tiple reasoning and analysis tasks. The results
+    GPT-o1
+                     TT        75.83      65.63     81.92       56.50        66.67           demonstrate consistent improvements over the CoT
+                     CoT       75.18      71.43     83.67       61.07        19.64           baseline in all tasks. Notably, TreeThinker sig-
+ DeepSeek-R1
+                     TT        79.18      71.23     84.61       68.94        61.91           nificantly enhances model’s ability in Chart Gen-
+    QwQ-32B
+                     CoT       41.79      23.12     28.83       47.39        13.27           eration, with ECR rising from 50.65 to 76.62
+                     TT        47.77     41.235     47.39       49.69        35.72           and PASS from 24.03 to 35.71 in Llama3.3-70B-
+                                                                                             Instruct. These results highlight TreeThinker’s
+                                                                                             effectiveness in enhancing open-source models
+prompts due to the similarity of these subtypes.
+                                                                                             across a diverse range of tasks. Regardless of
+                                                                                             model size, TreeThinker consistently improves per-
+D     More Experiments
+                                                                                             formance in various reasoning and analytical tasks,
+D.1     Experiments on Reasoning Models.                                                     demonstrating its effectiveness in boosting the com-
+                                                                                             prehension and processing of complex hierarchical
+We evaluated the performance of the most ad-
+                                                                                             data.
+vanced inference models, GPT-o1, DeepSeek-R1,
+and QWQ on RealHitBench. Considering the high
+                                                                                             E      Case Study
+computational cost of GPT-o1 and the recent in-
+stability of DeepSeek’s server due to a surge in                                             E.1      Complex Tables Examples
+traffic, we randomly selected 500 samples from
+benchmark to assess the reasoning models’ ability                                            To better illustrate the complexity of each table
+to understand realistic hierarchical complex tables,                                         structure, we provide examples from our dataset,
+with the results shown in the figure 6. Compared to                                          including tables and corresponding question an-
+general-purpose models, inference-based models                                               swering (QA) pairs. By the way, to make the table
+perform better in handling complex tables. More-                                             structure more intuitive, we appropriately process
+over, our proposed TreeThinker further enhances                                              the table in the dataset to highlight its complex
+their ability to process tabular data.                                                       structures.
+
+                                                                                             Hierarchical Column Header. The specific ex-
+D.2     Different size and complexity table.
+                                                                                             ample is presented in Figure 9. Merged cells, such
+We evaluated the overall performance of the model                                            as ’Landings into’ and ’Scotland’, present the Hier-
+under varying table token counts and different lev-                                          archical Column Header structure.
+els of table complexity, as shown in the figure 8.
+The results indicate that as the number of tokens in-                                        Hierarchical Row Header. Hierarchy structure
+creases and the table complexity rises, the model’s                                          in row headers is depicted in Figure 10, which
+performance gradually declines. Moreover, when                                               shows the type that the classification is not in the
+these two factors are combined, the challenge for                                            same column. The other type, classification shown
+the model becomes even greater.                                                              in the same column, is displayed in Figure 1.
+Table 7: The results of TreeThinker when using Llama3.1-8B-Instruct and Llama3.3-70b-Instruct as the base
+models.
+
+                                        Fact Checking        Numerical Reasoning    Structure Comprehending                    Data Analysis       Chart Generation
+           Model             Method
+                                          F1       EM         F1              EM         F1                     EM        ROUGE      GPT-EVAL      ECR      PASS
+
+                               CoT      44.93      30.32     27.21        14.53       50.8                      35.9       32.25       60.12       13.64    4.55
+ Llama3.1-8B-Instruct
+                                TT       47.4      39.85     37.69        29.18     52.17                       44.27      34.62       61.69       35.06    27.27
+
+                               CoT      64.53      53.08     48.99        36.58     68.93                       55.81      27.98       52.26       50.65    24.03
+ Llama3.3-70B-Instruct
+                                TT      69.94      63.93     61.69        54.6      73.22                       64.89      37.38       70.57       76.62    35.71
+
+
+
+
+Nested Sub-Tables. Just as Figure 11, the whole
+table content is divided into several sub-tables by
+merged cells spanning the full width of the table.
+Notably, the content in sub-table ’TOTAL’ is the
+superset of the other parts, while the data in area
+’Men, 16 years and over’ are the superset of the
+segments below. This trick sometimes causes am-
+biguities.
+Multi-Table Join. We prepare Figure 12 as the
+example of Multi-Table Join. Actually, columns
+headers of the table consist of 5 cells, which look
+like 10 cells though. The table-maker present the                                                     100
+tabular data like this is to create intuitive compari-
+son between ’C1-C10’ and ’C11-C20’.
+Table 8: Comparison between RealHiTBench and other
+existing related benchmarks across two aspects: table                                                  60
+                                                                                   Table Complexity
+
+
+
+
+size and complexity score.
+
+ Benchmark                 TableBench   MULTIHIERTT        HiTab   RealHiTBench
+
+ Table Size
+  70th Pctl Row                19           10              23          69
+  70th Pctl Column              7            5              13          16
+                                                                                                       30
+  70th Pctl Cell Length       7.52         11.92           7.30        9.59
+
+ Complexity Score
+  Header Hierarchy           27.30         38.62           57.91      60.55
+  Content Partition          19.45         32.16           47.10      57.54
+  Implicit Multi-Table       12.34         21.52           33.98      43.48
+  Supplement Information     32.59         37.26           55.64      69.86                             0
+                                                                                                            0           5000               10000             >10000
+  1
+      70th Pctl: 70th Percentile                                                                                        Table Token Number
+
+                                                                                   Figure 8: Different complexity and tokens of tables
+                                                                                   comparsion in RealHiTBench.
+Table 9: The complete question prompt of Fact Checking. Fill the corresponding content into the ’...’ positions
+after ’[]’ field.
+
+   Question Generation Prompt for Fact Checking
+   # Role play
+   Suppose you are an expert in question annotation and your task is to generate high-quality and
+   diverse questions based on a given task description and tabular data.
+   # Task Descriptions
+   Fact checking task in tabular data involves locating relevant data from a table based on a question
+   posed by a user and performing the necessary lookups, calculations, or comparisons to verify or
+   generate an accurate answer. The task typically involves extracting keywords from the question,
+   locating specific rows and columns of the table, and performing calculations, aggregations, or
+   conditional filtering of the data, if necessary, to produce a result that meets the requirements of the
+   question.
+   # Generation Restrictions
+   To generate 5 questions based on the given task description and tabular data, give due consideration
+   to the following aspects:
+   1.Complexity: Include a range of problem complexities to suit different levels of fact-checking
+   skill. Simple problems should involve straightforward calculations or direct comparisons, like
+   checking totals or averages, while complex questions might involve multi-step calculations or
+   inferential reasoning that requires synthesizing data across several rows or columns. This diversity
+   in complexity ensures that users encounter a mix of questions, from basic checks to challenging
+   analytical tasks, enhancing skill development.
+   2.Length: Questions should be between 20 and 50 words in length. Ensure that the questions are as
+   concise as possible while still containing the necessary details.
+   3.Diversity: The subtypes covered by the question should contain Multi-hop Fact Checking, Value-
+   Matching, Inference-based Fact-Checking.
+   4.Real-World Relevance: The questions asked should match real-world scenarios, making them
+   more practical and relatable.
+   5.Writing-Style: Use straightforward and accessible language. Keep terminology consistent,
+   especially for statistical or financial terms, to avoid confusion. Ensure questions are free from
+   ambiguity and clearly specify what is expected in the answer.
+   6.Answer Control: Ensure that the final answer format of the question can be expressed as "Final
+   Answer: AnswerName1, AnswerName2..." form, no other form. Ensure the "AnswerName" is a
+   number or entity name, as short as possible, without any explanation.
+   # Output Control
+   Please generate it in the following format:
+   [Question1]: ... ,
+   [subtype1]: ... .
+   [Question2]: ... ,
+   [subtype2]: ... .
+   The subtype of each question should be one of Multi-hop Fact Checking, Value-Matching, Inference-
+   based Fact-Checking.
+Table 10: The complete question prompt of Numerical Reasoning. Fill the corresponding content into the ’...’
+positions after ’[]’ field.
+
+   Question Generation Prompt for Numerical Reasoning
+   # Role play
+   Suppose you are an expert in question annotation and your task is to generate high-quality and
+   diverse questions based on a given task description and tabular data.
+   # Task Descriptions
+   Numerical reasoning tasks in tabular data are tasks that involve analyzing, calculating, or making
+   logical inferences based on numerical information from tabular-structured data. The task typically
+   involves recognizing patterns, making numerical comparisons, identifying trends, predicting out-
+   comes, or solving specific problems from large amounts of numerical data.
+   # Generation Restrictions
+   To generate 5 questions based on the given task description and tabular data, give due consideration
+   to the following aspects:
+   1.Complexity: Include a range of problem complexities. Simple problems may require direct
+   calculations or basic comparisons, while complex ones could involve multi-step calculations or
+   inferential reasoning across multiple rows/columns.
+   2.Length: Questions should be between 20 and 50 words in length. Ensure that the questions are as
+   concise as possible while still containing the necessary details.
+   3.Diversity: The subtypes covered by the question should contain Multi-hop Numerical Reasoing,
+   Counting, Ranking, Comparison, Calculation (Numerical Calculation and Time-based Calculation).
+   4.Real-World Relevance: The questions asked should match real-world scenarios, making them
+   more practical and relatable.
+   5.Writing-Style: Use straightforward and accessible language. Keep terminology consistent,
+   especially for statistical or financial terms, to avoid confusion. Ensure questions are free from
+   ambiguity and clearly specify what is expected in the answer.
+   6.Answer Control: Ensure that the final answer format of the question can be expressed as "Final
+   Answer: AnswerName1, AnswerName2..." form, no other form. Ensure the "AnswerName" is a
+   number or entity name, as short as possible, without any explanation.
+   # Output Control
+   Please generate it in the following format:
+   [Question1]: ... ,
+   [subtype1]: ... .
+   [Question2]: ... ,
+   [subtype2]: ... .
+   The subtype of each question should be one of Multi-hop Numerical Reasoning, Counting, Ranking,
+   Comparison, Calculation.
+Table 11: The complete question prompt of Data Analysis. Fill the corresponding content into the ’...’ positions
+after ’[]’ field.
+
+   Question Generation Prompt for Data Analysis
+   # Role play
+   Suppose you are an expert in question annotation and your task is to generate high-quality and
+   diverse questions based on a given task description and tabular data.
+   # Task Descriptions
+   The task of Data Analysis in tabular data is the process of systematically examining and transforming
+   structured data to extract meaningful information, discover patterns in the data, support decision
+   making, or test hypotheses. It aims to mine key features or trends from data, reveal hidden
+   relationships or anomalies, predict future changes, and provide solutions to problems through
+   quantitative or qualitative methods. This process typically outputs results in a clear and actionable
+   form, providing a solid foundation for deeper understanding of the data.
+   # Generation Restrictions
+   To generate 5 questions based on the given task description and tabular data, give due consideration
+   to the following aspects:
+   1.Complexity: Include a range of problem complexities to suit different levels of data analysis skill.
+   Simple tasks should involve straightforward operations, such as calculating averages, identifying
+   basic trends (e.g., increasing or decreasing patterns), or performing direct comparisons between val-
+   ues in a single column. Intermediate tasks might require analyzing relationships between variables
+   using correlation or group-level aggregations, identifying potential impacts, or summarizing data
+   patterns across multiple rows or columns. Complex tasks could involve multi-step processes such
+   as performing causal analysis, anomaly detection requiring cross-referencing multiple datasets, or
+   building predictive models that integrate trends and relationships.
+   2.Length: Questions should be between 20 and 50 words in length. Ensure that the questions are as
+   concise as possible while still containing the necessary details.
+   3.Diversity: The subtypes covered by the question should contain Rudimentary Analysis, Summary
+   Analysis, Predictive Analysis, Exploratory Analysis, Anomaly Analysis.
+   4.Real-World Relevance: The questions asked should match real-world scenarios, making them
+   more practical and relatable.
+   5.Writing-Style: Use straightforward and accessible language. Keep terminology consistent,
+   especially for statistical or financial terms, to avoid confusion. Ensure questions are free from
+   ambiguity and clearly specify what is expected in the answer.
+   6.Question example: Rudimentary Analysis: "What is the mean and standard deviation of the
+   Year built column?", "Which state or region has the highest proportion of Military MPs to total
+   MPs, and what is the percentage?". Summary analysis: "Can you provide a descriptive explanation
+   of the table, including the main columns and some basic insights?", "Can you provide a detailed
+   description of the table, including explanations for each main column and highlight any notable
+   trends or insights from the data?". Predictive Analysis: "Based on the historical population growth
+   from 1956 to 2006, what could be the projected population of Tabriz in 2026?". Exploratory
+   Analysis: "How does the number of examinees affect the pass percentage over the years?", "Does a
+   higher crude birth rate causally influence the natural change in population?". Anomaly Analysis:
+   "What are the anomalies in the viewership data for the TV episodes?", "Can you identify which
+   surname data points deviate significantly from the norm?".
+   # Output Control
+   Please generate it in the following format:
+   [Question1]: ... , [subtype1]: ... .
+   [Question2]: ... , [subtype2]: ... .
+   The subtype of each question should be one of Rudimentary Analysis, Summary Analysis, Predic-
+   tive Analysis, Exploratory Analysis, Anomaly Analysis.
+Table 12: The complete question prompt of Chart Generation. Fill the corresponding content into the ’...’ positions
+after ’[]’ field.
+
+   Question Generation Prompt for Chart Generation
+   # Role play
+   Suppose you are an expert in question annotation and your task is to generate high-quality and
+   diverse questions based on a given task description and tabular data.
+   # Task Descriptions
+   The task of chart generation in tables is to help users quickly understand and analyze data by con-
+   verting tabular data into charts or other graphical representations that visualize relationships, trends,
+   or characteristics of the data. The goal is to simplify complex data patterns so that distributions,
+   trends, comparative differences, or correlations between variables can be more easily perceived.
+   Typically, this type of task requires clarifying the analysis objectives, choosing the appropriate chart
+   type (e.g., bar charts, line charts, pie charts, or scatter plots, etc.), and cleaning and processing the
+   data to ensure that the final visualization results are clear, accurate, and able to convey information
+   effectively. This approach not only enhances the intuition and efficiency of data presentation, but
+   also facilitates further analysis and decision-making.
+   # Generation Restrictions
+   To generate 5 questions based on the given task description and tabular data, give due consideration
+   to the following aspects:
+   1.Complexity: Include a range of problem complexities. Simple problems may only require
+   extracting data and drawing a picture, while complex problems require understanding the data items
+   that need to be used in the problem and processing them before drawing the picture.
+   2.Length: Questions should be between 20 and 50 words in length. Ensure that the questions are as
+   concise as possible while still containing the necessary details.
+   3.Diversity: The subtypes covered by the question should contain LineChart Generation, BarChart
+   Generation, ScatterChart Generation, PieChart Generation.
+   4.Real-World Relevance: The questions asked should match real-world scenarios, making them
+   more practical and relatable.
+   5.Writing-Style: Use straightforward and accessible language. Keep terminology consistent,
+   especially for statistical or financial terms, to avoid confusion. Ensure questions are free from
+   ambiguity and clearly specify what is expected in the answer. It needs to be made clear in the
+   question what type of chart is being plotted, such as "According to the table, draw a bar chart to
+   illustrate ..." and "Please help me draw a line chart showing ...".
+   6.Answer Control: Ensure the final answer format is the python code block that can generate the
+   chart correctly.
+   # Output Control
+   Please generate it in the following format:
+   [Question1]: ... ,
+   [subtype1]: ... .
+   [Question2]: ... ,
+   [subtype2]: ... .
+   The subtype of each question should be one of LineChart Generation, BarChart Generation,
+   ScatterChart Generation, PieChart Generation.
+Table 13: The complete answer prompt of Fact Checking. Fill the corresponding content into the ’...’ positions
+after ’[]’ field.
+
+   Answer Generation Prompt for Fact Checking
+   # Role play
+   Suppose you are an expert in table analysis and your task is to provide answers to questions based
+   on the content of the table.
+   # Chain-of-Thought
+   Let’s think step by step as follows and make the most of your strengths as a table analysis expert:
+   1.Fully understand the question and extract the necessary information from it.
+   2.Clearly and comprehensively understanding the content of the table, including the structure of
+   the table, the meaning and formatting of each row and column header(Note: There is usually
+   summative cell in the table, such as all, combine, total, sum, average, mean, etc. Please pay careful
+   attention to the flag information in the row header and column header, this information can help
+   you to skip many operations.)
+   3.Based on the question, select the row and column headers in the table that are most relevant to it
+   and find the corresponding cells based on them.
+   4.According to the requirements of the question, perform statistical, calculation, ranking, or other
+   operations on the cells you selected, and output of the answer in the format specified by the
+   definition.
+   # Output Control
+   1.First, you need to output your reasoning steps according to the question and table itself. The
+   reasoning steps should follow the format below: [Reasoning steps for this question are as following:
+   1.First, we need to... 2.We need to...]. output steps until final answers get solved.
+   2.Then, you need to output the final answer. The final answer should follow the format below:
+   [Answer Format] Final Answer: AnswerName1, AnswerName2... Ensure the final answer format
+   is the last output line and can only be in the "Final Answer: AnswerName1, AnswerName2..."
+   form, no other form.
+   3.Ensure the "AnswerName" is a number or entity name, as short as possible, without any expla-
+   nation. Give the final answer to the question directly without any explanation. If the question is
+   judgmental, please answer ’Yes’ or ’No’. Let’s get start!
+   [Question]: ...
+
+
+
+
+                    Figure 9: The Hierarchical Column Header sample in RealHiTBench.
+Table 14: The complete answer prompt of Numerical Reasoning. Fill the corresponding content into the ’...’
+positions after ’[]’ field.
+
+   Answer Generation Prompt for Numerical Reasoning
+   # Role play
+   Suppose you are an expert in table analysis and your task is to provide answers to questions based
+   on the content of the table.
+   # Chain-of-Thought
+   Let’s think step by step as follows and make the most of your strengths as a table analysis expert:
+   1.Fully understand the question and extract the necessary information from it.
+   2.Clearly and comprehensively understanding the content of the table, including the structure of
+   the table, the meaning and formatting of each row and column header(Note: There is usually
+   summative cell in the table, such as all, combine, total, sum, average, mean, etc. Please pay careful
+   attention to the flag information in the row header and column header, this information can help
+   you to skip many operations.)
+   3.Based on the question, select the row and column headers in the table that are most relevant to it
+   and find the corresponding cells based on them.
+   4.According to the requirements of the question, perform statistical, calculation, ranking, or other
+   operations on the cells you selected, and output of the answer in the format specified by the
+   definition.
+   # Output Control
+   1.First, you need to output your reasoning steps according to the question and table itself. The
+   reasoning steps should follow the format below: [Reasoning steps for this question are as following:
+   1.First, we need to... 2.We need to...]. output steps until final answers get solved.
+   2.Then, you need to output the final answer. The final answer should follow the format below:
+   [Answer Format] Final Answer: AnswerName1, AnswerName2... Ensure the final answer format
+   is the last output line and can only be in the "Final Answer: AnswerName1, AnswerName2..."
+   form, no other form.
+   3.Ensure the "AnswerName" is a number or entity name, as short as possible, without any expla-
+   nation. Give the final answer to the question directly without any explanation. Note: If the final
+   answer has multiple decimals, retain two decimals.
+   Let’s get start!
+   [Question]: ...
+Table 15: The complete answer prompt of Data Analysis. Fill the corresponding content into the ’...’ positions after
+’[]’ field.
+
+   Answer Generation Prompt for Data Analysis
+   # Role play
+   Suppose you are an expert in table analysis and your task is to provide answers to questions based
+   on the content of the table.
+   # Chain-of-Thought
+   Let’s think step by step as follows and make the most of your strengths as a table analysis expert:
+   1.Fully understand the question and extract the necessary information from it.
+   2.Clearly and comprehensively understanding the content of the table, including the structure of
+   the table, the meaning and formatting of each row and column header(Note: There is usually
+   summative cell in the table, such as all, combine, total, sum, average, mean, etc. Please pay careful
+   attention to the flag information in the row header and column header, this information can help
+   you to skip many operations.)
+   3.Based on the question, select the row and column headers in the table that are most relevant to it
+   and find the corresponding cells based on them.
+   4.According to the requirements of the question, perform statistical, calculation, ranking, or other
+   operations on the cells you selected, and output of the answer in the format specified by the
+   definition.
+   # Output Control
+   1.First, you need to output your reasoning steps according to the question and table itself. The
+   reasoning steps should follow the format below: [Reasoning steps for this question are as following:
+   1.First, we need to... 2.We need to...]. output steps until final answers get solved.
+   2.Then, you need to output the final answer. The final answer should follow the format below:
+   [Answer Format] Final Answer: AnswerName1, AnswerName2... Ensure the final answer format
+   is the last output line and can only be in the "Final Answer: AnswerName1, AnswerName2..."
+   form, no other form.
+   3.The "AnswerName" should represent the primary result of the rudimentary analysis, such as a
+   number or an entity name, expressed as concisely as possible. Provide the final answer directly
+   without additional explanation or extra output.
+   Let’s get start!
+   [Question]: ...
+Table 16: The complete answer prompt of Chart Generation. Fill the corresponding content into the ’...’ positions
+after ’[]’ field.
+
+   Answer Generation Prompt for Chart Generation
+   # Role play
+   Suppose you are an expert in table analysis and your task is to provide answers to questions based
+   on the content of the table.
+   # Chain-of-Thought
+   Let’s think step by step as follows and make the most of your strengths as a table analysis expert:
+   1.Fully understand the question and extract the necessary information from it.
+   2.Clearly and comprehensively understanding the content of the table, including the structure of
+   the table, the meaning and formatting of each row and column header(Note: There is usually
+   summative cell in the table, such as all, combine, total, sum, average, mean, etc. Please pay careful
+   attention to the flag information in the row header and column header, this information can help
+   you to skip many operations.)
+   3.Based on the question, select the row and column headers in the table that are most relevant to it
+   and find the corresponding cells based on them.
+   4.According to the requirements of the question, perform statistical, calculation, ranking, or other
+   operations on the cells you selected, and output of the answer in the format specified by the
+   definition.
+   # Output Control
+   1.First, you need to output your [reasoning steps] according to the question and table itself. The
+   reasoning steps should follow the format below: [Reasoning steps for this question are as following:
+   1.First, we need to... 2.We need to...]. output steps until final answers get solved. Then, you need to
+   output the final answer.
+   2.The final answer should follow the format below and ensure the first three code lines is exactly
+   the same with the following code block: [Answer Format] python import pandas as pd import
+   matplotlib.pyplot as plt df = pd.read_excel(’table.xlsx’) ... plt.show(). Ensure the code can generate
+   the chart correctly and output this code block completely.
+   3.You should take the values needed to draw the chart directly from the table and write them into
+   the code block, e.g. name1: value1, name2: value2...
+   4.Then transform it into a string with newlines represented as ’\n’, indents represented as ’\t’ and no
+   comments. Ensure code block and corresponding string are right. Do NOT output [answer format].
+   5.Ensure that the X-axis used for drawing in the code is arranged in ascending alphabetical or
+   numerical order. Ensure the last line in python code can only be "plt.show()", no other from. Give
+   the final answer to the question directly without any explanation.
+   Let’s get start!
+   [Question]: ...
+Table 17: The First-Round Tree-Based answer prompt. Fill the corresponding content into the ’...’ positions after
+’[]’ field.
+
+   First-Round Tree-Based Answer Prompt
+   # Role play
+   You are tasked with performing detailed table analysis. Your task is to generate a hierarchical tree
+   structure for the top-row and left-column headers based on a LaTeX syntax complex table.
+   # Task Description
+   [Reasoning Steps]
+   Your thought process is as follows:
+   1.Understand the Table Structure: Provide a comprehensive description of the table, including
+   the various levels of row and column headers and their corresponding meanings. Construct two
+   distinct hierarchical trees: one for the row headers and one for the column headers. Each tree
+   should accurately represent the levels and relationships of the headers.
+   2.Traverse the Table: Analyze each row and column header to extract its content, indentation, and
+   positions in the table. Identify merged cells and indentation, as they often indicate hierarchical
+   relationships. Determine the parent-child relationships based on these visual cues and arrange the
+   data under the correct parent node in both row and column header trees.
+   3.Validate the Hierarchical Relationships: Iterate through both the row header tree and column
+   header tree. Verify that the parent-child relationships are accurate and that the nodes are correctly
+   placed within their respective hierarchies.
+   # Node Definition
+   You will be provided with a table in LaTeX format. The table may contain complex structures, such
+   as merged or nested cells. Your task is to encode each node of table header as a tuple T(t1, t2, t3,
+   t4).
+   The first element t1 indicates it represents row header (R) or column header (C), along with its
+   corresponding level.
+   The second element t2 and third element t3 represent its start and end positions, while the fourth
+   element t4 contains the value from the table. For example, a tuple (R0, 1, 2, City) indicates that it is
+   a row header (R) at level 0, spanning from row 1 to row 2, with the value City.
+   Please Convert the table headers to list L=[T1, T2, ...].
+   # Tree Generate
+   1. Divide the tuples list L into groups based on their levels, such that all tuples with the same level
+   are grouped together. Add a special ROOT node for rows and columns, each with a level of "-1".
+   2. For each tuple A in L. If the start and end positions of A are equal, mark A as a leaf node.
+   3. Otherwise, compare its T2 and T3 values with every closest higher-level and same flag tuple B.
+   If tuple A is within the range of tuple B, then B is the parent-header of A.
+   4. Repeat steps 2 and 3 iteratively until all tuples in L are linked to their respective parent nodes
+   (Tuples without parent node are linked to the ROOT node), forming a hierarchical Table-Header
+   Tree H.
+   # Output Control
+   Next, we will provide a table for you to analyze the hierarchical structure for the table and please
+   organize the table header tuples as a tree, which can help you better understand the table structure.
+   You should clearly and comprehensively understand the content of the table, including the structure
+   of the table, the meaning and formatting of each row and column header (Note: There is usually
+   summative cell in the table, such as all, combine, total, sum, average, mean, etc. Please pay careful
+   attention to the flag information in the row header and column header, this information can help
+   you to skip many operations.)
+   Please check the constructed tree structure carefully and make sure that you have not missed any
+   information in the contents of the table.
+   Let’s get started!
+   [TABLE]: ...
+Table 18: The Second-Round Tree-Based answer prompt. Fill the corresponding content into the ’...’ positions
+after ’[]’ field.
+
+   Second-Round Tree-Based Answer Prompt
+   # Role play
+   You are a table analyst. Your task is to first extract relevant keywords based on the questions posed, identify related
+   content from the previous tables, and match it with the corresponding headers in the structure tree. Then you need to
+   answer questions based on the provided table content.
+   # Thinking Guidelines and Output Format Control
+   1.Understand the Question: Begin by carefully reading the question to extract the essential information needed for
+   answering. This helps ensure that you focus on the right aspects of the table in the next steps.
+   2.Analyze the Table Content: Thoroughly examine the structure tree and original content of the table, paying close
+   attention to both row and column headers, which may include special indicators such as "Total," "Sum," "Average," or
+   other summary metrics. Be mindful of any rows or columns dedicated to aggregates, as these can provide quick answers
+   without the need for detailed calculations. It’s also crucial to recognize that the table might have complex structures,
+   such as merged cells or semantic nesting, which could influence the interpretation of the data.
+   3.Identify Relevant Data: With a clear understanding of the question, identify the rows and columns in the table that are
+   most relevant to the inquiry. This involves locating the cells that correspond to the relevant headers, ensuring the selected
+   data is directly related to the question at hand.
+   4.Perform Necessary Analysis or Calculations: Once the relevant data is identified, perform any required operations,
+   such as statistical analysis, mathematical calculations, ranking, or other necessary procedures. This will help you derive
+   the needed insights and provide a comprehensive answer.
+   # Output Action Pattern
+   Your output should follow a React-like pattern of thinking, which includes one or more cycles of "Thought/Action/Result",
+   ultimately leading to a "Final Answer" on the last line.
+   [Action Patterns]
+   1.Thought: Consider the next action based on the result of the previous one.
+   2.Action: The action should always be a single processing action.
+   3.Result: Simulate the action result, analyze the result, and decide whether to continue or stop.
+   (This "Thought/Action/Result" cycle can repeat multiple times.)
+   Verify the table, observations, and question thoroughly before providing the final answer.
+   # Output Format
+   When answering, if the final answer comes from the original format in the table, please use the original format from the
+   table without modifying it.
+   Below is an example of an output format. You need to first output the relevant keywords, headers, and content related
+   with the question, then go through a multi-round interaction of thought/action/result, and finally provide the final answer.
+   # Output Example
+   Relevant Keywords: Keywords related to the table in question.
+   Relavant Table Headers: column/row headers related with the question.
+   Relavant Content: related table content.
+   Thought: Your first round of thinking.
+   Action: The action of your first round.
+   Result: The observation and result of your first round of simulation.
+   Thought: Your second round of thinking. The ’Thought/Action/Result’ cycle can repeat 1 or more times until the final
+   answer is reached.
+   Action: The action of your second round.
+   Result: The observation and result of your second round of simulation.
+   Final Answer: Your output result, following the format "Final Answer: AnswerName1, AnswerName2...". The
+   "AnswerName" should be a number or entity name, as short as possible.
+   Let’s get start!
+   [Question]: ...
+Table 19: The representative GPT-Eval prompt of Data Analysis. Fill the corresponding content into the ’...’
+positions after ’[]’ field.
+
+   Representative GPT-Eval Prompt for Data Analysis
+   Suppose you are an expert in table analysis and your task is to rate the user answer on one metric
+   based on the table content, question and corresponding reference answer.
+   You will be given table content and a question about rudimentary analysis of the table. And the
+   corresponding reference answer to a question and the answer from the user.
+   Your task is to rate the answer on one metric.
+   Please make sure you read and understand these instructions carefully. Please keep this document
+   open while reviewing, and refer to it as needed.
+   Evaluation Criteria:
+   Correctness (1-100) - the answer should be as close as possible to the reference answer, with
+   perfectly equal answers receiving full marks, smaller differences receiving higher marks, and larger
+   differences receiving only lower marks.
+   Evaluation Steps:
+   1. Read the table carefully and fully understand the contents of the table.
+   2. Read the result and compare it to the reference answer and the table. Determine if the answer is
+   correct and if not score it based on how different it is from the correct answer.
+   3. Assign a score for correctness on a scale of 0 to 100, where 0 is the lowest and 100 is the highest
+   based on the Evaluation Criteria.
+   [Question]: ... ,
+   [Reference Answer]: ... ,
+   [User Answer]: ... .
+   Emphasize: you need to make sure your final answer is formatted in this way: [Score]: xx/100
+Figure 10: The Hierarchical Row Header sample in RealHiTBench.
+ Figure 11: The Nested Sub Tables sample in RealHiTBench.
+
+
+
+
+  Figure 12: The Multi-Table Join sample in RealHiTBench.
+
+
+
+
+Figure 13: The flat table sample in TableBench (Wu et al., 2024).
+Figure 14: The multiple table sample in MMQA (Wu et al., 2025).
+

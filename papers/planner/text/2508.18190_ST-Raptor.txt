@@ -1,0 +1,1259 @@
+                                                             ST-Raptor: LLM-Powered Semi-Structured Table
+                                                                          Question Answering
+                                                             Zirui Tang                                           Boyu Niu                                             Xuanhe Zhou∗
+                                                 Shanghai Jiao Tong University                Shanghai Jiao Tong University                                    Shanghai Jiao Tong University
+                                                    tangzirui@sjtu.edu.cn                         nby2005@sjtu.edu.cn                                             zhouxh@cs.sjtu.edu.cn
+
+                                                               Boxiu Li                                          Wei Zhou                                              Jiannan Wang
+                                                Shanghai Jiao Tong University                 Shanghai Jiao Tong University                                        Simon Fraser University
+                                                 lbxhaixing154@sjtu.edu.cn                       weizhoudb@sjtu.edu.cn                                                jnwang@sfu.ca
+
+                                                            Guoliang Li                                       Xinyi Zhang                                                  Fan Wu
+arXiv:2508.18190v3 [cs.AI] 2 Sep 2025
+
+
+
+
+                                                      Tsinghua University                      Renmin University of China                                      Shanghai Jiao Tong University
+                                                  liguoliang@tsinghua.edu.cn                   xinyizhang.info@ruc.edu.cn                                          fwu@cs.sjtu.edu.cn
+
+                                                                                               Q1: How many students are enrolled in the
+                                                                                               bachelor CE sino-foreign program?
+                                                                                                                                                                            Q6: How old was he when he started to be active?
+                                                                                               Right: 97 Wrong: 457 (Fail to distinguish
+                                                                                                                                                                            Right: 36 Wrong: 52 (Incorrect direct referencing
+                                                                                               different levels and cell semantics)
+                                                                                                                                                                            of table contents)
+
+                                                                                               Q2: How many Zhang teachers are there?
+                                                                                               Right: 1 Wrong: 2 (Wrong cell semantics)
+
+
+                                                                                                                                                                            Q7: How many occupation did he have?
+                                                                                                                                                                            Right: 5 Wrong: 4 (Fail to count cell contents)
+                                                                                               Q3: What's the total expenditure of the third
+                                                                                               quarter?
+                                                                                               Right: 105509.2 Wrong: 211018.4 (doubled)
+
+
+                                                                                                                                                                            Q8: How many employees in department A and C
+                                                                                                                                                                            have received a rating higher than A?
+                                                                                               Q4: Which quarter has the highest cash
+                                                                                                                                                                            Right: 2 Wrong: 1 (Fail to distinguish merged cells)
+                                                                                               expenditure?
+                                                                                               Right: Forth Quarter Wrong: Whole Year
+                                                                                               (Fail to understand the hierarchy)                                           Q9: Tell me the max age of employees.
+                                                                                                                                                                            Right: 42 Wrong: None (Fail to locate Age column)
+
+
+                                                                                               Q5: What is the depreciation rate for the                                    Q10: Summarize the basic information of the
+                                                                                               first year using the sum of years method?                                    company.
+                                                                                               Right: 14/105=13.33%                                                         Right: The company TD Tech has a contact number
+                                                                                               Wrong: 0.05 (Confusing depreciation rate                                     13912311231, a zip code 213000, and a contact
+                                                                                               and net residual rate)                                                       person named Tim.
+
+
+
+
+                                                      Figure 1: Example analytical questions over real-world semi-structured tables (e.g., Excel spreadsheets).
+                                        Abstract                                                                                      Given a user question, ST-Raptor decomposes it into simpler sub-
+                                        Semi-structured tables, widely used in real-world applications (e.g.,                         questions, generates corresponding tree operation pipelines, and
+                                        financial reports, medical records, transactional orders), often in-                          conducts operation-table alignment for accurate pipeline execution.
+                                        volve flexible and complex layouts (e.g., hierarchical headers and                            Third, we incorporate a two-stage verification mechanism: (1) for-
+                                        merged cells). These tables generally rely on human analysts to                               ward validation checks the correctness of execution steps, while (2)
+                                        interpret table layouts and answer relevant natural language ques-                            backward validation evaluates answer reliability by reconstructing
+                                        tions, which is costly and inefficient. To automate the procedure,                            queries from predicted answers. To benchmark the performance,
+                                        existing methods face significant challenges. First, methods like                             we present SSTQA, a dataset of 764 questions over 102 real-world
+                                        NL2SQL require converting semi-structured tables into structured                              semi-structured tables. Experiments show that ST-Raptor outper-
+                                        ones, which often causes substantial information loss. Second, meth-                          forms nine baselines by up to 20% in answer accuracy. The code is
+                                        ods like NL2Code and multi-modal LLM QA struggle to understand                                available at https://github.com/weAIDB/ST-Raptor.
+                                        the complex layouts of semi-structured tables and cannot accurately
+                                        answer corresponding questions.
+                                           To this end, we propose ST-Raptor, a tree-based framework                                  1        Introduction
+                                        for semi-structured table question answering (semi-structured table                           Semi-Structured Tables are a type of data structure that represents
+                                        QA) using large language models. First, we introduce the Hierar-                              the flexible and complex layouts commonly found in real-world data
+                                        chical Orthogonal Tree (HO-Tree), a structural model that captures                            across a variety of applications, such as Word Tables for financial
+                                        complex semi-structured table layouts, along with an effective al-                            reports [1], Excel spreadsheets for medical records [2], and PDF
+                                        gorithm for constructing the tree by identifying headers, content                             Tables for e-commerce transaction orders [3]. They often serve as
+                                        values, and their implicit relationships. Second, we define a set of                          the major type in these applications, e.g., accounting for up to 80%
+                                        basic tree operations to guide LLMs in executing common QA tasks.                             of patient records in Electronic Medical Record (EMR) systems [2].
+                                                                                                                                         For better understanding, in Figure 1, we showcase five exam-
+                                        ∗ Xuanhe Zhou is the corresponding author.                                                    ple semi-structured tables with corresponding user questions from
+                                                                                                                              1
+diverse scenarios (e.g., human resource management, financial man-              different cell relationships could lead to different answers. For in-
+agement, and personal information). Considering the bottom-right                stance, in the bottom-right table of Figure 1, when splitting the
+table (TD-Tech): (𝑖) the top portion covers the company’s funda-                merged cell of department A, the answer to the question “what is
+mental details, while (𝑖𝑖) the lower portion contains basic informa-            the second department” would be department A instead of B (C1).
+tion and performance ratings of employees per department. Dif-                      Second, due to the complexity of semi-structured table layouts,
+ferent shades of blue in TD-Tech highlight the nested levels of the             answering questions over such tables can be challenging, often
+table, reflecting relationships like hierarchical headers (e.g., the “Ba-       requiring a variety of analytical “tricks”. For instance, we may
+sic Info” header linked to lower-level headers like “Company” and               need to apply both left-to-right and top-to-down lookup strategies
+“TEL”) and header-to-content (e.g., both “Department” and “Level”               (e.g., identifying departments in the bottom-right table of Figure 1
+headers own the content values of “A”s). Even human analysts may                by referencing the top-level title header, the left “Employee Info”
+need to carefully analyze the layout characters to fully understand             header, and the nested “Department” header). Conversely, we may
+such semi-structured tables.                                                    sometimes need to examine the content cells to identify the relevant
+    This layout flexibility makes semi-structured table QA extremely            headers (i.e., bottom-up lookup), which makes the semi-structured
+challenging and distinguishes it from other common QA tasks on                  table QA procedure even more complicated (C2).
+structured data (e.g., relational tables [12]) and unstructured data                Third, an effective validation mechanism for semi-structured table
+(e.g., textual documents or multimedia files [7]). In Figure 1, we              QA remains absent, which is especially crucial for resolving issues
+showcase semi-structured table questions that commonly require                  such as hallucination in LLMs [10, 34]. In related tasks like NL2SQL,
+the following analysis strategies: (𝑖) Identify the headers based               many methods do not validate the accuracy of generated answers
+on the user question to locate the areas of relevant table cells. For           and thus produce the final result in a single shot. Others merely
+instance, 𝑄8 first identifies the “Level” header in the “Employee               check whether executing the SQL statements yields result tables
+Info” sub-table, and then recognizes the “A+” cells. Meanwhile,                 sufficient to answer the question. However, in semi-structured table
+it is essential to distinguish that the content value “A” under the             QA, the retrieved cells can (𝑖) still involve complex semi-structured
+“Department” header is different from “Level A” in the original                 layouts (e.g., a single cell may contain multi-row text or even a
+question. (𝑖𝑖) Leverage the identified cells and the original question          nested sub-table) and (𝑖𝑖) be derived through multiple lookups,
+to analyze the surrounding table structures for capturing nested                making it difficult for general LLMs to verify the accuracy of these
+relationships and extracting additional information. For instance,              retrieved semi-structured table cells (C3).
+for 𝑄9, the merged cell “A+” applies to two employees to get the                    To address these challenges, we propose a novel semi-structured
+right answer “2”. (𝑖𝑖𝑖) Explore all potentially relevant header and             table QA framework (ST-Raptor). First, we introduce a graph model
+content cells required to form an accurate answer. For instance,                (HO-Tree) to represent semi-structured table layouts, with nodes
+for 𝑄10, relevant information about the company is needed for                   denoting table headers / content values and edges capturing their
+summarization.                                                                  hierarchical and containment relationships. This model also in-
+    Existing works (including powerful LLMs like GPT4-o[29] and                 cludes nine basic tree operations, covering most common QA tasks
+DeepSeek-R1 [13]) face significant limitations in semi-structured               and addressing the structural complexity challenge (for C1). Sec-
+table QA. First, NL2SQL methods [8, 10, 16, 34, 35, 41] generate SQL            ond, we present an effective HO-Tree construction strategy: (1)
+statements executed on relational tables to get the final answer.               a multi-modal LLM identifies semi-structured table headers, (2)
+However, it requires converting semi-structured tables into fully               heuristic rules separate the semi-structured table into basic table
+structured formats, causing substantial information loss. Second,               units based on the identified headers, and (3) a depth-first search
+methods like NL2Code [43] generate python code to operate on                    (DFS) algorithm constructs the HO-Tree. This stage addresses the
+pandas dataframes. However, they struggle to understand many                    difficulty of accurately representing the complex implicit relations
+complex semi-structured tables and conduct precise information                  of semi-structured tables. Third, we propose a question decompo-
+retrieval. A more promising approach involves converting tables                 sition method with two key techniques: (1) semantic alignment
+into images for processing with Vision Language Models (VLM) [20,               between the input question and the derived operation pipeline,
+47]. But it has three main limitations: (𝑖) Table2image causes precise          and (2) a column-type-aware tagging approach that annotates dis-
+loss and often misleads to irrelevant table areas; (𝑖𝑖) It requires             crete, continuous, and unstructured columns (e.g., listing [man,
+extensive fine-tuning on QA tasks and has poor generalization                   woman] for a sex column) to enhance data retrieval accuracy (for
+ability; (𝑖𝑖𝑖) It cannot work for relatively large tables those with            C2). Finally, we introduce a two-stage QA verification mechanism
+over 100+ rows (see more analysis in Section 2.3).                              to ensure solution stability. The first stage checks constraints (e.g.,
+    There are several challenges in achieving automatic semi-                   non-empty, question-related) to validate the generated operations
+structured table QA. First, understanding the structure of semi-                and their execution results. The second stage provides a confidence
+structured tables involves two main problems: (𝑖) how to distinguish            score by comparing the original questions with those derived from
+header and content cells that could distribute in any areas of the              the final answers (for C3).
+table, which involves semantic understanding (e.g., in the bottom-                  We summarize our contributions as follows:
+right table of Figure 1, the “A” cells under “department” and “level”           (1) We present a novel framework that enables effective and robust
+headers) and cannot be handled by rule-based matching approaches                semi-structured table QA using large language models.
+[9]; (𝑖𝑖) how to understand the nested or containment relationships             (2) We provide a tree-based representation method for semi-structured
+across the header and content cells, where the same question to                 tables (HO-Tree), and design basic tree operations in the model to
+                                                                                support common QA tasks.
+                                                                            2
+                                                                                                                                Company    TD Tech          Name       Mark       Jone       Ray           Meta Info
+                                                                                                                                                                                                           MS
+                                                                                                                           (a) Minimal Structure                   (b) Basic Structure
+                                                                                                                                                                                                           BS
+                                                                                                                                Company    TD Tech             City      Name
+                                                                                                                                 Company    TD Tech          Name       Mark      Jone          RayName     Meta Info
+                                                                                                                                                                                                            Albert
+                                                                                                                                Zip Code   213000                        Albert          Info
+                                                                                                                                                                                                 MS
+                                                                                                                              (a) Minimal Structure           (b) Basic Structure
+                                                                                                                                                         BeiJing                         Sex     Male
+                                                                                                                                Contacts    Tim                      Tim                         BS
+                                                                                                 Company    TD Tech   Name       Mark       Jone     Ray         Meta Info
+                                                                                                                             (c)Company    TD
+                                                                                                                                  Orthogonal  Tech         City
+                                                                                                                                                    (d) Containment  Name
+                                                                                                                                                                        Relation (e) Nested    Relation
+                                                                                                                                                                 MS                      Name    Albert
+                                                                                             (a) Minimal Structure               Basic
+                                                                                                                            (b)Zip Code Structure
+(3) We propose a DFS-based algorithm that combines VLM and                          Table 1: Semi-Structured Table Layouts – Cells marked in blue
+                                                                                                                                          213000
+                                                                                                                                                          BeiJing BS
+                                                                                                                                                                    Albert       Info
+                                                                                                                                                                                          Sex     Male
+                                                                                                 Company    TD Tech                 Name Tim
+                                                                                                                         City Contacts                                Tim
+heuristic rules to construct HO-Tree from semi-structured table.                    in examples represent table headers.                                 Name     Albert                 Company TD Tech                        Name       Mark      Jon
+                                                                                                 Zip Code  213000             (c) Orthogonal
+                                                                                                                                   Albert        Info(d) Containment Relation (e) Nested Relation
+                                                                                     Layout  Company    TD Tech              Mark
+                                                                                                                    NameBeiJing         Jone
+                                                                                                                     Formal Representation        Ray               Info
+                                                                                                                                                          Sex MetaMale             (a) Atomic-Header-Single-Value
+                                                                                                                                                                                                        Example                  (b) Atomic-Header-M
+(4) We design a question decomposition strategy that ensures se-                                 Contacts
+                                                                                         (a) Minimal
+                                                                                                             Tim
+                                                                                                      Structure
+                                                                                                                                     Tim
+                                                                                                                         (b) Basic Structure                   MS                                                                                  Info
+                                                                                        L1:   Header-
+                                                                                                (c) Orthogonal       (d)
+mantic alignment with the generated operation pipelines, and in-                                                         = { 𝐻 = Relation
+                                                                                                                     𝑇𝑡 Containment  ℎ 1 , 𝑉 =(e)𝑣1Nested
+                                                                                                                                                    , 𝐻 BSRelation
+                                                                                                                                                          →  𝑉}.                                   Company
+                                                                                                                                                                                                         NameTD Tech
+                                                                                                                                                                                                                   Age          Name        Mark
+                                                                                                                                                                                                                                            Name      JoA
+                                                                                        Single-value
+                                                                                             Company  TD Tech          City      Name                                                            Info
+                                                                                                                                                           Name       Albert                 (a) Atomic-Header-Single-Value
+                                                                                                                                                                                                         Mark       22              (b) Atomic-Header-M
+                                                                                                                                                                                                                                            Mark
+troduce a column-type-aware tagging strategy to improve lookup                           L2:ZipHeader-
+                                                                                                Code  213000         𝑇𝑡 = { Albert
+                                                                                                                     BeiJing
+                                                                                                                             𝐻 = ℎ 1 , 𝑉Info= [ 𝑣1 , 𝑣2 , . . . , 𝑣𝑛 ],
+                                                                                                                                               SexCompanyMaleTD Tech                        Name     Mark    Jone     Ray                           Info
+                                                                                                                                                                                              (c) Atomic-Header-Subtable            (d) Hierarchical-Head
+accuracy on relatively large semi-structured tables.                                   Multiple-Values
+                                                                                             Contacts   Tim          𝐻        }.
+                                                                                                                         →n 𝑉 Tim
+                                                                                                                                                          (a) Atomic-Header-Single-Value                     Name      Age
+                                                                                                                                                                                                (b) Atomic-Header-Multiple-Values           Name
+                                                                                            (c) Orthogonal        (d) 𝑇
+                                                                                                                      Containment                                                                    Info
+(5) We propose a two-stage QA verification mechanism that con-                                                                    [ 𝐻 , 𝐻(e),Nested
+                                                                                                                         = 𝐻 =Relation       . . . , 𝐻Relation
+                                                                                                                                             1        2  ],        𝑛                                  CompanyMark
+                                                                                                                                                                                                               TD Tech22
+                                                                                                                                                                                                              Info
+                                                                                                                                                                                                                                        Group
+                                                                                                                                                                                                                                            Mark Name
+                                                                                                                                               Name                               Age             (c) Zip Name     Age
+                                                                                                                                                                                                      Atomic-Header-Subtable         (d) Hierarchical-Hea
+                                                                                                                                           𝑖 → 𝑇𝑖 ,
+                                                                                     L3: Orthogonal Tables 𝑇 = [ 𝑇1 ,𝑇o2 , . . . ,𝑇𝑛 ], 𝐻Info                                                             Code 213000                               Mike
+ducts constraint examinations and compares the pipelines of the                                                                                              Company    TD Tech
+                                                                                                                                                                        Mark       22
+                                                                                                                                                                               Contacts
+                                                                                                                                                                                           Name
+                                                                                                                                                                                             Tim
+                                                                                                                                                                                                     Mark
+                                                                                                                                                                                                       Mark Jone 22 Ray
+                                                                                                                                                                                                                                          HR
+                                                                                                                                                                                                                          Alber
+                                                                                                                     1≤𝑖 ≤𝑛 .                                                                                    Group
+origin question and those derived from the final answer.                                                                 n            (a) Atomic-Header-Single-Value       Atomic-Header-Multiple-Values
+                                                                                                                                            (c) Atomic-Header-Subtable (b)(d) Hierarchical-Header-Subtable
+                                                                                                                                                                              (e)Company   TD Tech
+                                                                                                                                                                                  Orthogonal-Tables                         Nam
+                                                                                                                                                                                                        (f) Hierarchical-Header
+                                                                                                                                                                                       Info 213000
+(6) We curate the SSTQA dataset, featuring 102 diverse semi-structured                   L4: Header-                 𝑇𝑡 = 𝐻 = 𝐻 p , 𝑇 = [ 𝑇1 ,𝑇2 , . . . ,𝑇𝑛 ],                  Zip Code
+                                                                                                                                                                               Group
+                                                                                                                                                                                                Info
+                                                                                                                                                                                                                   HR
+                                                                                                                                                                                                                            Mik
+                                                                                                                                                                   Name TD Tech
+                                                                                                                                                                Company    Age                        Name
+                                                                                                                                                                                                      Contacts   Age
+                                                                                                                                                                                                               Name
+                                                                                                                                                                                                                  Tim     Age                       Albe
+tables and 764 representative queries commonly found in real-world                    Orthogonal-Tables              𝐻 p →𝑇𝑖 , 1 ≤ 𝑖 ≤ 𝑛 Info Zip Code     22
+                                                                                                                                                  Mark 213000
+                                                                                                                                                                                                   (e)Mark      22
+                                                                                                                                                                                                              Mike
+                                                                                                                                                                                                       Orthogonal-Tables 25 (f) Hierarchical-Heade
+                                                                                                                                                                                                     HR
+scenarios.                                                                                                                                                (c) Atomic-Header-Subtable
+                                                                                                                                                                 Contacts   Tim             (d) Hierarchical-Header-Subtable
+                                                                                                                                                                                                             Albert      42
+
+                                                                                                                                                               (e) Orthogonal-Tables                              Info
+                                                                                                                                                                                            (f) Hierarchical-Header-Orthogonal-Tables
+(7) We conduct thorough evaluations to verify ST-Raptor can ef-                      each contain the same number of rows,       Companyforming
+                                                                                                                                          TD Tech
+                                                                                                                                                               Group
+                                                                                                                                                       a parallel          struc-Age
+                                                                                                                                                                          Name
+fectively tackle the structural and semantic complexities of semi-                                                               Zip Code 213000
+                                                                                     ture, while the content values of these subtables are HR                    weakly   Mike
+                                                                                                                                                                                re-25
+                                                                                                                                Contacts     Tim
+structured tables, resulting in improved QA accuracy and reliability.                lated or unrelated (e.g., personal information                  for   employees
+                                                                                                                                                                         Albert
+                                                                                                                                                                                in
+                                                                                                                                                                                    42
+
+                                                                                                                               (e) Orthogonal-Tables   (f) Hierarchical-Header-Orthogonal-Tables
+
+                                                                                     two separate departments). Suppose we have 𝑛 such subtables
+2     Preliminaries                                                                 𝑇n1, 𝑇2, . . . , 𝑇𝑛 . We represent their orthogonal combination as 𝑇 o=
+In this section, we first explain the typical semi-structured table                    𝐻 =[ 𝐻 1, 𝐻 2, . . . , 𝐻𝑛 ], 𝑇 =[ 𝑇1,𝑇2, . . . ,𝑇𝑛 ], 𝐻𝑖 →𝑇𝑖 , 1 ≤ 𝑖 ≤ 𝑛 .
+layouts, followed by the formalization of the semi-structured table                 For instance, as demonstrated in Table 1, the three atomic-header-
+QA task and a discussion of the limitations of existing approaches.                 single-value tables are combined in Orthogonal-Table layout.
+                                                                                    (L.4) Header-Orthogonal-Subtables.
+2.1     Semi-Structured Tables                                                         Header-Orthogonal-Subtables consists of an atomic or hierar-
+Semi-structured tables can be far more complex than structured                      chical header paired with one or more orthogonal-subtables ((L.3)),
+ones due to the combination of diverse table layouts. However, com-                 which means all orthogonal-subtables in (L.4) share the same header.
+pared with other semi-structured data, they still adhere to stricter                Formally, let the grouped        subtables be 𝑇1,𝑇2, . . . ,𝑇𝑛 . We represent
+layout constraints and may suffer information loss when stored in
+                                                                                                             n                                                 o
+                                                                                    this layout as 𝑇𝑡 = 𝐻 =𝐻 p,𝑇 =[ 𝑇1,𝑇2, . . . ,𝑇𝑛 ], 𝐻 p→𝑇𝑖 , 1 ≤ 𝑖 ≤ 𝑛 .
+formats like JSON (e.g., splitting merged cells). To preserve their
+structure, richer formats like HTML [31] are required. Furthermore,                 For instance, in Table 1, the header “Info” groups two orthogonal
+questions over such tables often demand precise layout-aware rea-                   subtables (i.e., “Name” and “Age” subtables) that each follows the
+soning (e.g., interpreting layout constraints) and operator ground-                 Header-Multiple-Value layout.
+ing (e.g., identifying the intersection of relevant rows and columns).                 A subtable 𝑇sub ⊂ 𝑇 follows one or a combination of the above
+                                                                                    layouts. Note that: (1) we do not consider irregular layouts, such
+Core Elements. In a semi-structured table 𝑇 , a table cell is the
+                                                                                    as content values presented without corresponding headers [4];
+atomic unit of a semi-structured table (e.g., the intersection of one
+                                                                                    (2) unlike structured tables, common semi-structured tables (e.g.,
+row and column). A table header consists of one or more rows
+                                                                                    Word tables, transaction records) are relatively small (e.g., tables
+or columns that label the table body. A merged cell spans multi-
+                                                                                    with over 100 rows are already considered large); (3) we assume the
+ple adjacent rows or columns to convey hierarchical information.
+                                                                                    tables are error-free, and issues such as table cleaning (e.g., missing
+A subtable is a semantically and structurally self-contained table
+                                                                                    value imputation [5]) are beyond the scope of this paper.
+embedded within a parent table with at least one level of nested
+                                                                                       Example 2.1. For the bottom-right semi-structured table in Fig-
+headers, rows, and internal layout.
+                                                                                    ure 1, we can extract two orthogonal subtables sharing a com-
+Table Layouts. The semi-structured table 𝑇 (in standard form and                    mon header “TD Tech” (𝐿.4 → 𝐿.3). Within the “Employee Info”
+ignoring issues likes data cleaning [6]) can be composed of four                    subtable, we can extract four header-multiple-values subtables
+typical layouts (independent with each other):                                      (𝐿.3→[𝐿21, . . . , 𝐿24 ]). In this way, we can use the formal expression
+(L.1) Header-Single-Value. The simplest layout pairs a header                       𝐿.4→𝐿.3→[𝐿.4→{𝐿.11, . . . , 𝐿.14 }, 𝐿.4→𝐿.3→[𝐿.2[1], . . . , 𝐿.2[4]]] to
+𝐻 = ℎ 1 with a single content value 𝑉 = 𝑣 1 , arranged either vertically            recursively traverse the entire structures. Furthermore, the one-to-
+or horizontal: 𝑇𝑡 = { 𝐻 = ℎ 1, 𝑉 = 𝑣 1, 𝐻 → 𝑉 } . For instance, in                  many relationships between these subtables motivate us to adopt
+Table 1, the atomic header “Name” is associated with the single value               a tree-based strategy to represent semi-structured tables (see Sec-
+“Albert”, demonstrating this minimal semi-structured table layout.                  tion 4).
+(L.2) Header-Multiple-Values. A more prevalent structure in semi-
+structured table is an atomic or hierarchical header 𝐻 = ℎ 1 accom-                 2.2        Semi-Structured Table QA
+panied by a list of values 𝑉 = [ 𝑣 1, 𝑣 2, . . . , 𝑣𝑛 ]. We represent this as
+                                                                                    Given a semi-structured table 𝑇 , the QA tasks aim to answer an
+𝑇𝑡 = { 𝐻 = ℎ 1, 𝑉 = [ 𝑣 1, 𝑣 2, . . . , 𝑣𝑛 ], 𝐻 → 𝑉 } . For instance, Table 1
+                                                                                    input question 𝑄 expressed in natural language based on 𝑇 [36].
+presents an example in which the atomic header “Name” corresponds
+to multiple values, specifically the list [ “Albert”, “Tim”, “Jack” ].                 Definition 1 (Semi-Structured Table QA). Let 𝑇 be a semi-
+(L.3) Orthogonal-Subtables. An orthogonal-subtable layout con-                      structured table with a multi-layered organization, and let 𝑄 be a
+sists of two or more subtables, whose top-level headers appear                      question that may reference one or multiple subtables in 𝑇 . Semi-
+at the same level, either horizontally or vertically. The subtables                 Structured Table QA is defined as a mapping (𝑇 , 𝑄) ↦−→ 𝐴, where
+                                                                                3
+                    Wrong Answer             Layout Understanding        Data Retrieval      Question Reasoning
+            40                          40                          80                    80 76                       that partially preserve structural information in textual form. How-
+#Total Numbers
+
+
+
+
+                                              31
+            30 29                       30                          60 60                 60                          ever, due to the inherent one-dimensional nature of these formats,
+                                                                                 46                    47
+            20                          20                          40      37            40                          LLMs face significant challenges in effectively interpreting com-
+                             16                         17   15                                             31
+                        13         14                                                             24                  plex table layouts. In contrast, image-based methods exhibit the
+                                                   11                                 18 20
+            10                          10                          20
+                                                                                                                      lowest layout understanding error among wrong answers (31.58%
+                 0 GPT-4o (HTML)         0GPT-4o (Structured) 0 Agent (ReAcTable) 0 VLM (TableLLaVA)                  compared to 35.48% for GPT-4o with structured input, 44.82% for
+    Figure 2: Error Distribution – GPT-4o is evaluated on both HTML                                                   GPT-4o with HTML input, and 61.67% for NL2Code agent), but
+    and structured (JSON) formats; ReAcTable (NL2SQL) converts semi-                                                  own relatively low overall accuracy caused by the following two
+    structured tables into structured representations; while TableLLaVA                                               limitations. This observation motivates us to design a proper semi-
+    utilizes LVM to process them as images.                                                                           structured table representation method that simultaneously stores the
+                                                                                                                      structural information and content of semi-structured tables.
+    the answer 𝐴 is derived by identifying the subtables {𝑇sub | 𝑇sub ⊆ 𝑇 }                                           (Limitation 2) Inaccurate Table Data Retrieval. As shown in
+    relevant to 𝑄.                                                                                                    Figure 2, data retrieval errors constitute a substantial proportion
+                                                                                                                      of failures. Specifically, the four methods (i.e., GPT-4o with struc-
+  QA Tasks. Commonly, QA tasks in this problem often require                                                          tured input, GPT-4o with HTML input, NL2Code agent, and vision-
+  understanding the layouts of target semi-structured tables. Here we                                                 language model) exhibit retrieval error rates of 55.17%, 54.84%,
+  showcase three typical QA tasks together with relevant layouts.                                                     76.67%, and 61.84%, respectively, which are primarily due to their
+  (1) Numerical Computation. The question 𝑄2 in Figure ?? re-                                                         inability to identify question-relevant tabular data. Among these
+  quests the age of the oldest employee (Header-Multiple-Values in                                                    methods, GPT-4o achieves superior performance, attributable to its
+  L.2). Correctly answering it involves (𝑖) locating the target column                                                advanced contextual comprehension capabilities. In contrast, the
+  “Age” within the hierarchical header “Info”, (𝑖𝑖) extracting all age                                                agent-based approach, which operates on structured table repre-
+  values from the corresponding records, and (𝑖𝑖𝑖) computing the                                                      sentations using external tools, incurs significant information loss
+  maximum value from the retrieved data. Such QA requires accurate                                                    during structural transformation. We observe that (1) these meth-
+  header identification and data retrieval, upon which we can easily                                                  ods lack robust data retrieval mechanisms, and (2) vanilla LLMs
+  apply basic computational functions to get accurate results.                                                        struggle to accurately locate target table content, likely due to in-
+  (2) Information Extraction. The question 𝑄1 in Figure ?? relies                                                     herent limitations in semantic understanding. This indicates that
+  on the “Employee Info” layout (Header-Orthogonal-Tables in L.4).                                                    significant improvements remain achievable in accurately locating
+  To derive the correct answer “2”, we must extract the records of                                                    and retrieving question-relevant content in semi-structured tables.
+  employees meeting the rating condition and aggregate them. Failure
+                                                                                                                      (Limitation 3) Question Comprehension Errors. Question com-
+  to properly interpret the semantic relationship between the merged
+                                                                                                                      prehension errors occur when a model misinterprets the semantics
+  cell “A+” and its associated employees may lead to a wrong answer.
+                                                                                                                      of a question and consequently retrieves incorrect answers from
+  (3) Summarization. The question 𝑄3 in Figure ?? requests a sum-
+                                                                                                                      semi-structured tables, often due to inadequate integration of table
+  mary of the company’s basic information (Orthogonal-Tables in L.3).
+                                                                                                                      layout and content. VLMs demonstrate the weakest performance,
+  Addressing this question involves two critical steps: (𝑖) identifying
+                                                                                                                      mainly due to their weak understanding of rich-text images. In
+  and extracting the semantically relevant table segments correspond-
+                                                                                                                      contrast, both GPT-4o and agent-based methods demonstrate better
+  ing to the question, and (𝑖𝑖) leveraging the reasoning capabilities of
+                                                                                                                      performance, benefiting from the advanced reasoning capabilities
+  LLMs to generate a coherent summary from the retrieved data. The
+                                                                                                                      of LLMs. However, their remaining errors are predominantly at-
+  key challenge lies in robustly interpreting complex table layouts to en-
+                                                                                                                      tributable to the failure to align the semantics of the input question
+  sure precise alignment between the question intent and the extracted
+                                                                                                                      with complex semi-structured table layouts, motivating us to de-
+  data to generate accurate summaries.
+                                                                                                                      sign tailored question decomposition and table semantic alignment
+    2.3               Limitations of Existing Methods                                                                 techniques for semi-structured tables.
+   In this section, we discuss the limitations and challenges of existing
+   approaches that could potentially be adapted to semi-structured table                                              3   ST-Raptor Overview
+   QA. As shown in Table 2, these methods can be categorized based                                                    Architecture. Figure 3 shows the architecture of ST-Raptor, which
+   on their table representation strategies (e.g., table serialization [37],                                          consists of four main modules: (1) Table2Tree converts the given
+   HTML/JSON [19]) and the question comprehension techniques                                                          semi-structured table into a Hierarchical Orthogonal Tree (HO-
+   (e.g.,[33]). Figure 2 illustrates the error distribution when applying                                             Tree), which effectively represents the header / content relation-
+   typical methods to semi-structured table QA.                                                                       ships within the original table (see Section 4.2). Note that the Ta-
+   (Limitation 1) Poor Table Layout Understanding. The fail-                                                          ble2Tree module is utilized only once when handling multiple ques-
+   ure in layout understanding indicates that the model incorrectly                                                   tions related to the same table. (2) Question2Pipeline transforms
+   captures structural evidence, primarily due to the limitations of                                                  complex questions into simpler sub-questions, from which corre-
+   semi-structured table representation. Among existing represen-                                                     sponding operation pipeline are generated for each sub-question
+   tation methods, structured table representation (i.e., converting                                                  (see Section 5.1). (3) AnswerGenerator then executes these opera-
+   semi-structured tables into fully structured formats) leads to major                                               tions to obtain intermediate results or produce the final answer (see
+   loss of layout information. Alternative approaches (e.g., HTML,                                                    Section 5.2). (4) AnswerVerifier adopts a two-stage validation strat-
+   JSON, Spreadsheet [37]) employ common serialization strategies                                                     egy. In the forward stage, it checks whether the execution results
+                                                                                                                  4
+          Table 2: Comparison of Relevant Methods for Semi-Structured Table QA – More stars indicates better performance.
+                           Structure                     Structure     Data    Supported Answer
+          Representation                   Method                                                   Main Challenge
+                          Information                  Understanding Retrieval Table Scale Accuracy
+    HTML/JSON/Spreadsheet      ✓           NL2SQL            -           -          -         -     Fail to operate the table.
+           HTML                ✓          NL2Code            -           -          -         -     Fail to operate the table.
+        HTML/JSON              ✓            LLM              ★          ★         ★★          ★     Fail to understand table structure.
+      JSON/Spreadsheet         ✓          NL2Code            ★         ★★         ★★         ★★     Fail to understand table structure.
+         Structured            ✗      NL2SQL / NL2Code       -          ★        ★★★          ★     Structural information loss.
+         Structured            ✗            LLM              -          ★         ★★          ★     Structural information loss.
+         Structured            ✗            Agent            -         ★★         ★★          ★     Structural information loss.
+           Image               ✓       Multimodal LLM       ★★          ★          ★         ★★     Fail to process big tables.
+          HO-Tree              ✓          ST-Raptor        ★★★        ★★★        ★★★        ★★★ Modeling and operation.
+
+    Table2Tree
+                                                                                                                               4.1    Hierarchical Orthogonal Tree
+                                  Principles             Layouts                     HO-Tree Construction
+          Raw Table                                    Header-Single-
+                                                                                                                               Following the recursive definition in Section 2.1, a semi-structured
+                                                           Value                                       M
+               VLM            Top-Level Header
+                               Identification
+                                                                                                                               table composed of layouts 𝐿.1–𝐿.4 (Table 1) can be decomposed
+                                                      Header-Multiple-
+          Meta Info                                                                               B        B
+                                  Table Header            Values                                                               into two parts: (1) Metadata, which provides high-level semantic
+                                   Distinguish
+               Embedding                                                                          M
+                              Orthogonal Table
+                                                      Orthogonal-Tables                                                        abstraction (e.g., headers), and (2) Data, which contains the actual
+          Aligned Info         Identification             Header-                             B        B                       content values (e.g., the header “sex” associated with [‘female’,
+                                                      Orthogonal-Tables
+                                                                                              SubTree
+                                                                                                                               ‘male’, ‘female’]). Both metadata and data components may exhibit
+    Question2Pipeline                                                                                 Answer                   hierarchical and orthogonal structures. Given this inherent one-to-
+                                         General LLM              Embedding Model                     Verifier
+                                                                                                                               many organization, we model them using trees: one for metadata
+                                                                                                      1 Forward
+                      Question                   Operation               Top-Down Retrieval
+                                                                                                                               and one for data. In each, nodes store metadata or content values,
+                     Decomposer                  Generator              Bottom-Up Retrieval
+                                                                                                        Answer
+    Question                                                                                            Checker                while edges encode containment or orthogonal relationships.
+                                                                                                      2 Backward
+    Answer Genertor                                                                                                               Definition 2 (Hierarchical Orthogonal Tree (𝐻𝑂-𝑇 𝑟𝑒𝑒)).
+                                Data                  Grouped               Sub-data                    Question
+                              Retriever             Information
+                                                                                                        Rebuilder              Given a semi-structured table 𝑇 , we model 𝑇 into HO-Tree that links
+        Operation
+        Executor                LLM                  Reasoning
+                                                                                                               ...             the metadata with corresponding content values by pointing the leaf
+                                                                          Sub-answer                                           node in the 𝑀𝑇𝑟𝑒𝑒 to each level of 𝐵𝑇𝑟𝑒𝑒, representing the association
+                              Reasoner                History                                     0.2 0.6            0.9
+
+                                                                                                                               between metadata and the corresponding table column:
+                     Figure 3: The ST-Raptor Architecture.                                                                     (1) Meta Tree (𝑀𝑇𝑟𝑒𝑒). It represents the structural information and
+                                                                                                                               content of the table’s metadata. Each path from the root to a leaf
+are non-empty and consistent with the question; otherwise, the                                                                 corresponds to an abstract description of a specific column. Nodes in
+operation is regenerated or terminated early. In the backward stage,                                                           𝑀𝑇𝑟𝑒𝑒 are denoted as 𝑀𝑁𝑜𝑑𝑒;
+similar questions are generated from the output, and their similarity                                                          (2) Body Tree (𝐵𝑇𝑟𝑒𝑒). It represents the structural information and
+to the original question is used to score answer’s reliability (see                                                            content of the table body. Each node corresponds to a single cell value,
+Section 6).                                                                                                                    each path from the root to a leaf represents a row, and each level of the
+                                                                                                                               tree corresponds to a column—aligned with a path in 𝑀𝑇 𝑟𝑒𝑒. Nodes
+System Workflow. When a new semi-structured table and its as-
+                                                                                                                               in 𝐵𝑇𝑟𝑒𝑒 are denoted as 𝐵𝑁𝑜𝑑𝑒.
+sociated questions arrive, Table2Tree first preprocesses the table
+                                                                                                                               A single 𝐻𝑂-𝑇𝑟𝑒𝑒 is represented as 𝑇 = {𝑀𝑇𝑟𝑒𝑒 = 𝑀, 𝐵𝑇 𝑟𝑒𝑒 =
+into an HO-Tree and serializes the object into a local file. The Ques-
+                                                                                                                               𝐵, 𝑀 → 𝐵}. Within a semi-structured table, a collection of such
+tion2Pipeline then decomposes each question into subquestions and
+                                                                                                                               𝐻𝑂-𝑇𝑟𝑒𝑒𝑠 may exist, each comprising an 𝑀𝑇𝑟𝑒𝑒 and a 𝐵𝑇 𝑟𝑒𝑒. More-
+iteratively interacts with the AnswerGenerator to generate answers
+                                                                                                                               over, hierarchical containment may exist among these trees, where
+for each subquestion. The answer to the final subquestion serves
+                                                                                                                               one 𝐻𝑂-𝑇𝑟𝑒𝑒 can serve as the value of a node within another 𝐵𝑇 𝑟𝑒𝑒.
+as the question answer. The AnswerVerifier is involved throughout
+each step of operation execution, identifying and discarding incor-                                                               Example 4.1. The right part of Figure 4 illustrates an example of
+rect intermediate results, based on which ST-Raptor iterates until                                                             a HO-Tree, where “TD Tech” serves as the top-level cell. This cell
+generating correct answer.                                                                                                     is stored in a single-node 𝑀𝑇𝑟𝑒𝑒, which points to the remaining
+                                                                                                                               structure stored in a 𝐻𝑂-𝑇𝑟𝑒𝑒. The subsequent 𝑀𝑇𝑟𝑒𝑒 contains two
+4     Tree Model for Semi-Structured Table                                                                                     𝑀𝑁𝑜𝑑𝑒 instances (i.e., “Basic Info” and “Employee Info”), each refer-
+                                                                                                                               encing a distinct 𝐵𝑁𝑜𝑑𝑒, with each 𝐵𝑁𝑜𝑑𝑒 storing a sub 𝐻𝑂-𝑇 𝑟𝑒𝑒.
+      Representation
+As discussed in Section 2.1, semi-structured tables consist of complex
+combinations of basic table layouts (e.g., hierarchical headers with                                                           4.2    HO-Tree Construction
+nested subtables). Accurately performing question answering over                                                               Based on the definition, constructing an HO-Tree from a given semi-
+such tables remains challenging even for advanced LLMs like GPT-                                                               structured table requires precisely identifying (1) meta-information
+4o (see Section 2.3). Thus, in this section, we study how to effectively                                                       (table headers), (2) content values, as well as (3) the relationships
+represent the layout relationships within semi-structured tables to                                                            between subtables. Two main challenges remain. First, headers and
+enable accurate question answering.                                                                                            content cells can appear in arbitrary positions, making it difficult to
+                                                                                                                           5
+ (1) Meta Info Detection                                            (2) Table Partition                                     (3) DFS-based HO-Tree Construction
+                                                                                                                                                               TD Tech
+                                                                                                                            MT         BT
+                  VLM                  Embedding                                                                                       MT   Company            TEL                Zip Code        Contacts
+
+
+
+
+                                                                                                                            Basic
+                                                                                                                            Info
+Raw Table               Meta Info             Aligned Info                                                                             BT   TD Tech      13912311231                22              Tim
+
+    ['TD Tech', 'Basic Information', 'Company',                                                                                        MT                                          Info
+     'TEL', 'Zip Code', 'Contact', 'Employee', ...]                                                                                     Department     Group             Name             Age         Level
+
+                                                                                                                                       BT                                Mark                22
+                                                                                                                                                      Research1                                        A+
+
+
+
+
+                                                                                                                            Employee
+                                                                                                                                            A                            Jone                24
+     ['TD Tech', 'Basic Info', 'Company', 'TEL',
+
+
+
+
+                                                                                                                              Info
+    'Zip Code', 'Contacts', 'Employee Info', ...]                                                                                                     Research2           Ray                31           A
+                                                                                                                                                                         Mike                25        A-
+                                                                                                                                            B            HR
+                                                                                                                                                                         Albert              42        A+
+     Position List: [(1, 1, 1, 6), (2, 1, 3, 2), (2, 2, 2, 2),                                                                                                           Miki                28           A
+                                                                                                      MT: Meta Info Tree;                   C         Network
+    (3, 2, 3, 2), (2, 4, 2, 4), (3, 4, 3, 4), (4, 1, 12, 1), ...]     Level 1     Level 2   Level 3                                                                       Ben                32        A-
+                                                                                                      BT: Body Data Tree;
+
+Figure 4: An example of constructing a three-level nested Hierarchical Orthogonal Tree (𝐻𝑂-𝑇𝑟𝑒𝑒) – Different shades of blue
+highlight the table’s nested levels. For example, in the bottom-right table, the metadata, marked in dark blue, is constructed top-down into a
+tree of depth two, while the unshaded data section structured into a left-to-right tree of depth five.
+                         Table 3: Table of Atomic Operations.                                                      tables [23], often exhibiting issues like hallucination and the “Lost
+Operation Formal Representation Description                                                                        in the Middle” effect [27], undermining consistency and reliability.
+Children    𝐶𝐻 𝐿 (𝑉 )            Get children based on the given value.                                               To overcome these limitations, we adopt a hybrid method that
+Father      𝐹𝐴𝑇 (𝑉 )             Get Father based on the given value.                                              combines rule-based matching with LLM-based reasoning. As shown
+Value       𝐸𝑋𝑇 (𝑉1 , 𝑉2 )       Get the cross of two values.
+                                                                                                                   in Figure 4, given a semi-structured table in Excel format, we first
+Condition 𝐶𝑜𝑛𝑑 (𝐷, 𝐹𝑢𝑛𝑐 )        Filter values based on the function.
+Calculation 𝑀𝑎𝑡ℎ (𝐷, 𝐹𝑢𝑛𝑐 )      Calculate result based on the function.
+                                                                                                                   convert it to HTML, render it using a headless browser, and capture
+Compare 𝐶𝑚𝑝 (𝐷 1 , 𝐷 2 , 𝐹𝑢𝑛𝑐 ) Compare values based on the function.                                              a high-resolution screenshot as input image for the VLM. Then, we
+Execute     𝐹𝑜𝑟𝑒𝑎𝑐ℎ (𝐷, 𝐹𝑢𝑛𝑐 )   Apply function to the given values.                                               prompt the VLM to output all possible keys that would be present
+Align       𝐴𝑙𝑖𝑔𝑛 (𝑃, 𝐻𝑂-𝑇 𝑟𝑒𝑒 ) Operation-Table alignment.                                                        in a JSON-formatted representation of the table as the candidate
+Reason      𝑅𝑒𝑎 (𝑄, 𝐷 )          Reasoning based on LLMs.                                                          meta-information cell values. Subsequently, we calculate similarity
+                                                                                                                   scores between candidates and all table cells using embedding-
+distinguish between them. Second, understanding the nested or con-                                                 based similarity metrics. Cells exceeding a predefined threshold
+tainment relationships among these cells is non-trivial, especially                                                are identified as meta-information, and their positions guide the
+given the flexible and irregular structure of semi-structured tables.                                              subsequent table partitioning process.
+Thus, next we introduce the detailed steps in HO-Tree construction.
+                                                                                                                   4.2.2      Table Partition Principles
+ Algorithm 1: HO-Tree Construction (HOTC)
+                                                                                                                   We introduce three principles to guide the HO-Tree construction
+  Input: A Semi-Structured Table 𝑇                                                                                 process by interpreting different layouts in semi-structured tables:
+  Output: Extracted HO-Tree 𝐻𝑂𝑇𝑟𝑒𝑒
+                                                                                                                   (Principle 1) Top-Level Header Identification. If a merged cell
+1    𝑀𝑒𝑡𝑎𝐼𝑛𝑓 𝑜 ← 𝑀𝑒𝑡𝑎𝐼𝑛𝑓 𝑜𝐷𝑒𝑡𝑒𝑐𝑡 (𝑇 );                                                                             spans an entire row or column, it is treated as a header in a Header-
+2 𝑇𝑙𝑖𝑠𝑡 ← 𝑇 𝑎𝑏𝑙𝑒𝑃𝑎𝑟𝑡 (𝑇 , 𝑀𝑒𝑡𝑎𝐼𝑛𝑓 𝑜);                                                                              Orthogonal-Tables layout (𝐿.4), and adjacent cells (below or to the
+3  𝐻𝑂𝑇 𝑟𝑒𝑒𝑙𝑖𝑠𝑡 ← [];                                                                                               right) are interpreted as a subtable.
+4  for 𝑇𝑠𝑢𝑏 in 𝑇𝑙𝑖𝑠𝑡 do                                                                                            (Principle 2) Header-Content Differentiation. When both top-
+ 5     switch 𝑡𝑦𝑝𝑒 (𝑇𝑠𝑢𝑏 ) do                                                                                      aligned and left-aligned headers are present, the one with more cells
+ 6         case 𝐿1, 𝐿2, 𝐿4 do                                                                                      is selected to construct the 𝑀𝑇𝑟𝑒𝑒, while the other is integrated
+ 7             𝐻𝑂𝑇 𝑟𝑒𝑒𝑙𝑖𝑠𝑡 .𝑝𝑢𝑠ℎ_𝑏𝑎𝑐𝑘 (𝐶𝑜𝑛𝑠𝑇𝑟𝑒𝑒 (𝑇𝑠𝑢𝑏 ));                                                          into the 𝐵𝑇𝑟𝑒𝑒.
+ 8         case 𝐿3 do                                                                                              (Principle 3) Orthogonal Table Identification. When Orthogonal-
+ 9             𝐻𝑂𝑇 𝑟𝑒𝑒𝑙𝑖𝑠𝑡 .𝑝𝑢𝑠ℎ_𝑏𝑎𝑐𝑘 (𝐻𝑂𝑇𝐶 (𝑇𝑠𝑢𝑏 ));                                                              Tables (𝐿.3) are detected, we segment them and process each sub-
+10     end                                                                                                         table recursively and sequentially.
+11 end                                                                                                                As illustrated in Figure 4, applying these principles enables table
+12 return 𝐶𝑜𝑛𝑠𝑇 𝑟𝑒𝑒 (𝐻𝑂𝑇𝑟𝑒𝑒𝑙𝑖𝑠𝑡 );                                                                                 partitioning based on meta-information locations and the recursive
+                                                                                                                   construction of HO-Trees for semi-structured tables.
+4.2.1           Meta Information Detection                                                                         4.2.3      DFS-based Tree Model Construction
+Unlike structured tables with fixed schemas, semi-structured tables                                                An HO-Tree is then constructed for each subtable according to its
+often exhibit complex and irregular nesting, posing challenges for                                                 identified layout type: for layouts 𝐿.1 and 𝐿.2, the HO-Tree is built
+meta-information extraction. Rule-based approaches fail to capture                                                 directly; otherwise, a recursive DFS is applied. For example, in Fig-
+such nuances, especially when similar structural patterns represent                                                ure 4, the vertically structured semi-structured tables demonstrate a
+different semantics. Serializing tables (e.g., as images or structured                                             top-down alignment of metadata and content.
+formats) allows prompting models for metadata extraction or for-                                                      Based on the detected metadata, the table is partitioned into
+mat generation. However, LLMs trained on 1D text struggle with 2D                                                  a list of subtables following predefined principles. An HO-Tree
+                                                                                                              6
+is then constructed for each subtable according to its identified              operation parameters with table content; (4) Semantic Reasoning
+layout type: for layouts 𝐿.1 and 𝐿.2, the HO-Tree is built directly;           Operations, which invoke LLMs for contextual inference.
+otherwise, a recursive DFS is applied. Take the vertically structured             For any user question, we first decompose it into one or more
+semi-structured tables where metadata and content are aligned top-             sub-questions, each resolved through a sequence of operations
+down in Figure 4 as an example: (1) In the 𝑀𝑇𝑟𝑒𝑒, each root-to-                to retrieve relevant information or derive the answer. Ideally, the
+leaf path represents a column, and the tree grows vertically to                generated operation pipeline includes: (1) retrieval to collect non-
+reflect vertical relationships among metadata. (2) In the 𝐵𝑇𝑟𝑒𝑒,               redundant data, (2) manipulation to structure the data into a model
+each path represents a row, with horizontally aligned attributes, so           comprehensible form, (3) alignment to ensure question-content
+the tree grows horizontally. Each leaf node in the 𝑀𝑇𝑟𝑒𝑒 points to a           alignment, and (4) reasoning to produce the final answer. In worst-
+corresponding level in the 𝐵𝑇𝑟𝑒𝑒, linking metadata to the associated           case scenarios, the model may retrieve nearly the entire table and
+content column.                                                                rely heavily on reasoning, highlighting the need for fine-grained,
+    During DFS backtracking, we model Orthogonal-Tables and                    modular operation design.
+Header-Orthogonal-Tables layouts (i.e., 𝐿.3 and 𝐿.4). In such cases,           Data Retrieval Operation. These operations are responsible for
+a node in the 𝐵𝑇 𝑟𝑒𝑒 may recursively contain another HO-Tree as                extracting relevant table content from the 𝐻𝑂-𝑇𝑟𝑒𝑒 based on argu-
+its value.                                                                     ments derived from the user question.
+    Algorithm 1 outlines the HO-Tree construction process. VLMs                • Children Retrieval (𝐶𝐻𝐿(𝑉 )) This operation retrieves all suc-
+identify table headers via the 𝑀𝑒𝑡𝑎𝐼𝑛𝑓 𝑜𝐷𝑒𝑡𝑒𝑐𝑡 function (Section 4.2.1).       cessor nodes of any node whose value matches 𝑉 . If multiple such
+Using the extracted metadata and predefined principles, the table              nodes exist, each set of successors is returned separately. Use the
+is partitioned into subtables through the 𝑇 𝑎𝑏𝑙𝑒𝑃𝑎𝑟𝑡 function (Sec-            𝐻𝑂-𝑇𝑟𝑒𝑒 in Figure 4 as an example, 𝐶𝐻𝐿(𝐵𝑎𝑠𝑖𝑐 𝐼𝑛𝑓 𝑜) returns the
+tion 4.2.2). To address structural complexity, each subtable is trans-         𝐻𝑂-𝑇𝑟𝑒𝑒 containing the company information.
+formed into an HO-Tree via the 𝐶𝑜𝑛𝑠𝑇𝑟𝑒𝑒 function (Section 4.2.3)               • Father Retrieval (𝐹𝐴𝑇 (𝑉 )) This operation is used to obtain the
+and recursively merged using depth-first search to reconstruct the             set of ancestor nodes of a given tree node. For instance, in Figure
+full structure of the original semi-structured table.                          4, 𝐹𝐴𝑇 (𝐷𝑒𝑝𝑎𝑟𝑡𝑚𝑒𝑛𝑡) would return the 𝐻𝑂-𝑇𝑟𝑒𝑒 containing the
+    Example 4.2. Figure 4 illustrates the construction of a three-level        employee information.
+nested HO-Tree. The “Basic Info” subtable is initially misidentified           • Value Retrieval (𝐸𝑋𝑇 (𝑉1, 𝑉2 )) This operation is used to find
+by the VLM as “Basic Information” and corrected by alignment.                  nodes in a certain layer of 𝐵𝑇𝑟𝑒𝑒 pointed to by a 𝑀𝑇𝑟𝑒𝑒 leaf node,
+Metadata is used to identify the 𝐿.4 → 𝐿.3 layout, guiding the par-            while giving them a common ancestor 𝐵𝑁𝑜𝑑𝑒 as a filtering criterion.
+tition of the “Basic Info” subtable into 𝑀𝑁𝑜𝑑𝑒 and a sub-𝐻𝑂-𝑇𝑟𝑒𝑒               Specifically, one of 𝑉1 and 𝑉2 needs to be a 𝑀𝑁𝑜𝑑𝑒 value, and the
+(constructing 𝐿.4). Finally, the leaf nodes of the 𝑀𝑇𝑟𝑒𝑒 in subtree            other needs to be a 𝐵𝑁𝑜𝑑𝑒 value. Assume that 𝑉1 is the 𝑀𝑁𝑜𝑑𝑒
+link to corresponding levels of the 𝐵𝑇𝑟𝑒𝑒 (constructing 𝐿.3).                  value and 𝑉2 is the 𝐵𝑁𝑜𝑑𝑒 value, the operation returns a set of node
+5     Pipeline-based Question Answering                                        values that satisfy the following: (1) The 𝐵𝑁𝑜𝑑𝑒 is in the 𝑀𝑇 𝑟𝑒𝑒
+                                                                               column 𝑉1 (2) 𝐵𝑁𝑜𝑑𝑒 with value 𝑉2 is an ancestor of the 𝐵𝑁𝑜𝑑𝑒 in
+With the HO-Tree model in place, it poses three key challenges in
+                                                                               𝑀𝑇𝑟𝑒𝑒 column.
+question answering over semi-structured tables. First, such questions
+often require multi-hop reasoning rather than one-shot retrieval,              Data Manipulation Operation is used to perform specific opera-
+and unlike NL2SQL tasks, lack a standardized operation set for                 tions on the data, including filtering based on conditions, perform-
+pipeline construction. Second, answering necessitates hybrid tra-              ing calculations, and making comparisons.
+versal strategies (e.g., left-to-right, top-down, bottom-up) to locate         • Condition (𝐶𝑜𝑛𝑑 (𝐷, 𝐹𝑢𝑛𝑐)) filters a data set 𝐷 using a predicate
+relevant content. Third, the large number of cells in some semi-               function 𝐹𝑢𝑛𝑐 and returns the filtered values or a new 𝐻𝑂-𝑇 𝑟𝑒𝑒. For
+structured tables complicates the precise identification of question-          instance, 𝐶𝑜𝑛𝑑𝑖𝑡𝑖𝑜𝑛(𝐸𝑋𝑇 (𝐿𝑖𝑙𝑦, 𝐺𝑟𝑎𝑑𝑒), 𝑑𝑒 𝑓 (𝑥) : 𝑟𝑒𝑡𝑢𝑟𝑛 𝑥 < 60)
+relevant information.                                                          retrieves Lily’s grades that are less than 60.
+   To address these challenges, we propose a pipeline-based QA                 • Calculation (𝑀𝑎𝑡ℎ(𝐷, 𝐹𝑢𝑛𝑐)) applies a numerical com-
+strategy centered on a set of tree-specific operations that cover most         putation function 𝐹𝑢𝑛𝑐 over a data set 𝐷. For instance,
+QA scenarios: (1) a question decomposition method for complex                  𝑀𝑎𝑡ℎ(𝐶𝐻𝐿(𝑃𝑟𝑖𝑐𝑒), 𝑑𝑒 𝑓 (𝑥) : 𝑟𝑒𝑡𝑢𝑟𝑛 𝑠𝑢𝑚(𝑥)) returns the sum of
+multi-hop queries, (2) an operation generation mechanism with                  the column “Price”.
+parameter-content alignment, and (3) a column-type-aware tagging               • Compare (𝐶𝑚𝑝 (𝐷 1, 𝐷 2, 𝐹𝑢𝑛𝑐)) compares two data sets 𝐷 1 and 𝐷 2
+mechanism that annotates columns based on data characteristics,                using a function 𝐹𝑢𝑛𝑐, and returns the boolean result. For instance,
+enabling efficient and accurate retrieval from large, complex tables.          𝐶𝑜𝑚𝑝𝑎𝑟𝑒 (𝐸𝑋𝑇 (𝐿𝑖𝑙𝑦, 𝐺𝑟𝑎𝑑𝑒), 𝐸𝑋𝑇 (𝐶𝑖𝑛𝑑𝑦, 𝐺𝑟𝑎𝑑𝑒), 𝑑𝑒 𝑓 (𝑥1, 𝑥2)       :
+                                                                               𝑟𝑒𝑡𝑢𝑟𝑛 𝑥1 > 𝑥2 returns the truth value of the statement “Lily’s
+5.1    Basic Operations over HO-Tree                                           grade is greater than Cindy’s”.
+                                                                               • Execute (𝐹𝑜𝑟𝑒𝑎𝑐ℎ(𝐷, 𝐹𝑢𝑛𝑐)) applies a function 𝐹𝑢𝑛𝑐 to each el-
+We design a suite of atomic operations to enable structured and                ement in data set 𝐷 and returns the resulting set. For instance,
+interpretable QA over the 𝐻𝑂-𝑇𝑟𝑒𝑒. These operations support both               𝐹𝑜𝑟𝑒𝑎𝑐ℎ(𝐸𝑋𝑇 (𝐿𝑖𝑙𝑦, 𝐺𝑟𝑎𝑑𝑒), 𝑑𝑒 𝑓 (𝑥) 𝑟𝑒𝑡𝑢𝑟𝑛 𝑥−10) retrieves all Lily’s
+precise tree traversal and auxiliary tasks correspond to common                grades and returns the values after minus ten.
+semi-structured table sub-tasks. The operations fall into four cate-
+gories: (1) Data Retrieval Operations, which retrieve relevant values          Alignment Operation aims to ensure consistency between opera-
+from the tree; (2) Data Manipulation Operations, which process or              tion parameters and the content of the 𝐻𝑂-𝑇𝑟𝑒𝑒.
+transform retrieved data; (3) Alignment Operations, which align
+                                                                           7
+                                                  SQ: Sub Question ST: Sub Tree   Example                               SQ1 Process (Top-Down)                                          SQ3 Process
+ Retrieve & Answer Decompose
+
+
+                                Question
+                                                  SD: Sub Data     SA: Sub Answer
+                                                                                          Q: How many employees in      (1) [Employee Info] ->                                          ### Context
+                                     SQ1                  SQ2               SQ3           department A and C have                                                                       SQ1: Count ... department A ...
+                                                                                                                          Employee
+                                                                                                                                                                                        SQ1 Answer 1: 2
+                                                                                       received a rating higher than A?      Info
+                                                                                                                                                                                        SQ2: Count ... department C ...
+                               ST1         ST2              ST1                                                                                                                         SQ2 Answer 2: 0
+                                                                                           Question Decomposer          (2) Cond([Department]->, =='A')                                 ### Question
+
+
+
+
+                                                                                                                                                                      SQ2 Process ...
+                               ST11                  ST12       ST12                                                      Department         Group            Level
+                                                                                                                                                                                        SQ3: Add the result of history
+                                                                                        SQ1: How many employees                          Research 1            A+                       questions.
+                                                                                                                              A
+                               SD1         SD2        SD1         SD2                   in department A received a                       Research 2
+                                                                                                                                                        ...
+                                                                                                                                                               A
+                                                                                                                                             ...
+                                                                                        rating higher than A?                 C              Network           A-
+                                     SA1                    SA2            Answer                                                                                                                        LLM
+                                                                                        SQ2: How many employees         (3) Cond([Level]->, > 'A')
+      Relevant Content Match                                                                                              Department              Age         Level                                    Reasoning
+                                                                                        in department C received a                     ...
+                                                                                                                                                  22
+                                                                                        rating higher than A?                 A                                A+
+                                      Entity 1                              Entity 1                                                              24
+                                        ...                                    ...
+                   SQ                                                                   SQ3: Add the result of
+                               LLM                    BNode    Embedding
+                                                                            Entity m                                    (4) Math([name]->, count())                                     ### Output SQ3
+                                      Entity n        Values     Match                  SQ1 and SQ2.
+                                                                                                                          Count([Mark, Jone]) = 2                                       Answer: 2
+
+                                                                           Figure 5: Question Decomposition and Pipeline Generation.
+• Align (𝐴𝑙𝑖𝑔𝑛(𝑃, 𝐻𝑂-𝑇𝑟𝑒𝑒)) This operation aligns the parame-                                                     intermediate results produced by earlier sub-questions. For exam-
+ters 𝑃 in a given operation with the nodes in the 𝐻𝑂-𝑇𝑟𝑒𝑒 using                                                   ple, a question such as “What is the total salary for 2021 and 2022?”
+an embedding-based similarity model [39]. The process involves                                                    can be decomposed into three sub-questions: (1) retrieve the 2021
+computing embeddings for the parameters and table content:                                                        salary, (2) retrieve the 2022 salary, and (3) compute the sum of the
+                                                                                                                  two. For table operation generation, we prompt the LLMs with a
+                                                  𝐸𝑎 = 𝐸𝑚𝑏𝑒𝑑 (𝑎 1, 𝑎 2, . . . , 𝑎𝑛 )                    (1)       predefined set of operations and illustrative examples.
+                                                                                                                     Step 2: Relevant Data Retrieval. Each sub-question is then
+                                                  𝐸𝑐 = 𝐸𝑚𝑏𝑒𝑑 (𝑐 1, 𝑐 2, . . . , 𝑐𝑚 )                    (2)       answered independently through a combination of top-down and
+                                                 𝑆𝑖𝑚𝑀𝑎𝑡𝑟𝑖𝑥 = 𝐶𝑜𝑠𝑆𝑖𝑚(𝐸𝑎 , 𝐸𝑐 )                           (3)       bottom-up retrieval. ST-Raptor always starts with top-down re-
+where 𝑎𝑖 represents the 𝑖-th parameter and 𝑐 𝑗 denotes the content                                                trieval and switches to bottom-up retrieval when the former fails.
+of the 𝑗-th node in the tree, with 𝑚 representing the total number                                                The left section of Figure 5 shows this iterative process. For each
+of nodes. Cosine similarity (𝐶𝑜𝑠𝑆𝑖𝑚) is used to identify the most                                                 sub-question, the LLM first generates an operation statement based
+semantically aligned table node for each parameter, which is then                                                 on the sub-question content and the meta-information extracted
+used for downstream operations.                                                                                   from the 𝐻𝑂-𝑇𝑟𝑒𝑒. Executing this operation yields intermediate
+   Example 5.1. For the operation 𝐶𝐻𝐿(𝐼𝑑𝑒𝑛𝑡𝑖 𝑓 𝑖𝑐𝑎𝑡𝑖𝑜𝑛), if the meta-                                             results (i.e., sub-trees), which are then used to inform subsequent
+information of the table is [‘ID’, ‘Name’, ‘Age’], the alignment op-                                              operation generation.
+eration 𝐴𝑙𝑖𝑔𝑛(𝐼𝑑𝑒𝑛𝑡𝑖 𝑓 𝑖𝑐𝑎𝑡𝑖𝑜𝑛, 𝐻𝑂𝑇𝑟𝑒𝑒) attempts to output “ID” to                                                   We employ the Align operation for two purposes: (1) Operation-
+align the operation parameter to the table content.                                                               Table Alignment, applied upon each operation’s generation to align
+Semantic Reasoning Operation leverages LLMs for high-level                                                        sub-questions with the corresponding table content, and (2) Rele-
+reasoning over retrieved data.                                                                                    vant Content Match, invoked when the number of data nodes is
+• Reason (𝑅𝑒𝑎(𝑄, 𝐷)) This operation takes the original question                                                   large, to extract key entities from the question and constrain the
+𝑄 and the data 𝐷 obtained from prior operations, and uses an                                                      search space within the HO-Tree.
+LLM to generate the final answer. In cases where the question is                                                     Step 3: Answer Generation Once the relevant sub-data is re-
+decomposed into multiple sub-questions, semantic reasoning can                                                    trieved, each sub-question is resolved via the Reason operation,
+also be used to aggregate intermediate answers into a final response.                                             and all sub-answers are aggregated to produce the final answer.
+
+5.2                            Question Decomposition and Pipeline                                                5.3     Relatively Large Table QA Enhancement
+                               Generation                                                                         The abundance of available BNodes poses challenges in selecting
+Figure 5 illustrates the overall process of question decomposition,                                               accurate operation parameters. To address this, we introduce a data
+operation generation, and step-by-step data retrieval via both top-                                               grouping strategy that leverages inherent structural and semantic
+down and bottom-up strategies.                                                                                    features, combining top-down grouping based on data characteris-
+   Step 1: Question Decomposition. As shown in Figure 5, upon re-                                                 tics with parallel grouping via tree structure traversal.
+ceiving a user question, we first utilize the semantic understanding                                              1. Characteristic-based Grouping. The top-down grouping pro-
+capabilities of an LLM to decompose complex multi-hop questions                                                   cess is performed during HO-Tree construction, clustering data
+into multiple simpler, single-step sub-questions. Specifically, we                                                based on column characteristics. As shown in Figure 6, column
+prompt the LLM with the input question, sampled table content                                                     values are classified by data type (e.g., Numeric, Datetime, Unstruc-
+as semantic supplements, and example decomposition cases that                                                     tured String) and then further categorized as follows: Discrete —
+are dynamically retrieved based on question similarity to generate                                                columns with a limited set of values (e.g., grades [‘A’, ‘B’, ‘C’, ‘D’]
+sub-questions. These sub-questions are often interdependent: some                                                 or binary options [Yes, No]); Continuous — columns with nu-
+can be directly resolved using the 𝐻𝑂-𝑇𝑟𝑒𝑒, while others rely on                                                  meric values spanning a range (e.g., height or temperature); and
+                                                                                                              8
+    (1) Feature Analysis
+                                                                                                                      executing operations, we verify whether the parameters produced
+     A-        Numeric             Discrete            Unique           Level: {'A-': 1, 'A+': 4, 'A': 2}
+                                                                                                                      by LLM are consistent with the actual contents of the table (e.g.,
+     A+
+     A-        Datetime           Continuous              Range                  Age: [22, 53]                        when asking for company information and the given data only
+     ...
+     A+
+                                                                                                                      contain employee information, we stop the process). This involves
+                String          Unstructured         Embedding           Group: [G1: [...], G2: [...], ...]
+ Column
+                                                                                                                      directly matching generated parameters against table cells to ensure
+ (2) View Construction & Retrieve                                                                                     semantic and syntactic alignment.
+                                                                 Info                                                    After executing each operation over the HO-Tree, the general
+       Department              Group               Name                  Age                     Level                LLM evaluates whether the resulting data sufficiently answers the
+                                                   Mark      1           22         1
+                                                                                                                      corresponding sub-question. If the result is found to be inadequate, a
+                            Research 1   1                                                        A+          1       new operation statement is generated to continue the reasoning pro-
+           A        1                              Jone      1           24        1
+
+                            Research 2   1          Ray      1           31         1              A          1
+                                                                                                                      cess. Notably, real-world queries often lack sufficient information
+                                                   Mike      2           25        2              A-          2       to be answered directly from the table, which may cause the model
+           B        2           HR       2
+                                                   Albert    2           42        2              A+          2       to hallucinate incorrect answers. To mitigate this issue, the forward
+                                                                                                                      verification mechanism allows the model to halt the pipeline and
+           N        N          Outer     N          Jack     N           53        N               A      N           return an “unanswerable” signal when it detects that the answer
+                                                                                                                      cannot be reliably inferred. Furthermore, when operation state-
+                           Q: Retrieve department with employee's level = A
+                                                                                                                      ments are found to misalign with the table content, the system
+     Figure 6: Characteristic-based Grouping Mechanism                                                                triggers a regeneration process to refine and correct the statements,
+Unstructured — columns with free-form text (e.g., comments or                                                         thereby improving both the data retrieval accuracy and efficiency.
+descriptions). A rule-based classifier performs this categorization                                                   Backward Verification. In the second stage, we evaluate the cor-
+to reduce complexity in tables with numerous similar cells. With                                                      rectness of the generated operation pipeline by verifying it against
+clearly defined rules, it achieves near-perfect accuracy.                                                             alternative reasoning paths. Notably, different questions over the
+   Each category is then grouped using tailored strategies: (1) Dis-                                                  same semi-structured table may yield identical answers via distinct
+crete values are clustered by exact matches (e.g., students with                                                      yet similar pipelines (e.g., “Who is the highest-paid employee?”
+Grade A); (2) Continuous values are sorted and partitioned into                                                       vs. “Who leads the technical department?”). Leveraging this prop-
+fixed intervals to preserve numeric order (e.g., stress levels by                                                     erty, we perform backward verification by generating alternative
+range); and (3) Unstructured values are grouped via embedding-                                                        questions with the same answer, deriving corresponding pipelines,
+based clustering to capture semantic similarity.                                                                      and measuring their similarity to the original. The average similar-
+   As shown in Figure 6, a column with values like Grade (A+,                                                         ity serves as an implicit indicator of pipeline and answer reliabil-
+A, A-, ...) is classified as Discrete, allowing identical values to be                                                ity. Specifically, we employ few-shot learning, retrieving question-
+grouped. Queries such as “fetch all students with Grade A” can then                                                   similar examples to guide the generation of alternative questions to
+be resolved efficiently within the corresponding group.                                                               solve the problem that questions with the same answers may show
+2. Group-based Data Retrieval. The parallel-direction grouping                                                        tremendous difference in their operation pipeline.
+leverages structural relationships within the 𝐻𝑂-𝑇𝑟𝑒𝑒. After locat-
+ing the target node(s) based on content, the tree is traversed to                                                     7     Experiments
+retrieve related information by: (1) searching upwards for ancestor
+nodes and (2) searching downwards for descendant nodes.                                                               7.1    Experiment Setup
+   This bi-directional traversal allows for the reconstruction of a                                                   LLMs. We use InterVL2.5 26B [11] as the vision language model,
+minimal sub-tree that contextualizes the target node, revealing                                                       Deepseek-V3 [14] as the general LLM, and Multilingual-E5-Large [39]
+the complete information associated with the same entity (e.g.,                                                       as the semantic embedding model.
+retrieving all attributes of a specific student or transaction).
+                                                                                                                      Evaluated Methods. The evaluated methods include: (1) NL2SQL.
+                                                                                                                      OpenSearch-SQL [41] employs a dynamic few-shot learning strat-
+6      Two-Stage QA Verification                                                                                      egy (Query-CoT-SQL) and introduces an SQL-Like intermediate
+Robust validation mechanisms are essential for the reliability of                                                     language to optimize reasoning chains. (2) Foundation Model.
+semi-structured table QA, particularly given that existing solutions                                                  GPT-4o [30], the cutting-edge LLM developed by OpenAI, and
+(e.g., NL2SQL [24, 41]) often lack comprehensive answer verifica-                                                     DeepSeekV3 [14], a strong Mixture-of-Experts LLM developed by
+tion. The main challenge arises from the fact that, different from                                                    DeepSeek-AI is evaluated. (3) Fine-tuning based Methods. TableL-
+structured table QA, the retrieved result cells in semi-structured                                                    LaMA [44] is a fine-tuned version of LLaMA-2 7B tailored for tab-
+table QA often exhibit complex layouts and may be derived through                                                     ular data processing across eight table-specific tasks. The model
+multi-step lookup processes, which is tricky for general LLMs to                                                      handles various table types, including Wikipedia tables and spread-
+verify. To address this problem, we propose a two-stage verification                                                  sheets. TableLLM [45] is a 13B-parameter LLM designed for tabular
+framework that integrates both forward and backward validation                                                        data manipulation tasks, which is fine-tuned on a diverse mix of
+to enhance the robustness and trustworthiness of the final answers.                                                   table-centric datasets in processing document tables and spread-
+Forward Verification. The first stage focuses on validating the                                                       sheets, making it well-suited for real-world office scenarios. (4)
+correctness of intermediate operations and execution results dur-                                                     Agent based Methods. ReAcTable [46] is an agent-driven approach
+ing the QA process. Specifically, at each step of generating and                                                      that integrates reasoning and action-based decision-making for
+                                                                                                                  9
+                                                                                         Table 5: Overall Performance Comparison.
+
+       Table 4: Characteristics of SSTQA Benchmark.                                                 WikiTQ-ST TempTabQA-ST      SSTQA
+                                                                               Methods
+                                          Cell  Avg. length                                            Acc         Acc     ROUGE-L Acc
+     Dataset Nesting Depth Merge Ratio                                         OpenSearch-SQL [41]    38.89        4.76      23.87   24.00
+                                         Count of Contents
+                                                                               TableLLaMA [44]        35.01       32.70      26.71   40.39
+    WikiTQ       1.2970      0.0091    178.3564   1.9568
+                                                                               TableLLM [45]          62.40        9.13      2.93     7.84
+  TEMPTABQA      2.0000      0.1780     44.8350   3.6696
+                                                                               ReAcTable [46]         68.00       35.88      7.49    37.24
+   INFOTABS      2.0000      0.0548     23.6683   2.0769
+                                                                               TAT-LLM [48]           23.21       61.86      19.26   39.78
+     SSTQA       2.5196      0.0544    147.4608   2.7287
+                                                                               TableLLaVA [47]        20.41        6.91      5.92     9.52
+                                                                               mplug-DocOwl1.5 [20]    39.8       39.80      28.43   29.65
+table question answering. It iteratively generates operations, up-             GPT-4o [30]            60.71       74.83      43.86   66.45
+dates the table, and constructs a reasoning chain as a proxy for               DeepSeekV3 [14]        69.64       63.81      46.17   63.22
+intermediate thought processes through prompting LLMs and in-                  ST-Raptor (Ours)       71.17       77.59     52.19    72.39
+context learning. TAT-LLM [48] extracts relevant segments from
+the context, generates logical rules or equations, and then applies            Data Collection. The 102 tables in SSTQA are carefully curated
+these rules or executes the equations to derive the final answer               from over 2031 real-world tables coverage across 19 representative
+through LLM prompting. (5) VLM based Methods. TableLLaVA [47]                  real scenarios (e.g., administrative and financial management) by
+extends the training of LLaVA-7B/13B on 150K table recognition                 considering tables featuring semi-structured formats, such as nested
+samples, allowing the model to align table structures and elements             cells, multi-row/column headers, irregular layouts, which ensures
+with textual modality. We choose the 7B version in our experiment.             the representativeness both in structure and information.
+mPLUG-DocOwl1.5 [20] is a fine-tuned VLM with 8B parameters. It                   For question-answer pair generation, we employ a two-stage
+incorporates a spatial-aware vision-to-text module designed to rep-            approach. First, we augment the question set by extracting infor-
+resent high-resolution, text-rich images while preserving structural           mation from tables as answers, then generating corresponding
+information and reducing the length of visual features.                        questions to enhance QA pair alignment. Second, we sample ques-
+                                                                               tion templates and prompt a LLM to generate open-ended question-
+Input Formats. NL2SQL and agent-based methods take structured
+                                                                               answer pairs based on the table and template. To ensure data quality,
+tables as input, typically stored in databases or CSV files. Fine-
+                                                                               we implement a two-step verification process. Initially, a LLM vali-
+tuning-based approaches operate on structured tables in Markdown
+                                                                               dates the alignment between tables, queries, and answers. This is
+format, while VLM-based methods accept table images as input.
+                                                                               followed by manual inspection to verify answer correctness by 11
+Foundation models generally utilize the HTML representation of
+                                                                               professional annotators, which results in a high-quality dataset of
+tables. ST-Raptor currently supports Excel as the input format and
+                                                                               764 meticulously curated table-based QA pairs.
+is compatible with all lossless table representations like HTML.
+                                                                               Table Complexity. We categorize table difficulty based on a weighted
+Benchmarks. We evaluate nine baselines and ST-Raptor on three
+                                                                               combination of three key features: (i) nesting depth (0.5), (ii) struc-
+benchmarks: (𝑖) WikiTQ, featuring Wikipedia tables with complex
+                                                                               tural irregularity, including the number of header rows and column
+natural language questions, (𝑖𝑖) TempTabQA, targeting on temporal
+                                                                               spans (0.3), and (iii) average cell content length (0.2). After z-score
+question answering over semi-structured tables, and (𝑖𝑖𝑖) SSTQA,
+                                                                               normalization and feature aggregation, SSTQA tables are grouped
+our proposed dataset detailed in Section 7.2. Since the table formats
+                                                                               into 59 simple, 33 medium, and 10 hard instances.
+in other datasets do not fully adhere to the definition of semi-
+structured tables, we select a subset of tables that meet the criteria         Table + QA Complexity. Table-question difficulty varies with the
+and denote them as WikiTQ-ST and TempTabQA-ST, respectively.                   combination of table structure and query complexity. Accordingly,
+                                                                               we categorize Table+QA tasks into three levels: (i) simple, where
+7.2    SSTQA Benchmark                                                         answers can be directly retrieved from the table; (ii) medium, re-
+                                                                               quiring logical inference or conditional operations; and (iii) hard,
+Existing semi-structured table datasets face two key limitations: (1)
+                                                                               where answers are not explicitly present and demand semantic rea-
+they consist of small, structurally simple tables that fail to evaluate
+                                                                               soning. We obtain 299 simple, 284 medium, and 178 hard cases. The
+a model’s capacity to comprehend complex semi-structured tables;
+                                                                               corresponding experimental results are presented in section 7.3.
+and (2) their queries are misaligned with practical applications, lim-
+iting real-world utility. For example, although WikiTQ [31] includes           Evaluation Metrics. We adopt two primary evaluation metrics:
+a large number of semi-structured tables from Wikipedia, these                 Answer Accuracy (Acc), following prior work [23, 44], and ROUGE-
+tables typically exhibit simple layouts with merged cells and are              L to accommodate summarization-style questions in SSTQA. To
+converted into structured formats as part of the benchmark prepro-             address the limitations of exact string matching, we further employ
+cessing. Meanwhile, TempTabQA [17] consists solely of shallowly                general-purpose LLMs to compare model predictions and ground-
+nested tables with fewer than five columns, lacking the structural             truth answers, enabling a more nuanced evaluation.
+complexity commonly observed in real-world datasets.
+    To fill the gap, we introduce SSTQA, a dataset specifically de-            7.3    Overall Performance Comparison
+signed to evaluate a model’s ability to conduct Semi-Structured                We conduct a comprehensive evaluation of ST-Raptor against nine
+Table Question Answering task in real-world scenarios. As shown                state-of-the-art table question answering (QA) methods, spanning
+in Table 4, WikiTQ has the highest cell count but the shallowest               five technical paradigms, i.e., NL2SQL, fine-tuning based methods,
+nesting depth. In contrast, SSTQA exhibits the deepest nesting and             agent based methods, VLM based methods, and foundation LLMs.
+the relatively large table size among the existing semi-structured             The general accuracy of these methods across three semi-structured
+table benchmarks.                                                              table QA benchmarks is shown in Table 5. Then, we further classify
+                                                                          10
+                 ST-Raptor     GPT-4o     ReAcTable      TableLLaVA          TAT-LLM        simple, limiting the performance gap over LLMs like Deepseek-V3
+           0.8        Deepseek-V3       mPLUG       TableLLaMA            TableLLM
+                                                                                            which can directly interpreting relevant information.
+                         -1.82%              +13.04%            +20.26%
+
+           0.6                                                                                  Meanwhile, the experimental results highlight significant perfor-
+Accuracy
+
+
+
+
+                                                                                            mance variations among the methods. NL2SQL-based approaches
+           0.4                                                                              perform the worst on the SSTQA and TempTabQA dataset but
+           0.2                                                                              achieve better results on WikiTQ, as the SQL generation paradigm
+                                                                                            is ill-suited for non-relational data, making it ineffective for semi-
+           0.0                                                                              structured tables. TableLLM ranks second-lowest on SSTQA due
+           0.6
+                         +5.64%              +10.90%            +6.66%
+                                                                                            to two main limitations: (1) its training is restricted to structured
+           0.4                                                                              datasets, reducing its generalizability to semi-structured formats,
+ROGUEL
+
+
+
+
+                                                                                            and (2) it struggles with large-scale tables and complex layouts
+           0.2                                                                              due to limited context length and one-dimensional semantic rea-
+                                                                                            soning. Its improved performance on WikiTQ can be attributed
+           0.0                                                                              to task-specific fine-tuning on this dataset. Agent-based methods
+                        Simple             Medium                Hard
+                                                                                            perform better on SSTQA due to their integration of external tools,
+  Figure 7: Evaluation Results under Different Table Difficulty.
+                                                                                            but they fail to operate directly on semi-structured tables. The trans-
+  the difficulty of semi-structured tables into Simple, Medium, and                         formation of semi-structured data into structured formats results
+  Hard tiers, and visualize the accuracy variation upon different table                     in the loss of critical layout information, reducing their effective-
+  difficulties, which is shown in Figure 7.                                                 ness. TAT-LLM exhibits unexpectedly strong performance on the
+     s Overall Accuracy. Experiments show that ST-Raptor consis-                            TempTabQA dataset. We attribute this to its fine-tuning on a large
+  tently outperforms all nine baselines across the evaluated WikiTQ-                        volume of financial data, which shares similarities with the tempo-
+  ST, TempTabQA-ST and SSTQA benchmarks. Table 5 shows ST-Raptor                            ral question types prevalent in TempTabQA, thereby contributing
+  achieves the highest accuracy, exceeding the second-best method                           to its effectiveness. Vision-language models excel at layout recog-
+  by 10.23% on SSTQA benchmark. This consistent outperformance                              nition through visual encoding but underperform in text-dense
+  can be attributed to three folds.                                                         scenarios due to limited textual comprehension, especially in ta-
+     First, ST-Raptor leverages the HO-Tree to represent semi-structured                    bles requiring strong semantic understanding. Foundation models,
+  tables, enabling explicit structural modeling while decoupling lay-                       while not explicitly designed for table-related tasks, achieve the
+  out understanding from question answering. This design allows the                         second-best performance on SSTQA dataset. This is attributed to
+  general-purpose LLM to operate without directly parsing complex                           their robust contextual reasoning and semantic interpretation abili-
+  table layouts. Instead, given JSON-formatted header information,                          ties, enabling accurate answer inference especially when tabular
+  ST-Raptor generates atomic operations and executes them on the                            layout understanding is secondary to interpreting textual content.
+  HO-Tree for relevant data retrieval. In contrast, most methods,                           Accuracy under Different Table Difficulties. We categorize ta-
+  excluding vision-language models (VLMs) which can directly per-                           bles in SSTQA benchmark into three levels of difficulty (i.e., Simple,
+  ceive layout information from table images, struggle to capture                           Medium, Hard) by layout complexity and content length. Figure 7
+  two-dimensional semantics using linear text representations.                              presents the comparative performance evaluation across these dif-
+     Second, ST-Raptor incorporates a novel question decomposition                          ficulty levels. Three key observations emerge from our analysis.
+  mechanism that breaks complex queries into simpler sub-questions,                             First, both ST-Raptor and foundation models exhibit progres-
+  followed by precise operation-table alignment. This improves both                         sively decreasing performance as table difficulty increases, under-
+  operation generation accuracy and execution reliability, thereby                          scoring the inherent challenges posed by complex layouts and large-
+  improving overall question answering performance.                                         scale semi-structured tables. In contrast, other methods demonstrate
+     Third, ST-Raptor dynamically combines top-down and bottom-                             only marginal performance variation across difficulty levels. We
+  up retrieval strategies based on question characteristics, enabling                       posit that these models primarily address questions with less table
+  robust handling of diverse semi-structured table QA scenarios. When                       structure comprehension. Consequently, performance differences
+  the top-down retrieval fails or a question lacks explicit header                          among them are largely driven by architectural variations rather
+  references, bottom-up retrieval is employed. This flexible approach                       than structural modeling capabilities.
+  allows the system to effectively navigate complex table structures,                           Second, although ST-Raptor shows a modest performance de-
+  outperforming other methods in challenging scenarios.                                     cline on hard-level tables, it consistently outperforms all methods
+     Additionally, we observe performance increase (around 3%) even                         by a substantial margin (e.g., exceeding the second-best model by
+  on the simple tables of WikiTQ-ST and TempTabQA-ST. For Wik-                              over 20% on the SSTQA dataset). The reasons are three-fold: (1) the
+  iTQ, where the majority of tables are fully structured, ST-Raptor                         hierarchical HO-Tree representation, which facilitates efficient pro-
+  outperforms the second-best model by around 2%. This modest im-                           cessing of large tables; (2) the question decomposition mechanism,
+  provement reflects ST-Raptor’s specialization for semi-structured                         which simplifies complex queries into tractable sub-questions; and
+  tables with complex nested hierarchies. In contrast, on TempTabQA,                        (3) the operation-table alignment strategy, which ensures accurate
+  where all tables are semi-structured but exhibit only shallow nesting                     and context-aware data retrieval.
+  and small sizes, ST-Raptor achieves around 3% improvement over                                Third, performance differences across models are less pronounced.
+  the second-best approach. While our model could effectively mod-                          This can be attributed to three key factors: (1) the smaller table
+  els such structures, the overall retrieval pipeline remains relatively
+                                                                                       11
+      Table 6: Analysis of Table + QA Difficulty on SSTQA.                             Table 7: Ablation Study on ST-Raptor Modules
+            Methods (Acc)   Simple     Medium      Hard                                                                         SSTQA
+            DeepseekV3      92.94%     61.83%     47.19%                       Model
+                                                                                                                        Acc            ROUGE-L
+            GPT-4o          86.64%     59.75%     43.26%                       Full Model (DeepseekV3)                 72.39%           52.19%
+            ST-Raptor       93.97%     62.66%     58.43%                       GPT-4o                                  62.12%           43.86%
+sizes, which reduce structural complexity; (2) the predominance                DeepseekV3                              62.26%           46.17%
+of semantically driven questions that require less explicit layout             w/o Table2Tree                      57.24%(-15.15%)  41.55%(-10.64%)
+reasoning; and (3) the dataset’s focus on temporal question answer-            w/o Question Decomposition          68.06%(-4.33%)   48.09%(-4.10%)
+                                                                               w/o Operation-Table Alignment       71.07%(-1.32%)   50.86%(-1.33%)
+ing within a single scenario, which limits question diversity and
+                                                                               w/o Data Manipulation Operation     65.09%(-7.30%)   47.13%(-5.06%)
+diminishes the impact of advanced structural modeling.                         w/o Answer Verifier                 66.10%(-6.29%)   47.46%(-4.73%)
+Analysis on Table + QA Difficulty. We categorize the Table+QA
+tasks into three difficulty levels. As shown in Table 6, ST-Raptor            data retrieval paths (e.g., locating related data dispersed across dif-
+outperforms all baselines across these levels. While both founda-             ferent subtrees) and reduced overall efficiency (e.g., from 10 to 40
+tion models and ST-Raptor perform well on simple cases, accuracy              seconds). Second, semantic misinterpretations by the LLM, such
+drops as difficulty increases. Notably, ST-Raptor demonstrates su-            incorrectly splitting a combined address-phone entry into separate
+perior performance on hard cases, attributed to its HO-Tree-based             fields, can trigger unnecessary lookups and potentially yield incor-
+representation and operation-pipeline-driven QA strategy.                     rect answers, leading to additional verification and iteration, and
+   We categorize Table+QA tasks into three difficulty levels (Ta-             thereby diminishing efficiency.
+ble 6). ST-Raptor consistently outperforms all baselines across
+these levels. While both foundation models and ST-Raptor per-
+                                                                              7.5    Ablation Study on ST-Raptor Modules
+form well on simple cases, accuracy drops as difficulty increases.            In this section, we perform an ablation study on ST-Raptor from
+Notably, ST-Raptor excels on hard cases, benefiting from its HO-              five perspectives. Results are reported in Table 7.
+Tree representation and operation-pipeline-driven QA strategy.                Without Table2Tree. We disable the Table2Tree module and in-
+                                                                              stead apply ST-Raptor directly to raw semi-structured tables, which
+7.4     Fine-grained Analysis                                                 evaluates the importance of explicit table layout modeling. The
+In this section, we discuss the quality of meta-information detection,        removal leads to the most significant degradation (an absolute ac-
+analyze question answering latency, and examine the impact of                 curacy drop of 15.15%), demonstrating the critical role of HO-Tree-
+pipeline errors.                                                              based structural representation in handling complex semi-structured
+Quality of Meta Information Detection. We evaluate the Ta-                    tables. This also highlights that foundation models alone struggle
+ble2Tree module’s accuracy in converting semi-structured table into           to capture intricate layout semantics without explicit structural
+HO-Tree. Experiment results show that the untuned VLM achieves                guidance.
+93.14% on SSTQA, 94.32% on TempTabQA and 92.31% on WikiTQ,                    Without Question Decomposition. We remove the question
+which is sufficiently high for accurate HO-Tree construction.                 decomposition module, requiring ST-Raptor to process complex
+Analysis of Backward Verification.                                            queries in a single step. This results in a 4.33% accuracy drop, con-
+   To assess the potential negative impact of generating suboptimal           firming the necessity of decomposition for effective multi-hop rea-
+question alternatives on question answering accuracy, we quan-                soning. Without decomposition, the ST-Raptor fails to isolate inter-
+tify the number of such bad alternatives and their corresponding              mediate steps, leading to compounding errors in reasoning chains.
+answers on the SSTQA dataset. Experimental results show a false               Without Operation-Table Alignment. We omit the operation-
+negative rate of 4.78% under the few-shot learning setting, indi-             table alignment mechanism to test whether the LLM in ST-Raptor
+cating that misjudgments in backward verification have minimal                can inherently align operations with table content. A 1.32% per-
+impact on table QA performance.                                               formance decline is observed, indicating that while LLMs possess
+Latency Analysis. The runtime of ST-Raptor is primarily influ-                semantic reasoning ability, explicit alignment could still improve
+enced by the cost of accessing the LLM, largely due to network                execution precision. This suggests that structural grounding re-
+latency. As ST-Raptor performs question answering via pipeline-               mains beneficial even for advanced models with strong language
+based operation generation, the runtime per query is inherently               understanding capabilities.
+unstable. ST-Raptor requires around 30 seconds per question (ig-              Without Data Manipulation Operations. We restrict ST-Raptor
+noring bias caused by factors like network communications), with              to data retrieval, alignment, and reasoning operations, disabling
+2.89 pipeline operations on average. This is substantially faster             data manipulation functions. This leads to a 7.30% accuracy drop,
+than the agent-based method, which incurs higher latency due to               underscoring the frequent necessity of manipulation operations
+a greater number of operations with more API calls, and slightly              and validating the completeness of our atomic operation set. Many
+slower than the fine-tuning approach, which benefits from local               questions inherently require operations such as filtering and calcu-
+deployment and direct reasoning.                                              lation, which cannot be bypassed through reasoning alone.
+Effects of Pipeline Mistakes. Pipeline Mistakes Analysis. Mis-                Without Answer Verifier. To evaluate the impact of self-verification,
+takes in the ST-Raptor pipeline primarily arise from two sources.             we remove the answer verifier module. Accuracy drops by 6.29%,
+First, mistakes in meta-information detection by the VLM can lead             suggesting that the verifier plays a vital role in detecting and cor-
+to incorrect HO-Tree representations, resulting in more complex               recting execution errors, thereby enhancing output reliability. This
+                                                                         12
+                                                             Table 8: Case Study on SSTQA Dataset.
+
+  Table Table                                                                                                                          mPLUG-
+                 Layout Representation                     Question                                            TableLLaMA ReAcTable             GPT-4o ST-Raptor
+   Id Difficulty                                                                                                                      DocOwl1.5
+                                                           Summarize the reimbursement
+    5     Simple   𝐿.4 → 𝐿.3 → [𝐿.21 , . . . , 𝐿.212 ]                                                             %          %          %        %       %
+                                                           activities of Tian Xiaohong.
+   19     Simple   𝐿.4 → 𝐿.3 → [𝐿.21 , . . . , 𝐿.23 ]      What are the components of employee compensation?       %          %          !        !       !
+                                                           What documents must a Continuity and
+   15     Simple   𝐿.4 → 𝐿.3 → [𝐿.21 , 𝐿.22 , 𝐿.23 ]       Availability Planner submit to the IT                   %          !          !        !       !
+                                                           Service Management Committee?
+                   𝐿.4 → 𝐿.3 → [ {𝐿.4
+                                                              What are the categories of variable
+   20     Simple   → 𝐿.3 → [𝐿.21 , . . . , 𝐿.26 ] }1 ,                                                             !          %          %        !       !
+                                                              manufacturing overhead?
+                   {𝐿.4 → [𝐿.21 , . . . , 𝐿.26 ] }2 ]
+                   𝐿.3 → [ {𝐿.4 → [𝐿.21 , 𝐿.22 , 𝐿.23 ] }1 , How many items are there in
+    4    Medium                                                                                                    %          %          %        %       !
+                   . . . , {𝐿.4 → [𝐿.21 , 𝐿.22 , 𝐿.23 ] 6 } ] drawing technology?
+                                                              Which employees in the table have 18
+   95    Medium    𝐿.4 → 𝐿.3 → [𝐿.21 , . . . , 𝐿.28 ]                                                              %          %          %        %       !
+                                                              years of service?
+                   𝐿.4 → {𝐿.4 → 𝐿.3 →                         What is the net cash flow generated
+   100   Medium                                                                                                    !          !          !        %       !
+                   [𝐿.11 , 𝐿.12 , . . . , 𝐿.134 ] }           from investing activities?
+                                                              What are the evaluation criteria for
+   87    Medium    𝐿.4 → 𝐿.3 → [𝐿.21 , . . . , 𝐿.210 ]                                                             %          %          %        !       !
+                                                              work attitude?
+                   𝐿.4 → [𝐿.1, {𝐿.4 → {𝐿.3                    How many secondary indicators are
+    1     Hard     → [𝐿.11 , 𝐿.12 ] } }1 , {𝐿.4 → {𝐿.3        included under the performance                       %          %          %        %       !
+                   → [𝐿.21 , . . . , 𝐿.24 ] } }2 , . . . ]    metric’s efficiency indicators?
+                   𝐿.3 → [ {𝐿.4 → [𝐿.21 , 𝐿.22 ] }1 ,         How many phases are included in the
+   10     Hard                                                                                                     %          %          %        !       !
+                   . . . , {𝐿.4 → [𝐿.21 , 𝐿.22 ] 4 } ]        Change Phase Code Table?
+                                                              What are the beginning and ending
+   91     Hard     𝐿.4 → 𝐿.3 → [𝐿.21 , . . . , 𝐿.28 ]                                                              %          %          %        !       !
+                                                              balances of total assets?
+                                                              How many categories are there for service
+   30     Hard     𝐿.3 → [𝐿.1, 𝐿.21 , . . . , 𝐿.26 ]                                                               %          %          %        %       !
+                                                              sub items with service number ’XX-R-I-4’?
+
+module is especially useful when wrong intermediate results or                               8     Related Works
+final answer are generated during multi-step execution.
+   Collectively, these results demonstrate that each module in
+                                                                                             8.1      Structured Table QA.
+ST-Raptor addresses distinct yet complementary challenges in                                 Mainstream approaches can be categorized into NL2SQL, NL2Code
+semi-structured table QA, and their synergistic integration is vital                         and vision-language model based methods. NL2SQL [16, 24, 41]
+for effectively tackling the layout-intensive questions in SSTQA.                            focuses on translating natural language queries into structured SQL
+                                                                                             commands by leveraging techniques such as (1) schema linking,
+                                                                                             which aligns user intents with database schema to resolve ambigui-
+                                                                                             ties, and (2) content retrieval, which dynamically extracts relevant
+                                                                                             information from the database to refine query generation. VLM
+7.6      Case Study on SSTQA Dataset                                                         based methods [20, 47] transform the table into image for analysis
+                                                                                             and question answering.
+For each table difficulty level in the SSTQA dataset, we select four
+representative question-answering cases. Table 8 presents the ab-                            8.2      Semi-Structured Table QA.
+stract semi-structured table layout representations, the correspond-                         Semi-structured tables bring a large challenge for table understand-
+ing questions, and the results from five selected methods. The layout                        ing and render traditional Text2SQL strategy ineffective. To address
+representations follow the table definitions introduced in Section 3,                        the issue, numerous excellent research efforts have been carried
+where 𝐿.1 denotes a Header-Single-Value structure, 𝐿.2 denotes                               out [21, 26, 32, 38]. For instance, Wang et al. proposed an end-to-end
+Header-Multiple-Value, 𝐿.3 denotes Orthogonal Tables, and 𝐿.4 de-                            system [38] that uses semi-structured tables as knowledge sources
+notes Header-Orthogonal-Tables. A rightward arrow indicates the                              by first finding the most similar tables and then selecting the most
+construction of a layout. For example, 𝐿.4 → 𝐿.2 indicates that                              relevant table cells to derive the answer. Additionally, Liu et al.
+headers are added to the 𝐿.2 layout.                                                         proposed the GrabTab method [26] featuring a Component Delib-
+   Two key observations emerge from the Table 8: (1) In terms of                             erator that efficiently leverages multiple table components without
+structural complexity, tables with complex layouts (e.g., Tables 20,                         requiring complex post-processing, for addressing the challenge
+4, 1, 10) often lead to errors for most methods except ST-Raptor. (2)                        of recognizing complex and irregular table structures. Inspired by
+Regarding questions, those requiring math operations (e.g., Tables                           NL2SQL techniques, Lu et al. [28] propose to convert natural lan-
+4, 1, 30) demand a deeper understanding of table structure, where                            guage queries into NoSQL ones, but only produce intermediate
+ST-Raptor consistently excels other methods.                                                 results, lacking the end-to-end semi-structured table QA capabil-
+   Regarding limitations, ST-Raptor may occasionally irregular                               ity like ST-Raptor. Moreover, Gupta et al. built a TEMPTABQA
+layout patterns, such as erroneously treating horizontally merged                            dataset [18] from 1,208 Wikipedia Infobox tables to evaluate the tem-
+content cells as headers, which can negatively affect the QA accu-                           poral reasoning capabilities, and found that even top-performing
+racy. Besides, both ST-Raptor and the baselines face challenges in                           LLMs fall behind human performance by over 13.5 F1 points. Some
+decomposing questions involving complex pipelines (e.g., resem-                              works conduct information extraction over semi-structured data.
+bling multi-level nested SQL queries), requiring techniques such as                          TWIX [25] assumes that many semi-structured data is generate
+specialized LLM fine-tuning. Nonetheless, such cases are infrequent                          from one similar layout template and proposes a method that first
+in semi-structured table QA tasks.
+                                                                                        13
+reconstruct the template than extract the content. However, it lacks
+support for merged cells and cannot be readily transformed into
+HO-Trees within our problem scope. Another approach is convert
+the semi-structured data into structured formats for downstream
+analysis [6]. However, this conversion process can introduce infor-
+mation loss and reduce answer accuracy. Overall, these findings
+highlight that despite significant advancements, substantial chal-
+lenges remain in effectively addressing semi-structured table QA.
+
+8.3    In-Context Table QA.
+Although table-based reasoning has shown remarkable progress
+with the emergence of LLMs [15], table QA solutions encounter
+significant performance degradation when confronted with the
+rich and diverse evidence present in tables. To enable LLMs to
+sufficiently understand both the tables and question information,
+decomposition plays a pivotal role in table QA [22, 24, 40, 42, 46].
+Ye et al. [42] introduces a method that effectively leverages LLMs
+to decompose large tables into relevant sub-tables and complex
+questions into simpler sub-questions through in-context prompting.
+In addition to in-context learning from data sources, the ReAcTable
+framework [46] proposed by Zhang et al. aims to improve complex
+table QA performance by incorporating execution feedback. This
+feedback mechanism, rooted in the ReAct framework, enables the
+system to dynamically adjust its operations based on the results
+of previous actions and addresses challenges such as interpreting
+complex data semantics, handling generated errors, and performing
+intricate data transformations.
+
+9     Conclusion
+In this paper, we introduced ST-Raptor, a tree-based framework
+aimed at addressing the critical challenges of automating question
+answering over semi-structured tables. Central to our approach is
+the Hierarchical Orthogonal Tree (HO-Tree), a formal representa-
+tion capable of capturing complex table layouts, including hierarchi-
+cal headers, merged cells, and implicit relationships. We designed
+a set of basic tree operations over HO-Trees to enable LLMs to
+perform layout-aware tasks. Given a user question, ST-Raptor de-
+composes it into simpler subquestions, constructs corresponding
+tree-operation pipelines, and executes them to retrieve relevant
+information or derive the final answer. To ensure both execution
+correctness and answer reliability, we proposed a two-stage verifica-
+tion mechanism combining forward constraint checking and back-
+ward answer validation. Additionally, we constructed the SSTQA
+benchmark, consisting of 764 questions over 102 real-world semi-
+structured tables. Experimental results demonstrate that ST-Raptor
+outperforms all baselines by up to 20% in answer accuracy.
+
+
+
+
+                                                                        14
+References                                                                                     [21] Sujay Kumar Jauhar, Peter Turney, and Eduard Hovy. 2016. Tables as Semi-
+                                                                                                    structured Knowledge for Question Answering. In Proceedings of the 54th Annual
+ [1] [n.d.]. https://www.frontiersin.org/research-topics/21489/knowledge-discovery-                 Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+     from-unstructured-data-in-finance                                                              Katrin Erk and Noah A. Smith (Eds.). Association for Computational Linguistics,
+ [2] [n.d.].          https://enterprises.upmc.com/resources/insights/health-cares-                 Berlin, Germany, 474–483. https://doi.org/10.18653/v1/P16-1045
+     unstructured-data-challenge/                                                              [22] Tushar Khot, Harsh Trivedi, Matthew Finlayson, Yao Fu, Kyle Richardson, Pe-
+ [3] [n.d.]. https://pages.cs.wisc.edu/~jbeckham/TR/cnet.pdf                                        ter Clark, and Ashish Sabharwal. 2023. Decomposed Prompting: A Modu-
+ [4] Serge Abiteboul. 1997. Querying semi-structured data. In Database Theory —                     lar Approach for Solving Complex Tasks. arXiv:2210.02406 [cs.CL] https:
+     ICDT ’97, Foto Afrati and Phokion Kolaitis (Eds.). Springer Berlin Heidelberg,                 //arxiv.org/abs/2210.02406
+     Berlin, Heidelberg, 1–18.                                                                 [23] Peng Li, Yeye He, Dror Yashar, Weiwei Cui, Song Ge, Haidong Zhang,
+ [5] Majed Alwateer, El-Sayed Atlam, Mahmoud Mohammed Abd El-Raouf, Osama A.                        Danielle Rifinski Fainman, Dongmei Zhang, and Surajit Chaudhuri. 2023. Table-
+     Ghoneim, and Ibrahim Gad. 2024. Missing Data Imputation: A Comprehensive                       GPT: Table-tuned GPT for Diverse Table Tasks. arXiv:2310.09263 [cs.CL]
+     Review. Journal of Computer and Communications 12, 11 (2024), 53–75. https:                    https://arxiv.org/abs/2310.09263
+     //doi.org/10.4236/jcc.2024.1211004                                                        [24] Zhishuai Li, Xiang Wang, Jingjing Zhao, Sun Yang, Guoqing Du, Xiaoru Hu,
+ [6] Simran Arora, Brandon Yang, Sabri Eyuboglu, Avanika Narayan, Andrew Ho-                        Bin Zhang, Yuxiao Ye, Ziyue Li, Rui Zhao, and Hangyu Mao. 2024. PET-
+     jel, Immanuel Trummer, and Christopher Ré. 2025. Language Models Enable                        SQL: A Prompt-Enhanced Two-Round Refinement of Text-to-SQL with Cross-
+     Simple Systems for Generating Structured Views of Heterogeneous Data Lakes.                    consistency. arXiv:2403.09732 [cs.CL] https://arxiv.org/abs/2403.09732
+     arXiv:2304.09433 [cs.CL] https://arxiv.org/abs/2304.09433                                 [25] Yiming Lin, Mawil Hasan, Rohan Kosalge, Alvin Cheung, and Aditya G.
+ [7] Camille Barboule, Benjamin Piwowarski, and Yoan Chabot. 2025. Survey on                        Parameswaran. 2025. TWIX: Automatically Reconstructing Structured Data
+     Question Answering over Visually Rich Documents: Methods, Challenges, and                      from Templatized Documents. arXiv:2501.06659 [cs.DB] https://arxiv.org/abs/
+     Trends. arXiv:2501.02235 [cs.CL] https://arxiv.org/abs/2501.02235                              2501.06659
+ [8] Łukasz Borchmann and Marek Wydmuch. 2025. Query and Conquer: Execution-                   [26] Hao Liu, Xin Li, Mingming Gong, Bing Liu, Yunfei Wu, Deqiang Jiang, Yinsong
+     Guided SQL Generation. arXiv:2503.24364 [cs.CL] https://arxiv.org/abs/2503.                    Liu, and Xing Sun. 2024. Grab What You Need: Rethinking Complex Table
+     24364                                                                                          Structure Recognition with Flexible Components Deliberation. Proceedings of
+ [9] Douglas Burdick, Marina Danilevsky, Alexandre V. Evfimievski, Yannis Katsis,                   the AAAI Conference on Artificial Intelligence 38, 4 (Mar. 2024), 3603–3611. https:
+     and Nancy Wang. 2020. Table Extraction and Understanding for Scientific and                    //doi.org/10.1609/aaai.v38i4.28149
+     Enterprise Applications. Proc. VLDB Endow. 13, 12 (2020), 3433–3436. https:               [27] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua,
+     //doi.org/10.14778/3415478.3415563                                                             Fabio Petroni, and Percy Liang. 2023. Lost in the Middle: How Language Models
+[10] Kaiwen Chen, Yueting Chen, Nick Koudas, and Xiaohui Yu. 2025. Reliable Text-                   Use Long Contexts. arXiv:2307.03172 [cs.CL] https://arxiv.org/abs/2307.03172
+     to-SQL with Adaptive Abstention. Proceedings of the ACM on Management of                  [28] Jinwei Lu, Yuanfeng Song, Zhiqian Qin, Haodi Zhang, Chen Zhang, and Raymond
+     Data 3, 1 (Feb. 2025), 69:1–69:30. https://doi.org/10.1145/3709719                             Chi-Wing Wong. 2025. Bridging the Gap: Enabling Natural Language Queries for
+[11] Zhe Chen, Weiyun Wang, Yue Cao, Yangzhou Liu, Zhangwei Gao, Erfei Cui,                         NoSQL Databases through Text-to-NoSQL Translation. arXiv:2502.11201 [cs.DB]
+     Jinguo Zhu, Shenglong Ye, Hao Tian, Zhaoyang Liu, Lixin Gu, Xuehui Wang,                       https://arxiv.org/abs/2502.11201
+     Qingyun Li, Yimin Ren, Zixuan Chen, Jiapeng Luo, Jiahao Wang, Tan Jiang, Bo               [29] OpenAI. 2024. GPT-4o System Card. arXiv:2410.21276 [cs.CL] https://arxiv.org/
+     Wang, Conghui He, Botian Shi, Xingcheng Zhang, Han Lv, Yi Wang, Wenqi Shao,                    abs/2410.21276
+     Pei Chu, Zhongying Tu, Tong He, Zhiyong Wu, Huipeng Deng, Jiaye Ge, Kai                   [30] OpenAI, Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge
+     Chen, Kaipeng Zhang, Limin Wang, Min Dou, Lewei Lu, Xizhou Zhu, Tong Lu,                       Akkaya, et al. 2024. GPT-4 Technical Report.             arXiv:2303.08774 [cs.CL]
+     Dahua Lin, Yu Qiao, Jifeng Dai, and Wenhai Wang. 2025. Expanding Performance                   https://arxiv.org/abs/2303.08774
+     Boundaries of Open-Source Multimodal Models with Model, Data, and Test-Time               [31] Panupong Pasupat and Percy Liang. 2015. Compositional Semantic Parsing
+     Scaling. arXiv:2412.05271 [cs.CV] https://arxiv.org/abs/2412.05271                             on Semi-Structured Tables. In Proceedings of the 53rd Annual Meeting of the
+[12] E. F. Codd. 1970. A relational model of data for large shared data banks. Commun.              Association for Computational Linguistics and the 7th International Joint Conference
+     ACM 13, 6 (June 1970), 377–387. https://doi.org/10.1145/362384.362685                          on Natural Language Processing (Volume 1: Long Papers), Chengqing Zong and
+[13] DeepSeek-AI. 2025. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs                     Michael Strube (Eds.). Association for Computational Linguistics, Beijing, China,
+     via Reinforcement Learning. arXiv:2501.12948 [cs.CL] https://arxiv.org/abs/2501.               1470–1480. https://doi.org/10.3115/v1/P15-1142
+     12948                                                                                     [32] Panupong Pasupat and Percy Liang. 2015. Compositional Semantic Parsing
+[14] DeepSeek-AI, Aixin Liu, Bei Feng, et al. 2025. DeepSeek-V3 Technical Report.                   on Semi-Structured Tables. In Proceedings of the 53rd Annual Meeting of the
+     arXiv:2412.19437 [cs.CL] https://arxiv.org/abs/2412.19437                                      Association for Computational Linguistics and the 7th International Joint Conference
+[15] Naihao Deng, Zhenjie Sun, Ruiqi He, Aman Sikka, Yulong Chen, Lin Ma, Yue                       on Natural Language Processing (Volume 1: Long Papers), Chengqing Zong and
+     Zhang, and Rada Mihalcea. 2024. Tables as Texts or Images: Evaluating the                      Michael Strube (Eds.). Association for Computational Linguistics, Beijing, China,
+     Table Reasoning Ability of LLMs and MLLMs. In Findings of the Association for                  1470–1480. https://doi.org/10.3115/v1/P15-1142
+     Computational Linguistics: ACL 2024. Association for Computational Linguistics,           [33] Bowen Qin, Binyuan Hui, Lihan Wang, Min Yang, Jinyang Li, Binhua Li, Ruiying
+     Bangkok, Thailand, 407–426. https://doi.org/10.18653/v1/2024.findings-acl.23                   Geng, Rongyu Cao, Jian Sun, Luo Si, Fei Huang, and Yongbin Li. 2022. A Survey on
+[16] Yingqi Gao, Yifu Liu, Xiaoxia Li, Xiaorong Shi, Yin Zhu, Yiming Wang, Shiqi Li,                Text-to-SQL Parsing: Concepts, Methods, and Future Directions. arXiv preprint
+     Wei Li, Yuntao Hong, Zhiling Luo, Jinyang Gao, Liyu Mou, and Yu Li. 2025. A                    arXiv:2208.13629 (2022). https://arxiv.org/abs/2208.13629
+     Preview of XiYan-SQL: A Multi-Generator Ensemble Framework for Text-to-SQL.               [34] Ge Qu, Jinyang Li, Bowen Li, Bowen Qin, Nan Huo, Chenhao Ma, and Reynold
+     arXiv:2411.08599 [cs.AI] https://arxiv.org/abs/2411.08599                                      Cheng. 2024. Before Generation, Align it! A Novel and Effective Strategy for Miti-
+[17] Vivek Gupta, Pranshu Kandoi, Mahek Vora, Shuo Zhang, Yujie He, Ridho                           gating Hallucinations in Text-to-SQL Generation. In Findings of the Association for
+     Reinanda, and Vivek Srikumar. 2023. TempTabQA: Temporal Question Answer-                       Computational Linguistics: ACL 2024. Association for Computational Linguistics,
+     ing for Semi-Structured Tables. In Proceedings of the 2023 Conference on Empirical             Bangkok, Thailand, 5456–5471. https://doi.org/10.18653/v1/2024.findings-acl.324
+     Methods in Natural Language Processing, Houda Bouamor, Juan Pino, and Kalika              [35] Torsten Scholak, Nathan Schucher, and Dzmitry Bahdanau. 2021. PICARD:
+     Bali (Eds.). Association for Computational Linguistics, Singapore, 2431–2453.                  Parsing Incrementally for Constrained Auto-Regressive Decoding from Language
+     https://doi.org/10.18653/v1/2023.emnlp-main.149                                                Models. In Proceedings of the 2021 Conference on Empirical Methods in Natural
+[18] Vivek Gupta, Pranshu Kandoi, Mahek Vora, Shuo Zhang, Yujie He, Ridho                           Language Processing. Association for Computational Linguistics, Online and
+     Reinanda, and Vivek Srikumar. 2023. TempTabQA: Temporal Question Answer-                       Punta Cana, Dominican Republic, 9895–9901. https://doi.org/10.18653/v1/2021.
+     ing for Semi-Structured Tables. In Proceedings of the 2023 Conference on Empirical             emnlp-main.779
+     Methods in Natural Language Processing, Houda Bouamor, Juan Pino, and Kalika              [36] Tal Schuster, Adam Lelkes, Haitian Sun, Jai Gupta, Jonathan Berant, William Co-
+     Bali (Eds.). Association for Computational Linguistics, Singapore, 2431–2453.                  hen, and Donald Metzler. 2024. SEMQA: Semi-Extractive Multi-Source Question
+     https://doi.org/10.18653/v1/2023.emnlp-main.149                                                Answering. In Proceedings of the 2024 Conference of the North American Chapter
+[19] Jonathan Herzig, Paweł Krzysztof Nowak, Thomas Müller, Francesco Piccinno,                     of the Association for Computational Linguistics: Human Language Technologies
+     and Julian Martin Eisenschlos. 2020. TAPAS: Weakly Supervised Table Parsing                    (Volume 1: Long Papers). Association for Computational Linguistics, Mexico City,
+     via Pre-training. In Proceedings of the 58th Annual Meeting of the Association                 Mexico, 1363–1381. https://doi.org/10.18653/v1/2024.naacl-long.74
+     for Computational Linguistics (ACL). Association for Computational Linguistics,           [37] Yuan Sui, Mengyu Zhou, Mingjie Zhou, Shi Han, and Dongmei Zhang. 2024. Table
+     4320–4333. https://doi.org/10.18653/v1/2020.acl-main.398                                       Meets LLM: Can Large Language Models Understand Structured Table Data? A
+[20] Anwen Hu, Haiyang Xu, Jiabo Ye, Ming Yan, Liang Zhang, Bo Zhang,                               Benchmark and Empirical Study. In Proceedings of the 17th ACM International Con-
+     Chen Li, Ji Zhang, Qin Jin, Fei Huang, and Jingren Zhou. 2024. mPLUG-                          ference on Web Search and Data Mining (WSDM 2024). Association for Computing
+     DocOwl 1.5: Unified Structure Learning for OCR-free Document Understanding.                    Machinery, Mérida, Mexico, 123–134. https://doi.org/10.1145/3616855.3635752
+     arXiv:2403.12895 [cs.CV] https://arxiv.org/abs/2403.12895                                 [38] Hao Wang, Xiaodong Zhang, Shuming Ma, Xu Sun, Houfeng Wang, and Mengxi-
+                                                                                                    ang Wang. 2018. A Neural Question Answering Model Based on Semi-Structured
+                                                                                          15
+     Tables. In Proceedings of the 27th International Conference on Computational               [44] Tianshu Zhang, Xiang Yue, Yifei Li, and Huan Sun. 2024. TableLlama: To-
+     Linguistics, Emily M. Bender, Leon Derczynski, and Pierre Isabelle (Eds.). Asso-                wards Open Large Generalist Models for Tables. In Proceedings of the 2024
+     ciation for Computational Linguistics, Santa Fe, New Mexico, USA, 1941–1951.                    Conference of the North American Chapter of the Association for Computational
+     https://aclanthology.org/C18-1165/                                                              Linguistics: Human Language Technologies (Volume 1: Long Papers). Associa-
+[39] Liang Wang, Nan Yang, Xiaolong Huang, Linjun Yang, Rangan Majumder,                             tion for Computational Linguistics, Mexico City, Mexico, 6024–6044. https:
+     and Furu Wei. 2024. Multilingual E5 Text Embeddings: A Technical Report.                        //doi.org/10.18653/v1/2024.naacl-long.335
+     arXiv:2402.05672 [cs.CL] https://arxiv.org/abs/2402.05672                                  [45] Xiaokang Zhang, Sijia Luo, Bohan Zhang, Zeyao Ma, Jing Zhang, Yang Li, Guanlin
+[40] Zhongyuan Wang, Richong Zhang, Zhijie Nie, and Jaein Kim. 2024. Tool-                           Li, Zijun Yao, Kangli Xu, Jinchang Zhou, Daniel Zhang-Li, Jifan Yu, Shu Zhao,
+     Assisted Agent on SQL Inspection and Refinement in Real-World Scenarios.                        Juanzi Li, and Jie Tang. 2025. TableLLM: Enabling Tabular Data Manipulation by
+     arXiv:2408.16991 [cs.CL] https://arxiv.org/abs/2408.16991                                       LLMs in Real Office Usage Scenarios. arXiv:2403.19318 [cs.CL] https://arxiv.org/
+[41] Xiangjin Xie, Guangwei Xu, Lingyan Zhao, and Ruijie Guo. 2025. OpenSearch-                      abs/2403.19318
+     SQL: Enhancing Text-to-SQL with Dynamic Few-shot and Consistency Align-                    [46] Yunjia Zhang, Jordan Henkel, Avrilia Floratou, Joyce Cahoon, Shaleen Deep,
+     ment. arXiv:2502.14913 [cs.CL] https://arxiv.org/abs/2502.14913                                 and Jignesh M. Patel. 2023. ReAcTable: Enhancing ReAct for Table Question
+[42] Yunhu Ye, Binyuan Hui, Min Yang, Binhua Li, Fei Huang, and Yongbin Li. 2023.                    Answering. arXiv:2310.00815 [cs.DB] https://arxiv.org/abs/2310.00815
+     Large Language Models are Versatile Decomposers: Decompose Evidence and                    [47] Mingyu Zheng, Xinwei Feng, Qingyi Si, Qiaoqiao She, Zheng Lin, Wen-
+     Questions for Table-based Reasoning. arXiv:2301.13808 [cs.CL] https://arxiv.                    bin Jiang, and Weiping Wang. 2024. Multimodal Table Understanding.
+     org/abs/2301.13808                                                                              arXiv:2406.08100 [cs.CL] https://arxiv.org/abs/2406.08100
+[43] Daoguang Zan, Bei Chen, Fengji Zhang, Dianjie Lu, Bingchao Wu, Bei Guan,                   [48] Fengbin Zhu, Ziyang Liu, Fuli Feng, Chao Wang, Moxin Li, and Tat-Seng Chua.
+     Yongji Wang, and Jian-Guang Lou. 2023. Large Language Models Meet NL2Code:                      2024. TAT-LLM: A Specialized Language Model for Discrete Reasoning over
+     A Survey. In Proceedings of the 61st Annual Meeting of the Association for Computa-             Tabular and Textual Data. arXiv:2401.13223 [cs.CL] https://arxiv.org/abs/2401.
+     tional Linguistics (Volume 1: Long Papers). Association for Computational Linguis-              13223
+     tics, Toronto, Canada, 7443–7464. https://doi.org/10.18653/v1/2023.acl-long.411
+
+
+
+
+                                                                                           16
+

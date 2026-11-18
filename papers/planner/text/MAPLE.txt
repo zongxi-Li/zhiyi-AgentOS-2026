@@ -1,0 +1,1834 @@
+                                                 MAPLE: Multi-Agent Adaptive Planning with Long-Term Memory for
+                                                                      Table Reasoning
+
+                                                                          Ye Bai1 , Minghan Wang1 , Thuy-Trang Vu1
+                                                                     1
+                                                                       Department of Data Science & AI, Monash University
+                                                                             {firstname.lastname}@monash.edu
+
+
+
+                                                                   Abstract                          LLMs struggle to achieve with single-pass infer-
+                                                                                                     ence.
+arXiv:2506.05813v2 [cs.CL] 16 Nov 2025
+
+
+
+
+                                                 Table-based question answering requires com-           Existing table reasoning frameworks exhibit
+                                                 plex reasoning capabilities that current LLMs       several limitations. Single-forward-pass meth-
+                                                 struggle to achieve with single-pass infer-
+                                                                                                     ods (Cheng et al., 2023; Ye et al., 2023) lack
+                                                 ence. Existing approaches, such as Chain-of-
+                                                 Thought reasoning and question decomposi-           error detection mechanisms, allowing mistakes
+                                                 tion, lack error detection mechanisms and dis-      to propagate through solutions. ReAct-based ap-
+                                                 card problem-solving experiences, contrasting       proaches (Wang et al., 2024b; Zhang et al., 2023)
+                                                 sharply with how humans tackle such problems.       provide environmental feedback but lack system-
+                                                 In this paper, we propose MAPLE (Multi-             atic verification. On the other hand, multi-agent
+                                                 agent Adaptive Planning with Long-term              approaches primarily focus on output refinement
+                                                 mEmory), a novel framework that mimics hu-
+                                                                                                     rather than comprehensive reasoning improve-
+                                                 man problem-solving through specialized cog-
+                                                 nitive agents working in a feedback-driven loop.    ment (Ye et al., 2023; Yu et al., 2025b). Addition-
+                                                 MAPLE integrates 4 key components: (1) a            ally, current systems discard problem-solving ex-
+                                                 Solver using the ReAct paradigm for reason-         periences after completion, preventing transferable
+                                                 ing, (2) a Checker for answer verification, (3) a   knowledge accumulation across tasks. It contrasts
+                                                 Reflector for error diagnosis and strategy cor-     with human problem-solving: when tackling com-
+                                                 rection, and (4) an Archiver managing long-         plex tabular problems, humans methodically
+                                                 term memory for experience reuse and evolu-         work through solutions, verify results, reflect on
+                                                 tion. Experiments on W I K I TQ and TAB FACT
+                                                                                                     mistakes, and accumulate experiences for future
+                                                 demonstrate significant improvements over ex-
+                                                 isting methods, achieving state-of-the-art per-     strategies.
+                                                 formance across multiple LLM backbones.1               To address these limitations, we propose
+                                                                                                     MAPLE (Multi-agent Adaptive Planning with
+                                         1       Introduction                                        Long-term mEmory), a novel framework that mim-
+                                                                                                     ics human problem-solving through specialized
+                                         Tables represent one of the most prevalent forms of         cognitive agents in a feedback-driven loop. As
+                                         semi-structured data, organizing information sys-           illustrated in Figure 1, MAPLE decomposes rea-
+                                         tematically across domains ranging from scientific          soning into distinct stages: reasoning, verification,
+                                         research to business analytics (Dong and Wang,              reflection, and memory evolution, each managed
+                                         2024). However, answering questions over tables             by a dedicated agent. Our framework implements a
+                                         presents unique challenges, requiring multi-step            feedback-driven cycle with the Solver conducting
+                                         reasoning over structured data, recognition of im-          iterative reasoning, the Checker performing qual-
+                                         plicit relationships between cells, and precise con-        ity assessment, the Reflector diagnosing errors and
+                                         textual interpretation (Lu et al., 2025). These chal-       suggesting improvements, and the Archiver man-
+                                         lenges make table-based question answering (QA)             aging long-term memory for cross-task learning.
+                                         particularly difficult for Large Language Models            This architecture enables dynamic adaptation both
+                                         (LLMs), as they must navigate tabular data struc-           within tasks and across similar problems, mirroring
+                                         ture while performing sophisticated reasoning to            human cognitive processes.
+                                         derive accurate answers, capabilities that current             Experiments on W I K I TQ and TAB FACT
+                                             1
+                                             Dataset and code are available at https://github.com/   demonstrate that MAPLE significantly outper-
+                                         bettyandv/MAPLE-table-reasoning                             forms existing methods across multiple LLM back-
+                                              Pipeline                                                                          Memory Mechanism
+
+        User
+
+
+                                                                                               ⑦ Retrieval
+                                  Retrieval               Solver with
+                                                       ReAct paradigm
+                                                                            Reasoning                        Working                                ① Memory
+                                                                                                             Memory                                Summarization        Temp
+                                                                                                 Feedback                        Archiver
+                        Working                                                                                                                                         Note
+        Solver
+                        Memory            Observations          Actions
+                                                                                                                                          ④ Should Evolve?
+                                                                                                                    ⑤ Evolve
+                                                                                                                    Decision
+                                                      Environment
+                                                                                            YES                                                                  Note
+                                                                                                                           Just Add Memory                   Note
+                              Answer Type Checking                                                                         Updated Neighbors                    Note
+                                                                                                                           Strengthen Connection
+        Checker                   Format Validation
+                                                                    Score & Comment       Is Answer                                                   ③ Return
+                                                                                         Reasonable?                               ⑥ Save             Neighbors
+                               Evidence Grounding                                                            Error Reason
+                                                                                            NO
+
+                    Reflect              Generate
+                                                                          Diagnosis
+                                                                                                             Correct Steps                              ② Retrieval
+        Reflector                                                                                                 ......
+                                                                      Improvement Plan                                                 Long-term
+                                                                                                                                        Memory
+
+
+
+Figure 1: The MAPLE framework pipeline. 4 agents work collaboratively in a feedback loop: the Solver conducts
+iterative reasoning using ReAct, the Checker evaluates answer quality, the Reflector diagnoses errors and suggests
+improvements, and the Archiver manages an evolving long-term memory. This architecture enables dynamic
+adaptation both within tasks and across similar problems, mirroring human cognitive problem-solving processes.
+
+
+bones. Ablation studies confirm each component                                           include social behavior modeling (Park et al., 2022;
+substantially contributes to the framework’s effec-                                      Gao et al., 2023; Chen et al., 2025), policy simula-
+tiveness. Our memory analysis reveals that logical                                       tion (Xiao et al., 2023; Hua et al., 2024), economic
+reasoning errors and numerical operation failures                                        forecasting (Horton, 2023; Li et al., 2023b; Zhao
+account for nearly 80% of remaining challenges,                                          et al., 2024), and gaming (Light et al., 2023; Wang
+providing valuable insights for future research and                                      et al., 2023b; Xu et al., 2024). Several MAS frame-
+serving as both a performance enhancer and diag-                                         works, including MetaGPT (Hong et al., 2024),
+nostic tool.                                                                             CAMEL (Li et al., 2023a), and AutoGen (Wu et al.,
+   Our contributions include: (1) a multi-                                               2023), have emerged to facilitate the implementa-
+agent framework implementing adaptive planning                                           tion of these systems.
+through feedback-driven reasoning; (2) a special-
+ized verification and reflection mechanism provid-                                       Memory Mechanisim for Agent Memory en-
+ing targeted diagnostic feedback; (3) a structured                                       ables agents to perform coherent, context-aware
+long-term memory system that distills experiences                                        reasoning across extended tasks. In multi-agent
+and categorizes errors; and (4) state-of-the-art per-                                    systems, memory serves as the cognitive founda-
+formance on W I K I TQ and TAB FACT benchmarks.                                          tion for retaining observations, decisions, and in-
+These innovations address fundamental limitations                                        teraction histories—critical elements for consistent
+in current approaches, creating a system that mir-                                       collaboration and adaptation over time (Sumers
+rors human cognitive processes while improving                                           et al., 2024).
+performance on complex table reasoning tasks.                                               Memory formats determine how content is
+                                                                                         stored and utilized, with several prominent ap-
+2   Related Work                                                                         proaches emerging in recent work. Natural
+                                                                                         language representations offer semantic richness
+Multi-agent System Multi-agent systems (MAS)                                             and interpretability, as demonstrated in Reflex-
+have gained attention for leveraging collective in-                                      ion (Shinn et al., 2023), Voyager (Wang et al.,
+telligence in complex tasks. Current applications                                        2023a), and Generative Agents (Park et al., 2023).
+span problem-solving domains such as software de-                                        Vector embeddings enable efficient similarity-
+velopment (Li et al., 2023a; Du et al., 2023; Qian                                       based retrieval, a technique central to systems like
+et al., 2024; Huang et al., 2024), embodied robotic                                      MemoryBank (Zhong et al., 2023), A-MEM (Xu
+coordination (Dasgupta et al., 2023; Mandi et al.,                                       et al., 2025), and ChatDev (Qian et al., 2024).
+2023; Zhang et al., 2024; Yu et al., 2025a), and sci-                                    Meanwhile, structured formats support symbolic
+entific Debate (Du et al., 2023; Xiong et al., 2023;                                     reasoning and precise queries, approaches adopted
+Tang et al., 2024). World simulation applications                                        by ChatDB (Hu et al., 2023) and DB-GPT (Zhou
+et al., 2023b). Beyond storage formats, re-            3     MAPLE Framework
+cent advances have introduced innovative man-
+agement strategies, including complete interac-        3.1   Overview
+tion storage (Zhong et al., 2023; Modarressi et al.,   Inspired by human problem-solving processes, we
+2024), cache-like designs (Packer et al., 2024), and   propose MAPLE (Multi-agent Adaptive Planning
+controller-based architectures (Wang et al., 2025)     with Long-term mEmory), a novel framework that
+that dynamically prioritize and maintain relevant      addresses a critical limitation in existing systems:
+information during extended reasoning processes.       their inability to adapt, reflect, and learn from expe-
+   Despite these advances, few existing systems        rience. As illustrated in Figure 1 and formalized in
+integrate all these memory dimensions within a co-     Algorithm 1, MAPLE decomposes reasoning into
+herent architecture specifically designed for com-     four distinct stages, each managed by a dedicated
+plex reasoning tasks like table-based QA, where        agent that fulfills a specialized cognitive function.
+both structured knowledge and flexible retrieval are      The Solver conducts progressive reasoning using
+essential for effective performance.                   the ReAct paradigm, enabling dynamic interaction
+                                                       with the table environment. The Checker performs
+Table Reasoning Research on table reasoning
+                                                       multi-dimensional verification across answer type,
+can be broadly classified into fine-tuning-based and
+                                                       format, and evidence grounding. The Reflector
+prompting-based methods. Fine-tuning approaches
+                                                       diagnoses reasoning errors and generates targeted
+like TAPAS (Herzig et al., 2020), Pasta (Gu et al.,
+                                                       improvement plans when verification fails. Finally,
+2022), TUTA (Wang et al., 2021), and TAPEX (Liu
+                                                       the Archiver manages long-term memory, facilitat-
+et al., 2022) adapt pre-trained language models to
+                                                       ing experience reuse across similar problems. To
+encode table semantics through specialized training
+                                                       more concretely illustrate the flow of our frame-
+objectives. Other works focus on improving align-
+                                                       work, we present a representative case study in
+ment between natural language queries and struc-
+                                                       Appendix D.
+tured data (Eisenschlos et al., 2020; Jiang et al.,
+                                                          A key innovation in MAPLE is its feedback-
+2022). Despite their effectiveness, these methods
+                                                       driven, multi-round reasoning cycle that enables
+typically require extensive annotated data and fea-
+                                                       continuous refinement of reasoning strategies
+ture static reasoning processes without adaptive
+                                                       through deliberate planning and adaptation. This al-
+correction mechanisms.
+                                                       lows agents to correct errors and improve solutions
+   Prompting-based methods leverage LLMs with
+                                                       through multiple attempts, mimicking how hu-
+minimal training data requirements. Techniques
+                                                       mans iteratively improve their problem-solving
+like Chain-of-Thought (Wei et al., 2023), Least-
+                                                       approaches.
+to-Most (Zhou et al., 2023a) and Dater (Ye et al.,
+2023) perform reasoning by decomposing tasks              Additionally, while existing systems discard rea-
+into explicit steps. Table-specific adaptations        soning experiences after completion, our approach
+include Binder (Cheng et al., 2023), Chain-of-         implements selective integration and strategic evo-
+Table (Wang et al., 2024b), ReAcTable (Zhang           lution of memory. The system filters redundant
+et al., 2023), and Table-Critic (Yu et al., 2025b),    experiences, distills valuable problem-solving pat-
+incorporating agent collaboration or ReAct-style       terns into structured notes, and evolves the memory
+reasoning.                                             base through semantic clustering. This integration
+                                                       of adaptive planning with evolving memory enables
+   Existing table reasoning methods exhibit sig-
+                                                       MAPLE to leverage past experiences, avoid re-
+nificant limitations across key design dimensions.
+                                                       peated errors, and continuously improve reasoning
+While some implement multi-agent architectures or
+                                                       capabilities across similar problem types.
+ReAct-based reasoning, none integrates all critical
+components: dynamic planning, reflection mecha-
+                                                       3.2   Agent Roles
+nisms, self-refinement, and long-term memory. A
+detailed comparison of these methods is provided       Table 1 summarizes the specialized responsibilities
+in Section A. Our proposed MAPLE framework             and input-output specifications of each agent in our
+addresses these gaps by combining collaborative        framework. Below, we formally define how these
+verification, adaptive planning, and evolving mem-     agents interact within the MAPLE architecture to
+ory structures to achieve more robust and accurate     create a cohesive reasoning system that surpasses
+table reasoning.                                       traditional single-pass approaches.
+Agent       Input                      Output     Function
+Solver      T or t′ , q, τ, r, M       t′ or as   Progressive reasoning with real-time environmental feedback
+Checker     T , q, as                  F          Verifies answer type, format and evidence grounding
+Reflector   T , q, τ, as , F           d, p       Diagnoses errors and generates targeted improvement plans
+            T , q, am , ag , τ, d, p   m          Distills experiences into structured memory notes
+Archiver    T , q, m, Ml , k, δ        N          Retrieves contextually relevant experiences for current tasks
+            m, N                       e          Evolves memory through semantic clustering and connection
+
+Table 1: Overview of specialized agents in MAPLE. Each agent performs distinct cognitive functions with specific
+input-output patterns. This modular design allows for verification, reflection, and experience reuse across tasks.
+
+3.2.1   Solver                                               3.2.2   Checker
+The Solver agent (S) leverages the ReAct                     The Checker agent (C) introduces a critical verifica-
+paradigm (Yao et al., 2023) to establish genuine             tion layer based on structured feedback principles.
+environmental interaction with tabular data. Af-             Given table T , question q, and Solver’s answer as ,
+ter each table operation, the Solver reassesses the          the Checker evaluates the output according to three
+environment to determine whether to perform ad-              essential criteria:
+ditional manipulations or derive an answer. This               1. Answer Type Checking: Evaluates whether
+iterative reasoning-acting cycle enables strategic                the answer matches the expected type im-
+adaptation based on real-time feedback from the                   plied by the question. For instance, if a ques-
+manipulated table state.                                          tion asks "How many medals did the country
+   Formally, the Solver operates according to the                 win?", a numerical value like "5" is expected,
+following process, given input (I, q, τ, r, M):                   not a country name like "USA".
+                                                               2. Format Validation: Assesses conformity to
+             λ = πsolver (I, q, τ, r, M)             (1)          prescribed formatting rules. If the expected
+                                                                  output is a single numerical value ("24"), but
+                                                                  the answer includes calculation steps ("4 × (1
+   where λ ∈ {t′ , as }, which can either be the op-              + 2 + 3) = 24"), this violates format require-
+erated table t′ (if the reasoning is not done yet) or             ments that mandate only the final result.
+the final answer (as ) of the Solver, I ∈ {T , t′ }            3. Evidence Grounding: Verifies that the an-
+represents the current environment (original table                swer is properly supported by evidence in the
+T or intermediate table t′ ), q is the question, τ de-            table data. If a question asks "Which coun-
+notes previous Solver operation history, and r is                 try won the most gold medals?" and the table
+the remaining attempts.                                           only lists "USA", "China", and "Japan", an
+   A distinctive feature of our approach is the in-               answer of "Germany" would violate evidence
+tegration of dual memory systems. The memory                      grounding as it does not appear in the table.
+input is defined as M = {Mw , Ml }, where work-
+                                                               For each criterion i ∈ {type, format, evidence},
+ing memory Mw contains Reflector feedback (d, p)
+                                                             the Checker assigns a score si ∈ {0, 1, 2} with
+providing diagnostic insights when prior attempts
+                                                             an explanatory comment ci , where 0 indicates the
+failed. Long-term memory Ml retrieves relevant
+                                                             requirement is not met, 1 indicates it is partially
+historical experiences (Nsolver ), including similar
+                                                             met, and 2 indicates it is fully met or not applicable.
+questions, proven strategies and common pitfalls,
+                                                             Formally, this evaluation process is defined as:
+creating a knowledge repository that enriches the
+reasoning process.
+                                                                      {(si , ci )}3i=1 = πchecker (T , q, as )   (2)
+   After each interaction, the updated environment
+I is fed back to the Solver, enabling continu-                  where πchecker represents the evaluation function
+ous adaptation based on the evolving table state.            mapping the input triplet to aspect-specific scores
+Through this feedback loop, the Solver can pro-              and comments. This structured   P3 feedback F in-
+gressively refine its understanding and approach             cludes a total score stotal =      i=1 si and an ag-
+until reaching a satisfactory answer. The complete           gregated summary, enabling the Reflector agent to
+prompt is provided in Appendix F.                            diagnose errors and generate improvement strate-
+gies.                                                   detailed working memory and long-term mem-
+   The Checker forms an integral component of           ory mechanisms described in Section B.1. The
+the reasoning cycle, creating a feedback loop that      Archiver operates through three complementary
+drives continuous improvement. By systematically        modules:
+evaluating answers across multiple dimensions, it
+                                                        Memory Summarization. Given the current ta-
+helps identify specific weaknesses in the reason-
+                                                        ble T , question q, model-predicted answer am ,
+ing process rather than merely flagging incorrect
+                                                        ground truth ag , Solver’s reasoning history τ , and
+answers. The complete prompt is provided in Ap-
+                                                        Reflector’s outputs (d, p), the Archiver distills this
+pendix F.
+                                                        rich context into a compact, structured memory
+3.2.3   Reflector                                       note:
+The Reflector agent (R) implements a metacog-
+nitive capability essential for advanced reasoning            m = πarchiver-sum (T , q, am , ag , τ, d, p)   (4)
+systems, analyzing failures, diagnosing root causes,
+and generating strategic corrections. This agent           This summarization extracts critical semantic
+drives continuous improvement through deliberate        features like keywords, tags, required operations,
+adaptation, providing the critical link between error   error types, correct and incorrect steps, creating
+detection and strategy refinement.                      an informative memory note m that captures the
+   Given the table T , question q, Solver’s reasoning   problem-solving episode’s essence. These notes
+trace τ , Solver’s answer as , and Checker feedback     are stored in long-term memory Ml to guide future
+F, the Reflector analyzes reasoning deficiencies        reasoning.
+and formulates targeted remediation strategies:
+                                                        Memory Retrieval. The system implements dual
+                                                        retrieval modes for different contexts:
+         (d, p) = πreflector (T , q, τ, as , F)   (3)
+                                                          1. Solver-time retrieval: During question an-
+   where d represents a concise diagnostic sum-              swering, the system retrieves relevant memory
+mary identifying critical reasoning errors, and p            notes based on the current table and question.
+outlines an actionable improvement plan with step-           The top-k semantically similar results within
+by-step corrections for subsequent attempts.                 threshold δ are returned for prompt augmenta-
+   This reflection mechanism creates a powerful              tion:
+feedback loop: the Solver adapts based on pre-
+                                                                          solver
+cise diagnosis and targeted suggestions, rather than           Nsolver = πmem-retrieve (T , q | Ml , k, δ) (5)
+blindly attempting alternatives. Without such di-
+rected feedback, traditional systems often repeat         2. Archiver-time retrieval: During memory
+the same errors, unable to identify reasoning flaws.         management, the system identifies neighbor-
+The Reflector examines not just answer correct-              ing notes for new candidates to inform evolu-
+ness, but the entire reasoning trajectory, pinpoint-         tion decisions:
+ing where logical connections faltered, operations                          archiver
+                                                               Narchiver = πmem-retrieve (m | Ml , k, δ) (6)
+were misapplied, or question intent was misunder-
+stood.
+                                                           This dual architecture enables both experien-
+   By implementing this metacognitive layer,
+                                                        tial guidance during active reasoning and strategic
+MAPLE progressively refines its reasoning strate-
+                                                        memory refinement during maintenance, creating a
+gies across multiple attempts, achieving within-task
+                                                        dynamic knowledge ecosystem that continuously
+learning that static reasoning systems cannot repli-
+                                                        improves.
+cate. The prompt template detailed in Appendix F.
+                                                        Memory Evolution. Our memory system ac-
+3.2.4   Archiver                                        tively evolves. Given the newly created memory m
+The Archiver agent (A) introduces experiential          and a set of retrieved neighbor memories Narchiver ,
+learning through structured memory management.          the Archiver determines whether the memory base
+This agent implements knowledge retention, re-          should evolve:
+trieval, and evolution mechanisms that enable con-
+tinual improvement across reasoning tasks, with                    e = πarchiver-evo (m, Narchiver )         (7)
+Algorithm 1 : MAPLE’s Adaptive Reasoning Loop with Multi-Agent Feedback
+ 1: Input: Table T , Question q, Memory M ∈ {Mw , Ml }, Remaining Attempts r, Neighbor Limit k,
+    Similarity Threshold δ
+ 2: Output: Final Answer am
+ 3: F inished ← False                                                                   ▷ Initialization flag
+ 4: τ ← []                                                             ▷ Initialize Solver operation history
+ 5: while ¬F inished and r > 0 do
+ 6:                   solver
+        Nsolver ← πmem-retrieve (T , q | Ml , k, δ)                  ▷ Retrieve neighbor memories, Eq. 5
+ 7:      ′
+        t or as ← πsolver (I, q, τ, r, M)                       ▷ Operated table or answer of Solver, Eq. 1
+ 8:     τ.append(LogSolverOperation(Mw ))                      ▷ Log current operation in operation history
+ 9:     if as ̸= <NOT_READY> then
+10:         F ← πchecker (T , q, as )                                              ▷ Evaluate answer, Eq. 2
+11:         if F.total_score == FULL_SCORE then
+12:              am ← as                                                            ▷ Accept Solver answer
+13:              F inished ← True
+14:         else
+15:              (d, p) ← πreflector (T , q, τ, as , F)             ▷ Diagnose and provide fix plan, Eq. 3
+16:              Mw ← UpdateWorkingMemory(d, p)                  ▷ Inject feedback for adaptive refinement
+17:         end if
+18:     else
+19:         Continue ReAct reasoning on updated table t′                             ▷ Continue ReAct loop
+20:     end if
+21:     r ←r−1                                                              ▷ Decrease remaining attempts
+22: end while
+23: return am                                                                    ▷ Output model prediction
+
+
+   where e specifies evolution decisions, includ-       rithm demonstrates several key innovations absent
+ing whether to evolve and what specific actions         in traditional approaches: (1) iterative refinement
+(strengthening connections or updating memory           through verification and reflection, (2) dynamic
+metadata) to take. This process enhances semantic       adaptation based on structured feedback, and (3)
+clustering of related experiences, enabling more        integration of experiential knowledge from similar
+contextually relevant knowledge retrieval in subse-     problems.
+quent tasks.
+                                                        4     Experiments
+   Through this sophisticated memory management
+approach, MAPLE transcends traditional systems          4.1    Experimental Setup
+that restart reasoning from scratch on each task. In-
+                                                        Datasets. We evaluate our approach on two
+stead, our framework builds an evolving knowledge
+                                                        standard benchmarks: (1) WikiTableQuestions
+repository that improves performance across simi-
+                                                        (W I K I TQ) (Pasupat and Liang, 2015): A widely
+lar problems through continuous refinement. For
+                                                        used benchmark dataset for studying question an-
+a more detailed algorithm describing this memory
+                                                        swering over structured tables. It contains 14,149
+evolution process, please see Section C. The com-
+                                                        question-answer pairs for training and 4,344 for
+plete Archiver prompt is provided in Appendix F.
+                                                        testing, collected from 421 Wikipedia tables. The
+  Having defined the specialized roles and inter-       questions require different levels of reasoning, and
+actions of each agent in our framework, we now          the answers can be single values, lists of values,
+formalize the complete reasoning procedure that         or derived results that are not explicitly present in
+orchestrates their collaborative operation. Al-         the table. (2) TAB FACT (Chen et al., 2020): A
+gorithm 1 presents the adaptive reasoning loop          benchmark for fact verification over tabular data,
+of MAPLE, illustrating how multiple agents co-          consisting of natural language statements paired
+ordinate through a feedback-driven cycle to pro-        with tables from diverse domains. Each statement
+gressively refine reasoning strategies. This algo-      is labeled as either entailed ("yes") or refuted ("no")
+Dataset                                                       W I K I TQ                                                       TAB FACT
+Model                                 GPT-4 O - MINI   LL A MA3.3-70B      Q WEN 2.5-72B     Average   GPT-4 O - MINI   LL A MA3.3-70B    Q WEN 2.5-72B   Average
+End-to-End QA                             46.64            45.58               35.93          42.72        71.69            75.49             63.49        70.22
+Few-Shot QA                               57.16            58.54               37.66          51.12        70.16            74.73             67.49        70.79
+Chain-of-Thought                          62.96            65.75               63.12          63.94        71.94            75.89             77.67        75.17
+Binder (Cheng et al., 2023)               60.24            65.26               63.64          63.05        75.45            74.54             80.20        76.73
+Dater (Ye et al., 2023)                   61.13            62.18               61.94          61.75        75.39            81.12             78.46        78.32
+Chain-of-Table (Wang et al., 2024b)       62.98            64.80               67.87          65.22        79.05            83.25             81.96        81.42
+ReAcTable (Zhang et al., 2023)            62.79            63.07               63.74          63.20        79.18            81.49             82.06        80.91
+                                          67.13            74.01              73.39          71.51         81.62            90.66            86.02        86.10
+MAPLE (Ours)
+                                          ↑ 4.15           ↑ 8.26             ↑ 5.52         ↑ 6.29        ↑ 2.44           ↑ 7.41           ↑ 3.96       ↑ 4.68
+
+
+Table 2: Table reasoning accuracy on W IKI TQ and TAB FACT using Q WEN 2.5-72B, LL A MA3.3-70B, and
+GPT-4 O - MINI. Bold denotes the best performance and underline denotes the second-best performance in each
+column. Red arrows indicate improvements over the strongest baseline.
+
+based on the table content. The test set includes                                      format before being passed to the LLMs. We use
+2,024 statements across 298 tables, requiring mod-                                     in-context prompting by including task-specific
+els to perform complex reasoning to verify factual                                     examples, which are provided in Section F. Default
+accuracy.                                                                              decoding parameters are used throughout. For all
+                                                                                       baseline methods, we follow their original settings
+Baselines. We compare our multi-agent frame-                                           to ensure optimal performance.
+work against three categories of baseline ap-
+proaches: (1) Standard Reasoning, where the                                            Metrics. For W I K I TQ, we compute denotation
+model directly generates answers from the ta-                                          accuracy by measuring whether the predicted an-
+ble and question. This includes End-to-End QA,                                         swer matches the gold answer, regardless of sur-
+which outputs the answer in a single step. Few-                                        face form. For TAB FACT, where the task is framed
+Shot QA, which adds example (Table, Question,                                          as binary classification (“yes” or “no”), we evalu-
+Answer) triplets to guide the model. Chain-of-                                         ate model predictions using exact string matching
+Thought (Wei et al., 2023), which encourages the                                       against the ground truth labels.
+model to explain its reasoning process before an-
+swering. (2) Program-Based Reasoning, which                                            4.2     Main Results
+guide the model to produce executable code for an-
+                                                                                       Table 2 presents the performance comparison on
+swering. Binder (Cheng et al., 2023) prompts the
+                                                                                       W IKI TQ and TAB FACT across LL A MA3.3-70B,
+model to generate Python or SQL code. Dater (Ye
+                                                                                       GPT-4 O - MINI and Q WEN 2.5-72B. Our proposed
+et al., 2023) breaks down the question and table
+                                                                                       method, MAPLE, consistently outperforms all
+into smaller parts for easier processing. (3) ReAct-
+                                                                                       baselines across both datasets and model back-
+Based Reasoning: This approach integrates rea-
+                                                                                       bones. On W IKI TQ, MAPLE achieves 74.01%
+soning and acting in an iterative process, using
+                                                                                       and 73.39% accuracy with respective models, while
+external tools to assist decision-making. Chain-
+                                                                                       on TAB FACT, it reaches 90.66% and 86.02%.
+of-Table (Wang et al., 2024b) dynamically con-
+                                                                                       These results represent substantial gains of up to
+structs intermediate tables to support reasoning. Re-
+                                                                                       +8.26% on W IKI TQ and +7.41% on TAB FACT
+AcTable (Zhang et al., 2023) follows this paradigm
+                                                                                       over the strongest baseline methods.
+by integrating SQL and Python executions to gener-
+                                                                                          Compared to recent specialized frameworks like
+ate intermediate results and refine reasoning steps.
+                                                                                       Chain-of-Table and ReAcTable, MAPLE demon-
+Implementation       Details. We      conduct                                          strates consistent improvements across both
+our experiments using 3 state-of-the-art                                               datasets. The gains are particularly pronounced on
+LLMs:     GPT-4 O - MINI2 , LL A MA3.3-70B-                                            W IKI TQ (+5.52% with Q WEN 2.5-72B), aligning
+I NSTRUCT (Grattafiori et al., 2024)3 and                                              with our framework’s strength in handling com-
+Q WEN 2.5-72B-I NSTRUCT (Qwen et al., 2025)4 .                                         positional reasoning tasks that require progressive
+All models run on two NVIDIA A100 GPUs.                                                refinement. For TAB FACT, the improvements con-
+The tabular input is converted into markdown                                           firm that our approach remains effective even in
+                                                                                       binary classification settings. For analysis of how
+    2
+      https://platform.openai.com/docs/models/gpt-4o-mini                              table size affects reasoning performance and the
+    3
+      https://huggingface.co/meta-llama/Llama-3.3-70B-
+Instruct                                                                               impact of multi-round reasoning, see Section E.
+    4
+      https://huggingface.co/Qwen/Qwen2.5-72B-Instruct                                    These results validate the core design principles
+Settings                                    LLAMA3.3-70B
+Baseline                                        45.58                     5.8% 11.0%
+                                                                                                     Error Type
++ Solver                                        63.81                  4.1%                    Logical Reasoning Errors
++ Solver & Checker                              65.91                                          Counting & Aggregation Errors
++ Solver & Checker & Reflector                  71.09                                  38.7%   Format & Temporal
+                                                                                                Interpretation Errors
++ Solver & Checker & Reflector & Archiver       74.01                40.4%                     Incomplete Output /
+                                                                                                Information Extraction
+                                                                                               Calculation & Comparison Errors
+Table 3: Ablation study showing the incremental contri-
+bution of each agent in MAPLE.
+                                                           Figure 2: Distribution of error types identified through
+                                                           MAPLE’s memory system on W IKI TQ.
+of MAPLE: dynamic adaptive planning through
+multi-round feedback loops, specialized agent roles
+with distinct cognitive functions, and progressive         suggests that our iterative verification process effec-
+knowledge accumulation through long-term mem-              tively eliminates many simpler mistakes. However,
+ory.                                                       the predominance of logical reasoning and aggre-
+                                                           gation errors indicates two critical directions for
+4.3    Evaluating Agent Contributions                      future improvement: (1) enhancing the fundamen-
+To assess the contribution of each agent in our            tal reasoning capabilities of LLMs to address the
+framework, we conduct an ablation study using              40.4% of logical errors, and (2) integrating special-
+the LLaMA3.3-70B model on W I K I TQ. As shown             ized external tools for precise counting and aggre-
+in Table 3, we incrementally introduce agents into         gation operations, which could potentially resolve
+the MAPLE pipeline. Starting from a baseline that          the 38.7% of errors related to handling large tables
+directly predicts answers without reasoning, we ob-        with numerous entities. This analysis demonstrates
+serve that adding the Solver agent alone leads to a        how our memory-based error categorization not
+substantial performance boost of +18.2 points, con-        only provides diagnostic information but also
+firming the effectiveness of our ReAct-style multi-        guides strategic research priorities for advanc-
+step reasoning. Incorporating the Checker further          ing table-based reasoning capabilities.
+improves accuracy (+2.1), suggesting that verify-
+                                                           Memory Dynamics and Similarity Threshold
+ing answer quality plays a crucial role in reducing
+                                                           Analysis. To understand how similarity thresh-
+erroneous outputs. Introducing the Reflector yields
+                                                           olds affect memory system behavior, we analyze
+an additional significant gain (+5.2), highlighting
+                                                           memory statistics across different distance thresh-
+the importance of iterative reflection and error cor-
+                                                           olds (δ) on both datasets, with results presented in
+rection. Finally, equipping the system with the
+                                                           Table 4.
+Archiver enables long-term memory utilization, re-
+sulting in peak accuracy of 74.01.                         Memory Filtering Effects. As δ increases from
+                                                           0.3 to 1.0, total memory size decreases dramati-
+4.4    Memory Analysis and System Behavior
+                                                           cally, from 4,078 to 191 notes for W IKI TQ and
+Error Distribution in LLM Table Reasoning.                 1,882 to 78 for TAB FACT. This demonstrates our
+Figure 2 shows the distribution of error types on          selective integration approach in action, preventing
+W IKI TQ, based on all errors stored in our mem-           memory explosion at low thresholds while becom-
+ory system after multiple rounds of reasoning and          ing increasingly selective at higher thresholds. At
+verification. The two most dominant categories             δ = 0.3, nearly all experiences (93.9%) are added
+are Logical Reasoning Errors (40.4%) and Count-            to memory, creating potential redundancy, while at
+ing & Aggregation Errors (38.7%), together ac-             δ = 1.0, only highly unique experiences (4.4%) are
+counting for nearly 80% of all failures. These             retained, representing two extremes of the memory
+are followed by Format & Temporal Interpretation           gradient phenomenon.
+Errors (11.0%), Incomplete Information Extrac-
+tion (5.8%), and Calculation & Comparison Errors           Optimal Evolution Dynamics. The evolution
+(4.1%).                                                    ratio (percentage of memories that undergo evo-
+   Notably, this distribution provides valuable in-        lution) follows an interesting pattern, peaking at
+sights into persistent challenges even after multi-        approximately δ = 0.7 for both datasets (65.2% for
+round verification and reflection. The relatively low      W IKI TQ, 74.7% for TAB FACT). Similarly, evolu-
+proportion of basic computational errors (4.1%)            tion efficiency, measured as evolved memories per
+             Threshold   Memory   Memory      Evolution   Evolution   # Evolved    Evolution     Med. Strengthen   Med. Update   Accuracy
+ Dataset
+                (δ)       Count   Ratio (%)    Count      Ratio (%)   Memories    Efficiency ↑      Distance        Distance      (%) ↑
+                0.1       4343     100.0%         0        00.0%          0          0.00             NA              NA          73.64
+                0.3       4078      93.9%        843       20.7%         981         1.16             0.25            0.25        74.01
+W I K I TQ      0.5       2615      60.2%       1269       48.5%        1504         1.19             0.45            0.44        71.18
+                0.7       1023      23.5%        667       65.2%         820         1.23             0.64            0.63        72.28
+                0.9       347       8.0%        224        64.6%        254          1.13             0.81            0.81        71.82
+                 1         191       4.4%        112       58.6%         133         1.19             0.89            0.88        71.82
+                0.1       2024     100.0%        0         00.0%         0           0.00             NA              NA          85.77
+                0.3       1882      93.0%       719        38.2%        787          1.09             0.24            0.24        85.70
+TAB FACT        0.5       1108      54.7%       710        64.1%        813          1.15             0.42            0.41        90.66
+                0.7       427       21.1%       319        74.7%        372          1.17             0.60            0.58        86.29
+                0.9       151        7.5%       100        66.2%        106          1.06             0.78            0.70        85.79
+                 1         78        3.9%        53        67.9%         59          1.11             0.86            0.82        85.40
+
+
+Table 4: Memory system dynamics across different similarity thresholds (δ) on W I K I TQ and TAB FACT datasets.
+
+evolution operation, reaches its maximum around                        evidence for this cognitive principle.
+the same threshold (1.23 for W IKI TQ, 1.17 for                           This analysis reveals that memory dynamics in
+TAB FACT). This suggests that moderate similarity                      MAPLE follow a nuanced optimization pattern
+thresholds create ideal conditions for knowledge                       across different operational modes. For memory
+evolution.                                                             evolution, a "Goldilocks principle" applies—with
+                                                                       too little filtering (δ < 0.5), the system becomes
+Optimal Retrieval Thresholds. While evolu-                             overwhelmed with redundant information; with ex-
+tion efficiency peaks at δ = 0.7, optimal thresh-                      cessive filtering (δ > 0.9), it lacks sufficient knowl-
+olds for accuracy show distinct patterns: W IKI TQ                     edge connections for meaningful evolution. The
+achieves highest performance (74.01%) at δ = 0.3,                      optimal range for evolution (δ ≈ 0.7) balances
+while TAB FACT reaches peak accuracy (90.66%)                          memory diversity and coherence. Meanwhile, ac-
+at δ = 0.5. This divergence reflects the different                     curacy optimization benefits from more stringent
+functional requirements: during problem-solving,                       relevance criteria (δ = 0.3-0.5), ensuring that only
+lower thresholds retrieve highly relevant, directly                    the most applicable experiences inform reasoning.
+applicable memories, whereas evolution benefits                        This dual-threshold approach enables MAPLE to
+from moderate thresholds balancing similarity with                     simultaneously optimize both knowledge organiza-
+sufficient diversity. Performance stabilizes beyond                    tion and problem-solving performance.
+δ = 0.9, indicating a saturation point where re-
+trieving increasingly dissimilar memories provides
+little additional value. These findings reveal that                    5       Conclusion
+  solver
+πmem-retrieve requires stricter relevance criteria
+                                                                       This paper presents MAPLE, a multi-agent frame-
+(lower δ values of 0.3-0.5) for effective reasoning
+                     archiver                                          work for table reasoning that integrates adaptive
+guidance, while πmem-retrieve  operates optimally
+                                                                       planning with long-term memory evolution. By
+at δ = 0.7 for efficient memory organization.
+                                                                       decomposing reasoning into specialized functions
+Cross-Dataset Consistency. Both datasets ex-                           handled by distinct agents, our approach enables
+hibit remarkably similar memory dynamics despite                       dynamic strategy refinement through a feedback-
+their different task characteristics, suggesting that                  driven cycle. Experiments on W I K I TQ and TAB -
+these patterns reflect fundamental properties of                       FACT demonstrate significant improvements over
+knowledge organization rather than dataset-specific                    existing methods, with ablation studies confirming
+artifacts.                                                             each component’s value. Our memory analysis re-
+                                                                       veals that logical reasoning errors and counting/ag-
+Theoretical Significance. These findings align                         gregation operations account for nearly 80% of
+with the "approximate learning" theory in cognitive                    remaining mistakes, suggesting 2 promising direc-
+science, which posits that optimal knowledge ac-                       tions: enhancing fundamental reasoning capabili-
+quisition occurs when new information is related                       ties and developing specialized numerical tools for
+to existing knowledge that is neither too similar                      complex operations. Beyond table reasoning, the
+nor too different (Gentner and Smith, 2013). Our                       principles demonstrated in MAPLE may benefit
+empirical results showing peak evolution at mod-                       knowledge-intensive tasks where verification, re-
+erate distances (δ ≈ 0.7) provide computational                        flection, and experience accumulation are crucial.
+Limitations                                                 Information Retrieval, SIGIR ’24, page 2997–3000,
+                                                            New York, NY, USA. Association for Computing
+Despite MAPLE’s promising results, several lim-             Machinery.
+itations should be acknowledged. First, our ap-
+proach is computationally more intensive than             Yilun Du, Shuang Li, Antonio Torralba, Joshua B.
+                                                            Tenenbaum, and Igor Mordatch. 2023. Improving
+single-pass methods due to its multi-round, multi-          factuality and reasoning in language models through
+agent architecture. Each reasoning attempt requires         multiagent debate. Preprint, arXiv:2305.14325.
+multiple LLM calls across different agents, increas-
+ing both inference time and computational costs.          Julian Eisenschlos, Syrine Krichene, and Thomas
+This presents challenges for real-time applications          Müller. 2020. Understanding tables with interme-
+                                                             diate pre-training. In Findings of the Association
+or deployment on resource-constrained systems.               for Computational Linguistics: EMNLP 2020, pages
+   Second, while our memory evolution mechanism              281–296, Online. Association for Computational Lin-
+demonstrates effectiveness in our experiments, its           guistics.
+long-term scalability remains unexplored. As the
+memory base grows, maintaining coherence and              Chen Gao, Xiaochong Lan, Zhihong Lu, Jinzhu Mao,
+                                                            Jinghua Piao, Huandong Wang, Depeng Jin, and
+preventing knowledge dilution become increas-               Yong Li. 2023. S3: Social-network simulation sys-
+ingly challenging. Future work should examine               tem with large language model-empowered agents.
+more sophisticated memory management strategies,            Preprint, arXiv:2307.14984.
+including forgetting mechanisms and hierarchical
+                                                          Dedre Gentner and Linsey A. Smith. 2013. 668 analogi-
+organization of memory notes.                               cal learning and reasoning. In The Oxford Handbook
+   Finally, our framework currently focuses exclu-          of Cognitive Psychology. Oxford University Press.
+sively on table-based reasoning without incorpo-
+rating external knowledge. This limits its applica-       Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri,
+bility to questions requiring information beyond            Abhinav Pandey, Abhishek Kadian, Ahmad Al-
+                                                            Dahle, Aiesha Letman, Akhil Mathur, Alan Schel-
+what’s explicitly presented in the table. Enhancing         ten, Alex Vaughan, Amy Yang, Angela Fan, and
+MAPLEwith external knowledge collection capa-               et al. 2024. The llama 3 herd of models. Preprint,
+bilities would be a valuable extension to address           arXiv:2407.21783.
+this limitation.
+                                                          Zihui Gu, Ju Fan, Nan Tang, Preslav Nakov, Xi-
+                                                            aoman Zhao, and Xiaoyong Du. 2022. PASTA:
+                                                            Table-Operations Aware Fact Verification via
+References                                                  Sentence-Table Cloze Pre-training. arXiv preprint.
+Huaben Chen, Wenkang Ji, Lufeng Xu, and Shiyu Zhao.         ArXiv:2211.02816 [cs].
+  2025. Multi-agent consensus seeking via large lan-
+  guage models. Preprint, arXiv:2310.20151.               Jonathan Herzig, Paweł Krzysztof Nowak, Thomas
+                                                            Müller, Francesco Piccinno, and Julian Martin Eisen-
+Wenhu Chen, Hongmin Wang, Jianshu Chen, Yunkai              schlos. 2020. TAPAS: Weakly Supervised Table Pars-
+ Zhang, Hong Wang, Shiyang Li, Xiyou Zhou, and              ing via Pre-training. In Proceedings of the 58th An-
+ William Yang Wang. 2020. Tabfact: A large-scale            nual Meeting of the Association for Computational
+ dataset for table-based fact verification. Preprint,       Linguistics, pages 4320–4333. ArXiv:2004.02349
+ arXiv:1909.02164.                                          [cs].
+Zhoujun Cheng, Tianbao Xie, Peng Shi, Chengzu             Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng,
+  Li, Rahul Nadkarni, Yushi Hu, Caiming Xiong,               Yuheng Cheng, Ceyao Zhang, Jinlin Wang, Zili
+  Dragomir Radev, Mari Ostendorf, Luke Zettlemoyer,          Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang
+  Noah A. Smith, and Tao Yu. 2023. Binding Language          Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu,
+  Models in Symbolic Languages. arXiv preprint.              and Jürgen Schmidhuber. 2024. Metagpt: Meta pro-
+  ArXiv:2210.02875 [cs].                                     gramming for a multi-agent collaborative framework.
+Ishita Dasgupta, Christine Kaeser-Chen, Kenneth              Preprint, arXiv:2308.00352.
+   Marino, Arun Ahuja, Sheila Babayan, Felix Hill,
+   and Rob Fergus. 2023. Collaborating with lan-          John J. Horton. 2023. Large language models as sim-
+   guage models for embodied reasoning. Preprint,           ulated economic agents: What can we learn from
+   arXiv:2302.00763.                                        homo silicus? Preprint, arXiv:2301.07543.
+
+Haoyu Dong and Zhiruo Wang. 2024. Large language          Chenxu Hu, Jie Fu, Chenzhuang Du, Simian Luo, Junbo
+  models for tabular data: Progresses and future direc-     Zhao, and Hang Zhao. 2023. Chatdb: Augment-
+  tions. In Proceedings of the 47th International ACM       ing llms with databases as their symbolic memory.
+  SIGIR Conference on Research and Development in           Preprint, arXiv:2306.03901.
+Wenyue Hua, Lizhou Fan, Lingyao Li, Kai Mei,                 Bernstein. 2023.   Generative agents: Interac-
+ Jianchao Ji, Yingqiang Ge, Libby Hemphill, and              tive simulacra of human behavior.     Preprint,
+ Yongfeng Zhang. 2024. War and peace (waragent):             arXiv:2304.03442.
+ Large language model-based multi-agent simulation
+ of world wars. Preprint, arXiv:2311.17227.                Joon Sung Park, Lindsay Popowski, Carrie J. Cai,
+                                                             Meredith Ringel Morris, Percy Liang, and Michael S.
+Dong Huang, Jie M. Zhang, Michael Luck, Qingwen              Bernstein. 2022. Social simulacra: Creating pop-
+  Bu, Yuhao Qing, and Heming Cui. 2024. Agentcoder:          ulated prototypes for social computing systems.
+  Multi-agent-based code generation with iterative test-     Preprint, arXiv:2208.04024.
+  ing and optimisation. Preprint, arXiv:2312.13010.
+                                                           Panupong Pasupat and Percy Liang. 2015. Composi-
+Zhengbao Jiang, Yi Mao, Pengcheng He, Graham Neu-            tional Semantic Parsing on Semi-Structured Tables.
+  big, and Weizhu Chen. 2022. OmniTab: Pretraining           arXiv preprint. ArXiv:1508.00305 [cs].
+  with natural and synthetic data for few-shot table-
+  based question answering. In Proceedings of the
+                                                           Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan
+  2022 Conference of the North American Chapter of
+                                                             Dang, Jiahao Li, Cheng Yang, Weize Chen, Yusheng
+  the Association for Computational Linguistics: Hu-
+                                                             Su, Xin Cong, Juyuan Xu, Dahai Li, Zhiyuan Liu,
+  man Language Technologies, pages 932–942, Seattle,
+                                                             and Maosong Sun. 2024. Chatdev: Communica-
+  United States. Association for Computational Lin-
+                                                             tive agents for software development. Preprint,
+  guistics.
+                                                             arXiv:2307.07924.
+Guohao Li, Hasan Abed Al Kader Hammoud, Hani
+  Itani, Dmitrii Khizbullin, and Bernard Ghanem.           Qwen, :, An Yang, Baosong Yang, Beichen Zhang,
+  2023a. CAMEL: Communicative agents for ”mind”             Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan
+  exploration of large language model society. In           Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan
+  Thirty-seventh Conference on Neural Information           Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin
+  Processing Systems.                                       Yang, Jiaxi Yang, Jingren Zhou, and 25 oth-
+                                                            ers. 2025. Qwen2.5 technical report. Preprint,
+Yang Li, Yangyang Yu, Haohang Li, Zhi Chen, and             arXiv:2412.15115.
+  Khaldoun Khashanah. 2023b. Tradinggpt: Multi-
+  agent system with layered memory and distinct char-      Noah Shinn, Federico Cassano, Edward Berman, Ash-
+  acters for enhanced financial trading performance.         win Gopinath, Karthik Narasimhan, and Shunyu Yao.
+  Preprint, arXiv:2309.03736.                                2023. Reflexion: Language agents with verbal rein-
+                                                             forcement learning. Preprint, arXiv:2303.11366.
+Jonathan Light, Min Cai, Sheng Shen, and Ziniu Hu.
+  2023. Avalonbench: Evaluating llms playing the           Theodore R. Sumers, Shunyu Yao, Karthik Narasimhan,
+  game of avalon. Preprint, arXiv:2310.05036.                and Thomas L. Griffiths. 2024.         Cognitive
+                                                             architectures for language agents.      Preprint,
+Qian Liu, Bei Chen, Jiaqi Guo, Morteza Ziyadi, Zeqi          arXiv:2309.02427.
+  Lin, Weizhu Chen, and Jian-Guang Lou. 2022.
+  TAPEX: Table Pre-training via Learning a Neural          Xiangru Tang, Anni Zou, Zhuosheng Zhang, Ziming
+  SQL Executor. arXiv preprint. ArXiv:2107.07653             Li, Yilun Zhao, Xingyao Zhang, Arman Cohan, and
+  [cs].                                                      Mark Gerstein. 2024. Medagents: Large language
+                                                             models as collaborators for zero-shot medical reason-
+Weizheng Lu, Jing Zhang, Ju Fan, Zihao Fu, Yueguo            ing. Preprint, arXiv:2311.10537.
+ Chen, and Xiaoyong Du. 2025. Large language
+ model for table processing: a survey. Frontiers of        Bing Wang, Xinnian Liang, Jian Yang, Hui Huang,
+ Computer Science, 19(2).                                    Shuangzhi Wu, Peihao Wu, Lu Lu, Zejun Ma, and
+                                                             Zhoujun Li. 2025. Scm: Enhancing large lan-
+Zhao Mandi, Shreeya Jain, and Shuran Song. 2023.
+                                                             guage model with self-controlled memory framework.
+  Roco: Dialectic multi-robot collaboration with large
+                                                             Preprint, arXiv:2304.13343.
+  language models. Preprint, arXiv:2307.04738.
+
+Ali Modarressi, Ayyoob Imani, Mohsen Fayyaz, and           Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-
+  Hinrich Schütze. 2024. Ret-llm: Towards a gen-             dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and
+  eral read-write memory for large language models.          Anima Anandkumar. 2023a. Voyager: An open-
+  Preprint, arXiv:2305.14322.                                ended embodied agent with large language models.
+                                                             Preprint, arXiv:2305.16291.
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang,
+  Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez.    Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao
+  2024. Memgpt: Towards llms as operating systems.           Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang,
+  Preprint, arXiv:2310.08560.                                Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei,
+                                                             and Jirong Wen. 2024a. A survey on large language
+Joon Sung Park, Joseph C. O’Brien, Carrie J. Cai,            model based autonomous agents. Frontiers of Com-
+  Meredith Ringel Morris, Percy Liang, and Michael S.        puter Science, 18(6).
+Shenzhi Wang, Chang Liu, Zilong Zheng, Siyuan               and Questions for Table-based Reasoning. arXiv
+  Qi, Shuo Chen, Qisen Yang, Andrew Zhao,                   preprint. ArXiv:2301.13808 [cs].
+  Chaofei Wang, Shiji Song, and Gao Huang. 2023b.
+  Avalon’s game of thoughts: Battle against decep-        Bangguo Yu, Qihao Yuan, Kailai Li, Hamidreza Kasaei,
+  tion through recursive contemplation. Preprint,           and Ming Cao. 2025a. Co-navgpt: Multi-robot coop-
+  arXiv:2310.01320.                                         erative visual semantic navigation using vision lan-
+                                                            guage models. Preprint, arXiv:2310.07937.
+Zhiruo Wang, Haoyu Dong, Ran Jia, Jia Li, Zhiyi
+  Fu, Shi Han, and Dongmei Zhang. 2021. TUTA:             Peiying Yu, Guoxin Chen, and Jingjing Wang. 2025b.
+  Tree-based Transformers for Generally Structured          Table-critic: A multi-agent framework for collabo-
+  Table Pre-training. In Proceedings of the 27th ACM        rative criticism and refinement in table reasoning.
+  SIGKDD Conference on Knowledge Discovery &                Preprint, arXiv:2502.11799.
+  Data Mining, pages 1780–1790. ArXiv:2010.12537
+  [cs].                                                   Hongxin Zhang, Weihua Du, Jiaming Shan, Qinhong
+                                                            Zhou, Yilun Du, Joshua B. Tenenbaum, Tianmin Shu,
+Zilong Wang, Hao Zhang, Chun-Liang Li, Julian Martin        and Chuang Gan. 2024. Building cooperative em-
+   Eisenschlos, Vincent Perot, Zifeng Wang, Lesly Mi-       bodied agents modularly with large language models.
+   culicich, Yasuhisa Fujii, Jingbo Shang, Chen-Yu Lee,     Preprint, arXiv:2307.02485.
+   and Tomas Pfister. 2024b. Chain-of-Table: Evolving
+   Tables in the Reasoning Chain for Table Understand-    Yunjia Zhang, Jordan Henkel, Avrilia Floratou, Joyce
+   ing. arXiv preprint. ArXiv:2401.04398 [cs].              Cahoon, Shaleen Deep, and Jignesh M. Patel. 2023.
+                                                            ReAcTable: Enhancing ReAct for Table Question
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten            Answering. arXiv preprint. ArXiv:2310.00815 [cs].
+   Bosma, Brian Ichter, Fei Xia, Ed Chi, Quoc Le, and
+   Denny Zhou. 2023. Chain-of-thought prompting elic-     Qinlin Zhao, Jindong Wang, Yixuan Zhang, Yiqiao
+   its reasoning in large language models. Preprint,        Jin, Kaijie Zhu, Hao Chen, and Xing Xie. 2024.
+   arXiv:2201.11903.                                        Competeai: Understanding the competition dynam-
+                                                            ics in large language model-based agents. Preprint,
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran                arXiv:2310.17512.
+  Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun
+  Zhang, Shaokun Zhang, Jiale Liu, Ahmed Hassan           Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and
+  Awadallah, Ryen W White, Doug Burger, and Chi            Yanlin Wang. 2023. Memorybank: Enhancing large
+  Wang. 2023. Autogen: Enabling next-gen llm ap-            language models with long-term memory. Preprint,
+  plications via multi-agent conversation. Preprint,        arXiv:2305.10250.
+  arXiv:2308.08155.
+                                                          Denny Zhou, Nathanael Schärli, Le Hou, Jason Wei,
+Bushi Xiao, Ziyuan Yin, and Zixuan Shan. 2023. Sim-         Nathan Scales, Xuezhi Wang, Dale Schuurmans,
+  ulating public administration crisis: A novel gener-      Claire Cui, Olivier Bousquet, Quoc Le, and Ed Chi.
+  ative agent-based simulation system to lower tech-        2023a. Least-to-most prompting enables complex
+  nology barriers in social science research. Preprint,     reasoning in large language models. Preprint,
+  arXiv:2311.06957.                                         arXiv:2205.10625.
+
+Kai Xiong, Xiao Ding, Yixin Cao, Ting Liu, and Bing       Xuanhe Zhou, Guoliang Li, and Zhiyuan Liu. 2023b.
+  Qin. 2023. Examining inter-consistency of large lan-      Llm as dba. Preprint, arXiv:2308.05481.
+  guage models collaboration: An in-depth analysis via
+  debate. In Findings of the Association for Computa-
+  tional Linguistics: EMNLP 2023, page 7572–7590.
+  Association for Computational Linguistics.
+Wujiang Xu, Kai Mei, Hang Gao, Juntao Tan, Zujie
+ Liang, and Yongfeng Zhang. 2025. A-mem: Agentic
+ memory for llm agents. Preprint, arXiv:2502.12110.
+Zelai Xu, Chao Yu, Fei Fang, Yu Wang, and Yi Wu.
+  2024. Language agents with reinforcement learning
+  for strategic play in the werewolf game. Preprint,
+  arXiv:2310.18940.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+  Shafran, Karthik Narasimhan, and Yuan Cao. 2023.
+  React: Synergizing reasoning and acting in language
+  models. Preprint, arXiv:2210.03629.
+Yunhu Ye, Binyuan Hui, Min Yang, Binhua Li, Fei
+  Huang, and Yongbin Li. 2023. Large Language Mod-
+  els are Versatile Decomposers: Decompose Evidence
+Appendix                                                 simultaneously observe both Solver reasoning steps
+                                                         and Checker feedback, synthesizing insights that
+A     Related Work                                       would be difficult to achieve in strictly layered or
+As illustrated in Table 5, existing table reasoning      peer-to-peer architectures.
+methods exhibit significant limitations across key          To directly facilitate communication with large
+design dimensions. While some implement multi-           language models during multi-turn interactions, the
+agent architectures or ReAct-based reasoning, none       working memory is represented entirely in natural
+integrates all critical components: dynamic plan-        language format. Each agent, Solver, Checker, Re-
+ning, reflection mechanisms, self-refinement, and        flector, and Archiver, reads from and writes to this
+long-term memory. Our proposed MAPLE frame-              shared memory throughout the reasoning cycle,
+work addresses these gaps by combining collabo-          ensuring that context is consistently updated and
+rative verification, adaptive planning, and evolving     accessible at every decision point.
+memory structures to achieve more robust and ac-
+                                                         Long-term Memory. The long-term memory
+curate table reasoning.
+                                                         (Ml ) captures accumulated knowledge across
+                                                         tasks, supporting continual improvement and ex-
+B     Cognitive Architecture
+                                                         perience reuse. Inspired by frameworks like A-
+B.1    Memory Module                                     MEM (Xu et al., 2025), we adapt their approaches
+                                                         specifically for table-based reasoning challenges.
+To enable multi-step reasoning, verification, and
+                                                            Our memory structure is tailored for table QA,
+reflection, MAPLE organizes internal information
+                                                         with each memory note containing fields crucial
+across two complementary memory modules: a
+                                                         for reasoning diagnostics: question type, required
+short-term working memory and a long-term mem-
+                                                         operations, correct/wrong steps, error types, rea-
+ory. The working memory enables flexible plan-
+                                                         sons and additional metadata enables tracking of
+ning and adaptation during reasoning by dynam-
+                                                         memory dynamics over time. We implement a
+ically maintaining intermediate states, while the
+                                                         hybrid storage format—structured metadata for
+long-term memory provides stable knowledge ac-
+                                                         embedding-based retrieval and natural language
+cumulated across tasks to guide future decisions.
+                                                         descriptions for interpretability.
+Together, these memory structures allow different
+agents to persist, access, and manipulate relevant in-      A key innovation is our selective integration
+formation throughout and across problem-solving          mechanism, which differs from frameworks like
+sessions.                                                A-MEM that accumulate all experiences indiscrim-
+                                                         inately. While A-MEM addresses long-range con-
+Working Memory. The working memory (Mw )                 versations where preserving every detail is essen-
+temporarily stores all information related to the cur-   tial, table QA questions often exhibit high similar-
+rent task instance, implementing a Shared Message        ity and structural homogeneity, making comprehen-
+Pool architecture (Hong et al., 2024) for agent com-     sive retention inefficient. Our approach implements
+munication. As shown in Figure 3, it maintains the       density-based filtering: when a new memory note
+original table T , the question q, the Solver’s op-      closely resembles multiple existing entries, it is not
+eration history (including intermediate tables and       added to the repository, preventing memory satura-
+tentative answers), Checker feedback (scores and         tion while preserving diverse reasoning patterns.
+comments), Reflector analysis (diagnosis and sug-           Similarly, while adopting the concept of memory
+gestions), and task-level metadata such as the num-      evolution from prior work, we introduce strategic
+ber of remaining attempts.                               timing for evolution operations, performing them
+   Unlike centralized or hierarchical communica-         selectively rather than universally, to maximize co-
+tion structures, our Shared Message Pool enables         herence without unnecessary computational over-
+all agents to asynchronously publish information to      head.
+and subscribe from a common memory space. This              This specialized approach achieves an optimal
+architecture facilitates flexible many-to-many inter-    balance between knowledge retention and effi-
+actions without predefined communication path-           ciency for table reasoning tasks. During opera-
+ways, allowing emergent collaboration patterns           tion, the Archiver retrieves relevant memories to
+based on informational dependencies rather than          assist the Solver, and after task completion, strate-
+rigid control flow. For example, the Reflector can       gically updates the memory base by either inserting
+                                      Multi-Agent   External                           Self-     Long-Term   Dynamic
+Model                                                          ReAct   Reflection
+                                       System       Tool Use                        Refinement    Memory     Planning
+Binder (Cheng et al., 2023)               ✗            ✓        ✗          ✗            ✗           ✗           ✗
+Dater (Ye et al., 2023)                   ✓            ✓        ✗          ✗            ✗           ✗           ✗
+Chain-of-Table (Wang et al., 2024b)       ✗            ✗        ✓          ✗            ✗           ✗           ✗
+ReAcTable (Zhang et al., 2023)            ✗            ✓        ✓          ✗            ✗           ✗           ✗
+Table-Critic (Yu et al., 2025b)           ✓            ✗        ✗          ✓            ✓           ✓           ✗
+MAPLE (Ours)                              ✓            ✗        ✓          ✓            ✓           ✓           ✓
+
+          Table 5: Comparison of representative table reasoning methods across key design dimensions.
+
+Algorithm 2 : MAPLE’s Dynamic Memory Evolution Process
+ 1: Input: Working Memory Mw = {T , q, am , ag , τ, d, p}, Long-term Memory Ml , Distance Thresh-
+    old δ, Neighbor Limit k, Required Minimum Neighbors kmin
+ 2: Output: Updated Long-term Memory Ml
+ 3: for each sample in working memory do
+ 4:     m ← πarchiver-sum (Mw )                              ▷ Distill experience into memory note, Eq. 4
+ 5:                      archiver
+        Narchiver ← πmem-retrieve (m, Ml , k, δ)          ▷ Retrieve ≤ k similar memories within δ, Eq. 6
+ 6:     if |Narchiver | < kmin then                                           ▷ Filter redundant memories
+ 7:         e ← πarchiver-evo (m, Narchiver )                            ▷ Decide evolution actions, Eq. 7
+ 8:         if e.should_evolve == True then
+ 9:              if strengthen ∈ e.actions then
+10:                    A DD L INKS(m, e.suggested_connections)              ▷ Create semantic connections
+11:              end if
+12:              if update_neighbor ∈ e.actions then
+13:                    U PDATE M ETADATA(Narchiver , e.new_info_neighbor ▷ Refine neighbor metadata
+14:              end if
+15:              m.tags ← e.tags_to_update                                          ▷ Update semantic tags
+16:         end if
+17:         A DD M EMORY(Ml , m)                                                  ▷ Persist new experience
+18:     end if
+19: end for
+20: return Ml
+
+
+
+unique experiences or evolving existing entries to                Instead, our method operates entirely within in-
+strengthen their utility.                                      ternal action spaces, where actions are directed
+                                                               toward interacting with internal memory systems.
+B.2     Action Module                                          Internal actions can be further classified into three
+The action module is responsible for translating               types based on their interaction with memory: Re-
+an agent’s decisions into specific outcomes. Posi-             trieval involves reading from long-term memory
+tioned at the most downstream point of the architec-           to access relevant past experiences. Reasoning
+ture, it directly interacts with the environment and           refers to updating the short-term working memory
+is influenced by the memory and planning modules.              through LLM-based processing of current informa-
+   Following the categorization proposed in                    tion. Learning denotes writing new information
+CoALA Framework (Sumers et al., 2024), action                  into long-term memory for future use.
+spaces can be broadly divided into two categories:                These fundamental actions rarely occur in iso-
+external actions and internal actions. External ac-            lation, instead, they form characteristic sequences
+tions involve interactions with the external environ-          and combinations that enable sophisticated reason-
+ment, such as controlling a robot, communicating               ing patterns. For example, the Solver typically
+with a human, or navigating a website. As our                  engages in iterative reasoning cycles punctuated by
+framework focuses on table reasoning tasks, we do              occasional retrieval operations, while the Archiver
+not involve external actions.                                  combines retrieval and learning to maintain mem-
+ Working Memory                                  Actions     Retrieval Reasoning Learning      Long-Term Memory
+ Question_id: ns-0                                 Solver                                      Question: what was the total number of ...
+ Question: What is the total revenue in 2020?     Checker                                      Qustion Type: lookup
+ Original Table: | Year | Revenue | Product |    Reflector                                     Required Operations: ["match date", ..., "sum goals"]
+                 |------|---------|---------|     Archiver                                     Keywords: ["implicit schema", ..., "date match"]
+                 | 2020 | 100    | A         |                                                 Tags: ["lookup", "schema misunderstanding", ...]
+                                                 Reasoning                         Retrieval
+                 | 2021 | 200    | B         |                        Solver                   Correct Steps: [..., ..., ..., ...]
+ Interim Table:...                               Reasoning                                     Wrong Steps: [..., ..., ..., ...]
+                                                                     Checker
+ Solver History: [thought, action, answer]                                                     Error Type: Schema misunderstanding
+ Checker Feedback: [score, comment]              Reasoning                                     Error Reason: The table implicitly represents games ...
+                                                                    Reflector
+ Reflector: [diagnosis, improvement_plan]                                          Retrieval Links: [Note3, Note15, Note28]
+                                                 Reasoning
+ Final Answer: 250                                                   Archiver                  Evolution History: [..., ..., ...]
+                                                                                   Learning
+ Remaining Attempts: 3                                                                         Retrieval Count: 10
+
+
+
+Figure 3: Overview of the memory structures and information flows in MAPLE. The green arrows (→) represent
+reasoning processes, where agents read and update working memory during multi-step problem solving. The
+orange arrows (←) represent retrieval operations from long-term memory to support current reasoning. The red
+arrows (→) denote learning operations, where new knowledge is written back into the long-term memory.
+
+
+ory coherence. The power of our multi-agent ap-                                 sequent step) or multi-path reasoning (where rea-
+proach emerges from these diverse action patterns,                              soning steps form tree-like structures), these ap-
+allowing different agents to specialize in distinct                             proaches struggle with complex tasks where initial
+cognitive operations while maintaining a cohesive                               plans require revision based on unexpected discov-
+problem-solving process.                                                        eries during execution. The fundamental limitation
+   Figure 3 summarizes the internal actions associ-                             is their inability to iteratively refine strategies based
+ated with each agent in our system. Both the Solver                             on execution outcomes—a critical capability in hu-
+and Checker agents primarily engage in reason-                                  man problem-solving.
+ing actions: they read from the working memory,
+process information according to their designated                               Planning       with     Feedback. In        contrast,
+roles, and write the updated reasoning steps back                               MAPLE implements dynamic planning with
+into the working memory. The Reflector agent per-                               dual-source feedback, enabling adaptive reasoning
+forms both reasoning and learning, as it not only                               that more closely mirrors human cognition:
+updates the working memory but also contributes                                    Environmental Feedback enables the Solver to
+insights to the long-term memory. The Archiver                                  observe changes in the table state after each opera-
+agent engages in all three action types: retrieval to                           tion and decide whether to continue manipulation
+access relevant experiences, reasoning to analyze                               or derive an answer. Similar to approaches like Re-
+current tasks, and learning to evolve the memory                                Act (Yao et al., 2023), our framework incorporates
+base with new knowledge.                                                        thought-action-observation triplets, allowing the
+                                                                                Solver to adapt its reasoning trajectory based on
+B.3    Planning Module                                                          real-time observations of how table manipulations
+                                                                                affect the environment state. This environmental
+Effective planning is crucial for solving multi-step
+                                                                                grounding prevents the accumulation of reasoning
+reasoning tasks, where the sequence and selection
+                                                                                errors that plague single-pass methods.
+of actions can significantly impact final outcomes.
+Following the categorization proposed by Wang                                      Model Feedback from specialized verification
+et al. (2024a), planning approaches can be broadly                              agents (Checker and Reflector) provides struc-
+classified into two categories: planning without                                tured evaluation of reasoning quality. Unlike self-
+feedback and planning with feedback.                                            reflection approaches where the same model in-
+                                                                                stance both generates and evaluates its own solu-
+Planning without Feedback. Traditional reason-                                  tions, our architecture implements a clear separa-
+ing systems typically employ static planning, where                             tion of concerns, dedicated agents with specialized
+the entire reasoning trajectory is predetermined be-                            prompts and evaluation criteria perform verifica-
+fore execution. For instance, standard Chain-of-                                tion tasks. This functional modularity enables more
+Thought prompting generates all reasoning steps                                 objective assessment, as the Checker evaluates an-
+in a single forward pass without adjusting to in-                               swers without access to the generation process,
+termediate results. Whether using single-path rea-                              and the Reflector provides targeted diagnosis rather
+soning (where each step leads to exactly one sub-                               than mere self-justification. This division of cogni-
+tive labor creates a system of checks and balances      Question & Table
+that significantly reduces the confirmation bias in-               ↓
+herent in single-model reflection approaches.           Solver Round 1 (Section D.1)
+   As illustrated in Figure 1, this feedback-driven                ↓
+planning eliminates the need for predefined reason-     Answer: Clint Dempsey
+ing sequences. Instead, the exact path through the                 ↓
+reasoning space emerges dynamically from agent          Checker Round 1 (Section D.2)
+interactions: the Solver adjusts based on interme-                 ↓
+diate table states and Reflector diagnostics, the       Logic Error ✗
+Checker determines when reasoning quality meets                    ↓
+acceptance criteria, and the Archiver retrieves rele-   Reflector (Section D.3)
+vant experiences to guide initial approaches. This                 ↓
+distributed, adaptive planning architecture creates     Solver Round 2 (Section D.4, D.5)
+an output-feedback-refinement loop that iteratively                ↓
+improves reasoning quality—a capability funda-          Final Answer: Eric Wynalda
+mental to robust problem-solving but absent in tra-                ↓
+ditional single-pass systems.                           Checker Round 2 (Section D.6)
+                                                                   ↓
+C    Memory Evolution Algorithm                         The answer is correct ✓
+                                                                   ↓
+In this section, we present the detailed algorithm      Archiver (Section D.7, D.8)
+for MAPLE’s memory evolution process (Algo-                        ↓
+rithm 2). While the main text describes the concep-     Save to Memory Base
+tual framework and key innovations of our mem-
+ory system, this appendix provides the complete         Figure 4: Illustrative case study of MAPLE’s multi-
+algorithmic implementation of how new experi-           agent reasoning workflow.
+ences are evaluated, filtered, and integrated into
+the long-term memory base. Specifically, the A D -
+D L INKS function corresponds to the Strengthen         whether to evolve the memory base. In this case,
+option in Figure 11: it does not alter the metadata     the Archiver decides that no evolution is necessary.
+of the neighboring memories but instead appends
+                                                        D.1   Round 1 - Solver
+their memory_id to the Links field of the current
+memory. In contrast, the U PDATE M ETADATA func-        D.1.1 User Input
+tion corresponds to the Update_Neighbor option in       Below is a retrieved memory from a similar ques-
+Figure 11: it summarizes new tags and context           tion previously answered by the system. You may
+based on both the current and neighboring memo-         use it as a reference to inform your reasoning.
+ries, and updates these fields in each memory ac-          <Related Memory>
+cordingly.                                                • Past Question: who scored the most goals?
+                                                         • Question Type: aggregation
+D    Case Study
+                                                         • Required Operations: find maximum, compare
+To illustrate how MAPLE’s agents collaborate to          • Correct Reasoning Steps: 1.Identify the col-
+refine reasoning, we present a step-by-step case           umn representing the number of goals scored
+study. As shown in Figure 4, the Solver begins             by each player; 2.Find the maximum value in
+with an initial attempt based on the input table and       the ’Goals’ column; 3.Return the player associ-
+question. After generating an intermediate answer,         ated with the maximum number of goals;
+the Checker detects a logical error, prompting the
+Reflector to diagnose the mistake and provide ac-        • Error Type: none
+tionable feedback. Incorporating these insights, the     • Error Reason: none
+Solver re-attempts the task and successfully derives      Now, here is your actual Solver task. This is
+the correct answer in the next round. The final rea-    your 1 attempt. You have 4 attempts remaining.
+soning trace is then passed to the Archiver, which        <Table>
+summarizes it into a memory note and evaluates            See Table 6
+#     Player               Goals    Caps    Career           Format Validation
+ 1    Landon Donovan           57    155    2000–present      • Score: 2
+ 2    Clint Dempsey            36    103    2004–present      • Comments: The answer is a single player’s
+ 3    Eric Wynalda             34    106    1990–2000
+                                                                name, which follows the expected format for
+ 4    Brian McBride            30     95    1993–2006
+ 5    Joe-Max Moore            24    100    1992–2002           this type of question.
+6T    Jozy Altidore            21     67    2007–present
+6T    Bruce Murray             21     86    1985–1993
+                                                             Evidence Grounding
+ 8    Eddie Johnson            19     62    2004–present      • Score: 0
+9T    Earnie Stewart           17    101    1990–2004         • Comments: According to the table, before Lan-
+9T    DaMarcus Beasley         17    114    2001–present
+                                                                don Donovan, the top goalscorer would be the
+Table 6: Original input table used for case study. This is      player with the next highest number of goals.
+the table provided to the Solver at the beginning of the        Clint Dempsey has 36 goals, but Eric Wynalda
+reasoning process.                                              has 34 goals and is listed above Dempsey in
+                                                                the table in terms of goals. However, the cor-
+                                                                rect answer should be the one with the highest
+  <Question>                                                    goals before Donovan, which is not Dempsey
+  who was the top goalscorer previous to landon                 but actually the player with the next highest
+donovan?                                                        goal count after Donovan is not the correct in-
+                                                                terpretation. The correct interpretation is to find
+D.1.2    LLM Response                                           the player who was the top scorer before Dono-
+  • Thought: To find the top goalscorer before Lan-             van’s time or the one with the next highest goals
+    don Donovan, I need to identify the player with             if considering the table’s data. Since Donovan
+    the most goals scored, excluding Landon Dono-               has 57 goals, the next in line is Dempsey with
+    van. Since the table is already sorted by the               36 goals, but considering the question’s phras-
+    number of goals in descending order, I can look             ing, it seems to ask for the top scorer before
+    at the second row to find the player with the               Donovan’s emergence or record, which would
+    next highest number of goals.                               indeed be Eric Wynalda or another player based
+                                                                on the ’previous to’ criteria. Given the table,
+  • Action: Identify the player with the second-
+                                                                Eric Wynalda had 34 goals and was a top scorer
+    highest number of goals
+                                                                before Donovan’s time, making Dempsey not
+  • Intermediate table: <NOT CHANGED>                           the correct answer based on the ’previous to’
+                                                                interpretation.
+  • Answer: Clint Dempsey
+                                                             Summary
+D.2     Round 2 - Checker                                     • Total Score: 4
+D.2.1    User Input                                           • Final Comments: The answer is incorrect be-
+<Table>                                                         cause, based on the logical interpretation of
+  Original Table (Table 6)                                      ’previous to Landon Donovan’, the correct top
+  <Question>                                                    goalscorer before Donovan would likely be Eric
+  who was the top goalscorer previous to landon                 Wynalda, given the context and data provided
+donovan?                                                        in the table. Clint Dempsey does have a signifi-
+                                                                cant number of goals but does not fit the ’pre-
+  <Answer>
+                                                                vious to’ criteria as directly as another player
+  Clint Dempsey
+                                                                might.
+D.2.2    LLM Response
+                                                             D.3     Round 3 - Reflector
+Answer Type Checking
+                                                             D.3.1    User Input
+ • Score: 2
+                                                             <Question>
+  • Comments: The question asks for a player’s                 who was the top goalscorer previous to landon
+    name, and the answer is a player’s name, so the          donovan?
+    type matches correctly.                                    <Table>
+  Original Table (Table 6)                              #     Player             Goals    Caps    Career
+  <Reasoner’s Processing History>
+                                                         3    Eric Wynalda           34     106   1990–2000
+  1.Identify the player with the second-highest          4    Brian McBride          30      95   1993–2006
+number of goals                                          5    Joe-Max Moore          24     100   1992–2002
+  <Reasoner’s Final answer>                             6T    Bruce Murray           21      86   1985–1993
+  Clint Dempsey                                         9T    Earnie Stewart         17     101   1990–2004
+  <Checker Feedback>
+  Same as Round 2 (D.2) Checker’s output                Table 7: Intermediate table produced by the Solver dur-
+                                                        ing the reasoning process. Irrelevant rows have been
+D.3.2    LLM Response                                   filtered out based on the question.
+ • Diagnosis: The reasoner incorrectly identified
+   Clint Dempsey as the top goalscorer before              <Question>
+   Landon Donovan. The mistake lies in the inter-
+                                                           who was the top goalscorer previous to landon
+   pretation of ’previous to’, which implies con-
+                                                        donovan?
+   sidering the time or emergence of players, not
+                                                           If the <Reflector result> is available, it means
+   just the next highest goal count. The reasoner
+                                                        you previously made a mistake, and the Reflector
+   should have considered the career span and
+                                                        has summarized the cause of that error. So this
+   goals of players who were active before or
+                                                        time, when solving the question, please take the
+   alongside Donovan’s early career to accurately
+                                                        improvement plan section into account to avoid
+   determine the top scorer before him.
+                                                        making the same mistake again.
+ • Improvement plan: To improve, the reasoner              <Reflector Result>
+   should re-evaluate the question’s phrasing and          Same as Round 3(D.3) Reflector’s output
+   the table’s data. Specifically, it should identify
+   players who were active before Landon Dono-          D.4.2    LLM Response
+   van’s emergence or during his early career and        • Thought: The question asks for the top
+   then determine which of these players had the           goalscorer previous to Landon Donovan. The
+   highest number of goals. In this case, consid-          Reflector result indicates that I should consider
+   ering Eric Wynalda’s career span (1990-2000)            the career span and goals of players who were
+   and goal count (34), he would be a more ap-             active before or alongside Donovan’s early ca-
+   propriate answer as the top goalscorer before           reer. Landon Donovan’s career started in 2000.
+   Donovan, given the ’previous to’ criteria. The          I need to identify players who were active be-
+   reasoner needs to enhance its ability to inter-         fore 2000 and find the one with the highest
+   pret temporal relationships and contextual clues        number of goals.
+   within the question to provide a more accurate        • Action: Filter players whose career ended be-
+   answer.                                                 fore 2000 or started before 2000, then find the
+                                                           maximum goals among them
+D.4     Round 4 - Solver
+D.4.1    User Input                                      • Intermediate table: see Table 7
+
+Below is a retrieved memory from a similar ques-         • Answer: <NOT READY>
+tion previously answered by the system. You may
+                                                        D.5     Round 5 - Solver
+use it as a reference to inform your reasoning.
+   <Related Memory>                                     D.5.1    User Input
+   Same memory content as in Round 1(D.1) Solver        Below is a retrieved memory from a similar ques-
+input.                                                  tion previously answered by the system. You may
+   Now, here is your actual Solver task. This is        use it as a reference to inform your reasoning.
+your 1 attempt. You have 4 attempts remaining.             <Related Memory>
+(Note: This refers to the inner-round count under          Same memory content as in Round 1(D.1) Solver
+the ReAct paradigm, not the outer round of Solver       input.
+retries.)                                                  Now, here is your actual Solver task. This is
+   <Table>                                              your 2 attempt. You have 3 attempts remaining.
+   Original Table (Table 6)                                <Table>
+  Intermediate Table(Table 7) from Round 4(D.4)        Evidence Grounding
+  <Question>                                            • Score: 2
+  who was the top goalscorer previous to landon          • Comments: According to the table, before Lan-
+donovan?                                                   don Donovan, Eric Wynalda was indeed the
+  <Action History>                                         top goalscorer with 34 goals, which is less than
+  1.Filter players whose career ended before 2000          Donovan’s 57 but more than the others below
+or started before 2000, then find the maximum              him in the list.
+goals among them
+  <Reflector Result>                                   Summary
+  Same as Round 3(D.3) Reflector’s output               • Total Score: 6
+
+D.5.2    LLM Response                                    • Final Comments: The answer is correct in
+                                                           terms of type, format, and evidence grounding.
+ • Thought: The Reflector result indicates that I
+                                                           Eric Wynalda is the player with the most goals
+   should consider players who were active be-
+                                                           before Landon Donovan, making the response
+   fore or during Landon Donovan’s early career.
+                                                           accurate.
+   Given the ’previous to’ criteria, I need to iden-
+   tify the top goalscorer among players whose         D.7     Round 7 - Archiver (Memory
+   career span ended before or overlapped with                 Summarization)
+   Donovan’s emergence. Eric Wynalda’s career
+   (1990-2000) and high goal count (34) make           D.7.1    User Input
+   him a strong candidate. I will re-evaluate the      <Question>
+   table data to confirm this.                            who was the top goalscorer previous to landon
+                                                       donovan?
+ • Action: Identify top goalscorer among players
+                                                          <Table>
+   active before or during Landon Donovan’s early
+   career                                                 Original Table (Table 6)
+                                                          <Model Answer>
+ • Intermediate table: <NOT CHANGED>                      Eric Wynalda
+ • Answer: Eric Wynalda                                   <Ground Truth>
+                                                          Eric Wynalda
+D.6     Round 6 - Checker                                 <Reasoner History>
+D.6.1    User Input                                       1. Filter players whose career ended before 2000
+<Table>                                                or started before 2000, then find the maximum
+  Original Table (Table 6)                             goals among them
+  <Question>                                              2. Identify top goalscorer among players active
+  who was the top goalscorer previous to landon        before or during Landon Donovan’s early career
+donovan?                                                  <Reflector Feedback>
+  <answer>                                                Same memory content as in Round 3(D.3) Re-
+  Eric Wynalda                                         flector’s output.
+
+D.6.2    LLM Response                                  D.7.2    LLM Response
+Answer Type Checking                                     • Question Type: lookup
+ • Score: 2                                              • Required Operations:      [’filter’, ’compare’,
+ • Comments: The question asks for a player’s              ’identify max’]
+   name, and the answer is a name, which matches         • Context: This question requires identifying the
+   the expected type.                                      top goalscorer before Landon Donovan’s time,
+                                                           involving filtering players based on their career
+Format Validation
+                                                           timeline and comparing their goal scores. The
+ • Score: 2
+                                                           correct answer, Eric Wynalda, is determined
+ • Comments: The answer is a single player’s               by having the highest number of goals among
+   name, which follows the expected format for             players whose careers significantly predated or
+   this type of question.                                  overlapped with Donovan’s start in 2000.
+ • Keywords: [’filter by time’, ’compare scores’,                                                                                    Ours Total
+                                                                    2000                                                             Ours Correct
+   ’max goals’]                                                                                                                      Chain-of-Table Total
+                                                                                                                                     Chain-of-Table Correct
+                                                                    1750                                                             Baseline Total
+ • Tags: [’lookup’, ’sports data’, ’goalscorer’, ’ca-                       77.5%                                                    Baseline Correct
+                                                                    1500         70.7%
+   reer timeline’]                                                                    67.9%
+
+                                                                    1250
+
+
+
+
+                                                        Frequency
+ • Correct Steps: ["Identify players with careers
+                                                                    1000
+   before or overlapping Landon Donovan’s start                                               72.9%
+                                                                                                   64.9%
+   in 2000", ’Among these players, find the one                     750                                 60.6%
+
+   with the highest number of goals’, ’Return the                                                                  68.3%
+                                                                    500                                                 54.5%57.7%
+   name of this top goalscorer’]
+                                                                    250
+                                                                                                                                       69.2%47.2%51.3%
+ • Wrong Steps: [ ]                                                   0
+                                                                                 0-300            300-600                600-2000            2000+
+                                                                                                        Table Size (Tokens)
+ • Error Type: none
+ • Error Reason: none                                   Figure 5: Accuracy comparison across table size
+                                                        categories on W IKI TQ. Performance is shown for
+D.8   Round 8 - Archiver (Memory Evolution)             MAPLE (blue), Chain-of-Table (orange), and Chain-
+D.8.1 User Input                                        of-Thought baseline (green), with both total attempt
+                                                        counts (darker shade) and correct answers (lighter stripe
+<New Memory Content>                                    pattern) displayed for each method.
+ • Question ID: nu-2024
+ • Question: who was the top goalscorer previous
+                                                        D.8.2 LLM Response
+   to landon donovan?
+                                                         • Should Evolve: false
+ • Question Type: lookup
+                                                                    • Actions: [ ]
+ • Required operations: filter, compare, identify
+   max                                                              • Suggested Connections: [ ]
+ • Context: This question requires identifying the                  • Tags to Update: [ ]
+   top goalscorer before Landon Donovan’s time,                     • New Context Neighborhood: [ ]
+   involving filtering players based on their career
+                                                                    • New Tags Neighborhood: [ ]
+   timeline and comparing their goal scores. The
+   correct answer, Eric Wynalda, is determined          E                  Addtional Experimental Results
+   by having the highest number of goals among
+   players whose careers significantly predated or      E.1                 Table Size vs. Reasoning Performance
+   overlapped with Donovan’s start in 2000.             We analyze how table size affects reasoning per-
+ • Tags: lookup, sports data, goalscorer, career        formance on the W IKI TQ dataset by categoriz-
+   timeline                                             ing tables into four buckets based on token length:
+                                                        0–300, 300–600, 600–2000, and 2000+. Figure 5
+ • Keywords: filter by time, compare scores, max
+                                                        presents the accuracy trends for MAPLE (blue),
+   goals
+                                                        Chain-of-Table (orange), and a Chain-of-Thought
+ • Correct Answer: Eric Wynalda                         baseline (green) across these size categories.
+ • Model Answer: Eric Wynalda                              Two key observations emerge. First, as table size
+ • Correct Steps: - Identify players with careers       increases, all methods experience a performance
+   before or overlapping Landon Donovan’s start         decline. This aligns with the intuition that larger
+   in 2000; - Among these players, find the one         tables introduce greater information complexity
+   with the highest number of goals; - Return the       and noise, making it harder for LLMs to extract
+   name of this top goalscorer                          relevant content effectively. Second, MAPLE con-
+                                                        sistently outperforms both baselines across all size
+ • Error Type: none                                     ranges, with particularly strong gains on larger ta-
+  • Error Reason: none                                  bles (600+ tokens). For instance, in the 600–2000
+   <Nearest Neighbors Memories>                         range, MAPLE achieves 68.3% accuracy, com-
+   Memory Note 1; Memory Note 2. (The format            pared to 54.5% and 57.7% for Chain-of-Table and
+and content are similar to the memory note shown        the CoT baseline, representing relative improve-
+above.)                                                 ments of 13.8% and 10.6%. Notably, while the
+                           #Tokens <300        #Tokens 300-600         #Tokens 600-2000   #Tokens >2000
+                                                                                                                            Notably, the benefits of multi-round reasoning
+                    3500                                                                                                 vary significantly by table complexity, though with
+                    3000                                                                           75%                   dataset-specific patterns. For W IKI TQ, larger ta-
+                    2500                                                                           70%                   bles (>2000 cells) show substantial relative gains,
+
+
+
+
+                                                                                                          Accuracy (%)
+(a) WiKiTQ
+        Frequency
+
+
+
+
+                    2000                                                                                                 improving by more than 10 percentage points from
+                                                                                                   65%
+                    1500                                                                                                 less than 55% at first iteration to more than 65%
+                    1000                                                                           60%                   with extended reasoning, however, their final ac-
+                    500
+                                                                                                                         curacy still remains below that of smaller tables.
+                                                                                                   55%
+                      0
+                                                                                                                         In contrast, for TAB FACT, complex tables (>400
+                                2          4         6         8          10         12   14                             cells, represented by blue and green lines) not only
+                                                           Iteration
+                            #Tokens <200        #Tokens 200-400         #Tokens 400-600   #Tokens >600
+                                                                                                                         exhibit steeper accuracy growth curves but eventu-
+                                                                                                                         ally surpass smaller tables in later iterations. This
+                    1000                                                                           90%                   divergent pattern likely reflects inherent differences
+                                                                                                                         in task complexity and dataset characteristics, as
+                    800                                                                            80%
+                                                                                                                         TAB FACT tables are generally smaller (avg ~388
+                                                                                                          Accuracy (%)
+(b) TabFact
+        Frequency
+
+
+
+
+                    600                                                                            70%                   tokens) compared to W IKI TQ (avg ~600 tokens).
+                    400                                                                                                  Nevertheless, both datasets consistently demon-
+                                                                                                   60%
+                                                                                                                         strate that our multi-agent framework provides pro-
+                    200
+                                                                                                   50%                   portionally greater benefits for complex tables, pre-
+                      0                                                                                                  cisely the scenarios where traditional methods typi-
+                                2          4         6         8          10         12   14
+                                                           Iteration                                                     cally struggle most with information overload and
+                                                                                                                         reasoning complexity.
+Figure 6: Analysis of accuracy improvements across
+                                                                                                                            These findings strongly support our approach’s
+reasoning iterations for different table sizes. Blue his-
+tograms show the distribution of samples by iteration                                                                    fundamental premise: while simple cases can be
+count required for resolution. Line plots track accuracy                                                                 solved with minimal iteration, complex reasoning
+progression by table size categories.                                                                                    challenges require structured, iterative refinement
+                                                                                                                         through specialized agent collaboration. The early
+                                                                                                                         convergence of most samples (approximately 80%
+performance gap between methods narrows for the                                                                          of W IKI TQ samples and 70% of TAB FACT sam-
+smallest tables, it widens substantially as complex-                                                                     ples resolved by iteration 3) combined with the
+ity increases, suggesting that MAPLE’s adaptive                                                                          continued improvements for complex cases demon-
+multi-agent architecture and memory-guided plan-                                                                         strates both the efficiency and effectiveness of our
+ning provide crucial robustness against information                                                                      multi-round approach.
+overload in complex tabular contexts.
+                                                                                                                         E.3   Impact of Memory Evolution Strategies
+E.2                   Impact of Multi-Round Reasoning                                                                    Table 8 compares different memory evolution
+Figure 6 illustrates how accuracy evolves with in-                                                                       strategies under fixed parameters (δ=0.7, n=5) on
+creasing reasoning iterations across different ta-                                                                       the W I K I TQ and TAB FACT datasets. The results
+ble sizes. The histograms (blue bars) show the                                                                           show that memory evolution has a substantial im-
+distribution of samples requiring each iteration                                                                         pact on QA performance. In both datasets, the
+count, while the line plots track accuracy by ta-                                                                        Never Evolve setting yields the lowest accuracy
+ble size groups. Due to our framework design,                                                                            (67.89% on W I K I TQ and 86.29% on TAB FACT),
+requiring at least one round of Solver and one of                                                                        confirming that static memory limits the system’s
+Checker—each sample involves a minimum of two                                                                            adaptability. In contrast, Always Evolve improves
+LLM calls. The progressive accuracy improvement                                                                          performance, but its brute-force nature leads to a
+pattern is particularly pronounced in TAB FACT,                                                                          large number of updates (69.5% and 78.9% evo-
+where initial accuracy starts below 50% in the first                                                                     lution ratios on W I K I TQ and TAB FACT, respec-
+iteration but ultimately surpasses 90% with suffi-                                                                       tively), introducing redundancy without fully trans-
+cient reasoning rounds. This dramatic improve-                                                                           lating into accuracy gains. Similarly, the periodic
+ment, nearly doubling accuracy through iterative                                                                         policy (Evolve Every n Entries) is overly rigid, re-
+refinement, demonstrates the substantial limitations                                                                     sulting in moderate efficiency but still lower accu-
+of single-pass approaches for fact verification tasks.                                                                   racy than more adaptive approaches.
+                                      Memory   Memory      Evolution   Evolution   # Evolved    Evolution     Med. Strengthen   Med. Update   Accuracy
+ Dataset     Evolve Type
+                                       Count   Ratio (%)    Count      Ratio (%)   Memories    Efficiency ↑      Distance        Distance      (%) ↑
+             Always Evolve             1023     23.5%        711        69.5%        936          1.32             0.64            0.64        71.42
+             Evolve Every n Entries    1023     23.5%        147        14.4%        190          1.29             0.64            0.64        69.96
+W I K I TQ   LLM-Based                 1023     23.5%        667        65.2%        820          1.23             0.64            0.63        74.01
+             Never Evolve              1023     23.5%         0         00.0%         0           0.00             NA              NA          67.89
+             Always Evolve             427      21.1%        337        78.9%        423          1.26             0.61            0.61        85.84
+             Evolve Every n Entries    427      21.1%         68        15.9%        90           1.32             0.63            0.63        85.75
+TAB FACT     LLM-Based                 427      21.1%        319        74.7%        372          1.17             0.60            0.58        90.66
+             Never Evolve              427      21.1%         0         00.0%         0           0.00             NA              NA          86.29
+
+
+Table 8: Performance of different memory evolution strategies under fixed parameters (similarity threshold δ=0.7,
+update interval n=5) on the W I K I TQ and TAB FACT datasets.
+
+
+   The LLM-Based strategy consistently achieves                                 and metadata to enhance future retrieval and rea-
+the best accuracy (74.01% on W I K I TQ and                                     soning quality.
+90.66% on TAB FACT) while maintaining a bal-
+anced evolution efficiency. Unlike naive policies,
+it selectively evolves memory entries guided by
+semantic signals, allowing the system to capture
+meaningful updates while avoiding unnecessary
+changes. This flexibility explains why its accu-
+racy surpasses both the always-update and fixed-
+frequency baselines, despite fewer total evolutions.
+These findings highlight that LLM-guided memory
+evolution is effective, striking a balance between
+adaptability and efficiency, and avoiding the rigid-
+ity of rule-based strategies.
+
+F      Example Prompts
+This appendix provides detailed instructions and
+prompt templates for 4 core agents in our frame-
+work: the Solver, the Checker, the Reflector and
+the Archiver. These agents work collaboratively
+to tackle table-based question answering tasks
+through iterative reasoning, verification, and error
+reflection.
+   Figure 7 presents the Solver’s step-by-step in-
+structions for interacting with the table based on
+the ReAct paradigm, including selecting appropri-
+ate operations and generating the final answer.
+   Figure 8 outlines the Checker Agent’s responsi-
+bilities, which involve evaluating the Reasoner’s
+output from three perspectives: answer type, for-
+mat validation, and Evidence Grounding.
+   Figure 9 introduces the Reflector Agent, which
+analyzes feedback from the Checker along with
+contextual information to identify the source of er-
+rors and suggest possible improvements for future
+reasoning attempts.
+   Finally, Figure 10 and Figure 11 detail the
+Archiver Agent’s dual roles: summarizing each
+task into structured memory notes and evolving the
+long-term memory base by refining connections
+        You are a Solver AI agent tasked with determining the next step to perform based on a provided table, question,
+        action history, and optionally additional information from other agents (such as Reflector). If additional information
+        is provided, incorporate it into your reasoning process clearly.
+
+
+        [Your task]:
+        1. Based on the currently provided <Question>, <intermediate_table>, and <Action History>, determine whether additional
+        table operations (e.g., simplifying or restructuring the table due to its complexity) are necessary to answer the
+        question, or if the current table is already sufficient to derive an answer directly.
+        - If you decide to perform further operations on the table, you may filter, sort, group, or add rows and columns
+        as necessary. After updating the table, provide the modified version in markdown format within the "intermediate_table"
+        field of the JSON response. Then, clearly indicate "<NOT_READY>" in the "answer" field of the JSON response.
+        - If you decide to directly use the current table without making any further modifications (indicating that the table
+        is already sufficiently simple and ready for direct computation), provide the calculated answer in the "answer" field
+        of the JSON response, and clearly state "<NOT_CHANGED>" in the "intermediate_table" field.
+        2. Clearly document your reasoning steps in the "thought" field of your JSON response, but make sure it's not overly long;
+        3. Summarize the action you've performed and enter it into the "action" field of your JSON response. This could be
+        an operation on the table (e.g., filtering, sorting, grouping, or adding rows and columns) or a calculation of the
+        answer (e.g., "Calculate the answer: 3 + 3 = 6").
+        ...
+
+
+        [Output Format]:
+        ```json
+        {
+            "thought": "<your clear reasoning process and rationale>",
+            "action": "<summarize the action you've performed>",
+            "intermediate_table": "<updated table or '<NOT_CHANGED>'>",
+            "answer": "<calculated answer or '<NOT_READY>'>"
+        }
+        ```
+
+        [Examples]:
+        ==========
+        <Example1>
+
+        <Intermediate Table>
+        | Year | Revenue | Product |
+        |-------|---------|---------|
+        | 2020 | 100      | A       |
+        | 2021 | 200      | B       |
+        | 2020 | 150      | C       |
+
+        <Question>
+        What is the total revenue in 2020?
+
+        <Action History>
+        None
+
+        After thinking step by step based on the above information:
+
+        <Solver result>
+        ```json
+        {
+          "Thought": "There is no prior action history, so I will start by filtering relevant data from the provided table.",
+          "Action": "Filter rows where 'Year' is 2020",
+          "Intermediate Table": " | Year | Revenue | Product |
+                                  |------|---------|---------|
+                                  | 2020 | 100     | A       |
+                                  | 2020 | 150     | C       |",
+          "Answer": "<NOT_READY>"
+        }
+        ```
+
+        ==========
+        <Example2>
+
+        <Intermediate Table>
+        | City    | Average Temperature |
+        |---------|---------------------|
+        | Beijing | 12                  |
+        | Tokyo   | 17.5                |
+        | Sydney | 23                   |
+
+        <Question>
+        Which city has the highest average temperature?
+
+        <Action History>
+        1.Calculate the average temperature for each city
+
+        After thinking step by step based on the above information:
+
+        <Solver result>
+        ```json
+        {
+          "Thought": "The intermediate table already lists the average temperature for each city. I can directly identify the city
+        with the highest average temperature.",
+          "Action": "Identify city with highest average temperature",
+          "Intermediate Table": "Not changed",
+          "Answer": "Sydney"
+        }
+        ```
+
+
+
+
+Figure 7: Instructions for the Solver Agent. These instructions guide the agent to perform step-by-step reasoning
+over the table based on the ReAct paradigm, enabling it to select appropriate operations and generate the final
+answer.
+   You are a Checker AI. Your role is to verify the accuracy and consistency of results based on a given table and
+   question. Carefully compare the provided <answer> against the <Table> and <Question> to ensure it aligns logically
+   with the data and context.
+
+
+   [Your task]
+   1. Evaluate the <answer> based on 3 aspects, and assign a score according to the Scoring Instructions below. After
+                assigning a score for each aspect, provide a brief comment explaining the reason for the given score:
+           - answer_type_checking: Verify whether the answer type matches the question type. Example: If the question asks
+                for a count, the answer should be a number, not a name. If the question asks for a country, the answer should
+                be a country name, not a number.
+           - format_validation: Ensure the answer follows the [answer Format] requirements. Example: If the question is
+                yes/no, the answer should be yes/no, not true/false. If the answer contains multiple elements, they should be
+                separated by "|". Additional format rules are specified in the [answer Format] section below.
+           - Evidence Grounding: Check if the question and answer are logically coherent. Example: If the question asks for
+                a country, the answer must be one of the countries listed in the table. If the question asks "Which month had the
+                highest revenue?", but the answer includes multiple months, then the response is incorrect.
+
+
+   2. Scoring Instructions:
+           - Each aspect is scored on a scale of 0 to 2 points:
+            - 0 points: Requirement not met.
+            - 1 point: Partially met.
+            - 2 points: Fully met or not applicable.
+           - The total score is out of 6 points.
+
+
+   3. Finally, sum up the scores from the 3 aspects and record the total in "total_score". Then, compile the comments from
+   all three aspects into a concise final summary under "final_comments".
+
+
+   [Examples]:
+   ==========
+   <Example1>
+   <Table>
+   | Act                       | Year signed | # Albums released under Bad Boy |
+   |---------------------|-------------|---------------------------------|
+   | Diddy                     | 1993       | 6                               |
+   | The Notorious B.I.G | 1993             | 5                               |
+   | Harve Pierre              | 1993       | -                               |
+   | The Hitmen                | 1993       | -                               |
+
+
+   <Question>
+   How many albums did Diddy have under Bad Boy?
+
+
+   <answer>
+   6
+
+
+   <feedback>
+   ```json
+   {
+       "feedback": {
+           "answer_type_checking": {
+               "score": 2,
+               "comments": "The question asks for a numerical value, and the answer is a number. The type matches correctly."
+           },
+           "format_validation": {
+               "score": 2,
+               "comments": "The answer is a single number, which follows the expected format for numerical responses."
+           },
+           "Evidence Grounding": {
+               "score": 2,
+               "comments": "The answer matches the correct value from the table, where Diddy has 6 albums under Bad Boy."
+           },
+           "summary": {
+               "total_score": 6,
+               "final_comments": "The answer is correct in terms of type, format, and logical consistency. No issues detected."
+           }
+       }
+   }
+   ```
+
+
+
+
+Figure 8: Instructions for the Checker Agent. These instructions guide the agent to evaluate the Reasoner Agent’s
+answer based on three aspects: answer type, format validation, and evidence grounding.
+       You are a Reflection AI. Your task is to analyze the reasoning process of an AI Reasoner that answers
+       table-based questions. You will receive: 1. The original table and question. 2. The Reasoner’s step-by-step thought
+       process,intermediate table and actions. 3. The Reasoner’s final answer. 4. Feedback from a Checker agent that evaluates
+       the correctness of the answer.
+
+
+       [Your Tasks]:
+       1. Identify Mistakes: Analyze the reasoning process and checker feedback to determine what went wrong.
+       2. Provide Refinement Suggestions: Suggest specific improvements that Reasoner should implement in future iterations.
+
+
+       [Output Format]:
+       Please provide your reflection strictly in the following JSON format:
+       ```json
+       {
+            "diagnosis": "<Concise reflection on key mistakes>",
+            "improvement_plan": "<Step-by-step plan for improving reasoning in the next attempt>"
+       }
+       ```
+
+
+       [Examples]:
+       ==========
+       <Example1>
+
+
+       ### Provided Information
+       Question:
+       What is the total revenue in 2020?
+
+
+       Table:
+       | Year | Revenue | Product |
+       |------|---------|---------|
+       | 2020 | 100            | A         |
+       | 2021 | 200            | B         |
+       | 2020 | 150            | C         |
+
+
+       Reasoner’s Processing History:
+       [
+       {
+            "thought": "There is no prior action history, so I will start by filtering relevant data from the provided table.",
+            "action": "Filter rows where 'Year' is 2020",
+            "intermediate_table": "| Year | Revenue | Product |
+                                         |------|---------|---------|
+                                         | 2020 | 100    | A       |
+                                         | 2020 | 150    | C       |",
+            "answer": "<NOT_READY>"
+       },
+       ...
+       ]
+
+
+       Reasoner’s Final answer:
+       100
+
+
+       Checker feedback:
+       {
+            "feedback": {
+                ...
+                "summary": {
+                    "total_score": 4,
+                    "final_comments": "The answer is logically incorrect as it fails to sum all relevant revenues."
+                }
+            }
+       }
+
+
+       ### Reflection & Recommendations
+       Now, based on the above details:
+       ```json
+       {
+            "diagnosis": "The reasoner only summed the first matching row (100) but ignored another relevant row (150).
+                             This caused an incorrect final answer.",
+            "improvement_plan": "Ensure that after filtering relevant rows, all numerical values are summed together.
+                                        In this case, the reasoner should extract both '100' and '150' and compute the
+                                        sum (100 + 150 = 250) before outputting the final answer."
+       }
+       ```
+
+
+
+
+Figure 9: Instructions for the Reflector Agent. These instructions guide the agent to reflect on the provided
+information—including the table, question, the Reasoner’s answer, and feedback from the Checker Agent—and to
+identify the cause of the error as well as suggest a direction for improvement.
+        You are an expert reasoning analyzer helping to build a long-term JSON format memory system for QA tasks. Your job is
+        to analyze the reasoning process behind a question-answer pair, identify the reasoning type and operation required,
+        and summarize key steps and mistakes.
+
+
+        You will be given:
+        - A QA question
+        - A table (used for answering the question)
+        - A predicted answer from a model
+        - The correct (ground truth) answer
+        - A step-by-step reasoning trace (from a Reasoner)
+        - Feedback from a Reflector agent (who diagnoses mistakes and proposes fixes)
+
+
+        Please output your structured summary as a JSON object with the following fields:
+
+
+        {
+            "question_type": "A general reasoning category such as 'filter+count', 'lookup', 'aggregation', 'comparison'",
+            "required_operations": [
+             "List of core reasoning operations required to solve the question",
+             "Examples: 'filter', 'sum', 'compare', 'lookup'"
+            ],
+            "context": "A short paragraph summarizing the reasoning pattern, data domain, and error focus (if any).",
+            "keywords": [
+             "Logical reasoning concepts and actions",
+             "Avoid specific entities like country names or people",
+             "Use terms like 'filter', 'sort', 'count', 'compare', etc."
+            ],
+            "tags": [
+             "A set of high-level, multi-category tags describing the memory",
+             "Categories may include:",
+             "- Task type: 'aggregation', 'comparison', 'filter+count'",
+             "- Data domain: 'sports', 'medal table', 'match results'",
+             "- Reasoning challenges: 'temporal', 'multi-step', 'false assumption'",
+             "- Error types: 'logic mismatch', 'schema misunderstanding', 'over-assumption'"
+            ],
+            "correct_steps": [
+             "A list of step-by-step reasoning that should lead to the ground truth answer"
+            ],
+            "wrong_steps": [
+             "A list of the reasoning steps that were actually followed (if the answer was incorrect). If the reasoning was
+        correct (e.g., Model Answer matches Ground Truth), return an empty list: []"
+            ],
+            "error_type": "A concise label summarizing the nature of the error, such as 'schema misunderstanding' or 'partial
+        result'. If the answer is correct, return 'none'.",
+            "error_reason": "A brief explanation of why the answer is incorrect. Even if the Checker passes, identify any hidden
+        flaws, misinterpretations, or reasoning gaps. If the error_type is 'none', then return 'none' as well."
+        }
+        ==============
+        Example:
+        {
+            "question_type": "lookup",
+            "required_operations": ["match date", "understand implicit schema", "sum goals"],
+            "context": "This is a structured lookup question that requires understanding implicit roles in a sports match table.
+        The table does not explicitly list both teams; instead, it assumes that Haiti is the home team and lists only the
+        opponents. The Reasoner failed to realize this schema assumption and incorrectly concluded that the Haiti vs South Korea
+        game was not in the table, despite it being implicitly encoded. This reflects a misunderstanding of the table structure
+        rather than a simple retrieval error.",
+            "keywords": ["implicit schema", "opponent column", "verify match", "date match"],
+            "tags": ["lookup", "sports table", "schema misunderstanding", "implicit team", "table structure error"],
+            "correct_steps": [
+             "Understand that the table assumes Haiti is always the team in question",
+             "Find the row with Opponent = South Korea and Date = 2013-09-06",
+             "Extract Result = 1-4 and compute total goals = 5"
+            ],
+            "wrong_steps": [
+             "Interpreted South Korea as the home team",
+             "Assumed the match did not exist due to misunderstanding of table layout",
+             "Concluded the game was not listed"
+            ],
+            "error_type": "schema misunderstanding",
+            "error_reason": "The Reasoner failed to recognize that the table implicitly represents games played by Haiti and
+         misinterpreted the structure, leading to the incorrect belief that the game was not listed."
+        }
+
+
+
+
+Figure 10: Instructions for the Archiver Agent Memory Summarization Module. These instructions guide the
+Archiver agent in analyzing the reasoning process of each task, identifying key reasoning types, operations, and
+errors, and structuring them into a standardized memory note.
+   You are an AI agent responsible for evolving a memory knowledge base to improve future retrieval and reasoning.
+
+
+   You will receive:
+   - A new memory (which includes the context, keywords)
+   - A list of nearest neighbor memories (memories that are most semantically similar based on prior embeddings)
+
+
+   Your tasks:
+   1. Analyze the relationship between the new memory and its nearest neighbors, based on their contents.
+   2. Decide whether the memory base should evolve.
+
+
+   Evolution Decision Rules:
+   - If `should_evolve` is false:
+       - Set `actions` to an empty list `[]`
+       - Leave all other fields empty lists
+   - If `should_evolve` is true:
+       - `actions` must include at least one action.
+       - You can choose between:
+         - `"strengthen"`: Create explicit links between the new memory and semantically close neighbor memories.
+         - `"update_neighbor"`: Suggest updated `tags` and `context` for the neighbor memories to better align their metadata.
+       - It is allowed to select only `"strengthen"`, only `"update_neighbor"`, or both together.
+
+
+   When suggesting updates:
+   - If you select `"strengthen"`, list the IDs of neighbor memories to connect.
+   - If you select `"update_neighbor"`, provide updated `tags` and `context` for each neighbor memory.
+   - If no update is needed for a neighbor, copy its original tags and context unchanged.
+   - Ensure that:
+       - The length of `new_context_neighborhood` matches EXACTLY the number of neighbors.
+       - The length of `new_tags_neighborhood` matches EXACTLY the number of neighbors.
+
+
+   Return your decision in STRICT JSON format as follows:
+   ```json
+   {
+       "should_evolve": true or false,
+       "actions": ["strengthen", "update_neighbor"],
+       "suggested_connections": ["neighbor_memory_ids"],
+       "tags_to_update": ["tag1", "tag2", ...],
+       "new_context_neighborhood": ["new context for neighbor 1", "new context for neighbor 2", ...],
+       "new_tags_neighborhood": [["tag1", "tag2"], ["tag1", "tag2"], ...]
+   }
+
+
+
+
+Figure 11: Instructions for the Archiver Agent Memory Evolution Module. These instructions direct the Archiver
+agent to examine newly created memory notes and their nearest neighbors, determine whether semantic evolution is
+necessary, and perform actions such as strengthening connections or updating metadata to improve the coherence
+and retrieval quality of the memory base.
+

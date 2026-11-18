@@ -1,0 +1,346 @@
+                                        TabClaw: An Interactive and Self-Evolving Agent for Spreadsheet
+                                                      Manipulation and Table Reasoning
+                                                           Mingyue Cheng                                                         Shuo Yu                                         Daoyu Wang
+                                              State Key Laboratory of Cognitive                               State Key Laboratory of Cognitive                     State Key Laboratory of Cognitive
+                                            Intelligence, University of Science and                         Intelligence, University of Science and               Intelligence, University of Science and
+                                                     Technology of China                                             Technology of China                                   Technology of China
+                                                          Hefei, China                                                    Hefei, China                                          Hefei, China
+                                                    mycheng@ustc.edu.cn                                            yu12345@mail.ustc.edu.cn                           daoyu.wang@mail.ustc.edu.cn
+
+                                                             Qingchuan Li                                                     Xiaoyu Tao                                        Qingyang Mao
+                                              State Key Laboratory of Cognitive                               State Key Laboratory of Cognitive                     State Key Laboratory of Cognitive
+arXiv:2606.10316v1 [cs.CL] 9 Jun 2026
+
+
+
+
+                                            Intelligence, University of Science and                         Intelligence, University of Science and               Intelligence, University of Science and
+                                                      Technology of China                                            Technology of China                                   Technology of China
+                                                          Hefei, China                                                    Hefei, China                                          Hefei, China
+                                                    chouli@mail.ustc.edu.cn                                        txytiny@mail.ustc.edu.cn                           maoqy0503@mail.ustc.edu.cn
+
+                                                                                             Yitong Zhou                                                   Qi Liu
+                                                                              State Key Laboratory of Cognitive                           State Key Laboratory of Cognitive
+                                                                            Intelligence, University of Science and                     Intelligence, University of Science and
+                                                                                     Technology of China                                         Technology of China
+                                                                                          Hefei, China                                                Hefei, China
+                                                                                yitong.zhou@mail.ustc.edu.cn                                      qiliuql@ustc.edu.cn
+
+                                        Abstract                                                                                         inspectable user workflow. This paper shows how TabClaw turns
+                                        Spreadsheets and tables are widely used representations for struc-                               spreadsheets and tables into inspectable analytical workflows while
+                                        tured data analysis, but effective analysis still requires substantial                           gradually personalizing itself to recurring data-analysis tasks. Our
+                                        manual effort and domain expertise. Recent large language model                                  code is available.1
+                                        (LLM) agents can automate parts of this process, but they often pro-
+                                        vide limited transparency into intermediate decisions, rely on im-                               Keywords
+                                        plicit assumptions, struggle with multi-table comparison, and repeat                             spreadsheet manipulation, table reasoning, data analytics, LLM
+                                        similar workflows without adapting to a user’s preferences. This                                 agents, human-agent interaction, self-evolving agents
+                                        paper presents TabClaw, an open-source interactive AI agent for
+                                        spreadsheet manipulation and table reasoning. Users upload CSV                                   ACM Reference Format:
+                                                                                                                                         Mingyue Cheng, Shuo Yu, Daoyu Wang, Qingchuan Li, Xiaoyu Tao, Qingyang
+                                        or Excel files and issue natural-language requests; TabClaw clarifies
+                                                                                                                                         Mao, Yitong Zhou, and Qi Liu. 2018. TabClaw: An Interactive and Self-
+                                        ambiguous intent, exposes an editable execution plan, streams a                                  Evolving Agent for Spreadsheet Manipulation and Table Reasoning. In .
+                                        ReAct-style tool-using analysis loop, dispatches specialist agents                               ACM, New York, NY, USA, 5 pages. https://doi.org/XXXXXXX.XXXXXXX
+                                        for parallel multi-table reasoning, and synthesizes findings with
+                                        explicit consensus and uncertainty markers. Beyond one-off analy-
+                                        sis, TabClaw records completed workflows, extracts persistent user                               1    Introduction
+                                        memory, distills reusable skills from repeated tool-use patterns,                                Spreadsheets and tables are widely used representations for struc-
+                                        supports package-style skill import, and upgrades skills from nega-                              tured data analysis. Analysts, researchers, and domain experts rou-
+                                        tive feedback. Experiments on spreadsheet manipulation and table                                 tinely ask questions over CSV files, spreadsheets, and exported
+                                        reasoning benchmarks show that TabClaw improves executable                                       database tables, but answering those questions still requires a chain
+                                        task completion and reasoning performance while preserving an                                    of mechanical actions: inspect schemas, choose columns, clean miss-
+                                                                                                                                         ing values, filter rows, aggregate metrics, join related files, create
+                                        Permission to make digital or hard copies of all or part of this work for personal or            pivot tables, and summarize the results. These operations are indi-
+                                        classroom use is granted without fee provided that copies are not made or distributed
+                                        for profit or commercial advantage and that copies bear this notice and the full citation        vidually simple for experienced users, yet they become costly when
+                                        on the first page. Copyrights for components of this work owned by others than the               users must repeatedly translate exploratory intent into spreadsheet
+                                        author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or           formulas, SQL queries, or ad hoc scripts. The friction is especially
+                                        republish, to post on servers or to redistribute to lists, requires prior specific permission
+                                        and/or a fee. Request permissions from permissions@acm.org.                                      visible in conversational settings, where a user may begin with an
+                                        Conference’17, Washington, DC, USA                                                               underspecified question such as “which products are doing best?”,
+                                        © 2018 Copyright held by the owner/author(s). Publication rights licensed to ACM.
+                                        ACM ISBN 978-1-4503-XXXX-X/2018/06
+                                        https://doi.org/XXXXXXX.XXXXXXX                                                                  1 https://github.com/ustc-table-mining/TabClaw
+Conference’17, July 2017, Washington, DC, USA                                                                                      Mingyue Cheng et al.
+
+
+refine the target metric after seeing intermediate results, and then             design makes the analysis process visible before, during, and after
+ask a follow-up comparison over another table.                                   execution, so that users can intervene when the request is ambigu-
+   Recent large language models (LLMs) have advanced table un-                   ous, inspect intermediate evidence, and provide feedback that can
+derstanding and table reasoning [3, 17], making it possible to ex-               improve future behavior.
+press analytical tasks in natural language. Prior work has explored                 The workflow is supported by three persistent components. Per-
+table-specific pretraining [10, 16, 29], prompting and decomposition             sonalized memory stores user preferences, domain facts, and re-
+methods [13, 30, 32], and LLM systems for spreadsheet or table ma-               curring analysis patterns, and retrieves relevant entries for future
+nipulation [12, 33, 35]. These methods demonstrate strong progress,              requests. The table toolbox provides structured operations such
+but many still treat table analysis as a one-shot reasoning problem:             as reading, filtering, aggregation, sorting, sampling, selection, and
+the model receives a table and a question, then returns an answer                sandboxed code execution. The self-evolving module records com-
+or a generated program. In practical data work, however, correct-                pleted workflows, mines recurring patterns, distills reusable skills,
+ness depends not only on the final answer but also on whether the                and upgrades them based on user feedback. In implementation,
+system supports user intervention and preserves useful experience                the frontend is a single-page web interface for file upload, chat,
+across repeated workflows [4, 26, 34].                                           plan editing, live event rendering, result-table inspection, memory
+   This gap motivates a more interactive view of table-analysis                  management, and skill management, while the FastAPI backend
+agents [23, 24, 27]. A useful agent should clarify ambiguous intent              exposes HTTP and Server-Sent Events (SSE) endpoints for the cor-
+before acting, expose an editable plan, stream intermediate opera-               responding agent workflows.
+tions so that users can inspect and correct the process, and support
+multi-table analysis. It should also adapt to the user over time: re-
+curring report patterns, domain-specific preferences, and negative               2.1    Intent Clarification and Planning
+feedback should become reusable system knowledge rather than                     Before any data operation is executed, TabClaw checks whether the
+disappearing after a single session. These requirements connect                  user’s request has multiple plausible interpretations. The clarifica-
+table reasoning with broader research on tool-augmented agents,                  tion module considers the natural-language question together with
+planning, memory, and self-improvement [11, 21].                                 the schemas of the uploaded tables, and asks a concise follow-
+   In this paper, we present TabClaw, an open-source web system                  up question only when different interpretations would lead to
+for interactive spreadsheet manipulation and table reasoning.2 Tab-              meaningfully different analyses. After the intent is resolved, Tab-
+Claw couples an LLM-driven ReAct loop [25, 31] with a curated                    Claw generates an editable plan containing concrete analysis steps,
+table-skill registry implemented on top of pandas. A user can up-                aligning with recent plan-then-execute and interactive planning
+load one or more CSV/Excel files, ask a natural-language question,               paradigms [8, 19, 28]. Users can inspect, reorder, delete, or rewrite
+inspect an editable plan before execution, and watch the agent                   steps before execution. This stage is important because spreadsheet
+stream reasoning, tool calls, intermediate result tables, and final              tasks often require assumptions about columns, filters, grouping
+conclusions in real time. The system is designed for local deploy-               keys, and comparison baselines; exposing the plan gives users a
+ment through a FastAPI backend and a browser-based interface,                    chance to correct these assumptions before they affect the data.
+making it easy to demonstrate, extend, and audit.
+   TabClaw is designed to make table analysis both controllable
+during execution and reusable across sessions. When a request                    2.2    ReAct Execution and Self-Verification
+admits multiple plausible interpretations, the system asks clarifi-              During execution, TabClaw follows a ReAct-style loop in which the
+cation questions and allows the user to revise the plan before any               model alternates between reasoning over the current task state and
+data operation is executed. For comparative analysis over multiple               calling table tools. Each tool call produces an observation, such as
+uploaded tables, TabClaw assigns a scoped specialist agent to each               a filtered table, an aggregate result, or a preview of relevant rows,
+table and then aggregates their findings with explicit indications of            and the next reasoning step is conditioned on these observations.
+consensus and uncertainty. The system further maintains persis-                  The loop is streamed to the browser through SSE, allowing users to
+tent memories about user preferences, domain facts, and recurring                inspect the sequence of thoughts, tool calls, and intermediate result
+analysis patterns, and retrieves only relevant memories for future               tables rather than receiving only an opaque final answer. When
+interactions. Completed workflows are also recorded so that re-                  a request involves multiple uploaded tables, TabClaw can assign
+peated tool-use sequences can be distilled into reusable skills and              scoped specialist agents to different tables and then aggregate their
+improved when users provide negative feedback.                                   findings. Each specialist receives only the table and schema relevant
+                                                                                 to its subtask, which reduces cross-table contamination and makes
+2    System Overview                                                             intermediate conclusions easier to attribute. The final aggregation
+Figure 1 summarizes the main workflow of TabClaw. The interac-                   distinguishes high-confidence agreements from conflicts or caveats
+tion begins with a user question and one or more uploaded tables.                across tables. After the planned steps finish, TabClaw runs a self-
+TabClaw first clarifies the user’s analytical intent, then turns the             verification stage before returning the final answer. The verifier
+request into an editable plan, executes the plan with tool-grounded              checks whether the original goal has been covered, whether the con-
+reasoning, verifies whether the result is sufficiently supported, and            clusion is grounded in observed evidence, and whether the planned
+finally returns an answer together with a feedback interface. This               steps have been completed. If the check identifies a gap, the system
+                                                                                 can issue additional tool calls and revise the answer; otherwise, it
+2 Demo video: https://github.com/fishsure/TabClaw/blob/main/asset/TabClaw.mp4.   proceeds to the final response and collects user feedback.
+TabClaw: An Interactive and Self-Evolving Agent for Spreadsheet Manipulation and Table Reasoning                                                           Conference’17, July 2017, Washington, DC, USA
+
+
+                                                                                                                                                                     Uploaded Tables
+               User Question
+               Which product category had the highest total sales in Q1 2024 compared to Q1 2023?                                                               sales_2023.csv               sales_2024.csv
+
+
+      Clarify User Intent                      Plan (Editable)                     Execute (ReAct Loop)                               Self Verify                          Final Answer & Feedback
+                                        For this task:                              Thought: I need to read both tables.
+                                                                                                                                        ✓ Goal Coverage                  Sports had the highest sales increase
+                Do you want to                                                                                                                                           in Q1 2024 compared to Q1 2023.
+                                        1. Read both tables                                                                           ✓ Evidence Grounding
+             compare total sales by
+                                        2. Filter to Q1 2023 / Q1 2024                  Tool: read_table                              ✓ Step Completeness
+                  category?                                                                                                                                                           2023     2024
+                                        3. Group by category and sum                                                                           …
+                                        the sales                                    Thought: Filter to Q1.                                                                Sports      980     1,210      +230
+                                        4. Compare totals: 2024 vs 2023
+                                                                                            Tool: filter                                                                   Home        430      510       +80
+      A   Yes, by category              Find category with the highest
+                                                                                                                             If no
+                                        increase                                                                                                                           Beauty      320      360       +40
+                                                                                     Thought: Group by category            Additional tool calls to fill the gap.
+                                        5. Return result and explanation                  and sum sales.
+      B   No, by product
+                                                                                                                                                                               Was this answer helpful?
+                                                                                       Tool: groupby_agg                     Yes
+                                                 User can edit /
+           User selects A                       reorder / delete                               …                           Return the final answer.
+
+
+
+                Personalized Memory                                                      Table Toolbox                                                              Self-Evoving
+
+
+       Preferences                    Retrieve relevant                     read      filter     sum       …           code in
+       Domain Facts                   memories and inject
+                                                                                                                      sandbox                   Record          Mine       Generate
+                                      into context.                                                                                                                                        User        Upgrade
+       Analysis Patterns                                                                                                                       completed      recurring    Skill.md
+                                                                           sample      sort                                                                                                             skills
+                                                                                                select                                         workflows       patterns (Reusable skill) feedback
+
+
+
+Figure 1: TabClaw workflow overview. The system turns a user question and uploaded tables into a clarified, planned, tool-
+grounded, and self-verified analysis, supported by personalized memory, a table toolbox, and workflow-driven skill evolution.
+
+
+2.3       Persistent Support Modules
+The lower part of Figure 1 shows the modules that support the
+workflow across sessions. Personalized memory stores stable pref-
+erences, domain facts, and recurring analysis patterns, and retrieves
+relevant memories when a new request is processed. This allows
+TabClaw to reuse user-specific context without requiring the user
+to restate the same assumptions in every session. The table toolbox
+provides the operations used by the ReAct executor. TabClaw cur-
+rently includes 16 built-in pandas skills, including table inspection,
+filtering, column selection, aggregation, sorting, merging, pivot-
+ing, computed-column creation, descriptive statistics, value search,
+deduplication, renaming, sampling, value counts, correlation matri-
+ces, and head-row preview. For advanced cases, users can enable a
+code tool that runs sandboxed pandas and numpy code after AST                                                  Figure 2: TabClaw browser interface with chat, streamed
+inspection and timeout enforcement. The self-evolving module con-                                              reasoning, table operations, and result inspection.
+nects completed workflows with future capability improvement.
+TabClaw records the sequence of tool calls, intermediate results,
+final conclusions, and user feedback for nontrivial analyses. Recur-                                           a completed task contains a sufficiently rich tool sequence, Tab-
+ring successful patterns can be distilled into reusable skills, while                                          Claw can assess whether the sequence captures a reusable pattern,
+negative feedback provides evidence for revising skills that repeat-                                           such as a parameterized report, a top-𝑘 analysis, a KPI summary,
+edly fail. The following section describes these personalization and                                           or a multi-step join, and distill it into a reusable skill for future
+evolution mechanisms in more detail.                                                                           conversations. Users can also trigger pattern discovery over his-
+                                                                                                               torical workflows, where recurring tool sequences are grouped,
+                                                                                                               compared with existing skills, and proposed as new skills before
+                                                                                                               installation. Feedback further supports self-improvement: negative
+3     Self-Evolution and Personalization                                                                       ratings are attached to both the workflow and the skills used in
+TabClaw treats every completed nontrivial analysis as a workflow,                                              it, and repeated failures provide evidence for revising the corre-
+storing the user request, involved tables, optional plan, ordered                                              sponding skill, following recent work on self-correction and verbal
+tool steps, intermediate summaries, final conclusion, feedback, and                                            feedback for language agents [9, 24]. Personalization is handled
+skills used. These records allow the system to reuse experience                                                by persistent memory, a common design concern in long-running
+across sessions rather than treating each analysis as isolated. When                                           LLM agents [21]. After each interaction, a lightweight extraction
+Conference’17, July 2017, Washington, DC, USA                                                                                   Mingyue Cheng et al.
+
+
+                                  Table 1: Performance comparison on table and spreadsheet benchmarks.
+
+                                                        SpreadsheetBench            SheetCopilot
+               Category               Method                                                           WikiTQ     TabFact     HiTab
+                                                       Soft Acc.   Hard Acc.     Exec@1     Pass@1
+               Direct Inference       Vanilla           0.188        0.155         0.955     0.694       0.614      0.734     0.636
+                                      Binder            0.241        0.189         0.965     0.693       0.725      0.854     0.658
+               Context                Chain-of-Table    0.148        0.129         0.871     0.613       0.721      0.828     0.634
+               Augmentation           NormTab           0.148        0.122         0.975     0.728       0.659      0.757     0.603
+                                      SpreadsheetLLM    0.233        0.198         0.987     0.715       0.661      0.792     0.646
+               Autonomous             ReAct             0.188        0.161         0.968     0.726       0.698      0.879     0.634
+               Agent                  SheetAgent        0.223        0.185         0.933     0.613       0.732      0.868     0.691
+               Ours                   TabClaw           0.288        0.245         0.998     0.774      0.752       0.921     0.698
+
+
+step identifies preferences, domain knowledge, user context, or              Chain-of-Table [30], NormTab [20], SpreadsheetLLM [7]), and agent
+historical insights worth remembering; at query time, stable prefer-         baselines (ReAct [31], SheetAgent [2]). All methods use DeepSeek-
+ences are included while other memories are retrieved only when              v3.2 [15] as their backbone.
+relevant, keeping the prompt compact.
+                                                                             5.2    Experimental Result
+4    Demonstration Scenario                                                  Table 1 summarizes the results. TabClaw achieves the best per-
+The demonstration is organized around three audience-operable                formance across all reported benchmarks. On SpreadsheetBench,
+scenarios in the browser interface shown in Figure 2. First, in an           it improves both soft and hard accuracy, suggesting that explicit
+ambiguity-aware analysis scenario, a user uploads a sales table              planning and tool-grounded execution are useful for operation-
+and asks, “Which products are doing best?” TabClaw inspects the              heavy spreadsheet tasks. On SheetCopilot, TabClaw also obtains
+schema and asks whether “best” should mean revenue, profit, units            the strongest execution success and pass-rate results, indicating
+sold, or growth. After the user selects a metric, the system gener-          that the system more reliably selects executable operations rather
+ates an editable plan; the user can revise the grouping key, such as         than only generating plausible textual answers. The improvements
+changing product-level analysis to category-level analysis, before           also hold on WikiTQ, TabFact, and HiTab, which test compositional
+execution. The audience then sees streamed tool calls, intermediate          question answering, table-based fact verification, and hierarchi-
+aggregates, and the final ranked answer. Second, in the main multi-          cal table reasoning, respectively. This consistency suggests that
+table comparison scenario aligned with Figure 1, the user uploads            TabClaw’s workflow benefits are not limited to a single table for-
+2023 and 2024 sales tables and asks which category has the highest           mat or task family. We attribute the gains mainly to three factors:
+Q1 growth. TabClaw assigns each table to a scoped specialist agent,          editable planning reduces premature commitment to an incorrect
+computes table-specific Q1 summaries, and passes the results to an           interpretation, the pandas-backed toolbox grounds reasoning in
+aggregator. The interface exposes specialist outputs side by side            deterministic table operations, and streamed intermediate tables
+and then presents a synthesized answer with consensus, conflicts,            make the process inspectable and easier to correct. These results
+and uncertainty markers, making clear how multi-table evidence               are still preliminary because the current evaluation focuses on task
+is combined rather than hidden inside a single response. Third,              accuracy and execution success; future work should include human-
+the demonstration shows self-evolution from feedback. After re-              centered measures such as time-to-answer, correction effort, user
+peated tasks such as monthly KPI reports, top-𝑘 growth reports, and          trust, and the long-term utility of memory and skill evolution.
+anomaly summaries, TabClaw proposes a distilled Skill.md from
+historical workflows. The user reviews and approves installation.
+                                                                             6     Conclusion
+On a later similar request, the system retrieves the skill, executes
+a shorter and more stable tool sequence than the original ReAct              This paper presented TabClaw, an interactive and self-evolving
+exploration, and records feedback for future skill refinement.               system for spreadsheet manipulation and table reasoning. Tab-
+                                                                             Claw exposes table analysis as an inspectable workflow that com-
+5 Experiments                                                                bines clarification, editable planning, streamed tool execution, self-
+                                                                             verification, memory, and skill evolution. The live demonstration
+5.1 Experimental Setup                                                       shows how users can revise intermediate steps, compare multiple
+The evaluation covers SpreadsheetBench [18] for spreadsheet ma-              tables, and reuse recurring analysis patterns in a browser-based
+nipulation and reasoning, SheetCopilot [14] for executable spread-           interface. Preliminary benchmark results further indicate perfor-
+sheet operations, and WikiTQ [22], TabFact [1], and HiTab [5] for ta-        mance gains over direct inference, context augmentation methods,
+ble question answering, fact verification, and hierarchical table rea-       and autonomous agent baselines. TabClaw provides a practical
+soning. We report each benchmark’s standard metric and compare               platform for studying transparent and adaptive human-agent col-
+against direct inference, context augmentation methods (Binder [6],          laboration on tabular data.
+TabClaw: An Interactive and Self-Evolving Agent for Spreadsheet Manipulation and Table Reasoning                               Conference’17, July 2017, Washington, DC, USA
+
+
+GenAI Usage Disclosure                                                                    [21] Charles Packer, Vivian Fang, Shishir_G Patil, Kevin Lin, Sarah Wooders, and
+                                                                                               Joseph_E Gonzalez. 2023. MemGPT: Towards LLMs as Operating Systems. (2023).
+Generative AI tools were used to assist with language drafting and                        [22] Panupong Pasupat and Percy Liang. 2015. Compositional semantic parsing on
+editing. The authors remain responsible for the technical content,                             semi-structured tables. arXiv preprint arXiv:1508.00305 (2015).
+                                                                                          [23] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli,
+claims, references, and final manuscript.                                                      Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023.
+                                                                                               Toolformer: Language models can teach themselves to use tools. Advances in
+                                                                                               Neural Information Processing Systems 36 (2023), 68539–68551.
+                                                                                          [24] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and
+References                                                                                     Shunyu Yao. 2023. Reflexion: Language agents with verbal reinforcement learning.
+ [1] Wenhu Chen, Hongmin Wang, Jianshu Chen, Yunkai Zhang, Hong Wang, Shiyang                  Advances in Neural Information Processing Systems 36 (2023), 8634–8652.
+     Li, Xiyou Zhou, and William Yang Wang. 2019. Tabfact: A large-scale dataset for      [25] Daoyu Wang, Qingchuan Li, Mingyue Cheng, Jie Ouyang, Shuo Yu, Qi Liu, and
+     table-based fact verification. arXiv preprint arXiv:1909.02164 (2019).                    Enhong Chen. 2026. StepPO: Step-Aligned Policy Optimization for Agentic
+ [2] Yibin Chen, Yifu Yuan, Zeyu Zhang, Yan Zheng, Jinyi Liu, Fei Ni, and Jianye Hao.          Reinforcement Learning. arXiv preprint arXiv:2604.18401 (2026).
+     2024. Sheetagent: A generalist agent for spreadsheet reasoning and manipulation      [26] Jiahao Wang, Mingyue Cheng, Qingyang Mao, Yitong Zhou, Daoyu Wang, Qi Liu,
+     via large language models. In ICML 2024 Workshop on LLMs and Cognition.                   Feiyang Xu, and Xin Li. 2025. Tabletime: Reformulating time series classification
+ [3] Mingyue Cheng, Qingyang Mao, Qi Liu, Yitong Zhou, Yupeng Li, Jiahao Wang,                 as training-free table understanding with large language models. In Proceedings of
+     Jiaying Lin, Jiawei Cao, and Enhong Chen. 2025. A survey on table mining                  the 34th ACM International Conference on Information and Knowledge Management.
+     with large language models: Challenges, advancements and prospects. Authorea              3009–3019.
+     Preprints (2025).                                                                    [27] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang,
+ [4] Mingyue Cheng, Shuo Yu, Chuang Jiang, Xiaoyu Tao, Qingyang Mao, Jie                       Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, et al. 2024. A survey on large
+     Ouyang, Qi Liu, and Enhong Chen. 2026. TableMind++: An Uncertainty-Aware                  language model based autonomous agents. Frontiers of Computer Science 18, 6
+     Programmatic Agent for Tool-Augmented Table Reasoning. arXiv preprint                     (2024), 186345.
+     arXiv:2603.07528 (2026).                                                             [28] Zihao Wang, Shaofei Cai, Guanzhou Chen, Anji Liu, Xiaojian Shawn Ma, and
+ [5] Zhoujun Cheng, Haoyu Dong, Zhiruo Wang, Ran Jia, Jiaqi Guo, Yan Gao, Shi                  Yitao Liang. 2023. Describe, explain, plan and select: interactive planning with
+     Han, Jian-Guang Lou, and Dongmei Zhang. 2021. Hitab: A hierarchical table                 llms enables open-world multi-task agents. Advances in Neural Information
+     dataset for question answering and natural language generation. arXiv preprint            Processing Systems 36 (2023), 34153–34189.
+     arXiv:2108.06712 (2021).                                                             [29] Zhiruo Wang, Haoyu Dong, Ran Jia, Jia Li, Zhiyi Fu, Shi Han, and Dongmei Zhang.
+ [6] Zhoujun Cheng, Tianbao Xie, Peng Shi, Chengzu Li, Rahul Nadkarni, Yushi Hu,               2021. Tuta: Tree-based transformers for generally structured table pre-training.
+     Caiming Xiong, Dragomir Radev, Mari Ostendorf, Luke Zettlemoyer, et al. 2022.             In Proceedings of the 27th ACM SIGKDD Conference on Knowledge Discovery &
+     Binding language models in symbolic languages. arXiv preprint arXiv:2210.02875            Data Mining. 1780–1790.
+     (2022).                                                                              [30] Zilong Wang, Hao Zhang, Chun-Liang Li, Julian Martin Eisenschlos, Vincent
+ [7] Haoyu Dong, Jianbo Zhao, Yuzhang Tian, Junyu Xiong, Shiyu Xia, Mengyu                     Perot, Zifeng Wang, Lesly Miculicich, Yasuhisa Fujii, Jingbo Shang, Chen-Yu
+     Zhou, Yun Lin, José Cambronero, Yeye He, Shi Han, et al. 2024. Spreadsheetllm:            Lee, et al. 2024. Chain-of-table: Evolving tables in the reasoning chain for table
+     Encoding spreadsheets for large language models. arXiv preprint arXiv:2407.09025          understanding. arXiv preprint arXiv:2401.04398 (2024).
+     (2024).                                                                              [31] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+ [8] Lutfi Eren Erdogan, Nicholas Lee, Sehoon Kim, Suhong Moon, Hiroki Furuta,                 and Yuan Cao. 2023. React: Synergizing reasoning and acting in language models.
+     Gopala Anumanchipalli, Kurt Keutzer, and Amir Gholami. 2025. Plan-and-act: Im-            In International Conference on Learning Representations (ICLR).
+     proving planning of agents for long-horizon tasks. arXiv preprint arXiv:2503.09572   [32] Yunhu Ye, Binyuan Hui, Min Yang, Binhua Li, Fei Huang, and Yongbin Li. 2023.
+     (2025).                                                                                   Large language models are versatile decomposers: Decomposing evidence and
+ [9] Zhibin Gou, Zhihong Shao, Yeyun Gong, Yelong Shen, Yujiu Yang, Nan Duan,                  questions for table-based reasoning. In Proceedings of the 46th international ACM
+     and Weizhu Chen. 2023. Critic: Large language models can self-correct with                SIGIR conference on research and development in information retrieval. 174–184.
+     tool-interactive critiquing. arXiv preprint arXiv:2305.11738 (2023).                 [33] Liangyu Zha, Junlin Zhou, Liyao Li, Rui Wang, Qingyi Huang, Saisai Yang,
+[10] Jonathan Herzig, Paweł Krzysztof Nowak, Thomas Müller, Francesco Piccinno,                Jing Yuan, Changbao Su, Xiang Li, Aofeng Su, et al. 2023. Tablegpt: Towards
+     and Julian Martin Eisenschlos. 2020. TaPas: Weakly supervised table parsing via           unifying tables, nature language and commands into one gpt. arXiv preprint
+     pre-training. arXiv preprint arXiv:2004.02349 (2020).                                     arXiv:2307.08674 (2023).
+[11] Xu Huang, Weiwen Liu, Xiaolong Chen, Xingmei Wang, Hao Wang, Defu Lian,              [34] Huajian Zhang, Mingyue Cheng, Yucong Luo, and Xiaoyu Tao. 2026. STaR:
+     Yasheng Wang, Ruiming Tang, and Enhong Chen. 2024. Understanding the                      Towards Effective and Stable Table Reasoning via Slow-Thinking Large Language
+     planning of LLM agents: A survey. arXiv preprint arXiv:2402.02716 (2024).                 Models. In Proceedings of the ACM Web Conference 2026. 7189–7200.
+[12] Chuang Jiang, Mingyue Cheng, Xiaoyu Tao, Qingyang Mao, Jie Ouyang, and Qi            [35] Xiaokang Zhang, Sijia Luo, Bohan Zhang, Zeyao Ma, Jing Zhang, Yang Li, Guan-
+     Liu. 2025. TableMind: An Autonomous Programmatic Agent for Tool-Augmented                 lin Li, Zijun Yao, Kangli Xu, Jinchang Zhou, et al. 2024. Tablellm: Enabling
+     Table Reasoning. arXiv preprint arXiv:2509.06278 (2025).                                  tabular data manipulation by llms in real office usage scenarios. arXiv preprint
+[13] Ziqi Jin and Wei Lu. 2023. Tab-cot: Zero-shot tabular chain of thought. arXiv             arXiv:2403.19318 (2024).
+     preprint arXiv:2305.17812 (2023).
+[14] Hongxin Li, Jingran Su, Yuntao Chen, Qing Li, and Zhao-Xiang Zhang. 2023.
+     Sheetcopilot: Bringing software productivity to the next level through large
+     language models. Advances in Neural Information Processing Systems 36 (2023),
+     4952–4984.
+[15] Aixin Liu, Aoxue Mei, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu,
+     Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, et al. 2025. Deepseek-
+     v3. 2: Pushing the frontier of open large language models. arXiv preprint
+     arXiv:2512.02556 (2025).
+[16] Qian Liu, Bei Chen, Jiaqi Guo, Morteza Ziyadi, Zeqi Lin, Weizhu Chen, and Jian-
+     Guang Lou. 2021. TAPEX: Table pre-training via learning a neural SQL executor.
+     arXiv preprint arXiv:2107.07653 (2021).
+[17] Weizheng Lu, Jing Zhang, Ju Fan, Zihao Fu, Yueguo Chen, and Xiaoyong Du.
+     2025. Large language model for table processing: A survey. Frontiers of Computer
+     Science 19, 2 (2025), 192350.
+[18] Zeyao Ma, Bohan Zhang, Jing Zhang, Jifan Yu, Xiaokang Zhang, Xiaohan Zhang,
+     Sijia Luo, Xi Wang, and Jie Tang. 2024. Spreadsheetbench: Towards challenging
+     real world spreadsheet manipulation. Advances in Neural Information Processing
+     Systems 37 (2024), 94871–94908.
+[19] Qingyang Mao, Qi Liu, Zhi Li, Mingyue Cheng, Zheng Zhang, and Rui Li. 2024.
+     PoTable: Towards Systematic Thinking via Stage-oriented Plan-then-Execute
+     Reasoning on Tables. arXiv preprint arXiv:2412.04272 (2024).
+[20] Md Mahadi Hasan Nahid and Davood Rafiei. 2024. Normtab: Improving sym-
+     bolic reasoning in llms through tabular data normalization. In Findings of the
+     Association for Computational Linguistics: EMNLP 2024. 3569–3585.
+

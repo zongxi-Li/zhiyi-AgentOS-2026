@@ -1,0 +1,877 @@
+                                                                 ProgramTab: Boosting Table Reasoning of LLMs
+                                                                         via Programmatic Paradigm
+                                                         Pei Guo, Enjie Liu, Yunzhi Tan* , Mochi Gao, Jianxin Zhang,
+                                                                   Ruichao Zhong, Juntao Li, Bo Hu* , Zang Li
+                                                              ♠
+                                                                Big Data and AI Platform Department, Tencent, China
+                                                  ♢
+                                                    Institute of Computer Science and Technology, Soochow University, China
+                                         {anthonyguo, karolinaliu, boristan, mochigao, harryyfhu, gavinzli}@tencent.com;
+                                               20204027008@stu.suda.edu.cn; rzhongab@connect.ust.hk; ljt@suda.edu.cn
+
+                                                                    Abstract                               Title: 1981 Houston Oilers season
+
+                                                                                                                   date               opponent          result
+                                                  Table-based reasoning with large language                                        at los angeles
+                                                  models (LLMs), which requires reasoning                   september 6, 1981                          w 27-20
+                                                                                                                                        rams
+                                                  based on natural language questions and struc-                                    at cleveland
+                                                                                                           september 13, 1981                           w 9-3
+                                                  tured tabular data, has gained widespread atten-                                     browns
+                                                  tion. However, a series of issues still constrain        september 27, 1981      miami dolphins      l 10-16
+                                                  the application of this task. The previous ap-                    …                     …               …
+arXiv:2607.11207v1 [cs.CL] 13 Jul 2026
+
+
+
+
+                                                  proaches suffered from significant performance                                     pittsburgh
+                                                                                                            december 20, 1981                          w 21-20
+                                                                                                                                      steelers
+                                                  degradation when faced with large tables due to
+                                                  the difficulty of long text modeling and the lim-
+                                                  itation of input length for LLMs. The text-to-           Figure 1: An example of a table in WikiTQ dataset.
+                                                  SQL approach is used to efficiently extract key
+                                                  information from tables and generate smaller
+                                                  sub-tables. However, tabular data, especially           establish their connection with user queries, and ex-
+                                                  web tables, often lack the necessary structure
+                                                                                                          ecute efficient logical reasoning and computations.
+                                                  and consistency, making them unsuitable for
+                                                  performing mathematical logic operations us-               Recently, LLMs (Brown et al., 2020; Hoffmann
+                                                  ing SQL queries. We propose the ProgramTab              et al., 2022; OpenAI, 2022) have significantly trans-
+                                                  framework, which guides LLMs employing in-              formed the landscape of natural language process-
+                                                  context learning to perform tabular data pre-           ing tasks with their impressive understanding and
+                                                  processing with Python code, as well as the
+                                                                                                          generation capabilities. Instead of fine-tuning the
+                                                  momentous contents extraction with row and
+                                                  column extraction and SQL generation. The               pre-trained models, sufficiently utilizing the in-
+                                                  experiment results on table reasoning datasets          context learning of LLMs to solve complex tab-
+                                                  demonstrate that the ProgramTab framework ef-           ular data reasoning has been a mainstream direc-
+                                                  fectively deals with table-based reasoning tasks        tion (Chen, 2023; Cheng et al., 2023; Ye et al.,
+                                                  and outperforms all LLM-based baselines.                2023; Wang et al., 2024). However, current meth-
+                                                                                                          ods still face several limitations. Firstly, most of
+                                          1       Introduction                                            the work (Cheng et al., 2023; Ye et al., 2023; Wang
+                                                                                                          et al., 2024) treats the entire table as an input, which
+                                          Tables, as a popular form of data representation,
+                                                                                                          is unsuitable for tables containing large amounts
+                                          play a significant role in everyday work and life.
+                                                                                                          of data. When the number of tokens in a table
+                                          Analysis and reasoning based on tabular data have
+                                                                                                          exceeds the maximum input limitation of LLMs,
+                                          emerged as a hot topic in natural language process-
+                                                                                                          the content of the table will be truncated, leading
+                                          ing, attracting wide attention from academia and
+                                                                                                          to information loss and consequently affecting the
+                                          industry. The main downstream tasks of tabular rea-
+                                                                                                          performance of LLMs. This has been verified in
+                                          soning include table-based fact verification (Chen
+                                                                                                          the work of (Chen, 2023). To mitigate the length
+                                          et al., 2020; Aly et al., 2021) and table-based ques-
+                                                                                                          constraint of inputs, the common approach is to
+                                          tion answering (Panupong and Percy, 2015; Cho
+                                                                                                          utilize a programmatic language, such as generat-
+                                          et al., 2019). The challenges of these tasks lie
+                                                                                                          ing SQL queries to retrieve the most relevant rows
+                                          in how to enable language models to comprehend
+                                                                                                          and column data (Ye et al., 2023; Nahid and Rafiei,
+                                          table data content, including text, numbers, etc.,
+                                                                                                          2024b; Zhang et al., 2024c,a). However, table data,
+                                              *    Corresponding Author                                   especially the web table is usually provided as
+
+                                                                                                      1
+strings and often lacks the necessary structure              2     Related Work
+and consistency, requiring conversion to the ap-
+propriate format and data types for mathemati-               In this section, we introduce the related approaches
+cal logic operations to avoid calculation errors.            of table-based reasoning: fine-tuning-based and
+It requires SQL to preprocess the data while ex-             prompting-based table reasoning.
+tracting the relevant information, which increases
+                                                             2.1    Fine-tuning-based Table reasoning
+the complexity of generating SQL (The results in
+Table 3 can confirm this opinion). For example, as           Table-based understanding and reasoning tasks are
+shown in Figure 1, when the question is about the            significant in data analysis systems. Many ap-
+number of games the Houston Oilers won in 1981               proaches focus on constructing pre-trained lan-
+season, the ‘w’ and ‘l’ symbols from the result cell         guage models and fine-tuning them to address these
+aren’t provided as a single column and need to be            tasks (Zhang et al., 2020; Patnaik et al., 2024).
+extracted, which is defined as "lack of necessary            Among them, mask language models (MLM) are
+structure". Regarding the absence of consistency,            widely adopted. For example, TaPas (Herzig et al.,
+the structure at the "year" column in Figure 2 is            2020) acquires BERT (Devlin et al., 2019) to parse
+inconsistent, such as "1931" and "spring 1932".              table information via pre-training. PASTA (Gu
+                                                             et al., 2022) pre-trains DeBERTaV3 (He et al.,
+                                                             2021) to perform six types of common sen-
+   To address the above challenges, we introduce             tence–table cloze tasks. Besides, TAPEX (Liu
+the ProgramTab framework, which executes with                et al., 2022) employs the BART (Lewis et al., 2020)
+program languages (Python and SQL) to flexibly               model to learn the neural SQL executors over a syn-
+handle the table contents based on the questions.            thetic corpus. OmniTab (Jiang et al., 2022) lever-
+Specifically, as shown in Figure 2, (1) we utilize the       ages retrieval to pair relevant natural sentences with
+embedding model to compute the relevant scores               mask-based pre-training and synthesizes natural
+of each line of tables with the questions and resort         language questions by converting sampled SQL
+the lines in descending order. In the following              from tables. Inner Table Retrieval (ITR) (Lin et al.,
+steps, the top K lines with higher relevant scores           2023) extracts sub-tables to preserve the most rele-
+are extracted as instances to replace the complete           vant information for the questions.
+tables. With the most relevant lines as input, (2)
+LLMs are prompted to select the columns related              2.2    Prompting-based Table Reasoning
+to the questions, (3) generate the Python code to            Recently, LLMs (Hoffmann et al., 2022; OpenAI,
+preprocess the table data, including unifying the            2023; Touvron et al., 2023) have gained widespread
+data format and defining the data type for each              attention due to their powerful understanding and
+column. After that, (4) SQL queries are generated            generation capabilities. Given a few augmenting
+using chain-of-thought (CoT) (Wei et al., 2023) and          few-shot examples relevant to the tasks, the LLMs
+executed to obtain the most valuable information.            can tackle various reasoning tasks (Fu et al., 2023;
+Finally, (5) LLMs process this information and               Zhang et al., 2023). A few approaches also employ
+produce the final answers.                                   LLMs to tackle table reasoning tasks with few-shot
+                                                             prompts. TableCoT (Tai et al., 2023) systemati-
+                                                             cally explores the performance of LLMs on table
+   We validate our ProgramTab framework by con-              reasoning tasks and finds that LLMs are excellent
+ducting experiments on two challenging table rea-            at solving such tasks, especially combined with
+soning datasets: WikiTQ (Panupong and Percy,                 CoT approach. Besides, rather than generating
+2015) and TabFact (Chen et al., 2020). With                  general text, additional programmatic text, such
+three LLM backbones, our evaluation demonstrated             as Python programs (Chen et al., 2022; Gao et al.,
+that ProgramTab achieves excellent performance               2023), and Text-to-SQL (Rajkumar et al., 2022)
+on table-based reasoning benchmarks, and outper-             approaches are employed to improve the perfor-
+forms all the other baselines with different LLM             mance further. LEVER (Ni et al., 2023) improves
+backbones. Besides, ProgramTab is not limited by             the performance of code LLMs on language-to-
+the input length of table data, which obtains a sig-         code tasks by training separate verifiers to validate
+nificant efficiency and effectiveness improvement            the programs generated by LLMs and their exe-
+compared with other strong baselines.                        cution results. Binder (Cheng et al., 2023) maps
+
+                                                         2
+                                                                                                        year          division        playoffs        national cup
+                                                                                                     1936/37            n/a          not qualify       champion
+                                                                                                       1931              1           no playoff           n/a
+                                         ① Row Retrieval
+                                                                                                         …               …               …                 …
+                                                                                                 Question(Q): how long did it … after 1936?
+
+                                                                                                                                         ② Column Extraction
+
+    Title: New York Americans (soccer)
+                                                                      The 'year' column will help us identify the year                                                     year            national cup
+                                                                      after 1936 when they won the National Cup, and the                               Execute
+           year           division        playoffs     national cup                                                                                                      1936/1937          champion
+                                                                      'national_cup' column will indicate whether they were
+           1931               1          no playoff         n/a       the champions in that specific year.                                                                 1931                n/a
+        spring 1932           1          no playoff     1st round     The answer is year, national_cup.                                                                     …                   …
+         fall 1932            1          no playoff         n/a
+                                                                      Question(Q): how long did it … after 1936?
+
+         1933/34            n/a          no playoff          ?                                                                          ③ Data Redefinition with Python Code and Execution
+             …               …               …              …
+                                                                      def function(df):
+         1936/37            n/a          not qualify    champion        # step 1: standardize the data format
+                                                                        df['year'] = df['year'].str.extract('(\\d{4})‘)                                                                       years_to_w
+             …               …               …              …
+                                                                        # step 2: set the data type for each column                                               year      national cup      in_after_19
+                                                                        df['year'] = df['year'].astype(int)                                                                                       36
+    Question(Q):                                                        df['national_cup'] = df['national_cup'].astype(str)
+    how long did it take for the new york americans to win the          # step 3 (optional): extract the information                                              1936       champion                0
+    national cup after 1936?                                            df['years_to_win_after_1936'] = df['year'] - 1936                                         1931            n/a                -5
+                                                                        return df
+                                                                                                                                                                     …            …                  …
+                                                                      # call the function, don't change df anymore
+                       Therefore, the answer is 17 years.             df = function(df)                                                                   Question(Q): how long did it … after 1936?
+
+                                                                                                                                        ④ SQL Generation with CoT and Execution
+                                           ⑤ Answer Generation
+                                                                            years_to_win_after_1936                           step1: select the `years_to_win_after_1936` where `national_cup` =
+                                                                                                                              'champion'
+                                                                                       17
+                                                                                                                              SQL1: SELECT `years_to_win_after_1936` FROM test WHERE `year` >
+                                                                      Question(Q): how long did it … after 1936?              1936 AND `national_cup` = 'champion'
+
+
+
+                                           Figure 2: The overview of ProgramTab for table-based reasoning.
+
+
+the task input to a program that allows generat-                                                    is NormTab (Nahid and Rafiei, 2024a), which uti-
+ing SQL or Python programs and extending their                                                      lizes LLMs to regularize table content, making it
+functions by calling LLMs in the program. Re-                                                       conducive to SQL query generation. ProgramTab
+AcTable (Zhang et al., 2024b) breaks down the                                                       leverages LLMs to generate relevant processing
+problem into multiple steps and uses LLMs to gen-                                                   code for table normalization, whereas NormTab
+erate code programs that are executed through ex-                                                   has LLMs directly output the entire table in
+ternal tools for each step. Finally, it leverages ma-                                               text form. In comparison, ProgramTab is more
+jority voting to improve overall accuracy. Wang                                                     efficient, and through code execution, it reduces
+et al. (2024) proposes a Chain-of-Table framework                                                   the likelihood of inconsistencies in the processing
+that designs a series of table operations and dynam-                                                of data within the same column. Additionally,
+ically plans an operation chain based on the inputs.                                                we propose an improvement for SQL genera-
+It’s difficult for LLMs to perform reasoning when                                                   tion by decomposing the question into multiple
+confronted with large tables with multiple rows.                                                    sub-questions and providing the corresponding
+Dater (Ye et al., 2023), TabSQLify (Nahid and                                                       SQL for each sub-question, aiming to further
+Rafiei, 2024b) and H-STAR (Nikhil et al., 2024)                                                     enhance performance.
+decompose the original table into the sub-table by
+selecting the relevant rows and columns. After that,                                                3          ProgramTab Reasoning
+Dater and Alter (Zhang et al., 2024a) also propose
+the parsing-execution-filling and query augmenta-                                                   As shown in Figure 2, ProgramTab consists of five
+tion strategy respectively to decompose a complex                                                   procedures: 1) row retrieval, 2) column extrac-
+question into simpler step-by-step sub-questions                                                    tion, 3) data definition with code, 4) SQL gener-
+by generating an intermediate SQL. E 5 (Zhang                                                       ation and 5) answer generation. In this section,
+et al., 2024c) presents an algorithm to condense                                                    we describe the above procedures in detail. The
+large tables while maintaining useful information.                                                  original table is denoted as T .
+Unlike above works, which typically extract in-
+                                                                                                    3.1          Row Retrieval
+formation directly using SQL queries to obtain
+answers—thus increasing the difficulty of SQL                                                       To alleviate the limitation of the input length of
+generation, we propose an innovative approach                                                       LLMs, we first execute row retrieval, extracting
+that leverages LLMs to generate code for data                                                       the most relevant rows to represent the entire table
+preprocessing. Besides, the most similar work                                                       content. Specifically, for each row of data in the
+                                                                                                    table, we concatenate the column name and value
+
+                                                                                              3
+      ### Task description: Please select the relevant columns about the          ### Task description: Based on the questions and current data format
+      question from ### Table headers. We also provide a few rows about           with python, define a new function to supplement subsequent processing
+      the value of different headers to assist to choose the columns.             operations with python according to the following steps:
+      Please follow the format that describe the reasons of choosing the          - step 1 (optional): standardize the data format for each column.
+      column firstly and give the conclusion as 'The answer is' finally.          - step 2: set the data type for each column (the type must be one of int,
+                                                                                  float, string and datetime).
+      ###Example1:                                                                - step 3 (optional): extract the useful information by adding new
+      Question: which team won previous to crettyard?                             columns if needed.
+      ### Table header: team | county | wins | years won                          - Note: you just need to output the code, don't answer the questions and
+      ### A few rows:                                                             don't redefine the df.
+      row1: Greystones | Wicklow | 1 | 2011                                       Here are some examples to help you understand this task.
+      row2: Ballymore Eustace | Kildare | 1 | 2010                                ###Example1:
+      row3: Maynooth | Kildare | 1 | 2009                                         Question: how many people stayed at least 3 years in office?
+      ### Answer: To find out which team won before crettyard, we need to         ### Current code of data format:
+      look at the 'years won' column to determine the year crettyard won          data = {'took_office': ['march 4, 1803', 'march 4, 1809', 'march 4,
+      and find the team that won the year before. Besides, the 'team'             1815'], 'left_office': ['march 3, 1809', 'march 3, 1815', 'april 18,
+      column is also crucial because it has the names of the teams that           1816’]}
+      won in those years. The answer is team, years won.                          df = pd.DataFrame(data)
+                                                                                  ### Answer:
+                                                                                  def function(df):
+      ###Example2:                                                                        # step 1: standardize the data format: the question only need the
+      Question: did february 2012 or july 2006 have more total votes?             years
+      ### Table header: polling_firm | month | link | favor | oppose                      df['took_office'] = df['took_office'].map(lambda x: x.split(',
+      ### A few rows:                                                             ')[-1])
+      row1: utgers-eagleton | march 2014 | | 64 | 28                                      df['left_office'] = df['left_office'].map(lambda x: x.split(',
+      row2: quinnipiac | july 2013 | | 60 | 31                                    ')[-1])
+      row3: rutgers-eagleton | june 2013 | | 59 | 30                                      # step 2: set the data type: set the year to int type
+      ### Answer: To answer the question about whether February 2012 or                   df['took_office'] = df['took_office'].astype(int)
+      July 2006 had more total votes, we need to look at the 'month'                      df['left_office'] = df['left_office'].astype(int)
+      column to find the data for these two specific months. In addition,                 # step 3: extract the information
+      the 'favor' and 'oppose' columns are also important because they                    df['stayed_years_in_office'] = df['left_office'] -
+      contain the number of votes. By adding these two columns together,          df['took_office’]
+      we can get the total votes for each month. The answer is month,                     return df
+      favor, oppose.                                                              # call the function, don't change df anymore
+                                                                                  df = function(df)
+      ### Problem to be solved:
+      Question: {}                                                                ###Example2:
+      ### Table header: {}                                                        Question: what's the number of parishes founded in the 1800s?
+      ### A few rows:{}                                                           ### Current code of data format:
+      ### Answer:                                                                 data = {'parish': ['st mary', 'the immaculate conception', 'st james the
+                                                                                  less'], 'founded': ['1852', '1854', '1828’]}
+                                                                                  df = pd.DataFrame(data)
+                                                                                  ### Answer:
+      Figure 3: Prompt for LLMs to extract columns.                               def function(df):
+                                                                                         # step 1: all data format are the same, there is no need to
+                                                                                  change
+                                                                                         # step 2: set the data type
+                                                                                         df['parish'] = df['parish'].astype(str)
+                                                                                         df['founded'] = df['founded'].astype(int)
+of the cells to form a text segment, and an embed-                                       # step 3: there is no data need to extract
+                                                                                         return df
+ding model is utilized to calculate the relevance                                 # call the function, don't change df anymore
+                                                                                  df = function(df)
+score between the row data and the question. Ulti-                                ### Problem to be solved:
+
+mately, the top K most relevant rows are selected as
+instances in the prompt templates of the following                              Figure 4: The prompt for LLMs to perform data redefi-
+steps, which effectively alleviates the whole table                             nition with code.
+as the input context. The value of ‘K’ is determined
+based on the context length supported by the model
+being used. We set K to 10 for all the models.
+                                                                                and ‘1933/34’. Therefore, it’s necessary to rede-
+3.2      Column Extraction                                                      fine data, including unifying the format, defining
+                                                                                the data type, and extracting additional information
+To minimize the impact of irrelevant data, it is                                (the detailed discussion about data redefinition is
+essential to extract the relevant columns and utilize                           presented in Section 5.1). The related prompt is
+them for LLMs to conduct reasoning (Zhang et al.,                               shown in Figure 4, given the current data format
+2024a). As shown in Figure 3, given the question,                               code, we acquire LLMs to generate Python code
+table header, and top K rows as input context, we                               with the following steps. Firstly, if there is column
+prompt LLMs to follow the examples and extract                                  data with inconsistent formats, standardize it to
+the related columns with additional explanation.                                form a unified format. Besides, the data type for
+Based on the LLMs filter columns, we extract them                               each column must be set to make it suitable for
+from T and obtain Tcol .                                                        performing mathematical logical operations, such
+                                                                                as defining the column to the integer type. We re-
+3.3      Data Redefinition with Code                                            quire that the data type must be one of integer, float,
+Specifically, to maintain the flexibility of table data,                        string, and datetime types. Finally, additional infor-
+the string type is adopted for the table data espe-                             mation could be extracted by adding new columns.
+cially collected from the web. Besides, the format                              Among them, annotations are added for each step
+of data is not always consistent which causes a                                 to benefit LLMs to follow the above steps more
+great challenge for SQL generation. For example,                                effectively. Besides, steps 1 and 3 are optional,
+as shown in Figure 2, the values of column year in                              depending on the specific cases. For instance, the
+T are not rigorous, which conclude three different                              formats of each column in Figure 4 example 2 are
+formats with string type: ‘1931’, ‘spring 1932’,                                consistent, there is no need to extract extra infor-
+
+                                                                            4
+  ### Task description:                                                              ### Task description: Based on the table title, question and execution
+  You are a data scientist specializing in text-to-SQL tasks. Given the              result of the sql query bellow, find the answer to the given question
+  Question and Database schema, you should decompose the question into               correctly. If there are multiple answers, please split them by ' | '.
+  multiple steps and generate their SQL. Please add the `` for every                 Note: Only choose the answers from SQL Answer.
+  column you select in the SQL. Note: Just output the step and sql. Here
+  are some examples to help you understand this task.                                Table_title: piotr kędzia
+                                                                                     Question: in what city did piotr's last 1st place finish occur?
+  ### Example1:                                                                      SQL: select `year`, `venus` from test where `position` = '1st' order by
+  Database title: The table about 2000 Olympic Games.                                `year` DESC LIMIT 1
+  Database scheme:                                                                   SQL Answer:
+  CREATE TABLE test(                                                                 Table Schema: year | venus
+  "race_name" TEXT; VALUES: [vuelta a guatemala, vuelta a colombia],                 Values: 2007 | bangkok, Thailand
+  "winner_country" TEXT; VALUES: [usa, aus])                                         A: The SQL answer contain the year and venus about piotr's last 1st
+  ### Question: who won more races, the usa or australia?                            place, and the question ask about the city which means the venus, and
+  ### Sub-step and their SQL:                                                        the city where Piotr's last 1st place finish occurred is Bangkok,
+  step1: obtain the count of usa win.                                                Thailand.
+  SQL1: SELECT COUNT(`race_name`) FROM test WHERE `winner_country` = 'usa’           Therefore, the answer is bangkok, thailand.
+  step2: obtain the count of aus win.
+  SQL2: SELECT COUNT(`race_name`) FROM test WHERE `winner_country` = 'aus’           Table_title: playa de oro international airport
+  step3: Compare the count of usa and aus, and select the most                       Question: how many more passengers flew to los angeles than to saskatoon
+  SQL3: SELECT `winner_country`, won_count FROM (SELECT `winner_country`,            from manzanillo airport in 2013?
+  COUNT(`race_name`) AS won_count FROM test WHERE `winner_country` in                SQL: select `city`, `passengers` from test where `city` in ('united
+  ('usa', 'aus')) ORDER BY won_count DESC LIMIT 1\n\n                                states, los angeles', 'canada, saskatoon’);
+                                                                                     SQL Answer:
+  ### Example2:                                                                      Table Schema: city | passengers
+  Database title: The table about members of Third Incarnation of Lachlan.           Values: united states, los angeles | 14,749
+  Database scheme:                                                                   canada, saskatoon | 2,282
+  CREATE TABLE test(                                                                 A: The SQL answer contains the number of passengers who flew to los
+  "row_id" INTEGER; VALUES: [0, 1],                                                  angeles and saskatoon from manzanillo airport 14,749, 2,282. So, the
+  "member" TEXT; VALUES: [john ryan, james martin],                                  difference in the number of passengers between los angeles and saskatoon
+  "term" TEXT; VALUES: [1859-1864, 1864-1869])                                       is 14,749 - 2,282 = 12,467.
+  ### Question: of the members of the third incarnation of the lachlan,              Therefore, the answer is 12,467.
+  who served the longest?
+  ### Sub-step and their SQL:                                                        ### Problem to be solved:\n
+  step1: obtain the all `member` and sorted them based on `term` with DESC
+  SQL1: SELECT `member` FROM test ORDER BY `term` DESC
+  step2: select the longest `member` by LIMIT 1
+  SQL2: SELECT `member` FROM test ORDER BY `term` DESC LIMIT 1                   Figure 6: Prompt for LLMs to generate final answers.
+  ### Problem to be solved:\n
+
+
+
+Figure 5: Prompt for LLMs to generate SQL with CoT.                              4      Experiments
+                                                                                 4.1      Datasets
+mation. As a result, steps 1 and 3 are unnecessary.                              We design relevant prompts and utilize the pow-
+                                                                                 erful in-context learning ability of LLMs to di-
+3.4    SQL Generation                                                            rectly reason on the test set. We evaluate
+                                                                                 the proposed ProgramTab on three public table
+The table data after redefining is unified and meets                             reasoning benchmarks: TabFact (Chen et al.,
+the requirements for SQL execution. In this step,                                2020), WikiTQ (Panupong and Percy, 2015) and
+we make use of few-shot learning to prompt LLMs                                  HiTab (Cheng et al., 2022). Among them, Tab-
+to perform SQL generation. Specifically, as pre-                                 Fact is a table-based binary fact verification bench-
+sented in Figure 5, the essential information is pro-                            mark. Given a statement, we need to ascertain the
+vided, such as the database title, schema, and top                               truthfulness of it based on the table. We report
+K relevant rows. With these contexts, LLMs are                                   the accuracy of the test set, which contains 2,024
+prompted to decompose the question into multi-                                   statements and 298 tables. Besides, WikiTQ is
+ple steps and generate their sub-SQL with the CoT                                one of the most commonly used and highly com-
+method. We find that the CoT style is beneficial for                             plex datasets, collected and annotated based on
+LLMs to generate the final SQL queries, and the                                  Wikipedia tables. The WikiTQ comprises 4,344
+specific analysis is described in Section 5.1.                                   question-answer pairs in the test set. HiTab is the
+                                                                                 dataset that contains hierarchical tables with com-
+                                                                                 plex hierarchical indexing.
+3.5    Answer Generation
+
+After executing the SQL query obtained from the                                  4.2      Baselines
+previous step, the most relevant information is                                  We divide the baselines into two categories: (1)
+gained from the table. As presented in Figure 6,                                 approaches that spend additional computing re-
+during this step, based on the results from executing                            sources to train proprietary models with custom
+the SQL query and the question, we utilize LLMs                                  training data, such as TaPas (Herzig et al., 2020),
+to reason with the additional explanation and fi-                                GraPPa (Yu et al., 2021), TAPEX (Liu et al., 2022),
+nally make a conclusion. Consequently, we can                                    PASTA (Gu et al., 2022), TaCube (Zhou et al.,
+conveniently extract the results from the conclu-                                2022), OmniTab (Jiang et al., 2022), ITR (Lin
+sions as final answers. This approach helps LLMs                                 et al., 2023) and CABINET (Patnaik et al., 2024).
+concentrate on the relevant parts to understand the                              (2) without training, approaches that design few
+context and answer the questions.                                                shot prompts and employ the in-context ability of
+
+                                                                             5
+LLMs, such as TableCoT (Tai et al., 2023), Re-                           Methods                   Backbone               Accuracy
+
+AcTable (Zhang et al., 2024b), Binder (Cheng                                              Previous Work with Training
+                                                                           TaPas                    BERT                    83.9
+et al., 2023), Dater (Ye et al., 2023), Chain-of-                          Tapex                    BART                    86.7
+                                                                          PASTA                  DeBERTaV3                  90.8
+Table (Wang et al., 2024), Alter (Zhang et al.,
+                                                                                         Previous Work without Training
+2024a), E 5 (Zhang et al., 2024c), NormTab (Nahid                            E5                     GPT-4                   88.7
+and Rafiei, 2024a), TabSQLify (Nahid and Rafiei,                         ReAcTable                                          73.1
+                                                                          TableCoT                                          73.1
+2024b) and H-STAR (Nikhil et al., 2024).                                   Binder                                           79.1
+                                                                            Dater                                           78.0
+                                                                            Alter               GPT-3.5-Turbo               84.3
+4.3   Implementation Details                                              NormTab                                           68.9
+                                                                         TabSQLify                                          79.5
+In our settings, we conduct experiments by uti-                           H-STAR                                            85.0
+                                                                     ProgramTab (Ours)                                      85.9
+lizing closed-source LLMs (GPT-3.5-Turbo and                               Binder                                           78.1
+GPT-4o-mini1 ) and the open-source LLM Llama-                               Dater                                           81.6
+                                                                       Chain-of-Table       Llama-3.1-70B-Instruct          85.6
+3.1-70B-Instruct2 as the backbones. The prompt                           TabSQLify                                          70.7
+                                                                     ProgramTab (Ours)                                      86.8
+templates for each procedure are described in Sec-                         Binder                                           84.6
+tion 3. Besides, the details of hyper-parameters are                        Dater                                           80.9
+                                                                       Chain-of-Table            GPT-4o-mini                84.2
+presented in Appendix A.2. Notably, syntax errors                        TabSQLify                                          78.7
+                                                                          H-STAR                                            89.4
+occasionally occurred during data redefinition and                   ProgramTab (Ours)                                      89.6
+SQL generation, resulting in non-executable code.
+To address this issue, we adopted a retry mecha-                 Table 1: Accuracy of ProgramTab compared to the base-
+nism. Specifically, when a runtime error occurred                lines on TabFact test set.
+during both processes, we attempted to rerun the
+process, with a maximum of five attempts. If all                 better performance compared to E 5 with GPT-4.
+five attempts failed, it was concluded that LLMs                 (3) With stronger coding and reasoning abilities,
+were unable to handle the given table, and no fur-               ProgramTab with Llama-3.1-70B-Instruct and GPT-
+ther steps were executed. About the evaluation                   4o-mini achieve better performance.
+metrics, we follow Nahid and Rafiei (2024b) to
+use the official denotation accuracy and employ the              5     Analysis
+binary classification accuracy for WikiTQ and Tab-
+Fact datasets evaluation respectively. GTE-base (Li              5.1     Ablation Study Results
+et al., 2023) is employed as the embedding model.                To evaluate the effectiveness of each procedure in
+                                                                 the ProgramTab framework, we pay attention to
+4.4   Results                                                    two important steps: data redefinition (DR) and
+As presented in Table 1 and Table 2 (the additional              SQL generation (SG). Specifically, we remove the
+results on HiTab in Appendix A.5.), (1) the previ-               DR procedure described in Section 3.3 and keep
+ous work, training with specific tasks perform well.             the other steps unchanged. The result in Table 3
+Specifically, PASTA (Gu et al., 2022) achieves                   shows that without the DR step to preprocess the
+90.8% accuracy on TabFact, while CABINET (Pat-                   tabular data, it will require SQL to preprocess the
+naik et al., 2024) obtains 69.1% on WikiTQ. Us-                  data and extract the relevant information, which
+ing GPT-4o-mini as the backbone, ProgramTab                      increases the complexity of generating SQL for
+achieved performance comparable to PASTA on                      LLMs. Therefore, the performance significantly
+the TabFact dataset. Furthermore, on the WikiTQ                  decreases on both datasets, especially on WikiTQ
+dataset, ProgramTab outperformed CABINET re-                     which is more complex. This conclusion is also ver-
+gardless of the large model used as its backbone.                ified by Wang et al. (2024). Besides, we replace the
+Due to unnecessary additional fine-tuning, the gen-              procedure described in Section 3.4 with the SQL
+eralization of ProgramTab is better. (2) Compared                generation without CoT (denotes as w/o CoT SG).
+to previous work without training, ProgramTab                    The special prompt is shown in Appendix A.1. Ta-
+with different LLM backbones outperforms the                     ble 3 presents that the performance of ProgramTab
+other baselines on all evaluation benchmarks. In ad-             w/o SG CoT drops when discarding question de-
+dition, our framework with GPT-4o-mini achieves                  composition. It verifies that compared with direct
+    1                                                            SQL generation, decomposing the questions into
+      https://openai.com/index/gpt-4o-mini-advancing-cost-
+efficient-intelligence/                                          multiple steps and generating their sub-SQL is ef-
+    2
+      https://ai.meta.com/blog/meta-llama-3-1/                   fective in reducing the difficulty of SQL generation.
+
+                                                             6
+      Methods                  Backbone               Accuracy
+                                                                       Methods                  TabFact            WikiTQ
+                      Previous Work with Training
+        TaPas                   BERT                    48.8           Binder                    79.1                55.4
+       GraPPa                  RoBERTa                  52.7
+        Tapex                                           57.5           Dater                     78.0                52.8
+       TaCube                                           60.8           TabSQLify                 79.5                64.7
+      OmniTab                   BART                    62.8
+         ITR                                            63.4
+                                                                       ProgramTab                85.9                70.3
+      CABINET                                           69.1             w/o DR               81.6 (↓ 4.3)       59.4 (↓ 10.9)
+                     Previous Work without Training                      w/o CoT SG           84.1 (↓ 1.8)        65.0 (↓ 5.3)
+      TableCoT                                          48.8
+       Binder                                           61.9
+                                Codex
+     ReAcTable                                          65.8         Table 3: Ablation results of GPT-3.5-Turbo-based Pro-
+        Dater                                           65.9         gramTab with and without data redefinition and CoT
+         E5                     GPT-4                   65.5
+     ReAcTable                                          52.5         SQL generation.
+      TableCoT                                          52.4
+       Binder                                           55.4
+        Dater                                           52.8
+        Alter               GPT-3.5-Turbo               67.4          Methods                Backbone           TabFact   WikiTQ
+     TabSQLify                                          64.7
+      NormTab                                           61.2          Binder                   Codex               -       29.6
+      H-STAR                                            69.6          Chain-of-Table   GPT-3.5-Turbo-16k-0613      -       44.8
+ ProgramTab (Ours)                                      70.3
+       Binder                                           50.5          Binder                                      -         0.0
+        Dater                                           43.5          Dater                                       -        34.6
+   Chain-of-Table        Llama3.1-70B-Instruct          62.2
+                                                                      TableCoT             GPT-3.5-Turbo         55.5      35.1
+     TabSQLify                                          55.8
+ ProgramTab (Ours)                                      75.5          TabSQLify                                  72.8      52.3
+       Binder                                           58.8          ProgramTab                                 86.6      68.0
+        Dater                                           58.3
+   Chain-of-Table            GPT-4o-mini                55.6
+     TabSQLify                                          57.0         Table 4: Performance of ProgramTab and strong base-
+      H-STAR                                            74.9         lines on large tables from TabFact and WikiTQ.
+ ProgramTab (Ours)                                      76.0
+
+
+Table 2: Performance of ProgramTab compared to the
+baselines on WikiTQ test set.                                        with performance on the full TabFact dataset. It
+                                                                     could be clarified that the row retrieval and column
+                                                                     extraction procedures in our framework are effec-
+5.2   Performance Analysis under Large Tables
+                                                                     tive in providing the relevant rows as the context,
+As described in Section 1, Chen (2023) and Ye                        which is beneficial for SQL generation to extract
+et al. (2023) have presented that LLMs suffer from                   the final information from the large tables.
+significant performance degeneration when deal-
+ing with large tables. To evaluate the effectiveness
+of ProgramTab, we extract the large tables from                      5.3   Robustness Analysis
+WikiTQ and TabFact datasets. Specifically, we de-
+fine the large tables for WikiTQ when the token                      Following Nahid and Rafiei (2024b), we verify the
+counts are larger than 4000 because 4000 tokens are                  robustness of ProgramTab based on the different
+the maximum token limitation for GPT-3.5-Turbo.                      cutoff thresholds. Specifically, the cutoff thresholds
+Besides, We follow Nahid and Rafiei (2024b) to                       are established to discard tabular tokens exceeding
+choose 1200 tokens for TabFact because the ta-                       these limits. For example, if the original table has
+bles almost contain few data. We then compare                        800 tokens and the maximum threshold is set to
+ProgramTab with Binder, Dater, Chain-of-Table,                       600, it means that 200 tokens of the original ta-
+TableCoT, and TabSQLify. As shown in Table 4,                        ble are truncated, and the percentage is 200/800 =
+we observe that all strong baselines suffer from a                   25.0%. In our experiment, we set the cutoff thresh-
+significant decline in performance on two datasets.                  old at 2000 and 600 for WikiTQ and TabFact re-
+For example, Binder with Codex merely achieves                       spectively. Table 5 shows four categories based on
+29.6% accuracy on the WikiTQ dataset and even                        the above thresholds and presents that ProgramTab
+can’t be applied when utilizing GPT-3.5-Turbo as                     with GPT-3.5-Turbo outperforms TabSQLify ex-
+the backbone. Besides, TabSQLify obtains subop-                      cept on the 25%-50% cutoff on WikiTQ. The re-
+timal performance thanks to its effective extraction                 sults further demonstrate that the ProgramTab can
+of columns and rows employing the text-to-SQL                        extract the relevant information under limited token
+method. In contrast, ProgramTab significantly out-                   boundary conditions and is not sensitive to input
+performs all baselines and even improves compared                    length limitations for LLMs.
+
+                                                                 7
+                                                                                      TabFact                      WikiTQ
+                                            Cut-off(%)
+ Methods          Datasets
+                                0-10%    10-25% 25-50%              50%+                                                     Missing
+                                                                                                                    4% 12%
+                                                                                                                             Columns Error
+ TabSQLify                       64.6         60.6    66.3          56.2                     16%                             SQL Error
+                  WikiTQ                                                             31%
+ ProgramTab                      70.8         62.4    62.6          68.0                                      32%
+                                                                                               31%                           Code Error
+ TabSQLify                       79.1         80.8    70.0          72.8              22%                              52%
+                  TabFact                                                                                                    Reasoning
+ ProgramTab                      89.0         86.5    77.5          86.4
+                                                                                                                             Error
+
+
+Table 5: Performance of ProgramTab on the different                            Figure 7: Statistic of different error types on TabFact
+cutoff thresholds categories.                                                  and WikiTQ datasets.
+                                                                                           Missing Columns Error
+
+
+ Methods                # of samples / step          Total # of samples
+ Binder                      Neural SQL: 50                   50
+                                                                               cantly lower latency. Consequently, ProgramTab
+                       Decompose Table: 40
+                                                                               efficiently reduces computation time and resource
+ Dater
+                        Generate Cloze: 20
+                                                             100
+                                                                               costs and performs better.
+                        Generate SQL: 20
+                           Query: 20
+                                                                               5.5    Error Analysis
+                        Dynamic Plan ≤ 5
+ Chain-of-Table         Generate Args ≤ 19                   ≤ 25              To systemically analyze the shortcomings of pro-
+                            Query: 1                                           gramTab with GPT-3.5-Turbo, we select two test
+ TabSQLify
+                        Decompose Table: 1
+                                                              2                sets (i.e., TabFact, and WikiTQ), and randomly
+                            Query: 1
+                                                                               choose 100 error samples from each dataset. Then,
+                       Column Extraction: 1
+                   Data Redefinition with Code: 1
+                                                                               we manually examine these failures and they are
+ ProgramTab                                                   4
+                         Generate SQL: 1                                       classified into four error categories: 1) Missing
+                             Query: 1
+                                                                               Columns Error: LLMs don’t select the relevant
+Table 6: The number of samples generated by different
+                                                                               columns. 2) SQL Error: the generated SQL queries
+methods adopting LLMs.                                                         incorrectly filter the relevant information or contain
+                                                                               syntax rule errors. 3) Code Error: the generated
+                                                                               Python codes fail to unify the format and type of
+5.4      Efficiency Analysis                                                   data, or introduce irrelevant information. 4) Rea-
+Following Wang et al. (2024), we analyze the ef-                               soning Error: LLMs fail to generate the correct
+ficiency of ProgramTab from two aspects. (1)                                   answers given the extracted relevant information.
+We evaluate the number of samples generated by                                 It is worth noting that we additionally verify the
+LLMs. For each reasoning step, compared to the                                 performance of row retrieval in Appendix A.4. As
+approaches that apply the self-consistency (Binder                             shown in Figure 7, we can observe that the missing
+and Dater) strategy to generate multiple samples or                            column and reasoning errors respectively account
+adopt the iterative sample creation process (Chain-                            for a small portion of TabFact and WikiTQ. The
+of-Table), ProgramTab adopts a greedy search strat-                            main source of errors focuses on the code and SQL
+egy to produce a single response. Specifically, Ta-                            errors, especially on the WikiTQ. We replaced GPT-
+ble 6 shows the number of samples generated by                                 3.5-Turbo with GPT-4o-mini for code and SQL
+LLMs for a single question in different methods on                             generation, and found that GPT-4o-mini effectively
+the WikiTQ dataset. We can find that LLMs are                                  avoids the errors encountered with GPT-3.5-Tubo.
+required to generate multiple samples for Binder                               The performance of these two LLMs in Table 1
+and Dater, while Chain-of-Table adopts a more                                  and 2 can also be verified. Consequently, enhanc-
+efficient approach to reduce the number of sam-                                ing the capacity of code generation is effective in
+ples. TabSQLify achieves the minimum number                                    improving the performance further.
+of samples. Our approach adopts a greedy search
+                                                                               6     Conclusion
+strategy to obtain one response for each step, for a
+total of only four samples. (2) We also validated                              In this paper, we illustrate the limitations of cur-
+the end-to-end performance of ProgramTab on the                                rent table-based reasoning with LLMs approaches,
+entire test set. For each sample, ProgramTab re-                               including suffering from significant performance
+quires an average time of 4 seconds to generate                                degradation when faced with large tables, and
+the final answer. In comparison, Dater requires                                the inconsistent table data structure increases the
+generating 100 samples, with an average time of                                difficulty of SQL generation. Consequently, we
+over 10 seconds. Clearly, our method has signifi-                              propose the ProgramTab framework, which suffi-
+
+                                                                           8
+ciently implements the strong in-context learning              and natural language generation. In Proceedings
+ability of LLMs to perform tabular data preprocess-            of the 60th Annual Meeting of the Association
+                                                               for Computational Linguistics (Volume 1: Long
+ing with Python code and key information extrac-
+                                                               Papers), pages 1094–1110. Association for Compu-
+tion with SQL generation. It achieves the best per-            tational Linguistics.
+formance compared with the baselines and is not
+limited by the input length of table data. Hoping            Zhoujun Cheng, Tianbao Xie, Peng Shi, Chengzu
+                                                               Li, Rahul Nadkarni, Yushi Hu, Caiming Xiong,
+this flexible table-based reasoning framework can              Dragomir Radev, Mari Ostendorf, Luke Zettlemoyer,
+shed new light on the understanding of prompting               Noah A. Smith, and Tao Yu. 2023. Binding language
+LLMs for table understanding.                                  models in symbolic languages. In International
+                                                               Conference on Learning Representations (ICLR).
+7   Limitations                                              Minseok Cho, Gyeongbok Lee, and Seung won
+                                                               Hwang. 2019. Explanatory and actionable debug-
+In this section, we present several of the limitations
+                                                               ging for machine learning: A tableqa demonstra-
+of our approach - ProgramTab. Firstly, the data                tion. In Proceedings of the 42nd International ACM
+redefinition with code can preprocess the table data           SIGIR Conference on Research and Development in
+well, but more preprocessing for more complex                  Information Retrieval, page 1333–1336. ACM.
+table structures should be explored further. What’s          Jacob Devlin, Ming-Wei Chang, Kenton Lee, and
+more, how to perform row retrieval more efficiently             Kristina Toutanova. 2019. BERT: Pre-training of
+from tables with large amounts of rows is another               deep bidirectional transformers for language under-
+optimization direction.                                         standing. In Proceedings of the 2019 Conference
+                                                                of the North American Chapter of the Association
+                                                                for Computational Linguistics: Human Language
+                                                                Technologies, Volume 1 (Long and Short Papers),
+References                                                      pages 4171–4186. Association for Computational
+Rami Aly, Zhijiang Guo, Michael Schlichtkrull, James            Linguistics.
+  Thorne, Andreas Vlachos, Christos Christodoulopou-         Yao Fu, Hao Peng, Ashish Sabharwal, Peter Clark, and
+  los, Oana Cocarascu, and Arpit Mittal. 2021. Fever-          Tushar Khot. 2023. Complexity-based prompting for
+  ous: Fact extraction and verification over un-               multi-step reasoning. In Advances in International
+  structured and structured information. Preprint              Conference on Learning Representations.
+  arXiv:2106.05707.
+                                                             Luyu Gao, Aman Madaan, Shuyan Zhou, Uri Alon,
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie                  Pengfei Liu, Yiming Yang, Jamie Callan, and Gra-
+  Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind           ham Neubig. 2023. Pal: Program-aided language
+  Neelakantan, Pranav Shyam, Girish Sastry, Amanda             models. In In International Conference on Machine
+  Askell, and et al. 2020. Language models are few-            Learning, pages 10764–10799.
+  shot learners. In Advances in neural information
+  processing systems, pages 33:1877–1901.                    Zihui Gu, Ju Fan, Nan Tang, Preslav Nakov, Xi-
+                                                               aoman Zhao, and Xiaoyong Du. 2022. PASTA:
+Wenhu Chen. 2023. Large language models are few(1)-            Table-operations aware fact verification via sentence-
+  shot table reasoners. In Findings of the Association         table cloze pre-training. In Proceedings of the
+  for Computational Linguistics: EACL 2023, pages              2022 Conference on Empirical Methods in Natural
+ 1120–1130. Association for Computational Linguis-             Language Processing, pages 4971–4983. Association
+  tics.                                                        for Computational Linguistics.
+Wenhu Chen, Xueguang Ma, Xinyi Wang, and                     Pengcheng He, Jianfeng Gao, and Weizhu Chen. 2021.
+ William W Cohen. 2022. Program of thoughts                    DeBERTav3: Improving deBERTa using ELECTRA-
+ prompting: Disentangling computation from rea-                style pre-training with gradient-disentangled embed-
+ soning for numerical reasoning tasks. Preprint                ding sharing. Preprint arXiv:2111.09543.
+ arXiv:2211.12588.
+                                                             Jonathan Herzig, Pawel Krzysztof Nowak, Thomas
+Wenhu Chen, Hongmin Wang, Jianshu Chen, Yunkai                 Müller, Francesco Piccinno, and Julian Eisen-
+ Zhang, Hong Wang, Shiyang Li, Xiyou Zhou,                     schlos. 2020.    TaPas: Weakly supervised ta-
+ and William Yang Wang. 2020.         Tabfact: A               ble parsing via pre-training. In Proceedings of
+ large-scale dataset for table-based fact verifica-            the 58th Annual Meeting of the Association for
+ tion. In International Conference on Learning                 Computational Linguistics, pages 4320–4333. Asso-
+ Representations (ICLR).                                       ciation for Computational Linguistics.
+Zhoujun Cheng, Haoyu Dong, Zhiruo Wang, Ran                  Jordan Hoffmann, Sebastian Borgeaud, Arthur Men-
+  Jia, Jiaqi Guo, Yan Gao, Shi Han, Jian-Guang                  sch, Elena Buchatskaya, Trevor Cai, Eliza Ruther-
+  Lou, and Dongmei Zhang. 2022. HiTab: A                        ford, Diego De, Las Casas, Lisa Hendricks, Johannes
+  hierarchical table dataset for question answering            Welbl, Aidan Clark, Tom Hennigan, Eric Noland,
+
+
+                                                         9
+  Katie Millican, GeorgeVanDen Driessche, Bogdan                 Abhyankar Nikhil, Gupta Vivek, Roth Dan, and
+  Damoc, Aurelia Guy, Simon Osindero, Karen Si-                    Reddy Chandan K. 2024. H-star: Llm-driven hy-
+  monyan, Erich Elsen, Jack Rae, Oriol Vinyals, and                brid sql-text adaptive reasoning on tables. Preprint
+  Laurent Sifre. 2022. Training compute-optimal large              arXiv:2407.05952.
+  language models. Preprint arXiv:2203.15556.
+                                                                 OpenAI. 2022. Gpt-3.5-turbo. Technical Report.
+Zhengbao Jiang, Yi Mao, Pengcheng He, Graham Neu-
+                                                                 OpenAI. 2023. Gpt-4. Technical Report.
+  big, and Weizhu Chen. 2022. OmniTab: Pretraining
+  with natural and synthetic data for few-shot table-            Pasupat Panupong and Liang Percy. 2015. Com-
+  based question answering. In Proceedings of the                  positional semantic parsing on semi-structured ta-
+  2022 Conference of the North American Chapter                    bles. In Proceedings of the 53rd Annual Meeting of
+  of the Association for Computational Linguistics:                the Association for Computational Linguistics and
+  Human Language Technologies, pages 932–942. As-                  the 7th International Joint Conference on Natural
+  sociation for Computational Linguistics.                         Language Processing (Volume 1: Long Papers),
+                                                                   pages 1470–1480. Association for Computational
+Mike Lewis, Yinhan Liu, Naman Goyal, Marjan                        Linguistics.
+  Ghazvininejad, Abdelrahman Mohamed, Omer Levy,
+  Veselin Stoyanov, and Luke Zettlemoyer. 2020.                  Sohan Patnaik, Heril Changwal, Milan Aggarwal,
+  BART: Denoising sequence-to-sequence pre-training                Sumit Bhatia, Yaman Kumar, and Balaji Krishna-
+  for natural language generation, translation, and                murthy. 2024. Cabinet: Content relevance-based
+  comprehension. In Proceedings of the 58th Annual                 noise reduction for table question answering. In
+  Meeting of the Association for Computational                     The Twelfth International Conference on Learning
+  Linguistics, pages 7871–7880. Association for Com-               Representations.
+  putational Linguistics.
+                                                                 Nitarshan Rajkumar, Raymond Li, and Dzmitry
+Zehan Li, Xin Zhang, Yanzhao Zhang, Dingkun Long,                  Bahdanau. 2022. Evaluating the text-to-sql ca-
+  Pengjun Xie, and Meishan Zhang. 2023. Towards                    pabilities of large language models.  Preprint
+  general text embeddings with multi-stage contrastive             arXiv:2204.00498.
+  learning. Preprint arXiv:2308.03281.                           Chang-Yu Tai, Ziru Chen, Tianshu Zhang, Xiang Deng,
+                                                                   and Huan Sun. 2023. Exploring chain of thought
+Weizhe Lin, Rexhina Blloshmi, Bill Byrne, Adria                    style prompting for text-to-SQL. In Proceedings
+ de Gispert, and Gonzalo Iglesias. 2023. An inner                  of the 2023 Conference on Empirical Methods in
+ table retriever for robust table question answering.              Natural Language Processing, pages 5376–5393. As-
+ In Proceedings of the 61st Annual Meeting of the                  sociation for Computational Linguistics.
+ Association for Computational Linguistics (Volume
+ 1: Long Papers), pages 9909–9926. Association for               Touvron, Hugo, Lavril, Thibaut, Izacard, Gautier, Mar-
+ Computational Linguistics.                                        tinet, Xavier, Lachaux, Marie-Anne, Lacroix, Tim-
+                                                                   oth’ee, Rozi‘ere, Baptiste, Goyal, Naman, Hambro,
+Qian Liu, Bei Chen, Jiaqi Guo, Morteza Ziyadi, Zeqi                Eric, Azhar, Faisal, Rodriguez, Aurelien, Joulin,
+  Lin, Weizhu Chen, and Jian-Guang Lou. 2022.                      Armand, Grave, Edouard, Lample, and Guillaume.
+  Tapex: Table pre-training via learning a neural sql ex-          2023. Llama: Open and efficient foundation lan-
+  ecutor. In In International Conference on Learning               guage models. Preprint arXiv:2302.13971.
+  Representations.
+                                                                 Zilong Wang, Hao Zhang, Chun-Liang Li, Julian Mar-
+Md Mahadi Hasan Nahid and Davood Rafiei. 2024a.                     tin Eisenschlos, Vincent Perot, Zifeng Wang, Lesly
+ NormTab: Improving symbolic reasoning in LLMs                      Miculicich, Yasuhisa Fujii, Jingbo Shang, Chen-Yu
+ through tabular data normalization. In Findings                    Lee, and Tomas Pfister. 2024. Chain-of-table: Evolv-
+ of the Association for Computational Linguistics:                  ing tables in the reasoning chain for table under-
+ EMNLP 2024, pages 3569–3585. Association for                       standing. In International Conference on Learning
+ Computational Linguistics.                                         Representations (ICLR).
+                                                                 Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten
+Md Mahadi Hasan Nahid and Davood Rafiei. 2024b.                     Bosma, Brian Ichter, Fei Xia, Ed Chi, Quoc Le,
+ TabSQLify: Enhancing reasoning capabilities of                     and Denny Zhou. 2023. Chain-of-thought prompt-
+ LLMs through table decomposition. In 2024 Annual                   ing elicits reasoning in large language models. In
+ Conference of the North American Chapter of the                    Proceedings of the 36th International Conference
+ Association for Computational Linguistics.                         on Neural Information Processing Systems, pages
+                                                                    24824–24837.
+Ansong Ni, Srini Iyer, Dragomir Radev, Ves Stoyanov,
+  Wen tau Yih, Sida I Wang, and Xi Victoria Lin.                 Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+  2023. Lever: Learning to verify language-to-code                 Shafran, Karthik Narasimhan, and Yuan Cao. 2023.
+  generation with execution. In Proceedings of the                 ReAct: Synergizing reasoning and acting in language
+  40th International Conference on Machine Learning                models. In International Conference on Learning
+  (ICML’23).                                                       Representations (ICLR).
+
+
+                                                            10
+Yunhu Ye, Binyuan Hui, Min Yang, Binhua Li,
+  Fei Huang, and Yongbin Li. 2023. Large lan-
+  guage models are versatile decomposers: Decom-
+  pose evidence and questions for table-based reason-
+  ing. In Proceedings of the 46th International ACM
+  SIGIR Conference on Research and Development in
+  Information Retrieval, pages 174–184.
+Tao Yu, Chien-Sheng Wu, Xi Victoria Lin, bailin
+  wang, Yi Chern Tan, Xinyi Yang, Dragomir Radev,
+  richard socher, and Caiming Xiong. 2021. Gra{pp}a:
+  Grammar-augmented pre-training for table seman-
+  tic parsing. In International Conference on Learning
+  Representations.
+Han Zhang, Yuheng Ma, and Hanfang Yang. 2024a.
+  Alter: Augmentation for large-table-based reasoning.
+  Preprint arXiv:2407.03061.
+Hongzhi Zhang, Yingyao Wang, Sirui Wang, Xuezhi
+  Cao, Fuzheng Zhang, and Zhongyuan Wang. 2020.
+  Table fact verification with structure-aware trans-
+  former. In Proceedings of the 2020 Conference on
+  Empirical Methods in Natural Language Processing
+  (EMNLP), pages 1624–1629. Association for Com-
+  putational Linguistics.
+
+Yunjia Zhang, Jordan Henkel, Avrilia Floratou, and
+  Joyce Cahoon. 2024b. Reactable: Enhancing react
+  for table question answering. In Proceedings of the
+  VLDB Endowment 17(8), pages 1981–1994.
+
+Zhehao Zhang, Yan Gao, and Jian-Guang Lou. 2024c.
+  e5 : Zero-shot hierarchical table analysis using aug-
+  mented LLMs via explain, extract, execute, ex-
+  hibit and extrapolate. In Proceedings of the 2024
+  Conference of the North American Chapter of the
+  Association for Computational Linguistics: Human
+  Language Technologies (Volume 1: Long Papers),
+  pages 1244–1258. Association for Computational
+  Linguistics.
+Zhuosheng Zhang, Aston Zhang, Mu Li, and Alex
+  Smola. 2023.      Automatic chain of thought
+  prompting in large language models.           In
+  Advances in International Conference on Learning
+  Representations.
+Fan Zhou, Mengkang Hu, Haoyu Dong, Zhoujun Cheng,
+  Fan Cheng, Shi Han, and Dongmei Zhang. 2022.
+  TaCube: Pre-computing data cubes for answering
+  numerical-reasoning questions over tabular data. In
+  Proceedings of the 2022 Conference on Empirical
+  Methods in Natural Language Processing, pages
+  2278–2291. Association for Computational Linguis-
+  tics.
+
+
+
+
+                                                          11
+A     Appendix                                                                                          200
+                                                                                                               183
+                                                                                                        180
+
+
+
+
+                                                                        Average Number of Table Cells
+A.1    Prompts for SQL Generation without                                                               160
+       CoT                                                                                              140
+                                                                                                        120
+ ### Task description: You are a data scientist specializing                                                                              101
+ in text-to-SQL tasks. You should write a valid SQLite to                                               100
+ solve the following question based on the database scheme and
+ hint. Please add the `` for every column you select in the
+                                                                                                         80
+ SQL. Note: Just output the sql. Here are some examples to                                               60
+ help you understand this task.                                                                                                                  45
+                                                                                                         40            32
+ ### Example1:
+                                                                                                         20                                           15
+ Database title: The table about 2000 Olympic Games.                                                                          4
+ Database scheme:\nCREATE TABLE test(\n\"race_name\" TEXT;
+ VALUES: [vuelta a guatemala, vuelta a
+                                                                                                          0
+ colombia],\n\"winner_country\" TEXT; VALUES: [usa, aus])\n\n                                                        WikiTQ                   TabFact
+ ### Question:\nwho won more races, the usa or australia?\n\n
+ ### SQL: SELECT `winner_country`, won_count FROM (SELECT                                                      Original           TabSQLify     ProgramTab
+ `winner_country`, COUNT(`race_name`) AS won_count FROM test
+ WHERE `winner_country` in ('usa', 'aus')) ORDER BY won_count
+ DESC LIMIT 1\n\n
+                                                                       Figure 9: Comparison of the average number of table
+                                                                       cells on two datasets.
+ ### Example2:
+ Database title: The table about members of Third Incarnation
+ of Lachlan.
+ Database scheme:\nCREATE TABLE test(\n\"row_id\" INTEGER;                                Methods                                    Backbone         HiTab
+ VALUES: [0, 1],\n\"member\" TEXT; VALUES: [john ryan, james
+ martin],\n\"term\" TEXT; VALUES: [1859-1864, 1864-1869])\n\n                             ReAct (Yao et al., 2023)                    GPT-4           81.87
+ ### Question:\nof the members of the third incarnation of the
+ lachlan, who served the longest?\n\n
+                                                                                          E 5 (Zhang et al., 2024c)                   GPT-4           85.08
+ ### SQL: SELECT `member` FROM test ORDER BY `term` DESC LIMIT                            ProgramTab                                GPT-4o-mini       83.57
+ 1\n\n
+
+ ### Example3:                                                         Table 7: Performance of ProgramTab on HiTab dataset.
+ Database title: The table about different season of giant
+ slalom and super g.
+ Database scheme:\nCREATE TABLE test(\n\"season\" TEXT; VALUES:
+ [1986, 1987],\n\"slalom\" TEXT; VALUES: [39,
+ 24],\n\"giant_slalom\" TEXT; VALUES: [23, 9],\n\"super_g\"            and TabFact datasets. These results also verify that
+ TEXT; VALUES: [19, 18])\n\n
+ ### Question:\nwhich super g had a slalom of less than 5 when
+                                                                       ProgramTab can perform critical information ex-
+ the giant slalom was 1?\n\n                                           traction from amounts of tabular cells, and validly
+ ### SQL: SELECT `super_g` FROM test WHERE `slalom` < 5 AND
+ `giant_slalom` = 1\n\n                                                deal with large tables.
+ ### Problem to be solved:\n
+                                                                       A.4                                Performance of Row Retrieval
+Figure 8: Prompt for LLMs to generate SQL w/o CoT.                     We evaluate the performance of row retrieval stage
+                                                                       in ProgramTab. Specifically, the average number of
+                                                                       rows per table is 26 in the WikiTQ dataset. In the
+A.2    LLM Hyper-parameters                                            above experiments, we set K to 10, which means
+For all the procedures described in Section 3, we set                  that on average, we can filter out 16 rows per table,
+the same hyper-parameters for LLMs. Specifically,                      resulting in a filtering ratio of 61.5%. Addition-
+the temperature is set to 0.6 while both top_p and                     ally, among the top 10 rows retrieved, 86% of the
+the sample number are 1.                                               samples contained the final answer.
+
+A.3    Table Size Reduction                                            A.5                                Experiments on HiTab
+We analyze the efficiency of ProgramTab in filter-                     To present the effectiveness of ProgramTab when
+ing irrelevant information and extracting the key                      applied to more complex tabular structures, we
+tabular data from tables. To accomplish this, we                       supplemented ProgramTab’s experiments on the
+count the average number of table cells that feed                      HiTab dataset, which contains hierarchical tables.
+LLMs to generate the final answers. As presented                       To achieve this, we first reconstructed the hierar-
+in Figure 9, the average number of full table cells                    chical tables by merging certain column header in-
+(original) is 183 and 101 respectively. There is                       formation using a ":" delimiter, making them more
+a significant reduction after employing the Tab-                       suitable for processing by ProgramTab. The final
+SQLify approach. Our framework ProgramTab                              experimental results are as follows: ProgramTab
+employs SQL generation procedure to effectively                        with GPT-4o-mini demonstrates promising perfor-
+filter much irrelevant information and extract the                     mance, while adopting the E 5 method to process
+most related data. It respectively reduces the aver-                   hierarchical tables yields even better performance.
+age number of table cells to 4 and 15 for WikiTQ
+
+                                                                  12
+

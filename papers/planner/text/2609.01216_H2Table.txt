@@ -1,0 +1,640 @@
+                                            H2 Table: Hierarchical Hypergraph-Enhanced Large Language Models
+                                                                for Complex Table Reasoning
+                                                             Jia Ling1 , Yangfan Wang1 , Chen Tang2 , Haoming Tan1 ,
+                                                                     Yang Yang3 , Yi Guan1 , Jingchi Jiang1,4,*
+                                            1
+                                              Harbin Institute of Technology, 2 AI Research Center, Midea Group (Shanghai) Co., Ltd.
+                                                                 3
+                                                                   Changchun University of Science and Technology
+                                                         4
+                                                           State Key Laboratory of Smart Farm Technologies and Systems
+                                                       {2022112476,yf.wang,2022111514}@stu.hit.edu.cn
+                                                       travistang@foxmail.com, yangyang_hit_wi@163.com
+                                                                   {guanyi,jiangjingchi}@hit.edu.cn
+
+                                                                 Abstract
+arXiv:2609.01216v2 [cs.AI] 9 Oct 2026
+
+
+
+
+                                             Tables are ubiquitous across diverse domains,
+                                             yet reasoning over them remains a signiﬁcant
+                                             challenge for modern large language models
+                                             (LLMs). Current approaches typically lin-
+                                             earize tables into sequences, inherently over-
+                                             looking their intrinsic two-dimensional and
+                                             hierarchical structure. To address this, we
+                                             propose H2 Table (Hierarchical Hypergraph-
+                                             Enhanced Table Reasoning), a novel frame-
+                                             work that represents complex tables as hi-
+                                             erarchical nested hypergraphs. To process
+                                             this representation, we design a tailored hy-
+                                             pergraph encoder to facilitate message pass-
+                                             ing between hyperedges (headers) and nodes
+                                             (cells), thereby perceiving the semantic en-
+                                             tailment relationships between them within
+                                             complex tables. Furthermore, we introduce
+                                             a set of learnable query vectors acting as       Figure 1: Comparison of modeling approaches and cor-
+                                             a lightweight bridge to extract representative   responding message passing mechanisms for complex
+                                             structural embeddings from the encoder into      tables between the proposed H2 Table and other leading
+                                             the LLM. Experimental results demonstrate        baselines.
+                                             that our approach effectively handles complex
+                                             table question answering tasks with hierarchi-
+                                             cal nested headers. Notably, on the HiTab        data, existing approaches have evolved signiﬁ-
+                                             dataset, H2 Table achieves an average improve-   cantly. Recently, the paradigm has shifted toward
+                                             ment of 22.88% over state-of-the-art baselines   LLM-based methods. These approaches primarily
+                                             on highly complex tables with a nesting depth    rely on 1D text-centric serialization to harness pre-
+                                             of four. Our code is available at: https:        trained knowledge, or construct massive instruc-
+                                             //github.com/lila120/h2table.                    tion datasets for full-parameter supervised ﬁne-
+                                        1    Introduction                                     tuning (SFT) (e.g., TableLlama Zhang et al., 2024,
+                                                                                              TableGPT Li et al., 2024). Furthermore, to explic-
+                                        Table understanding and reasoning are critical for    itly capture internal structural information, some
+                                        enabling diverse downstream applications, such        works represent tables as graphs. For instance,
+                                        as table question answering (TableQA) (Pasupat        HeGTa (Jin et al., 2025) models tables as heteroge-
+                                        and Liang, 2015) and Text-to-SQL (Yu et al.,          neous graphs, while HYTREL (Chen et al., 2023)
+                                        2018), to process complex, real-world data. Con-      utilizes hypergraphs. Building upon this structural
+                                        sequently, leveraging the powerful semantic syn-      perspective, TAMO (Li et al., 2026) integrates the
+                                        thesis and reasoning capabilities of large language   hypergraph encoder from HYTREL with LLMs,
+                                        models (LLMs) has become essential in this do-        achieving the current state-of-the-art performance.
+                                        main. Driven by the need to decode structured            However, existing methods exhibit several criti-
+                                            *
+                                                Corresponding author.                         cal limitations. LLM paradigms relying on 1D se-
+rialization and full-parameter ﬁne-tuning demand        bust structural awareness. Remarkably, rather than
+massive amounts of high-quality data and incur          relying on costly full-parameter tuning, H2 Table
+prohibitive computational costs. Alternatively,         applies lightweight LoRA (Hu et al., 2022) to the
+representing tables as standard graphs fails to cap-    base LLM, achieving performance comparable or
+ture their intrinsic structural features. Since edges   even superior to full ﬁne-tuning while incurring
+in standard graphs are strictly pairwise, they in-      minimal computational overhead.
+herently contradict the one-to-many relationships          To demonstrate that our structural modeling
+between headers and cells. Existing hypergraph-         yields superior reasoning and generalization capa-
+based methods like HYTREL overcome this bot-            bilities, we conduct extensive experiments on mul-
+tleneck but are restricted to simple ﬂat tables. Fur-   tiple complex table benchmarks. Our main contri-
+thermore, lacking LLM integration, they are inca-       butions are summarized as follows:
+pable of handling generative tasks like TableQA.
+While TAMO addresses this by coupling a hyper-             • Hierarchical Nested Hypergraph Model-
+graph encoder with an LLM, its encoding mech-                ing for Complex Tables: We propose a hi-
+anism fundamentally overlooks the nested hierar-             erarchical nested hypergraph to preserve the
+chy of complex headers. As illustrated in Fig-               intrinsic semantic entailment in multi-level
+ures 1(a) and (c), when processing complex ta-               tables. Furthermore, we develop a tailored,
+bles with hierarchical headers, TAMO ﬂattens all             hierarchy-aware encoder that facilitates dy-
+hyperedges into a single level by directly con-              namic message passing to ensure comprehen-
+necting high-level headers to their associated cell          sive cross-level interactions.
+nodes. This approach neglects the hierarchical re-
+lationships among hyperedges, leading to a loss            • Learnable Query Based Structural Align-
+of multi-level dependencies and table semantic im-           ment: We introduce a query-based Soft
+plications. Consequently, the subsequent message             Structure Prompt mechanism powered by
+passing occurs solely between these ﬂattened hy-             a compact set of learnable query vectors.
+peredges and cell nodes, ignoring the essential in-          Through end-to-end ﬁne-tuning, this mech-
+teractions across different header levels.                   anism progressively learns to extract task-
+   To address the aforementioned challenges,                 beneﬁcial structural features from tables,
+we propose H2 Table (Hierarchical Hypergraph-                thereby boosting reasoning capabilities for
+Enhanced Table Reasoning). We ﬁrst introduce a               question answering.
+tailored transformation that maps complex tables
+into hierarchical nested hypergraphs. Rather than          • Comprehensive Superiority and Struc-
+ﬂattening these structures, our method preserves             tural Robustness: Empirical results show
+intrinsic tabular semantics, particularly the se-            that H2 Table consistently outperforms com-
+mantic entailment ﬂowing from multi-level head-              peting baselines across multiple datasets.
+ers down to speciﬁc cells, by employing higher-              Crucially, it demonstrates exceptional robust-
+level hyperedges that connect parent headers ex-             ness against increasing structural complexity,
+clusively to their direct sub-headers. To encode             achieving an average relative improvement
+these semantic dependencies, we develop a hy-                of 22.88% on deep hierarchical tables and
+pergraph encoder equipped with a four-stage hi-              enabling ﬁne-tuned medium-sized models to
+erarchical interaction module (V2E, C2P, P2C,                eclipse hundred-billion parameter models.
+and E2V). Beyond conventional vertex-hyperedge
+interactions, we speciﬁcally introduce the C2P          2 Related Work
+and P2C stages to facilitate information exchange
+                                                        2.1 LLM-based Table Reasoning
+across different hyperedge levels, as depicted in
+Figures 1(d). Subsequently, we introduce a com-         Currently, ﬂattening two-dimensional tables into
+pact set of learnable query vectors to extract rep-     one-dimensional sequences is the prevailing ap-
+resentative tabular structures from the encoder,        proach for LLMs to process tabular data (Lu et al.,
+optimized continuously through end-to-end ﬁne-          2025). To enhance the comprehension capabili-
+tuning. These vectors act as a Soft Structure           ties of LLMs on serialized tables, previous studies
+Prompt (Lester et al., 2021) prepended to the se-       have typically employed instruction tuning (e.g.,
+rialized text, naturally infusing the LLM with ro-      TableGPT, Li et al., 2024; TableLlama, Zhang
+et al., 2024) or prompt engineering (e.g., Chain-of-    this constitutes a challenge of cross-modal fea-
+Table, Wang et al., 2024) for optimization. How-        ture alignment. Existing strategies generally fall
+ever, these optimization strategies exhibit distinct    into two paradigms. The ﬁrst involves projection-
+limitations: instruction tuning demands substan-        based mapping, taking cues from large multimodal
+tial amounts of data and incurs prohibitive compu-      models (e.g., LLaVA, Liu et al., 2023a). For in-
+tational costs while prompt engineering is heavily      stance, GraphGPT (Tang et al., 2024) employs
+constrained by the context window limits. More          an MLP to project node and subgraph embed-
+importantly, forcibly ﬂattening a table inherently      dings, extracted by a pre-trained GNN, directly
+disrupts its intrinsic topological structure, a crit-   into the continuous input space of the LLM. Simi-
+ical ﬂaw that becomes especially evident when           larly, both HeGTa (utilizing heterogeneous graphs)
+dealing with complex or nested tables.                  and TAMO (leveraging hypergraphs) adopt analo-
+   To mitigate the structural information loss          gous linear projectors for feature transformation.
+caused by serialization, several studies (e.g.,         Alternatively, the second paradigm focuses on
+TabPrompt, Jin et al., 2023; HeGTa, Jin et al.,         serialization-based alignment. InstructGLM (Ye
+2025) have modeled tables as graphs to capture          et al., 2024) heuristically ﬂattens the graph’s topo-
+their intrinsic two-dimensional and higher-order        logical structure into an extended text sequence, fa-
+features. However, since each edge in a conven-         cilitating subsequent ﬁne-tuning strictly within the
+tional graph typically denotes only pairwise re-        textual semantic domain.
+lationships, it struggles to accurately character-         However, simple linear projectors often struggle
+ize the inherent one-to-many higher-order corre-        to efﬁciently compress highly complex structural
+lations between a row (or column) header and            information, while serialization inevitably leads to
+its constituent cells. Consequently, HYTREL             excessively long contexts and topological loss. In
+(Chen et al., 2023) represents tables as hyper-         contrast to these conventional methods, we draw
+graphs, where a single hyperedge can connect mul-       inspiration from the architecture of Q-Former (Li
+tiple nodes. Although effective, it is restricted       et al., 2023). Speciﬁcally, we introduce learn-
+to simple ﬂat tables and lacks integration with         able query vectors to perform cross-attention with
+LLMs, making it incapable of handling genera-           graph embeddings, thereby actively extracting and
+tive downstream tasks such as TableQA. Build-           compressing global topological and semantic fea-
+ing upon this, TAMO (Li et al., 2026) integrates        tures via end-to-end generative ﬁne-tuning. This
+the HYTREL encoder with LLMs, treating tab-             design not only alleviates the computational over-
+ular data as an independent continuous modal-           head but also signiﬁcantly bolsters the model’s
+ity. While effective for ﬂat tables, TAMO’s en-         feature aggregation capacity when reasoning over
+coding mechanism fundamentally ﬂattens com-             complex nested tables.
+plex nested headers by directly grouping all asso-
+ciated cells under a single, coarse-grained hyper-      3 Method
+edge. This design inherently overlooks the multi-
+                                                        3.1 Modeling Complex Tables as
+level dependencies and internal topological struc-
+                                                            Hierarchical Nested Hypergraphs
+tures among the headers themselves. To bridge
+the gap, H2 Table advances hypergraph-based table       To effectively capture the structural and semantic
+reasoning by explicitly modeling these hierarchi-       dependencies within complex tables, we model the
+cal relationships. By designing nested hyperedges       table as a Hierarchical Nested Hypergraph H =
+and a tailored multi-stage message-passing mecha-       (V, E, R, I).
+nism, our framework systematically captures ﬁne-           Speciﬁcally, the node set V = {v1 , v2 , . . . , vn }
+grained structural semantics while maintaining ex-      represents all data cells. The hyperedge set E =
+ceptional parameter efﬁciency.                          {e1 , e2 , . . . , em } comprises all table headers along
+                                                        with a virtual global root representing the entire
+2.2   Cross-Modal Alignment between Graph               table. This set is strictly partitioned into disjoint
+      Structures and Semantic Spaces                    leaf headers Eleaf and high-level headers Ehigh
+The aforementioned graph-based tabular reason-          (which contains the root).
+ing methods inherently rely on fusing the struc-           The hierarchical relation R ⊆ E × E de-
+tural topology of graphs with the semantic com-         ﬁnes the structural dependency among hyperedges
+prehension capabilities of LLMs. Fundamentally,         across different header levels, where a directed
+Figure 2: The overall architecture of the proposed framework. First, a complex hierarchical table is modeled
+as our designed hierarchical nested hypergraph, which is then processed by a hierarchical encoder featuring a
+four-stage message passing mechanism to derive the corresponding structural embeddings. Subsequently, a set
+of self-attended query vectors interacts with these structural embeddings via cross-attention. This yields a ﬁxed
+number of structure-aware embeddings, which are ﬁnally combined with the serialized text and fed into the LLM
+to facilitate reasoning and generate the correct answer.
+
+
+edge (ei , ej ) indicates that ei is the parent of ej .   of its children’s scopes:
+For instance, as shown in Figure 2, in the complex                                       ∪
+table, the high-level header "First Quarter Sales"                S(eparent ) =                          S(echild )
+acts as the parent of the leaf header "March". The                                (eparent ,echild )∈R
+incidence relation I ⊆ V × Eleaf links each data
+cell v to its corresponding lowest-level leaf head-       Consequently, this formulation ensures that all par-
+ers. For instance, as illustrated in Figure 2, the cell   ent hyperedges inherently perceive the scopes of
+node "20" is connected to both the column header          their descending sub-headers all the way down to
+hyperedge "February" and the row header hyper-            the individual cell nodes.
+edge "watch".
+                                                          3.2 Hierarchy-Aware Hypergraph Encoder
+                                                          Tailored to the proposed hierarchical nested hy-
+                                                          pergraph, we design a hierarchy-aware hyper-
+   Based on these relations, the hypergraph estab-        graph encoder to facilitate comprehensive infor-
+lishes a recursively nested scope. For any leaf           mation propagation, encompassing both the inter-
+header echild ∈ Eleaf , its base scope is determined      actions between data cells and hyperedges, and
+by the incidence relation as S(echild ) = {v ∈ V |        the hierarchical message passing among hyper-
+(v, echild ) ∈ I}. Conversely, the scope of any high-     edges across different levels. Within this en-
+level header eparent ∈ Ehigh is deﬁned as the union       coder, we innovatively introduce a Hierarchical
+Hyperedge Interaction Module, which integrates a       non-trivial challenge; naively mapping extensive
+GAT into the hierarchical message-passing mech-        graph embeddings via linear projection underuti-
+anism of hypergraphs. This design facilitates          lizes structural priors and overloads the LLM’s
+directed, weighted message propagation dynam-          context. To address this, we introduce a parameter-
+ically among hyperedges, thereby enabling the          efﬁcient cross-modal alignment module to seam-
+model to autonomously learn the underlying se-         lessly bridge these distinct spaces.
+mantic correlations between table headers. As             Inspired by Q-Former (Li et al., 2023), we de-
+shown in Figure 2, once a complex table is mod-        sign a query-based mechanism for structural fea-
+eled as the hierarchical hypergraph detailed in        ture extraction and alignment. Speciﬁcally, we ini-
+Section 3.1 and initial embeddings are generated,      tialize a compact set of learnable query vectors
+these embeddings undergo iterative information         designed to distill salient global topological rep-
+interaction through this encoder. The encoder’s        resentations from the dense node and hyperedge
+single-layer forward propagation is meticulously       features yielded by the encoder. As illustrated in
+structured into four distinct stages:                  Figure 2, the alignment module is instantiated via
+                                                       a stack of Transformer decoder layers (Vaswani
+   • V2E (Vertex-to-Edge): Guided by the inci-         et al., 2017).
+     dence relation I, this stage utilizes a set at-      In each layer, the query vectors ﬁrst undergo
+     tention mechanism (Lee et al., 2019; Chen         self-attention to model their intra-query dependen-
+     et al., 2023) to aggregate data cell features     cies. During the subsequent cross-attention phase,
+     into their corresponding leaf headers, thereby    these queries attend to the comprehensive struc-
+     establishing the base representations for the     tural embeddings acting as keys and values gen-
+     lowest-level hyperedges.                          erated by the hypergraph encoder, thereby facili-
+                                                       tating deep cross-modal fusion (Li et al., 2023).
+   • C2P (Child-to-Parent): Along the directed
+                                                       Finally, the fused representations are projected
+     edges of the hierarchical relation R, a GAT
+                                                       through a feed-forward network (FFN).
+     dynamically weights and propagates infor-
+                                                          Formally, let H denote the structural graph fea-
+     mation from child headers to their parents
+                                                       tures and Q(l−1) denote the queries at layer l − 1;
+     in a bottom-up manner. This enables high-
+                                                       the core update process at the l-th layer can be ab-
+     level headers and ultimately the global root to
+                                                       stracted as:
+     capture the underlying data distribution and
+                                                                        (      (                     ))
+     structural hierarchy.
+                                                           Q(l) = FFN MCA MSA(Q(l−1) ), H, H
+   • P2C (Parent-to-Child): Operating symmet-
+     rically top-down along the reverse direction      where MSA and MCA represent multi-head self-
+     of R, this phase distributes global context.      attention and cross-attention, respectively. For
+     The GAT mechanism adaptively balances the         brevity, the standard residual connections and
+     broader semantic information passed from          layer normalization applied within each sub-
+     the parent with the preservation of the child’s   module are omitted from the notation.
+     own local features.                                  Optimized continuously through end-to-end
+                                                       ﬁne-tuning, the queries learn to extract the most
+   • E2V (Edge-to-Vertex): Finally, the hierar-        representative structural features of the table. Af-
+     chically enriched hyperedge features are re-      ter multi-layer alignment, these highly distilled
+     turned to the data cells via set attention.       query embeddings function as soft structural
+     Residual connections are applied here to mit-     prompts that are prepended to the serialized table
+     igate gradient vanishing, completing one full     text, constructing a cohesive dual-stream semantic-
+     hierarchy-aware message-passing cycle.            structural input that seamlessly guides the down-
+                                                       stream LLM’s reasoning (Liu et al., 2023b).
+3.3   Query-Based Parameter-Efﬁcient                      Irrespective of table complexity, the module
+      Feature Alignment                                condenses structural information into a ﬁxed num-
+While the hypergraph encoder captures rich topo-       ber of tokens, alleviating the sequence explo-
+logical representations, bridging the gap between      sion common in direct graph inputs and mini-
+continuous graph structural representations and        mizing the LLM’s contextual burden. Moreover,
+the semantic reasoning space of LLMs remains a         as this module manages the cross-modal trans-
+ Dataset                                     HiTab                                       TATQA
+ Depth                      I         II       III        IV       Avg.       I         II       III      Avg.
+ Llama3.1-8B             0.3143    0.3609    0.2977      0.2286   0.3004   0.1866    0.1693    0.1603    0.1721
+   +pure text (LoRA)     0.6571    0.7190    0.6458      0.5714   0.6483   0.3528    0.3964    0.3462    0.3651
+   +TAMO (LoRA)          0.7143    0.7960    0.7355      0.6286   0.7186   0.4461    0.4819    0.4295    0.4525
+   +H2 Table (LoRA)      0.6857    0.8046    0.7614      0.7143   0.7415   0.4606    0.4819    0.4359    0.4595
+ Gemma2-9B               0.6000    0.6733    0.5818      0.5143   0.5924   0.3965    0.4136    0.3974    0.4025
+  +pure text (LoRA)      0.7143    0.7946    0.7343      0.7143   0.7394   0.4781    0.5328    0.5128    0.5079
+  +TAMO (LoRA)           0.7143    0.8031    0.7540      0.5714   0.7107   0.4723    0.5311    0.4936    0.4990
+  +H2 Table (LoRA)       0.7143    0.8260    0.7552      0.7429   0.7596   0.4927    0.5354    0.5000    0.5094
+ Llama2-7B               0.2000    0.1997    0.1242      0.1429   0.1667   0.1283    0.1364    0.1410    0.1352
+   +pure text (LoRA)     0.5429    0.5649    0.4379      0.4000   0.4864   0.1953    0.2409    0.1859    0.2074
+   +TAMO (LoRA)          0.6000    0.6862    0.5461      0.4571   0.5724   0.3324    0.3575    0.3718    0.3539
+   +H2 Table (LoRA)      0.6571    0.6862    0.5720      0.5714   0.6217   0.3615    0.3549    0.3654    0.3606
+ TableLlama              0.5714    0.6933    0.5966      0.5429   0.6011   0.1574    0.1451    0.1282    0.1436
+ GPT-4o                  0.7143    0.7418    0.6913      0.6571   0.7011   0.5335    0.5337    0.5064    0.5245
+ DeepseekV3              0.6571    0.7247    0.6531      0.6286   0.6659   0.4606    0.4491    0.4551    0.4549
+
+Table 1: Performance comparison of H2 Table against baseline models on the TableQA task across different table
+nesting depths (I–IV for HiTab, and I–III for TATQA). Models without indentation (including backbone baselines
+and the bottom group) are evaluated under the zero-shot setting, while indented rows represent LoRA ﬁne-tuned
+variants. “Avg.” denotes the arithmetic mean across depths. Bold and underlined values indicate the best and
+second-best results within each model group, respectively.
+
+
+lation, it circumvents costly full-parameter ﬁne-
+tuning. By updating merely 1% of the parameters,
+this paradigm achieves performance comparable
+to full ﬁne-tuning. Consequently, it drastically re-
+duces computational costs while mitigating catas-
+trophic forgetting and preserving the LLMs inher-
+ent reasoning capabilities.
+
+4     Experiments
+4.1    Experimental setup
+                                                           Figure 3: Distribution of table nesting depth for HiTab
+Datasets. We evaluate H2 Table on several repre-           and TATQA
+sentative benchmarks featuring complex hierarchi-
+cal structures, namely HiTab (Cheng et al., 2022)
+and TATQA (Zhu et al., 2021). The primary down-
+                                                           soning tasks through extensive SFT on diverse tab-
+stream task across all selected datasets is TableQA,
+                                                           ular datasets. Additionally, we compare our ap-
+with Accuracy serving as the core evaluation met-
+                                                           proach with TAMO (Li et al., 2026), a contem-
+ric. The distribution of tables within these datasets,
+                                                           porary method that treats tables as an indepen-
+categorized by header nesting depth, is illustrated
+                                                           dent modality and has demonstrated superior per-
+in Figure 3. Notably, because the formatted
+                                                           formance over TableLlama on several benchmarks.
+TATQA dataset includes a mere 12 tables with
+                                                           To ensure a fair and direct comparison with these
+four-level headers, a quantity insufﬁcient for sta-
+                                                           representative models, we adopt Llama2-7B (Tou-
+tistical signiﬁcance, these instances were excluded
+                                                           vron et al., 2023) as our primary base model. Fur-
+from our main experimental evaluation.
+                                                           thermore, to evaluate the efﬁcacy of our method
+Baselines. We select TableLlama (Zhang et al.,             on more advanced architectures, we extend our ex-
+2024) as a primary baseline, as it achieved state-         periments to Llama3.1-8B (Grattaﬁori et al., 2024)
+of-the-art performance across numerous table rea-          and Gemma2-9B (Team et al., 2024). Our eval-
+uation also includes comparisons against several       dating that our method effectively preserves struc-
+training conﬁgurations for the base models, includ-    tural integrity and captures deep hierarchical se-
+ing zero-shot inference, and LoRA ﬁne tuning us-       mantics.
+ing pure-text representations. Detailed experimen-        Remarkably, ﬁne-tuning medium-sized models
+tal results are reported in Table 1.                   (7B–9B parameters) with H2 Table enables them
+                                                       to rival or even surpass state-of-the-art closed-
+Implementation Details For the initialization          source and massively large LLMs in complex ta-
+of our hypergraph, node embeddings are extracted       ble reasoning. On the HiTab dataset, by only up-
+from the ﬁnal layer of a pre-trained RoBERTa-          dating approximately 1% of the total parameters,
+large model (Liu et al., 2019), and the hidden size    Gemma2-9B equipped with H2 Table (0.7596) sig-
+of our hypergraph encoder is strictly set to 1024      niﬁcantly outperforms the hundred-billion param-
+to maintain dimensional consistency. For a fair        eter DeepseekV3 (0.6659), and the powerful GPT-
+comparison, both the baseline models and our pro-      4o (0.7011). These results compellingly demon-
+posed framework are ﬁne-tuned end-to-end using         strate that providing a superior structural represen-
+LoRA with a rank of 8, with binary cross-entropy       tation empowers smaller models to achieve highly
+as the loss function. More detailed hyperparam-        competitive reasoning capabilities on complex ta-
+eter settings and training conﬁgurations are pro-      bles.
+vided in Appendix A.
+                                                       4.3 Ablation Study
+4.2   Main Results
+                                                       To thoroughly investigate the individual contribu-
+Table 1 presents the performance comparison on         tions and architectural synergies of key compo-
+the HiTab and TATQA datasets. To evaluate the ca-      nents in H2 Table, we conduct an extensive abla-
+pability of handling complex tables, the results are   tion study on the HiTab dataset based on Llama3.1-
+further categorized by table nesting depth. Overall,   8B.
+our proposed H2 Table consistently outperforms all
+baseline representations across different base mod-
+els and depth levels, demonstrating its effective-
+ness in TableQA tasks especially when encounter-
+ing hierarchical complex tables .
+   When integrated with various open-source
+LLMs such as Llama3.1-8B, Gemma2-9B, and
+Llama2-7B, the H2 Table representation consis-
+tently yields the highest average accuracy within
+each base model group. For instance, ﬁne-tuning
+Gemma2-9B with H2 Table achieves an average ac-
+curacy of 0.7596 on HiTab, substantially surpass-      Figure 4: The heatmap of the ablation study. Deep
+ing both the pure text and TAMO representations.       blue hues indicate superior performance, while lighter
+This indicates that H2 Table serves as a general and   shades represent degraded capabilities.
+robust paradigm to improve the table reasoning ca-
+pabilities of LLMs.                                       As visualized in Figure 4, removing the textual
+   Aligning with our primary motivation to tackle      feature module (w/o text) causes a catastrophic
+complex tables, H2 Table exhibits remarkable su-       performance collapse (represented by the blank
+periority on tables with high nesting depths (i.e.,    row), underscoring that textual semantics remain
+Depth-3 and Depth-4). While the performance of         the foundation of table understanding. Crucially,
+traditional baseline methods drops precipitously       omitting the complete hierarchical hypergraph en-
+as structural complexity increases, H2 Table re-       coder (w/o encoder) also induces severe perfor-
+mains highly robust. On the HiTab dataset at           mance degradation, which validates that explicit
+Depth-4, Llama3.1-8B with H2 Table achieves an         structural modeling is indispensable for break-
+accuracy of 0.7143, yielding a signiﬁcant abso-        ing the table-comprehension bottleneck of plain
+lute improvement over the pure text (0.5714) and       LLMs.
+TAMO (0.6286) baselines. Similar trends are con-          Furthermore, removing the GAT-based message
+sistently observed across other base models, vali-     passing (denoted as w/o GAT, where the hierar-
+          Training Set                         HiTab                          TATQA
+          Test Set                  HiTab    TATQA      AITQA      TATQA       HiTab     AITQA
+          Llama3.1-8B              0.3245     0.1708    0.5146         -         -          -
+            +Prompt tuning         0.0322     0.0298    0.1023      0.0639    0.0463     0.0498
+            +pure text (LoRA)      0.6774     0.2548    0.8330      0.3815    0.5696     0.7540
+            +TAMO (LoRA)           0.7643     0.3156    0.8634      0.4721    0.6086     0.7974
+            +H2 Table (LoRA)       0.7713     0.3225    0.8673      0.4745    0.6313     0.8220
+
+Table 2: Performance comparison of various models on standard and cross-domain TableQA tasks. Bold and
+underlined values indicate the best and second-best performance among the ﬁne-tuned variants for each base
+model, respectively. All results are averaged over three independent training and evaluation runs.
+
+
+chical edge aggregation is replaced by a standard      structure-aware TAMO improves it to 0.8634.
+Set Attention mechanism) or omitting the cross-           Most importantly, our proposed H2 Table con-
+attention alignment (w/o query) leads to a slight      sistently achieves the best performance across all
+yet consistent performance decline across most         settings, outperforming all baselines by a clear
+subsets. Although these performance gaps may ap-       margin. Speciﬁcally, whether trained on HiTab
+pear modest, such stable improvements are highly       or TATQA, H2 Table uniformly surpasses TAMO
+meaningful given the extremely challenging gen-        on both in-domain and all cross-domain test
+erative setting of complex hierarchical TableQA.       sets. These results demonstrate that by effectively
+   Interestingly, the w/o GAT variant yields highly    encoding hierarchical table structures, H2 Table
+competitive results and even achieves the top score    learns more robust, domain-invariant representa-
+on the Depth-1 subset. As Depth-1 tables are es-       tions for complex TableQA tasks.
+sentially ﬂat, they do not heavily rely on complex
+hierarchical message passing; thus, the strong per-    4.5 Analysis on Number of Query Vectors
+formance of this variant is expected. However, the
+                                                       As shown in Table 3, we evaluated the impact of
+performance gap becomes signiﬁcantly more pro-
+                                                       varying the number of query vectors on overall per-
+nounced on deeper hierarchical tables (e.g., Depth-
+                                                       formance.
+3 and Depth-4), which is exactly where the GAT-
+based hierarchy-aware propagation demonstrates
+                                                        N     Llama2-7B      Llama3.1-8B      Gemma2-9B
+its efﬁcacy. Overall, the full H2 Table architecture
+achieves the best average performance, validating       1        0.6172         0.7675            0.7862
+the necessity and strong synergistic effects of our     4        0.5905         0.7677            0.7847
+integrated modules.                                     8        0.6061         0.7672            0.7841
+                                                        12       0.6113         0.7713            0.7860
+4.4   Out-of-Distribution Generalization                16       0.5995         0.7603            0.7914
+
+To evaluate the out-of-distribution (OOD) gen-         Table 3: Comparison of different numbers of query
+eralization capability of our method, we con-          vectors (denoted as N). Bold and underlined values in-
+duct cross-domain experiments by incorporating         dicate the best and second-best performance, respec-
+AITQA (Katsis et al., 2022), another complex hier-     tively.
+archical table benchmark, as an unseen evaluation
+set.                                                      While the optimal vector count differs slightly
+   As shown in Table 2, the vanilla Llama3.1-8B        across model architectures, using 12 query vec-
+and its prompt-tuning variant exhibit poor robust-     tors consistently yields robust and highly com-
+ness across domains, with prompt tuning suffering      petitive results. Speciﬁcally, it achieves the best
+from catastrophic performance drops. Incorporat-       performance on Llama3.1-8B and maintains near-
+ing table-speciﬁc structural modeling signiﬁcantly     optimal scores for both Llama2-7B and Gemma2-
+boosts generalization. For instance, when trained      9B. To strike a balance between performance and
+on HiTab, the pure text baseline (LoRA) achieves       cross-model stability, we empirically set the num-
+an OOD score of 0.8330 on AITQA, whereas the           ber of query vectors to 12 for all experiments.
+5   Conclusion                                            Dongmei Zhang. 2022. Hitab: A hierarchical table
+                                                          dataset for question answering and natural language
+In this paper, we propose a novel framework,              generation. In Proceedings of the 60th Annual Meet-
+H2 Table. Unlike conventional methods that model          ing of the Association for Computational Linguistics
+tables as standard hypergraphs, we design a spe-          (Volume 1: Long Papers), pages 1094–1110.
+cialized hierarchical hypergraph representation tai-    Aaron Grattaﬁori, Abhimanyu Dubey, Abhinav Jauhri,
+lored for complex tables, coupled with a hyper-           Abhinav Pandey, Abhishek Kadian, Ahmad Al-
+graph encoder featuring a four-stage hierarchi-           Dahle, Aiesha Letman, Akhil Mathur, Alan Schel-
+                                                          ten, Alex Vaughan, and 1 others. 2024. The llama 3
+cal message-passing mechanism. Subsequently, a            herd of models. arXiv preprint arXiv:2407.21783.
+learnable query vector mechanism is employed to
+extract the most representative structural features     Edward J Hu, yelong shen, Phillip Wallis, Zeyuan
+                                                          Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and
+from the encoder’s output. The resulting structural       Weizhu Chen. 2022. LoRA: Low-rank adaptation of
+embeddings effectively assist LLMs in table rea-          large language models. In International Conference
+soning tasks. The effectiveness of our framework          on Learning Representations.
+has been validated across multiple datasets, partic-
+                                                        Rihui Jin, Yu Li, Guilin Qi, Nan Hu, Yuan-Fang Li,
+ularly those featuring intricate hierarchical tables,     Jiaoyan Chen, Jianan Wang, Yongrui Chen, Dehai
+demonstrating strong performance and generaliza-          Min, and Sheng Bi. 2025. Hegta: Leveraging het-
+tion capabilities.                                        erogeneous graph-enhanced large language models
+                                                          for few-shot complex table understanding. In Pro-
+Limitations                                               ceedings of the AAAI Conference on Artiﬁcial Intel-
+                                                          ligence, volume 39, pages 24294–24302.
+Our current work assumes that the header struc-         Rihui Jin, Jianan Wang, Wei Tan, Yongrui Chen, Guilin
+tures of complex hierarchical tables can be accu-         Qi, and Wang Hao. 2023. Tabprompt: Graph-based
+rately obtained beforehand. Under this setting,           pre-training and prompting for few-shot table under-
+we treat header hierarchies as available structural       standing. In Findings of the Association for Com-
+                                                          putational Linguistics: EMNLP 2023, pages 7373–
+annotations to isolate and evaluate the contribu-         7383.
+tion of hierarchical hypergraph modeling itself.
+Future work could explore integrating upstream          Yannis Katsis, Saneem Chemmengath, Vishwajeet Ku-
+                                                          mar, Samarth Bharadwaj, Mustafa Canim, Michael
+table-structure extractors with H2 Table for end-to-
+                                                          Glass, Alﬁo Gliozzo, Feifei Pan, Jaydeep Sen,
+end processing. Additionally, the proposed frame-         Karthik Sankaranarayanan, and 1 others. 2022. Ait-
+work still relies on feeding the serialized tabular       qa: Question answering dataset over complex tables
+text into the LLM. Subsequent work will investi-          in the airline industry. In Proceedings of the 2022
+gate how to enable the structural embeddings gen-         Conference of the North American Chapter of the
+                                                          Association for Computational Linguistics: Human
+erated by the encoder to simultaneously capture           Language Technologies: Industry Track, pages 305–
+rich semantic information.                                314.
+
+Acknowledgments                                         Juho Lee, Yoonho Lee, Jungtaek Kim, Adam Ko-
+                                                          siorek, Seungjin Choi, and Yee Whye Teh. 2019.
+We gratefully acknowledge the support of the              Set transformer: A framework for attention-based
+                                                          permutation-invariant neural networks. In Interna-
+Key Research and Development Program of Hei-              tional conference on machine learning, pages 3744–
+longjiang Province, China [2024ZX01A07] and               3753. PMLR.
+the National Key Research and Development Pro-
+                                                        Brian Lester, Rami Al-Rfou, and Noah Constant. 2021.
+gram [2025YFE0209200].                                    The power of scale for parameter-efﬁcient prompt
+                                                          tuning. In Proceedings of the 2021 conference on
+                                                          empirical methods in natural language processing,
+References                                                pages 3045–3059.
+Pei Chen, Soumajyoti Sarkar, Leonard Lausen, Bal-       Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi.
+  asubramaniam Srinivasan, Sheng Zha, Ruihong             2023. Blip-2: Bootstrapping language-image pre-
+  Huang, and George Karypis. 2023.          Hytrel:       training with frozen image encoders and large lan-
+  Hypergraph-enhanced tabular data representation         guage models. In International conference on ma-
+  learning. Advances in Neural Information Process-       chine learning, pages 19730–19742. PMLR.
+  ing Systems, 36:32173–32193.
+                                                        Liyao Li, Chao Ye, Wentao Ye, Yifei Sun, Zhe Jiang,
+Zhoujun Cheng, Haoyu Dong, Zhiruo Wang, Ran Jia,          Haobo Wang, Jiaming Tian, Yiming Zhang, Ning-
+  Jiaqi Guo, Yan Gao, Shi Han, Jian-Guang Lou, and        tao Wang, Xing Fu, and 1 others. 2026. Table as
+  a modality for large language models. Advances in       Zilong Ryan Wang, Hao Zhang, Chun-Liang Li, Ju-
+  Neural Information Processing Systems, 38:29285–           lian M Eisenschlos, Vincent Perot, Zifeng Wang,
+  29308.                                                     Lesly Miculicich, Yasuhisa Fujii, Jingbo Shang,
+                                                             Chen-Yu Lee, and 1 others. 2024. Chain-of-table:
+Peng Li, Yeye He, Dror Yashar, Weiwei Cui, Song Ge,          Evolving tables in the reasoning chain for table un-
+  Haidong Zhang, Danielle Riﬁnski Fainman, Dong-             derstanding. In International Conference on Learn-
+  mei Zhang, and Surajit Chaudhuri. 2024. Table-gpt:         ing Representations, volume 2024, pages 55587–
+  Table ﬁne-tuned gpt for diverse table tasks. Proceed-      55610.
+  ings of the ACM on Management of Data, 2(3):1–28.
+                                                          Ruosong Ye, Caiqi Zhang, Runhui Wang, Shuyuan Xu,
+Haotian Liu, Chunyuan Li, Qingyang Wu, and                  and Yongfeng Zhang. 2024. Language is all a graph
+  Yong Jae Lee. 2023a. Visual instruction tuning.           needs. In Findings of the association for computa-
+  Advances in neural information processing systems,        tional linguistics: EACL 2024, pages 1955–1973.
+  36:34892–34916.
+                                                          Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga,
+Pengfei Liu, Weizhe Yuan, Jinlan Fu, Zhengbao Jiang,        Dongxu Wang, Zifan Li, James Ma, Irene Li, Qingn-
+  Hiroaki Hayashi, and Graham Neubig. 2023b. Pre-           ing Yao, Shanelle Roman, and 1 others. 2018. Spi-
+  train, prompt, and predict: A systematic survey of        der: A large-scale human-labeled dataset for com-
+  prompting methods in natural language processing.         plex and cross-domain semantic parsing and text-to-
+  ACM computing surveys, 55(9):1–35.                        sql task. In Proceedings of the 2018 conference on
+                                                            empirical methods in natural language processing,
+Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Man-         pages 3911–3921.
+  dar Joshi, Danqi Chen, Omer Levy, Mike Lewis,
+  Luke Zettlemoyer, and Veselin Stoyanov. 2019.           Tianshu Zhang, Xiang Yue, Yifei Li, and Huan Sun.
+  Roberta: A robustly optimized bert pretraining ap-         2024. Tablellama: Towards open large generalist
+  proach. arXiv preprint arXiv:1907.11692.                   models for tables. In Proceedings of the 2024 Con-
+                                                             ference of the North American Chapter of the Asso-
+Weizheng Lu, Jing Zhang, Ju Fan, Zihao Fu, Yueguo            ciation for Computational Linguistics: Human Lan-
+  Chen, and Xiaoyong Du. 2025. Large language                guage Technologies (Volume 1: Long Papers), pages
+  model for table processing: A survey. Frontiers of         6024–6044.
+ Computer Science, 19(2):192350.
+                                                          Fengbin Zhu, Wenqiang Lei, Youcheng Huang, Chao
+Panupong Pasupat and Percy Liang. 2015. Composi-            Wang, Shuo Zhang, Jiancheng Lv, Fuli Feng, and
+  tional semantic parsing on semi-structured tables. In     Tat-Seng Chua. 2021. Tat-qa: A question answering
+  Proceedings of the 53rd Annual Meeting of the Asso-       benchmark on a hybrid of tabular and textual content
+  ciation for Computational Linguistics and the 7th In-     in ﬁnance. In Proceedings of the 59th annual meet-
+  ternational Joint Conference on Natural Language          ing of the Association for Computational Linguistics
+  Processing (Volume 1: Long Papers), pages 1470–           and the 11th international joint conference on nat-
+  1480.                                                     ural language processing (volume 1: long papers),
+                                                            pages 3277–3287.
+Jiabin Tang, Yuhao Yang, Wei Wei, Lei Shi, Lixin Su,
+   Suqi Cheng, Dawei Yin, and Chao Huang. 2024.           A Details of the Experiments
+   Graphgpt: Graph instruction tuning for large lan-
+   guage models. In Proceedings of the 47th Interna-      A.1 Training Settings.
+   tional ACM SIGIR Conference on Research and De-
+   velopment in Information Retrieval, pages 491–500.     For efﬁcient ﬁne-tuning, we applied LoRA (r =
+                                                          8, α = 16, dropout = 0.05). The model was
+Gemma Team, Morgane Riviere, Shreya Pathak,               optimized using AdamW (β1 = 0.9, β2 = 0.95,
+  Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhu-
+  patiraju, Léonard Hussenot, Thomas Mesnard,             weight decay = 0.05) with a learning rate of 1 ×
+  Bobak Shahriari, Alexandre Ramé, and 1 others.          10−5 .To construct the training sequences, we con-
+  2024. Gemma 2: Improving open language models           catenated the graph/query embeddings with the
+  at a practical size. arXiv preprint arXiv:2408.00118.   text prompt (comprising the description and the
+Hugo Touvron, Louis Martin, Kevin Stone, Peter            question) and the target label. Descriptions were
+  Albert, Amjad Almahairi, Yasmine Babaei, Niko-          truncated to 1,024 tokens, and the target genera-
+  lay Bashlykov, Soumya Batra, Prajjwal Bhargava,         tion length was bounded to 128 tokens. While the
+  Shruti Bhosale, and 1 others. 2023. Llama 2:
+                                                          training sequences were dynamically batched, we
+  Open foundation and ﬁne-tuned chat models. arXiv
+  preprint arXiv:2307.09288.                              relaxed the maximum context window to 4,096 to-
+                                                          kens during the inference and evaluation phases.
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob
+  Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz           A.2 Datasets.
+  Kaiser, and Illia Polosukhin. 2017. Attention is all
+  you need. Advances in neural information process-       In addition to HiTab, we applied speciﬁc pre-
+  ing systems, 30.                                        processing steps to the other two datasets. For
+    Figure 5: An example of complex hierarchical tables which has a depth of 4 and corresponding question.
+
+
+AITQA, since the original dataset provides anno-         per table). The manual inspection revealed that
+tations for all parent headers of each leaf header,      91 tables were converted accurately, whereas 9 ex-
+it was straightforward to convert it into the HiTab      hibited noticeable structural errors. This low er-
+format, speciﬁcally, comprising a row header tree,       ror rate (9%) suggests that TATQA tables possess
+a column header tree, and a data matrix. For             predominantly simple, shallow hierarchies, mak-
+TATQA, we employed LLM to transform the orig-            ing the LLM-based structural extraction largely re-
+inal ﬂat matrix tables into the aforementioned hi-       liable for this benchmark.
+erarchical format. Consequently, this approach in-          To further investigate how this structural
+evitably introduces some conversion errors, which        noise affects downstream reasoning, we evaluated
+partially explains why the model trained on the          H2 Table (using the Gemma-2-9B backbone) on
+TATQA dataset exhibits less stable performance           this sampled subset. The results reveal a clear per-
+compared to the model trained on HiTab. A de-            formance disparity between correctly and incor-
+tailed analysis of this noise is provided below.         rectly converted tables:
+   While converting ﬂat TATQA tables into hierar-
+chical structures via LLMs inherently introduces            Subset                                Accuracy
+a degree of structural noise, all evaluated mod-            Correct (546 QA pairs)                 52.20%
+els (both baselines and H2 Table) are trained and           Wrong (54 QA pairs)                    37.04%
+tested on this identical augmented dataset. Conse-
+quently, the relative performance comparisons re-           Overall (Full TATQA Test Set)          52.07%
+main strictly fair.
+                                                         Table 4: Performance disparity between correctly and
+   To quantitatively assess the impact of this con-      incorrectly converted tables. The overall evaluation en-
+version noise, we manually reviewed a random             compasses the full TATQA test set of 1,669 QA pairs.
+sample of 100 tables from the TATQA test set
+(comprising 600 QA pairs, averaging 6 questions            As detailed above, the model achieves a 52.20%
+accuracy on the correctly converted subset, which        well-deﬁned and seamlessly applicable to ﬂat ta-
+is 15.16% higher than its performance on the sub-        bles, without imposing any artiﬁcial or redun-
+set with structural errors (37.04%). This discrep-       dant hierarchical priors. Crucially, even under
+ancy conﬁrms that structural conversion quality          this ﬂat degeneration, H2 Table is fundamentally
+directly inﬂuences downstream TableQA perfor-            distinct from prior hypergraph-based approaches
+mance. However, because the overall conversion           such as TAMO in how structural knowledge is
+error rate remains low, the accuracy on the full         transferred to the LLM. Rather than relying on
+TATQA test set (52.07%) aligns closely with the          simple average-pooling over encoder embeddings,
+performance on the accurately converted subset,          our query-based cross-attention module employs
+thereby demonstrating the robustness of our evalu-       learnable queries to selectively attend over en-
+ation on this benchmark.                                 coder representations, effectively distilling high-
+                                                         density structural signals into a compact soft
+A.3    Evaluation.                                       prompt. Furthermore, once multi-level nested
+Regarding the evaluation metrics, rather than em-        headers are present, the hierarchical message-
+ploying a strict Exact Match (EM), we applied            passing stages (C2P and P2C) are dynamically ac-
+necessary data cleaning and format normaliza-            tivated, empowering the model to capture cross-
+tion to the model’s predictions, such as stripping       level semantic entailments that ﬂat hypergraph for-
+currency symbols (e.g., $). We clarify that all          mulations fundamentally overlook. Consequently,
+compared methods (including closed-source mod-           H2 Table generalizes rather than merely replaces
+els, ﬁne-tuned baselines, and H2 Table) are evalu-       ﬂat hypergraph modeling—it preserves full back-
+ated under exactly the same answer-cleaning and          ward compatibility with ﬂat tables, provides a
+format-normalization criteria. The reported accu-        more selective encoder-LLM alignment mecha-
+racy is therefore computed under a uniﬁed relaxed-       nism, and explicitly incorporates hierarchical in-
+match protocol after shared post-processing, en-         ductive bias precisely when nested headers matter.
+suring fair comparability.                               C.2 Statistical Signiﬁcance Analysis on Deep
+                                                             Hierarchy Tables
+B     Case Study
+                                                         To ensure a robust statistical evaluation and ad-
+In this section, we present a case study to demon-       dress the limited sample size of the isolated Depth-
+strate our model’s capability in handling complex        4 subset (N = 35), we aggregate the Depth-3
+table structures. As illustrated in Figure 5, our        (N = 813) and Depth-4 tables into a uniﬁed
+model successfully yields the correct answer to the      "Deep Hierarchy" subset, yielding a more sub-
+given question, whereas a strong baseline, TAMO,         stantial total sample size of N = 848. Evalu-
+fails to do so. This superior performance is at-         ated using the Llama-3.1-8B backbone, our pro-
+tributed to our speciﬁcally designed modeling and        posed H2 Table architecture demonstrates a stable
+hierarchical message-passing mechanism, which            improvement over the strongest baseline, TAMO,
+enable us to process such intricate tables more ef-      on this combined challenging subset.
+fectively.                                                  To formally validate the reliability of these per-
+                                                         formance gains, we conduct a paired McNemar’s
+C     Discussion                                         test comparing the exact match predictions of
+                                                         H2 Table against TAMO. The test conﬁrms that the
+C.1    Compatibility and Generalization over
+                                                         improvements introduced by our model are statis-
+       Flat Hypergraphs
+                                                         tically signiﬁcant, yielding an exact McNemar p-
+A natural theoretical question is how H2 Table be-       value of 0.0079 and a continuity-corrected χ2 p-
+haves when applied to standard ﬂat tables lacking        value of 0.0083 (p < 0.01). These statistical re-
+nested structures. In such degenerate cases, where       sults substantiate that the advantages of H2 Table
+all headers reside at a single depth, the hierarchical   on highly complex hierarchical tables are robust
+relations naturally collapse, and message passing        and not an artifact of small sample variance.
+reduces strictly to the leaf-level vertex-hyperedge
+interactions (i.e., V2E and E2V).
+   We regard this property as an intrinsic strength
+of our design: H2 Table remains mathematically
+

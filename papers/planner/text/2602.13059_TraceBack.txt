@@ -1,0 +1,1094 @@
+                                                       T RACE BACK: Multi-Agent Decomposition for Fine-Grained
+                                                                          Table Attribution
+                                              Tejas Anvekar∗            Junha Park∗         Rajat Jha∗       Devanshu Gupta                 Poojah Ganesan
+                                                                                  Puneeth Mathur           Vivek Gupta
+                                                                           Arizona State University            Adobe Research
+                                                                  Project-Page § Code
+                                         {tanvekar, jpark284, rjha16, dgupta77, pganesa4, vgupt140}@asu.edu,
+                                                                  puneetm@adobe.com
+                                                      Abstract
+                                                                                                          Source            Cost        Efficiency Scalability
+                                                  Question answering (QA) over structured               Solar Power        30–50         15–20         4
+                                                  tables requires not only accurate answers             Wind Power         20–40         30–45         5
+arXiv:2602.13059v1 [cs.CL] 13 Feb 2026
+
+
+
+
+                                                  but also transparency about which cells sup-          Hydropower         40–70         70–90         3
+                                                  port them. Existing table QA systems                  Geothermal         50–80           90+         2
+                                                  rarely provide fine-grained attribution, so
+                                                  even correct answers often lack verifiable            Question: Among renewable sources costing
+                                                  grounding, limiting trust in high-stakes set-         ≤ 50/MWh and scalability ≥ 3, which is most
+                                                  tings. We address this with T RACE BACK               efficient, and what is its efficiency?
+                                                  a modular multi-agent framework for scal-
+                                                  able, cell-level attribution in single-table
+                                                  QA. T RACE BACK prunes tables to relevant             Reasoning: Step 1: Cost Filter → Keep Solar,
+                                                  rows and columns, decomposes questions                Wind. Step 2: Scalability Filter → Keep Solar,
+                                                  into semantically coherent sub-questions,             Wind. Step 3: Efficiency Selection → Choose
+                                                  and aligns each answer span with its sup-             Wind (30–45%).
+                                                  porting cells, capturing both explicit and
+                                                  implicit evidence used in intermediate rea-              S1: Cost ≤ 50   S2: Scalability ≥ 3   S3: Max Efficiency
+                                                  soning steps. To enable systematic eval-
+                                                  uation, we release CITEB ENCH, a bench-
+                                                  mark with phrase-to-cell annotations drawn            Answer: Wind Power, 30–45% efficiency.
+                                                  from ToTTo, FetaQA, and AITQA. We fur-
+                                                  ther propose FAIRS CORE, a reference-less            Figure 1: Example of fine-grained table attribution: in-
+                                                  metric that compares atomic facts derived            termediate filters (cost, scalability) and final selection
+                                                  from predicted cells and answers to esti-            (efficiency) each correspond to specific cells.
+                                                  mate attribution precision and recall with-
+                                                  out human cell labels. Experiments show              2024). Even when answers are correct, the under-
+                                                  that T RACE BACK substantially outperforms
+                                                                                                       lying reasoning may be spurious or opaque, moti-
+                                                  strong baselines across datasets and granu-
+                                                  larities, while FAIRS CORE closely tracks            vating methods that make both answers and their
+                                                  human judgments and preserves relative               evidence more transparent.
+                                                  method rankings, supporting interpretable               Attribution has therefore become central to
+                                                  and scalable evaluation of table-based QA.           evidence-based reasoning in LLMs, linking an-
+                                                                                                       swers to verifiable sources (Gao et al., 2023a; Li
+                                          1   Introduction                                             et al., 2023). Most prior work focuses on unstruc-
+                                                                                                       tured text and relatively coarse citation; structured
+                                          Question answering (QA) is a core task in NLP                data such as tables introduce additional challenges
+                                          with applications ranging from customer support              due to schema constraints, hierarchical organiza-
+                                          to scientific analysis. Large language models                tion, and multi-step filtering (Figure 1).
+                                          (LLMs) have dramatically improved QA quality                    For tabular QA, accurately identifying which
+                                          (Brown et al., 2020; Achiam et al., 2023), but they          cells support the answer is crucial for trust and
+                                          frequently hallucinate or produce factually incor-           interpretability. However, cell-level attribution
+                                          rect statements (Ji et al., 2023), undermining relia-        remains largely unexplored. To date, the only
+                                          bility and user trust (Xu et al., 2025; Snyder et al.,       prior work explicitly targeting table attribution,
+                                              ∗
+                                                  contributed equally                                  MATSA (Mathur et al., 2024), operates at row-
+
+                                                                                                   1
+column granularity, lacks phrase-level alignment,                 question decomposition, and fine-grained
+and focuses solely on final answers. It does not ex-              cell grounding.
+pose intermediate evidence, such as start and end
+time cells used to compute a duration, even though             3. We develop FAIRS CORE, a reference-less
+these are essential steps in the reasoning process.               evaluation metric based on atomic fact align-
+   This raises a central question: How can we                     ment that estimates attribution precision and
+design an interpretable, scalable framework that                  recall without human cell labels.
+traces both answers and intermediate reasoning
+                                                               4. We conduct extensive experiments and ab-
+steps back to precise, cell-level evidence in struc-
+                                                                  lations, showing that T RACE BACK consis-
+tured tables?
+                                                                  tently outperforms strong baselines while
+   To address this, we introduce CITEB ENCH, a
+                                                                  FAIRS CORE tracks human judgments and
+benchmark for fine-grained attribution in table QA
+                                                                  preserves relative method rankings.
+comprising 1,500 manually annotated examples
+from ToTTo (Parikh et al., 2020), FetaQA (Nan              2     Related Work
+et al., 2022), and AITQA (Katsis et al., 2022).
+Each example includes cell-level attributions for          Attribution in QA is central to improving the relia-
+both final answer spans and intermediate reason-           bility, interpretability, and trustworthiness of large
+ing, enabling supervision for multi-hop and im-            language models (LLMs), particularly in struc-
+plicit inference.                                          tured and multi-source settings. Early work, such
+   Building on this resource, we propose T RACE -          as FEVER (Thorne et al., 2018), framed fact ver-
+BACK, a modular multi-agent LLM-based frame-               ification as attributing claims to supporting evi-
+work for post-hoc cell-level attribution over sin-         dence, while (Evans et al., 2021) emphasized its
+gle tables. T RACE BACK sequentially (i) identi-           role in truthful AI. Fake news detection has also
+fies relevant columns, (ii) filters rows via schema-       been cast as an attribution task (Hanselowski et al.,
+aware conditions, (iii) decomposes questions into          2018). In citation evaluation, (Gao et al., 2023b)
+sub-questions aligned with intermediate reasoning          introduced ALCE, a benchmark assessing citation
+steps, and (iv) grounds each sub-answer in specific        quality alongside answer fluency and correctness.
+cells, which are then aligned with answer spans            Its reliance on MAUVE (Pillutla et al., 2021) for
+(Figure 1). On the 1,500 annotated examples,               fluency scoring can yield unstable results due to
+T RACE BACK yields substantial gains over strong           sensitivity to output length and style, and correct-
+baselines in both fine-grained attribution and cov-        ness remains difficult to automate for multi-step
+erage of intermediate evidence.                            answers.
+   Manual cell-level annotation is, however,                  For structured data, (Mathur et al., 2024) pro-
+expensive and subjective, making large-scale               posed MATSA, a multi-agent framework for ta-
+evaluation difficult.      We therefore introduce          ble attribution with an 8.5K QA-pair benchmark
+FAIRS CORE, a reference-less metric that com-              from ToTTo (Parikh et al., 2020), FetaQA (Nan
+pares atomic facts extracted from predicted cells          et al., 2022), and AITQA (Katsis et al., 2022).
+with those in the answer. By estimating attri-             While effective on short contexts, MATSA is lim-
+bution precision and recall via fact alignment,            ited to row-column attribution and omits cell-level
+FAIRS CORE enables scalable, consistent, and in-           or long-context QA. Multi-source attribution typ-
+terpretable evaluation across datasets, including          ically follows two paradigms: joint response-and-
+unlabeled settings.                                        citation generation (Menick et al., 2022; Thoppi-
+   Our main contributions are:                             lan et al., 2022; Glaese et al., 2022), often re-
+                                                           stricted to single-source settings, and post-hoc at-
+  1. We present CITEB ENCH, a benchmark
+                                                           tribution (Gao et al., 2023b; Yue et al., 2023),
+     of manually annotated QA examples from
+                                                           which struggles on human-annotated multi-source
+     ToTTo, FetaQA, and AITQA with cell-level
+                                                           datasets. (Patel et al., 2024) addressed this
+     attributions covering both final answers and
+                                                           with POLITICITE, a benchmark featuring multi-
+     intermediate reasoning steps.
+                                                           paragraph questions and human-labeled multi-
+  2. We propose T RACE BACK, a multi-agent                 source attributions.
+     LLM-based framework for cell-level attribu-              Complementary to attribution methods, In-
+     tion that combines schema-aware pruning,              seq (Sarti et al., 2023) provides a toolkit for token-
+
+                                                       2
+and sequence-level attribution in neural text gen-            tically correct. This prevents TabCite from assess-
+eration, enabling analysis of model behavior via              ing fine-grained grounding.
+gradient- and attention-based explanations. While
+                                                              Noise in ground-truth attributions. TabCite is
+Inseq is designed for textual inputs and does not
+                                                              constructed from ToTTo, FetaQA, and AITQA.
+natively support structured tables or reasoning-
+                                                              Re-examining these sources reveals substantial la-
+aligned cell-level grounding, we repurpose its at-
+                                                              bel noise. In a manual inspection of 500 randomly
+tribution primitives as part of our framework to op-
+                                                              sampled examples per dataset, we observe error
+erate over table representations.
+                                                              rates of 21.7% for ToTTo and 55.3% for FetaQA.
+   To improve traceability, (Khalifa et al., 2024)
+                                                              Moreover, AITQA does not provide gold attribu-
+proposed source-aware pretraining and instruc-
+                                                              tion labels, and its label construction procedure is
+tion tuning by linking document IDs to citations,
+                                                              undocumented.
+though adaptability to evolving knowledge re-
+                                                                 Table 1 shows a representative F ETAQA:
+mains limited. Attribution research has also ex-
+                                                              Question: In which films did Pooja Ramachan-
+panded to multimodal QA, underscoring the need
+                                                              dran play the role of Cathy?
+for explainable grounding across text, tables, and
+                                                              Answer: Pooja Ramachandran starred as Cathy
+visual data.
+                                                              in Kadhalil Sodhapuvadhu Yeppadi and its Telugu
+   Existing methods lack fine-grained attribution
+                                                              version Love Failure.
+in structured data that captures both final answers
+and intermediate reasoning , critical for transpar-              While the relevant films and roles are cor-
+ent multi-hop inference. Current benchmarks omit              rectly highlighted, the ground-truth attribution
+reasoning-aligned cell-level annotations, and eval-           also marks several unnecessary cells, including
+uation remains costly, subjective, or unsuitable for          other entries from the same year and an unrelated
+scale. We address these gaps by introducing a                 film (Pizza).
+benchmark with manual cell-level attributions for              Year                Film                       Role        Language
+both final and intermediate steps, a modular multi-            2002      Yathrakarude Sradakku                 –          Malayalam
+                                                               2012   Kadhalil Sodhapuvadhu Yeppadi          Cathy          Tamil
+agent framework for post-hoc cell-level attribu-               2012             Love Failure                 Cathy         Telugu
+tion, and a scalable reference-free metric for at-             2012               Nanban                  Jeeva’s Wife      Tamil
+                                                               2012                Pizza                     Smitha         Tamil
+tribution quality.                                             2013            Swamy Ra Ra                   Bhanu         Telugu
+
+3     CITEB ENCH Benchmark                                    Table 1: Example from F ETAQA with ground-truth at-
+                                                              tribution highlighting (green = relevant, red = irrele-
+3.1   Limitations of the TabCite Benchmark
+                                                              vant).
+TabCite (Mathur et al., 2024) is a closely related
+benchmark for table-based citation. While it en-                {[2, 0], [2, 1], [2, 2], [3, 0], [3, 1], [3, 2], [3, 3], [5, 0], [5, 1]}
+ables coarse-grained evaluation, several aspects                 These ground truth labels systematically over-
+of its design limit its suitability for fine-grained          include cells that are loosely related (e.g., same
+phrase-to-cell attribution.                                   year, similar structure) rather than strictly neces-
+                                                              sary for the answer. This can encourage models to
+Absence of phrase-cell alignment. In TabCite,                 rely on partial or column-level matches instead of
+attribution labels are defined at the level of the full       consistent row-level evidence.
+answer, not individual answer phrases. As a result,              Overall, the lack of phrase-level alignment
+the benchmark cannot verify whether each seman-               and the presence of noisy or undocumented at-
+tic unit in the answer is grounded in the correct             tributions limit TabCite’s usefulness for evaluat-
+cell.                                                         ing fine-grained table grounding. These limita-
+   For example, consider the answer “Wind Power,              tions motivate CITEB ENCH, which provides ex-
+with an efficiency between 30% and 45%” with at-              plicit phrase-to-cell alignment and carefully cu-
+tributed cells {[1, 0], [1, 2]}. Without phrase-level         rated, transparent ground-truth annotations.
+alignment, the evaluation cannot distinguish the
+correct mapping “Wind Power” → [1, 0], “30%-                  3.2     CITEB ENCH Construction
+45%” → [1, 2] from the incorrect mapping where                To address the aforementioned limitations of
+these associations are reversed. Both are treated as          TabCite Mathur et al. (2024), we construct a
+equally valid, even though only the first is seman-           new benchmark by reformulating and manually
+
+                                                          3
+             Total        Gold Set         Silver Set        tions and form a silver set, which provides broader
+ Dataset   Examples   (Human-Annotated)    (Original)
+                                                             coverage for large-scale evaluation. Due to its
+ ToTTo      7,700            500             7,200
+                                                             smaller size, AITQA does not include a silver sub-
+ FetaQA     3,004            500             2,504
+ AITQA       513             513               –             set. Together, the gold and silver sets support
+                                                             both rigorous fine-grained evaluation and scalable
+                                                             benchmarking of attribution performance.
+   Table 2: Dataset statistics for the CITEB ENCH.
+                                                             4     T RACE BACK Agentic Framework
+annotating examples from three public datasets:                                                                                   Q : What is the duration
+                                                                      Event Name   Start Time   End Time   Location
+                                                                                                                                  of aerospace event?
+ToTTo (Parikh et al., 2020), FetaQA (Nan et al.,                       Aerospace   19:00:00     19:00:50        LA
+                                                                                                                                  A : The time duration
+2022), and AITQA (Katsis et al., 2022).                                Marathon    11:30:00     12:00:00        LA                is 50 seconds
+
+
+
+ToTTo is an open-domain, Wikipedia-based
+table-to-text dataset. Because it does not con-
+tain natural-language questions, we follow the ap-                                                 Event Name        Start Time        End Time
+
+proach of MATSA Mathur et al. (2024) by treat-                                                    Relevance: Duration, Name
+
+
+ing the reference descriptions as answers and syn-                                                              Pruned Table Relevance:
+
+thetically generating corresponding questions us-                                                                                     Aerospace, (Row1)
+
+                                                                                                           Event Name             Start Time      End Time
+ing DeepSeek-V3 (DeepSeek-AI and et al., 2025).                                                             Aerospace             19:00:00        19:00:50
+
+ToTTo includes a wide range of table structures,
+such as merged cells, variable row counts, and
+nested headers, and thus captures much of the
+structural complexity found in real-world tables.
+FetaQA consists of free-form, multi-hop
+question-answer pairs over Wikipedia tables.
+Many questions require aggregating evidence
+from multiple cells across different rows. Al-
+though the tables typically lack deeply nested
+headers, the dataset presents substantial reasoning
+challenges due to its long-form answers and                   Figure 2: Architecture diagram of the T RACE BACK.
+diverse table content.
+AITQA is        a     domain-specific    question-           4.1    Task Formulation
+answering dataset derived from SEC 10-K
+                                                             We consider cell-level structured single-table at-
+annual reports in the airline industry. Its tables
+                                                             tribution, where the goal is to identify the mini-
+contain complex column hierarchies, specialized
+                                                             mal yet sufficient set of table cells that support a
+financial terminology, and heterogeneous numeri-
+                                                             model-generated answer.
+cal formats, making the dataset representative of
+                                                                Let T be a table with R rows and C columns,
+enterprise and scientific document settings.
+                                                             and let each cell be indexed as T [i, j] for i ∈ [1, R]
+Human Annotation. From each dataset, we                      and j ∈ [1, C]. Given a natural-language question
+manually annotate 500 randomly sampled exam-                 q and its answer a, we seek an attribution set AT ⊆
+ples (all 513 examples from AITQA), yielding a               {T [i, j]} such that f (T, q, a) → AT .
+gold set with precise, phrase-aligned cell-level at-            The set AT must (i) be sufficient and non-
+tributions (Table 2). For each example, every an-            contradictory for deriving a from T , and (ii)
+swer phrase is explicitly linked to the table cell(s)        ground all semantic content in a. It may include
+that support it, enabling fine-grained and inter-            both explicit cells, whose values appear verbatim
+pretable evaluation. Inter-annotator agreement,              in a, and implicit cells, which are required for in-
+measured using Cohen’s κ on 250 randomly sam-                termediate reasoning but not directly mentioned.
+pled instances across all three datasets, is 0.72, in-       As illustrated in Figure 1, correctly answering the
+dicating substantial agreement.                              efficiency question for Wind Power requires cost
+   The remaining ToTTo and FetaQA examples re-               and scalability cells in addition to the final effi-
+tain their original (and potentially noisy) attribu-         ciency cell.
+
+                                                         4
+4.2   T RACE BACK Framework                               (Figure 2). For example, “What is the duration
+To solve this task, we propose T RACE BACK, an            of the event Marathon?” may be decomposed into
+LLM-based multi-agent framework in which each             “What is the start time of the event?” and “What
+agent handles a distinct subtask in the attribution       is the end time of the event?”, explicitly exposing
+pipeline. The framework is designed for structured        the role of Start_Time and End_Time. To ensure
+and semi-structured single tables and scales to ar-       faithfulness, each generated fact is checked by a
+bitrary table size and schema. Figure 2 gives an          pretrained NLI model (RoBERTa; Zhuang et al.
+overview.                                                 2021), following Mathur et al. (2024).
+                                                             In Figure 1, the comparative efficiency ques-
+1. Column Relevance Identification. This                  tion is similarly decomposed into sub-questions
+agent selects the subset of columns needed to de-         for cost filtering, scalability filtering, and effi-
+rive the answer. Relevant columns may be explicit,        ciency selection, revealing how multiple columns
+whose values appear in the answer, or implicit, re-       contribute to the final answer.
+quired for intermediate computations.
+   Given table metadata and schema, together with         4. Sub-Query Attribution. This agent performs
+(q, a), the agent uses few-shot prompting to pre-         fine-grained attribution by grounding each sub-
+dict the full set of relevant columns (Figure 2).         question to its supporting cells. Given the sub-
+For example, for the question “What is the du-            questions and the pruned table, it outputs cell co-
+ration of the event?” with answer “50 seconds”,           ordinates (i, j) corresponding to the evidence used
+it must identify Start_Time and End_Time even             to answer each sub-query.
+though no column is labeled “duration.” Similarly,           In Figure 2, sub-questions about start and end
+in Figure 1, answering the constrained efficiency         time are mapped to the Start_Time and End_Time
+query requires Cost, Scalability, and Efficiency,         cells in the relevant row; these cells are essen-
+even though only the efficiency value appears in          tial for computing the duration, even though they
+the final answer.                                         are absent from the answer text. In Figure 1,
+                                                          sub-questions are similarly grounded to the Cost,
+2. Evidence Span Extractor. Given the se-                 Scalability, and Efficiency cells that jointly deter-
+lected columns, this agent identifies the subset of       mine the answer. Operating at the cell level allows
+rows required to derive the answer. Following the         the agent to capture such implicit evidence, which
+SQL-based row extraction strategy of Abhyankar            row- or column-level attribution would miss.
+et al. (2025), it uses few-shot prompting to gener-
+ate filtering conditions over the relevant columns        5. Final Attribution. The final agent consol-
+and metadata.                                             idates all intermediate attributions into a single
+   In Figure 2, for the question “What is the dura-       phrase-to-cell mapping. It aligns the cell coor-
+tion of the aerospace event?”, the agent can gen-         dinates produced by the Sub-Query Attribution
+erate a filter such as WHERE Event_Name =                 agent with spans in the original answer, yielding a
+’Aerospace’, retaining only the row for the               complete, interpretable grounding of each answer
+Aerospace event. In Figure 1, more complex                component in verifiable tabular evidence and en-
+multi-step filtering is required: rows are filtered       abling faithful evaluation of table-based QA sys-
+by Cost ≤ 50/MWh, then by Scalability ≥ 3,                tems.
+and finally ranked by Efficiency. This pruning
+reduces computational overhead while preserving           5   Experimental Setup
+the complete reasoning chain.
+                                                          Baselines. We        evaluate    our     approach
+3. Query Decomposition. This agent decom-                 CITEB ENCH and compare against the fol-
+poses the original question into semantically co-         lowing baselines. Unless otherwise noted, all
+herent sub-questions, each corresponding to an in-        methods use GPT-4o (OpenAI et al., 2024) as
+termediate reasoning step needed to reconstruct           the LLM. Finally, all prompt of our method are
+the answer. The goal is to surface implicit depen-        provided in Appendix A
+dencies that holistic attribution often misses.              Few-shot ICL (Gao et al., 2023c) prompts the
+   Given table metadata, (q, a), and the pruned           model with a small number of annotated examples
+table, the agent generates sub-questions whose            and directly asks it to produce cell-level attribu-
+answers collectively entail the original response         tions for each question-answer pair.
+
+                                                      5
+   Post-hoc Retrieval (Gao et al., 2023a) lin-                   Evaluating across multiple granularity enables
+earizes each table row into text and uses a                   analysis of attribution performance at both coarse
+dense retriever (Sentence-BERT (Reimers and                   and fine levels: row- and column-level metrics
+Gurevych, 2019)) to rank rows by cosine similar-              capture broader localization accuracy, while cell-
+ity to the concatenated question and answer; the              level metrics assess fine-grained grounding fi-
+top-k rows (k=10) are then passed to the LLM to               delity.
+generate cell-level attributions.
+   G ENERATE P ROGRAMS (Wan et al., 2025)                     5.1   Main Results
+converts each row into atomic fact sentences, as-             Table 4 reports precision and recall for row-,
+signs each cell a unique identifier, and applies              column-, and cell-level attribution on ToTTo, Fe-
+the original G ENERATE P ROGRAMS pipeline un-                 taQA, and AITQA. We highlight the main trends
+changed to produce executable programs and their              here and refer to the table for complete figures.
+induced attributions.
+                                                              Row-Level Attribution. T RACE BACK achieves
+   I NSEQ-based Attribution (Sarti et al., 2023)
+                                                              the best row-level performance on all three
+repurposes token- and sequence-level attribu-
+                                                              datasets. On ToTTo, it improves precision from a
+tion by linearizing tables into structured text
+                                                              best baseline of 50.00 (G ENERATION P ROGRAMS)
+and treating cell values as attribution units;
+                                                              to 71.19 and recall from 74.50 (I NSEQ) to 80.38.
+gradient- and attention-based scores are aggre-
+                                                              On FetaQA, T RACE BACK attains 94.30 precision
+gated at the cell level. For this baseline we
+                                                              and 93.36 recall, a gain of roughly 19 precision
+use Qwen3-30B-A3B (Qwen et al., 2025a), as
+                                                              points over the strongest baseline (75.00) and +8.7
+gradient-based attribution requires direct access to
+                                                              recall over the best baseline (84.70). On AITQA,
+model parameters.
+                                                              it reaches 96.65 precision versus 66.82 for the
+   To our knowledge, no existing method natively              best baseline and matches the high-recall regime
+supports reasoning-aligned cell-level attribution             (97.12 vs. 97.60 for I NSEQ), showing that schema-
+over structured tables. The closest framework,                aware filtering avoids the over-retrieval that hurts
+MATSA (Mathur et al., 2024), operates at row-                 baseline precision.
+column granularity and is not publicly available,
+precluding direct comparison.                                 Column-Level Attribution. Column attribution
+                                                              is strong for several methods, but T RACE BACK
+Evaluation Metrics. We evaluate attribution                   is consistently competitive or best. On ToTTo,
+quality at three levels of granularity: row, col-             it nearly matches the highest baseline precision
+umn, and cell using precision and recall com-                 (91.50 vs. 92.70) while maintaining solid recall
+puted from the overlap between predicted and                  (77.64). On FetaQA, it achieves both the high-
+gold-standard attribution sets.                               est precision (96.39) and near-best recall (83.07
+   Let R′ , C ′ , and S ′ denote the sets of predicted        vs. 84.77 for SBERT+GPT-4o). On AITQA,
+rows, columns, and cells, respectively, and let R̂,           T RACE BACK attains 54.09 precision and 98.09
+Ĉ, and Ŝ denote the corresponding gold-standard             recall, improving precision over the best base-
+sets. Precision measures the proportion of pre-               line (49.86) while staying in the same high-recall
+dicted elements that are correct, while recall mea-           regime as SBERT+GPT-4o and I NSEQ.
+sures the proportion of gold elements that are suc-
+cessfully retrieved.                                          Cell-Level Attribution. Cell-level attribution is
+                                                              the hardest setting, and here T RACE BACK shows
+                                                              the largest margins. On ToTTo, it raises preci-
+       Granularity     Precision      Recall
+                                                              sion from 42.70 and recall from 53.80 (both from
+                        |R′ ∩ R̂|    |R′ ∩ R̂|                I NSEQ) to 74.20 and 67.05. On FetaQA, it im-
+       Row
+                          |R′ |         |R̂|                  proves precision from 56.50 to 89.81 and recall
+                        |C ′ ∩ Ĉ|   |C ′ ∩ Ĉ|               from 46.16 to 78.84, a gain of more than 30 points
+       Column
+                          |C ′ |        |Ĉ|                  on both metrics. On AITQA, T RACE BACK boosts
+                        |S ′ ∩ Ŝ|   |S ′ ∩ Ŝ|               precision from 31.96 (SBERT+GPT-4o) to 52.37
+       Cell
+                          |S ′ |        |Ŝ|                  while retaining very high recall (95.22 vs. 97.10
+                                                              for I NSEQ). These gains indicate that query de-
+Table 3: Precision and Recall at different granularity.       composition and sub-query attribution are partic-
+
+                                                          6
+                                           ToTTo                FetaQA                  AITQA
+       Method
+                                     Precision Recall Precision Recall             Precision Recall
+                                          Row-Level Attribution
+       SBERT + GPT-4o                  43.38     39.09      57.02    55.40           66.82      68.10
+       G ENERATION P ROGRAMS           50.00     31.28      75.00    40.06           59.68      71.90
+       Fewshot + CoT                   17.30     12.80      34.40    30.10           04.30      04.30
+       I NSEQ                          37.50     74.50      56.40    84.70           31.20      97.60
+       T RACE BACK - Lite              77.00     62.60      83.00    79.20           91.30      92.90
+       T RACE BACK                     71.19     80.38      94.30    93.36           96.65      97.12
+                                        Column-Level Attribution
+       SBERT + GPT-4o                  90.51     85.91      94.67    84.77           46.68      97.14
+       G ENERATION P ROGRAMS           71.81     24.71      78.42    20.00           49.86      83.81
+       Fewshot + CoT                   92.70     76.40      95.80    67.30           47.50      94.30
+       I NSEQ                          73.10     74.10      82.60    65.50           34.70      99.98
+       T RACE BACK - Lite              88.60     48.90      94.70    54.80           79.20      85.30
+       T RACE BACK                     91.50     77.64      96.39    83.07           54.09      98.09
+                                          Cell-Level Attribution
+       SBERT + GPT-4o                  39.78     36.97      52.08    46.16           31.96      66.67
+       G ENERATION P ROGRAMS           29.35     13.61      50.78    15.74           30.32      67.14
+       Fewshot + CoT                   14.50     10.10      27.40    17.80           02.20      04.30
+       I NSEQ                          42.70     53.80      56.50    44.20           19.20      97.10
+       T RACE BACK - Lite              73.80     39.60      75.40    42.30           73.70      80.60
+       T RACE BACK                     74.20     67.05      89.81    78.84           52.37      95.22
+
+Table 4: Attribution performance across granularities and datasets. Precision and recall for row-, column-,
+and cell-level attribution on ToTTo, FetaQA, and AITQA. Blocks correspond to different granularities. For each
+dataset-granularity pair, bold best method; underline marks second best
+
+
+ularly effective at isolating the exact supporting         components.
+cells, including implicit evidence.
+                                                           Variants. Both pipeline variants underperform
+Baseline Behavior and Ablations. Few-shot                  the full system. Running query decomposition be-
+CoT generally underperforms, especially at the             fore table pruning yields lower precision on all
+cell level, confirming that unguided prompt-               datasets (e.g., 63.00 vs. 74.20 on ToTTo), sug-
+ing lacks the structured reasoning needed for              gesting that pruning benefits from operating on
+fine-grained grounding. SBERT+GPT-4o and                   the original table rather than on decomposed sub-
+I NSEQ often achieve strong recall (e.g., row-             questions. Processing one subquery at a time fur-
+level recall of 97.60 on AITQA), but their                 ther reduces precision (61.32 on ToTTo and 69.67
+precision remains low due to aggressive re-                on FetaQA), indicating that joint reasoning over
+trieval and limited schema awareness. G ENERA -            sub-questions is important for maintaining con-
+TION P ROGRAMS trades precision for recall with-           sistent evidence selection. The full T RACE BACK
+out closing this gap. T RACE BACK-Lite (uses               achieves the best trade-off, with 74.20/67.05 on
+Qwen2.5-7B-Instruct (Qwen et al., 2025b)                   ToTTo and 89.81/78.84 on FetaQA.
+as LLM), which omits some components of our
+full framework, already outperforms all baselines          Ablations. Removing table pruning slightly im-
+in most settings, while the full T RACE BACK con-          proves precision on AITQA (86.33 vs. 52.37) but
+sistently delivers the best precision-recall balance       reduces precision on ToTTo and FetaQA and low-
+across datasets and granularities.                         ers recall overall, confirming that pruning is gen-
+                                                           erally beneficial for accuracy and efficiency. The
+5.2   Variants and Ablations                               largest degradation occurs when removing query
+Table 5 reports cell-level precision and recall for        decomposition: precision drops to 56.00 on ToTTo
+variants of T RACE BACK and ablations of its main          and 65.40 on FetaQA, with recall also reduced.
+
+                                                       7
+This shows that decomposition is crucial for sur-                 we can evaluate attribution quality without
+facing intermediate evidence and aligning attribu-                access to gold cell labels.
+tions with multi-step reasoning.
+                                                            FAIRS CORE Precision and Recall. Let a be the
+   Overall, these results indicate that both table
+                                                            number of answer-derived facts that are supported
+pruning and query decomposition are necessary:
+                                                            by at least one predicted cell-derived fact, and b
+pruning controls noise, while joint reasoning over
+                                                            the number of unsupported answer facts. Let c be
+decomposed sub-questions enables accurate cell-
+                                                            the number of predicted cell-derived facts that cor-
+level grounding.
+                                                            rectly match an answer fact, and d the number of
+6     FAIRS CORE Metric                                     predicted facts that do not match any answer fact.
+                                                            We define
+To reduce the cost of manually annotating cell-                              a                        c
+level attributions, we introduce FAIRS CORE, a                   Recall =        ,     Precision =        .
+                                                                           a+b                      c+d
+reference-less evaluation pipeline that estimates
+                                                            Recall (answer→cell view) measures how com-
+attribution quality by comparing atomic facts de-
+                                                            pletely the predicted attributions cover the answer
+rived from predicted cells with atomic facts ex-
+                                                            content, while precision (cell→answer view) mea-
+tracted from the answer (Figure 3). The pipeline
+                                                            sures how many predicted evidential cells are actu-
+has three stages.
+                                                            ally needed for the answer. Together, these quan-
+    1. Cell-to-fact conversion. Each cell pre-              tities provide an interpretable, scalable proxy for
+       dicted as relevant is converted into a short,        cell-level attribution quality.
+       declarative atomic fact by combining its             6.1   FAIRS CORE Systematic Analysis
+       value with the corresponding column header
+                                                            We next assess the reliability of FAIRS CORE as a
+       and, when needed, a row key. For exam-
+                                                            surrogate for human evaluation (Figure 4). Our
+       ple, the cells (Kadhalil Sodhapuvadhu Yep-
+                                                            analysis considers two complementary aspects:
+       padi, Cathy) under columns (Film, Role)
+                                                            (i) how closely FAIRS CORE precision and recall
+       yield facts such as “The role of Cathy ap-
+                                                            track true cell-level precision and recall when gold
+       pears in the film Kadhalil Sodhapuvadhu
+                                                            attributions are available, and (ii) how consistently
+       Yeppadi.” This step turns structured evidence
+                                                            FAIRS CORE scores distinguish correct from in-
+       into natural-language statements that can be
+                                                            correct attributions when applied both to model
+       compared to answer-derived facts.
+                                                            predictions and to gold cell sets themselves.
+    2. Answer-to-fact conversion. The reference             1. Human agreement check. We first apply
+       answer is decomposed into minimal, self-             FAIRS CORE to the 1,500 gold examples, pairing
+       contained atomic facts using an LLM. For             human cell-level attributions with their reference
+       instance, the answer “Pooja Ramachandran             answers. Since these labels are manually anno-
+       starred as Cathy in Kadhalil Sodhapuvadhu            tated, we expect scores close to 1.0. In this setting,
+       Yeppadi and its Telugu version Love Fail-            FAIRS CORE attains 83.20 precision and 88.34 re-
+       ure.” can be split into “Pooja Ramachan-             call, indicating strong alignment with human judg-
+       dran starred as Cathy in Kadhalil Sodhapu-           ments. The remaining gap is largely due to vari-
+       vadhu Yeppadi.” and “Pooja Ramachandran              ability in LLM-generated atomic facts and occa-
+       starred as Cathy in the Telugu version Love          sional errors in the entailment-based alignment.
+       Failure.” This yields fact set against which
+       table-derived facts can be aligned.                  2.    Alignment with attribution evaluation.
+                                                            We next assess how well FAIRS CORE approx-
+    3. Fact alignment and comparison. A scor-               imates true attribution quality when gold labels
+       ing LLM compares the two fact sets and de-           are used only for analysis. Table 6 compares
+       cides, for each pair, whether the cell-derived       FAIRS CORE-predicted precision and recall with
+       fact correctly supports an answer fact. Un-          human-annotated cell-level scores for T RACE -
+       matched answer facts correspond to recall            BACK on the same 1,500 examples.
+       errors (missing attributions), whereas un-           Analysis across datasets, FAIRS CORE systemati-
+       matched cell-derived facts correspond to pre-        cally underestimates absolute scores but tracks rel-
+       cision errors (over-attribution). In this way,       ative trends. On ToTTo and FetaQA, precision
+
+                                                        8
+ Method                                                                                                        ToTTo                                 FetaQA                     AITQA
+                                                                                                   Precision                Recall             Precision      Recall     Precision        Recall
+                                      Variants of T RACE BACK
+ Query Decomposition before Table Pruning    63.00     60.15                                                                                    71.23         75.10        85.38            92.89
+ Passing One Subquery at a Time              61.32     60.10                                                                                    69.67         73.33        85.95            92.00
+ T RACE BACK                                 74.20     67.05                                                                                    89.81         78.84        52.37            95.22
+                                                                                    Ablation Study on T RACE BACK
+ T RACE BACK                                                                                   74.20     67.05   89.81                                        78.84        52.37            95.22
+ - w/o Table Pruning                                                                           73.14     60.10   72.89                                        75.78        86.33            93.10
+ - w/o Query Decomposition                                                                     56.00     56.30   65.40                                        68.32        47.22            91.80
+
+Table 5: Variants and ablations of T RACE BACK for cell-level attribution. Cell-level precision and recall on
+ToTTo, FetaQA, and AITQA for (top) pipeline variants that modify how sub-questions are processed and (bottom)
+ablations that remove specific modules. Bold indicate the best score.
+
+                                                                                                 Attribute Atomic Facts
+                        Attributed Cells Table
+ Year                   Movie                 Role            Language                           The title of the film is Kadhalil Sodhappurvadu Yeppadi
+
+                                                                                                 The role played in Kadhalil Sodhappurvadu Yeppadi is Cathy
+                   Kadhalil
+   -            Sodhappurvadu                 Cathy                  -                           The title of the film Love Failure
+                   Yeppadi                                                                       The role played in Love Failure is Cathy
+   -               Love Failure               Cathy              Telugu                          The language of film Love Failure is Telugu
+                                                                                                                                                                                   Cell Level
+                                                                                                                                                                                Precision Recall
+                                                                                                  Answer Atomic Facts
+                           Original Answer
+                                                                                                 Pooja Ramachandran starred as Cathy in
+ Pooja Ramachandran starred as Cathy in                                                          Kadhalil Sodhappurvadu Yeppadi
+ Kadhalil Sodhappurvadu Yeppadi and its Telugu                                                    Pooja Ramachandran starred as Cathy in the Telugu
+ version Love Failure.                                                                            version of the film, Love Failure.
+
+
+
+
+                                          Figure 3: Illustration of Reference-less Evaluation Metric FAIRS CORE
+                 In Ideal case, the Precision and Recall of the predicted cell attribution
+                      given by FairScore should be equal to true precision and recall
+                                                                                                                        Dataset         Pred P     Actual P    ∆P      Pred R    Actual R     ∆R
+
+  True Cell Precision                                                                     Cell Precision
+                                                                                                                        ToTTo           58.81        74.52    -15.71   56.36      67.31      -10.95
+    True Cell Recall
+                                                 Predicted Truth Cell
+                                                                                           Cell Recall                  FetaQA          73.45        89.81    -16.36   72.40      78.84      -06.44
+                                                Attributions by Model
+                                                                                                                        AITQA           48.10        52.38    -04.28   57.27      95.65      -38.38
+
+
+                                 Ground Truth Cell                       Original                                     Table 6: FAIRS CORE-predicted vs. human-annotated
+                                   Attributions                          Answer
+                                                                                                                      cell-level precision and recall for T RACE BACK’s attri-
+Human Evaluation
+                                                     Ground Truth Cell
+                                                                                      FairScore Evaluation            butions. ∆ columns show prediction error.
+                                                       Attributions
+
+
+ Cell Precision = 100                                                                     Cell Precision
+  Cell Recall = 100                                                                        Cell Recall
+                                                                                                                      tion.
+                  In Ideal case, the Precision and Recall of the ground truth attribution
+                                     given by FairScore should be 100
+                                                                                                                         Taken together, these results indicate that
+                                                                                                                      FAIRS CORE closely mirrors human judgments of
+Figure 4: Systematic analysis of the metric -                                                                         attribution quality. By converting predicted cells
+FAIRS CORE                                                                                                            and answers into atomic facts and aligning them
+                                                                                                                      via entailment-based matching, it captures both
+is underestimated by about 16 points and recall                                                                       explicit and implicit evidence while penalizing
+by 6-11 points. AITQA exhibits a larger recall                                                                        omissions and hallucinations, enabling robust and
+gap (−38.38), reflecting the greater linguistic and                                                                   scalable evaluation without additional gold labels.
+structural variability of financial tables, while pre-
+cision remains within 4.3 points. Despite these
+                                                                                                                      6.2             Evaluation with FAIRS CORE
+discrepancies, FAIRS CORE preserves the correct
+ranking and relative differences, supporting its use                                                                  We report FAIRS CORE scores in terms of preci-
+as a scalable proxy for human cell-level evalua-                                                                      sion (P) and recall (R).
+
+                                                                                                                9
+ Method                  ToTTo        FetaQA          AITQA              tions drawn from ToTTo, FetaQA, and AITQA.
+                     P       R       P       R       P       R           We also introduced FAIRS CORE, a reference-less
+ Fewshot + CoT      30.81   13.25   15.67   17.73   11.73   6.69         metric based on atomic fact alignment that en-
+ SBERT + GPT-4o     20.51   16.84   20.05   21.87   4.51    5.47
+ I NSEQ             16.85   18.95   15.48   17.94   10.99   16.53        ables scalable evaluation without gold cell labels.
+ GP                 14.96   11.32   16.04   14.13   7.62    3.77         Experiments show that T RACE BACK consistently
+ T RACE BACK-Lite   53.87   40.20   51.88   45.12   63.44   55.13
+ T RACE BACK        56.89   48.39   63.73   64.15   42.20   49.93        outperforms strong baselines across datasets and
+                                                                         granularities, and that FAIRS CORE closely tracks
+Table 7: Cell-level precision and recall predicted by                    human judgments while preserving relative perfor-
+FAIRS CORE for different attribution methods on the                      mance trends.
+gold sets of ToTTo, FetaQA, and AITQA. Note: here                           Future work includes extending T RACE BACK
+P refers to Precison and R refers to recall, Method GP                   to more complex reasoning (e.g., aggregation and
+refers to G ENERATION P ROGRAMS.
+                                                                         multi-hop over multiple tables) and improving
+                                                                         FAIRS CORE ’s robustness so it can be applied
+Methods evaluated with FAIRS CORE on gold                                more broadly across domains and modalities.
+sets. Table 7 shows FAIRS CORE scores for
+T RACE BACK, T RACE BACK-Lite, and all base-                             Limitations
+lines on the 1,500 gold examples. On ToTTo,                              T RACE BACK has several limitations. First, it is
+T RACE BACK reaches P/R of 56.89/48.39, im-                              restricted to single-table settings and does not yet
+proving over the strongest baseline (Few-shot                            support multi-table joins, hierarchical schemas, or
+ICL: 30.81 P; I NSEQ: 18.95 R) by more than                              semi-/multimodal tables, limiting applicability to
+25 points in P and nearly 30 in R. On Fe-                                more complex QA scenarios. Second, its core
+taQA, it achieves 63.73/64.15, exceeding the                             components (e.g., query decomposition and cell
+best baseline (SBERT+GPT-4o: 20.05/21.87)                                attribution) rely heavily on LLMs, making perfor-
+by over 40 points on both metrics.            On                         mance sensitive to prompt design, model changes,
+AITQA, T RACE BACK-Lite attains the highest                              and domain shift. Third, while FAIRS CORE is
+scores (63.44/55.13), while the full T RACE -                            scalable, it depends on the quality of fact extrac-
+BACK still substantially outperforms all non-                            tion and entailment-based alignment and tends to
+T RACE BACK variants (42.20/49.93). Overall,                             underestimate absolute precision, especially for
+FAIRS CORE clearly separates strong from weak                            compositional or ambiguous answers. Fourth, our
+attribution methods and preserves the performance                        comparisons are constrained by the lack of pub-
+ordering observed with gold-label evaluation.                            licly available implementations for some close
+T RACE BACK evaluated with FAIRS CORE on                                 baselines (e.g., MATSA). Finally, CITEB ENCH
+silver sets. We also apply FAIRS CORE to sil-                            currently covers only English Wikipedia-style ta-
+ver sets instances without human annotations                             bles, so generalization to multilingual or domain-
+from ToTTo (7,200 examples) and FetaQA (2,504                            specific and more heterogeneous settings remains
+examples). On ToTTo, T RACE BACK attains                                 untested.
+55.10/76.12; on FetaQA, it reaches 69.30/68.93.
+These scores are consistent with the correspond-                         References
+ing gold-set estimates (56.89/48.39 for ToTTo
+and 63.73/64.15 for FetaQA) and preserve rela-                           Nikhil Abhyankar, Vivek Gupta, Dan Roth, and
+tive trends across datasets. Taken together, these                         Chandan K. Reddy. 2025. H-STAR: LLM-
+results indicate that FAIRS CORE is a reliable                             driven hybrid SQL-text adaptive reasoning on
+reference-less proxy for human evaluation, en-                             tables. In Proceedings of the 2025 Conference
+abling large-scale benchmarking of cell-level at-                          of the Nations of the Americas Chapter of the
+tribution when gold labels are scarce.                                     Association for Computational Linguistics: Hu-
+                                                                           man Language Technologies (Volume 1: Long
+7   Conclusion and Future Work                                             Papers), pages 8841–8863, Albuquerque, New
+                                                                           Mexico. Association for Computational Lin-
+We presented T RACE BACK, a modular multi-
+                                                                           guistics.
+agent framework for fine-grained cell-level attri-
+bution in table QA, and CITEB ENCH, a 1,500-                             Josh Achiam, Steven Adler, Sandhini Agarwal,
+example benchmark with phrase-to-cell annota-                              Lama Ahmad, Ilge Akkaya, Florencia Leoni
+
+                                                                    10
+  Aleman, Diogo Almeida, Janko Altenschmidt,              pages 6465–6488, Singapore. Association for
+  Sam Altman, Shyamal Anadkat, et al. 2023.               Computational Linguistics.
+  GPT-4 Technical Report.     arXiv preprint
+  arXiv:2303.08774.                                     Amelia Glaese, Nat McAleese, Maja Tr˛ebacz,
+                                                         John Aslanides, Vlad Firoiu, Timo Ewalds,
+Tom Brown, Benjamin Mann, Nick Ryder,                    Maribeth Rauh, Laura Weidinger, Martin
+  Melanie Subbiah, Jared D Kaplan, Prafulla              Chadwick, Phoebe Thacker, Lucy Campbell-
+  Dhariwal, Arvind Neelakantan, Pranav Shyam,            Gillingham, Jonathan Uesato, Po-Sen Huang,
+  Girish Sastry, Amanda Askell, Sandhini Agar-           Ramona Comanescu, Fan Yang, Abigail See,
+  wal, Ariel Herbert-Voss, Gretchen Krueger,             Sumanth Dathathri, Rory Greig, Charlie Chen,
+  Tom Henighan, Rewon Child, Aditya Ramesh,              Doug Fritz, Jaume Sanchez Elias, Richard
+  Daniel Ziegler, Jeffrey Wu, Clemens Winter,            Green, Soňa Mokrá, Nicholas Fernando, Boxi
+  Chris Hesse, Mark Chen, Eric Sigler, Ma-               Wu, Rachel Foley, Susannah Young, Iason
+  teusz Litwin, Scott Gray, Benjamin Chess,              Gabriel, William Isaac, John Mellor, Demis
+  Jack Clark, Christopher Berner, Sam McCan-             Hassabis, Koray Kavukcuoglu, Lisa Anne Hen-
+  dlish, Alec Radford, Ilya Sutskever, and Dario         dricks, and Geoffrey Irving. 2022. Improving
+  Amodei. 2020. Language Models are Few-Shot             alignment of dialogue agents via targeted hu-
+  Learners. In Advances in Neural Information            man judgements.
+  Processing Systems, volume 33, pages 1877–
+  1901. Curran Associates, Inc.                         Andreas Hanselowski, Avinesh PVS, Benjamin
+                                                          Schiller, Felix Caspelherr, Debanjan Chaudhuri,
+DeepSeek-AI and Aixin Liua et al. 2025.                   Christian M. Meyer, and Iryna Gurevych. 2018.
+  Deepseek-v3 technical report.                           A retrospective analysis of the fake news chal-
+Owain Evans, Owen Cotton-Barratt, Lukas                   lenge stance-detection task. In Proceedings of
+ Finnveden, Adam Bales, Avital Balwit, Peter              the 27th International Conference on Computa-
+ Wills, Luca Righetti, and William Saunders.              tional Linguistics, pages 1859–1874, Santa Fe,
+ 2021. Truthful AI: Developing and governing              New Mexico, USA. Association for Computa-
+ AI that does not lie.                                    tional Linguistics.
+
+Luyu Gao, Zhuyun Dai, Panupong Pasupat, An-             Ziwei Ji, Nayeon Lee, Rita Frieske, Tiezheng Yu,
+  thony Chen, Arun Tejasvi Chaganty, Yicheng              Dan Su, Yan Xu, Etsuko Ishii, Ye Jin Bang, An-
+  Fan, Vincent Zhao, Ni Lao, Hongrae Lee, Da-             drea Madotto, and Pascale Fung. 2023. Survey
+  Cheng Juan, and Kelvin Guu. 2023a. RARR:                of Hallucination in Natural Language Genera-
+  Researching and revising what language mod-             tion. ACM Comput. Surv., 55(12).
+  els say, using language models. In Proceedings
+                                                        Yannis Katsis, Saneem Chemmengath, Vishwajeet
+  of the 61st Annual Meeting of the Association
+                                                          Kumar, Samarth Bharadwaj, Mustafa Canim,
+  for Computational Linguistics (Volume 1: Long
+                                                          Michael Glass, Alfio Gliozzo, Feifei Pan,
+  Papers), pages 16477–16508, Toronto, Canada.
+                                                          Jaydeep Sen, Karthik Sankaranarayanan, and
+  Association for Computational Linguistics.
+                                                          Soumen Chakrabarti. 2022. AIT-QA: Ques-
+Tianyu Gao, Howard Yen, Jiatong Yu, and Danqi             tion answering dataset over complex tables in
+  Chen. 2023b. Enabling large language mod-               the airline industry. In Proceedings of the
+  els to generate text with citations. In Pro-            2022 Conference of the North American Chap-
+  ceedings of the 2023 Conference on Empiri-              ter of the Association for Computational Lin-
+  cal Methods in Natural Language Processing,             guistics: Human Language Technologies: In-
+  pages 6465–6488, Singapore. Association for             dustry Track, pages 305–314, Hybrid: Seattle,
+  Computational Linguistics.                              Washington + Online. Association for Compu-
+                                                          tational Linguistics.
+Tianyu Gao, Howard Yen, Jiatong Yu, and Danqi
+  Chen. 2023c. Enabling large language mod-             Muhammad Khalifa, David Wadden, Emma
+  els to generate text with citations. In Pro-           Strubell, Honglak Lee, Lu Wang, Iz Beltagy,
+  ceedings of the 2023 Conference on Empiri-             and Hao Peng. 2024. Source-Aware Training
+  cal Methods in Natural Language Processing,            Enables Knowledge Attribution in Language
+
+                                                   11
+  Models. In ICLR 2024 Workshop on Secure and             nologies (Volume 1: Long Papers), pages 3906–
+  Trustworthy Large Language Models.                      3919, Mexico City, Mexico. Association for
+                                                          Computational Linguistics.
+Dongfang Li, Zetian Sun, Xinshuo Hu, Zhenyu
+  Liu, Ziyang Chen, Baotian Hu, Aiguo Wu, and           Krishna Pillutla, Swabha Swayamdipta, Rowan
+  Min Zhang. 2023. A Survey of Large Language             Zellers, John Thickstun, Sean Welleck, Yejin
+  Models Attribution.                                     Choi, and Zaid Harchaoui. 2021. MAUVE:
+                                                          Measuring the gap between neural text and hu-
+Puneet Mathur, Alexa Siu, Nedim Lipka, and Tong           man text using divergence frontiers. In Ad-
+  Sun. 2024. MATSA: Multi-agent table struc-              vances in Neural Information Processing Sys-
+  ture attribution. In Proceedings of the 2024            tems.
+  Conference on Empirical Methods in Natural
+  Language Processing: System Demonstrations,           Qwen, : An Yang, and Anfeng Li et al. 2025a.
+  pages 250–258, Miami, Florida, USA. Associa-           Qwen3 technical report.
+  tion for Computational Linguistics.
+                                                        Qwen, : An Yang, and Baosong Yang et al. 2025b.
+Jacob Menick, Maja Trebacz, Vladimir Mikulik,            Qwen2.5 technical report.
+  John Aslanides, Francis Song, Martin Chad-
+  wick, Mia Glaese, Susannah Young, Lucy                Nils Reimers and Iryna Gurevych. 2019.
+  Campbell-Gillingham, Geoffrey Irving, and Nat           Sentence-BERT: Sentence embeddings us-
+  McAleese. 2022. Teaching language models to             ing Siamese BERT-networks. In Proceedings
+  support answers with verified quotes.                   of the 2019 Conference on Empirical Methods
+                                                          in Natural Language Processing and the 9th
+Linyong Nan, Chiachun Hsieh, Ziming Mao,                  International Joint Conference on Natural Lan-
+  Xi Victoria Lin, Neha Verma, Rui Zhang,                 guage Processing (EMNLP-IJCNLP), pages
+  Wojciech Kryściński, Hailey Schoelkopf, Ri-           3982–3992, Hong Kong, China. Association
+  ley Kong, Xiangru Tang, Mutethia Mutuma,                for Computational Linguistics.
+  Ben Rosand, Isabel Trindade, Renusree Ban-
+  daru, Jacob Cunningham, Caiming Xiong, and            Gabriele Sarti, Nils Feldhus, Ludwig Sickert, and
+  Dragomir Radev. 2022. FeTaQA: Free-form                 Oskar van der Wal. 2023. Inseq: An inter-
+  table question answering.     Transactions of           pretability toolkit for sequence generation mod-
+  the Association for Computational Linguistics,          els. In Proceedings of the 61st Annual Meet-
+  10:35–49.                                               ing of the Association for Computational Lin-
+                                                          guistics (Volume 3: System Demonstrations),
+OpenAI, :, Aaron Hurst, Adam Lerer, Adam P.               pages 421–435, Toronto, Canada. Association
+  Goucher, Adam Perelman, and Aditya Ramesh               for Computational Linguistics.
+  et al. 2024. Gpt-4o system card.
+                                                        Ben Snyder, Marius Moisescu, and Muham-
+Ankur Parikh, Xuezhi Wang, Sebastian                      mad Bilal Zafar. 2024. On Early Detection
+  Gehrmann, Manaal Faruqui, Bhuwan Dhingra,               of Hallucinations in Factual Question Answer-
+  Diyi Yang, and Dipanjan Das. 2020. ToTTo:               ing. In Proceedings of the 30th ACM SIGKDD
+  A controlled table-to-text generation dataset.          Conference on Knowledge Discovery and Data
+  In Proceedings of the 2020 Conference on                Mining, KDD ’24, page 2721–2732, New York,
+  Empirical Methods in Natural Language Pro-              NY, USA. Association for Computing Machin-
+  cessing (EMNLP), pages 1173–1186, Online.               ery.
+  Association for Computational Linguistics.
+                                                        Romal Thoppilan, Daniel De Freitas, Jamie
+Nilay Patel, Shivashankar Subramanian, Siddhant           Hall, Noam Shazeer, Apoorv Kulshreshtha,
+  Garg, Pratyay Banerjee, and Amita Misra.                Heng-Tze Cheng, Alicia Jin, Taylor Bos,
+  2024. Towards improved multi-source attribu-            Leslie Baker, Yu Du, YaGuang Li, Hongrae
+  tion for long-form answer generation. In Pro-           Lee, Huaixiu Steven Zheng, Amin Ghafouri,
+  ceedings of the 2024 Conference of the North            Marcelo Menegali, Yanping Huang, Maxim
+  American Chapter of the Association for Com-            Krikun, Dmitry Lepikhin, James Qin, De-
+  putational Linguistics: Human Language Tech-            hao Chen, Yuanzhong Xu, Zhifeng Chen,
+
+                                                   12
+  Adam Roberts, Maarten Bosma, Vincent Zhao,
+  Yanqi Zhou, Chung-Ching Chang, Igor Kri-
+  vokon, Will Rusch, Marc Pickett, Pranesh
+  Srinivasan, Laichee Man, Kathleen Meier-
+  Hellstern, Meredith Ringel Morris, Tulsee
+  Doshi, Renelito Delos Santos, Toju Duke,
+  Johnny Soraker, Ben Zevenbergen, Vinodku-
+  mar Prabhakaran, Mark Diaz, Ben Hutchin-
+  son, Kristen Olson, Alejandra Molina, Erin
+  Hoffman-John, Josh Lee, Lora Aroyo, Ravi
+  Rajakumar, Alena Butryna, Matthew Lamm,
+  Viktoriya Kuzmina, Joe Fenton, Aaron Co-
+  hen, Rachel Bernstein, Ray Kurzweil, Blaise
+  Aguera-Arcas, Claire Cui, Marian Croak,
+  Ed Chi, and Quoc Le. 2022. LaMDA: Lan-
+  guage Models for Dialog Applications.
+
+James Thorne, Andreas Vlachos, Oana Cocarascu,
+  Christos Christodoulopoulos, and Arpit Mittal.
+  2018. The fact extraction and VERification
+  (FEVER) shared task. In Proceedings of the
+  First Workshop on Fact Extraction and VERifi-
+  cation (FEVER), pages 1–9, Brussels, Belgium.
+  Association for Computational Linguistics.
+
+David Wan, Eran Hirsch, Elias Stengel-Eskin,
+  Ido Dagan, and Mohit Bansal. 2025. Gener-
+  ationPrograms: Fine-grained Attribution with
+  Executable Programs. In Second Conference on
+  Language Modeling.
+
+Ziwei Xu, Sanjay Jain, and Mohan Kankanhalli.
+  2025. Hallucination is Inevitable: An Innate
+  Limitation of Large Language Models.
+
+Xiang Yue, Boshi Wang, Ziru Chen, Kai Zhang,
+  Yu Su, and Huan Sun. 2023. Automatic evalua-
+  tion of attribution by large language models. In
+  Findings of the Association for Computational
+  Linguistics: EMNLP 2023, pages 4615–4635,
+  Singapore. Association for Computational Lin-
+  guistics.
+
+Liu Zhuang, Lin Wayne, Shi Ya, and Zhao Jun.
+  2021. A robustly optimized BERT pre-training
+  approach with post-training. In Proceedings of
+  the 20th Chinese National Conference on Com-
+  putational Linguistics, pages 1218–1227, Huh-
+  hot, China. Chinese Information Processing So-
+  ciety of China.
+
+
+
+
+                                                     13
+Appendix
+A   Prompt Templates
+
+ Prompt A: Column Relevance Identification Agent
+
+ You will be given table title, column names, question and answer. You need to find all the
+     ,→ columns in column names, which are relevant to question and answer.
+
+ <Example-1> :
+
+ Input :
+
+ <Table Title>: "Kings Time Duration Info"
+
+ <Column Names>: ["King Name", "Start of the Reign", "End of the Reign", "Duration", "
+     ,→ Kingdom"]
+
+ Question : "How long did king Rajat held the throne and when it ended?"
+ Answer : "King Rajat held the throne for 10 years and it ended at 1777." :
+
+
+ Final Answer :
+ <Relevant Columns>: ["Duration","End of the Reign"]
+
+ </Example-1>
+
+ <Instructions>
+ 1. Follow the given format for the final answer.
+ 2. Don’t miss any relevant columns.
+
+ Now, give output for the following inputs.
+
+ Input :
+
+ Table Title: {table title}
+
+ <Column Names>: {columns}
+
+ Question: {question}
+
+ Answer: {answer}
+
+ Output :
+
+
+
+
+B   Ethics Statement
+We affirm that this work adheres to established ethical standards in NLP research and publication. All
+datasets used in our study ToTTo, FetaQA, and AITQA are publicly available and used in compliance
+with their respective terms. Our benchmark, CITEB ENCH, is constructed through manual annotation
+with care to ensure fairness, factual accuracy, and privacy. We disclose all model configurations, prompt-
+ing strategies, and evaluation protocols to support transparency and reproducibility. While FAIRS CORE
+is designed to eliminate the need for human labels, it depends on LLM judgments, which may reflect
+inherent biases; we mitigate this by using temperature-controlled generation and standardized prompts.
+AI assistance was used in experiments and drafting to improve clarity, structure, and analysis quality,
+with human oversight throughout.
+
+
+
+
+                                                   14
+Prompt B: Evidence Span Extractor Agent
+
+Given a table schema and other table meta-data, question based on table and answer for the
+    ,→ question, write a MySQL query
+to retrieve all the relevant rows of the table, such that the answer to the given question
+    ,→ can be generated from the
+retrieved rows. Your focus should be to not eliminate any relevant rows from the table.
+    ,→ Think step-by-step.
+
+Important MySQL formatting rules:
+- Use backticks (‘...‘) around table names and column names (identifiers), especially if
+    ,→ they contain spaces or punctuation.
+- Put ONLY the SQL inside the <SQL> ... </SQL> tags (do not add a leading colon after <SQL
+    ,→ >).
+
+<Example-1> :
+
+Input :
+Table-Schema :
+<Column Names>: ["King Name", "Start of the Reign", "End of the Reign", "Duration"]
+<Table Title>: "Kings\_Time\_Duration\_Info"
+<Table-Rows> : [["Bhopal","Devanshu","1901","1998","98 Years"],["Chennai","Poojah
+    ,→ ","1999","2100","101"],["Ujjain","Rajat","2111","2211","100"]]
+
+Question : "How long did king Poojah held the throne and who was his successor?"
+Answer : "King Poojah held the throne for 101 years and King Rajat was his successor."
+
+Output :
+<step-by-step reasoning>
+1. In the question, the duration and the successor is asked for King Poojah.
+2. In the answer, duration of King Poojah is mentioned along with the sucessor to King
+    ,→ Poojah - King Rajat.
+3. The SQL query will be such that it retrieves the row of King Poojah and all the rows
+    ,→ that has the "Start of the Reign" >= 2100 ("End of the Reign" for King Poojah).
+Final Answer :
+<SQL> CREATE TABLE Pooja\_King AS SELECT * FROM ‘Kings\_Time\_Duration\_Info‘ WHERE ‘King
+    ,→ Name‘ = ’Poojah’ OR CAST(‘Start of the Reign‘ AS SIGNED) >= 2100; </SQL>
+</Example-1>
+
+<Instructions>
+1. Follow the given format for the final answer. The final SQL query should be between <SQL
+    ,→ > </SQL> tags.
+2. Only write CREATE MySQL statements.
+3. Give a SQL statement for MySQL.
+4. The query giving the filtered table should cover all parts of the question and answer.
+
+Now, give output for the following input.
+
+Input :
+
+Table-Schema :
+
+<Table Title>: {title}
+
+<Column Names>: {relevant columns}
+
+Table: {table with relevant columns}
+
+Question: {question}
+
+Anser: {answer}
+
+Output :
+
+
+
+
+                                            15
+Prompt C: Query Decomposition Agent
+
+Given the table information, a question based on the table, and its corresponding answer,
+    ,→ break down the original question into smaller sub-questions such that each sub-
+    ,→ question can be directly answered using specific parts of the table. The combined
+    ,→ answers to these sub-questions should comprehensively cover all the information in
+    ,→ the original answer. Ensure that each sub-question focuses on a specific aspect or
+    ,→ data point present in the table.
+
+Input Format:
+
+Table-Info: Includes the table schema (column names), table title, and section title if
+    ,→ available.
+Question: A natural language question based on the table.
+Answer: The corresponding answer derived from the table.
+
+Output Format:
+
+A list of sub-questions that together lead to the original answer.
+Each sub-question should correspond to specific columns or rows of the table.
+
+<Example-1>
+Input :
+Table-Schema :
+<Column Names>: ["King Name", "Start of the Reign", "End of the Reign", "Duration"]
+<Table Title>: "Kings Time Duration Info"
+
+Question : "How long did king Rajat held the throne and who was his successor"
+Answer : "King Rajat held the throne for 10 years and King Aayush was his successor."
+
+Output :
+Sub-Questions:
+1. What was the duration of King Rajat’s reign?
+2. What was the End of the Reign year of King Rajat?
+3. Which king started his reign at the end of King Rajat’s reign?
+
+</Example-1>
+
+<Instructions>
+1. Just give the sub-questions in the given format. Don’t return anything else.
+
+
+Now, give output for the following input.
+
+Input :
+
+Table-Schema :
+<Column Names>: {column}
+Table Title: {title}
+Question: {question}
+Answer: {answer}
+Output :
+
+
+
+
+                                            16
+Prompt D: Sub-Query Attribution Agent
+
+You are given a pruned table (only the relevant columns and the relevant rows), the
+    ,→ original Answer, plus a list of sub-questions.
+
+Your task: for EACH sub-question, return the minimal set of table cells (row, column)
+    ,→ needed to answer that sub-question, considering the context of the original Answer.
+Include cells used for filtering/comparisons/calculations even if they are not explicitly
+    ,→ mentioned in the final answer text.
+
+Indexing rules:
+- Use 0-based indexing for BOTH rows and columns.
+- Row indices refer to <Table Rows> (the pruned rows, header excluded).
+- Column indices refer to <Relevant-Columns> (the ordered list provided).
+
+Output format:
+- Return one line per sub-question, in the same order as given:
+  <Cells>: [(row\_index, col\_index), (row\_index, col\_index), ...]
+- If a sub-question has no evidence in the table, output:
+  <Cells>: []
+- Do not output anything other than these <Cells>: ... lines.
+
+Input:
+<Relevant-Columns>: {columns}
+<Table Rows>: {pruned_rows}
+Answer: {answer}
+<Sub-Questions>:
+{sub-questions}
+
+
+
+
+Prompt E: Final Attribution Agent
+
+You are given:
+- The original question and its final (ground-truth) answer.
+- A pruned table (<Relevant-Columns> and <Table Rows>, header excluded).
+- A list of sub-questions.
+- A set of candidate evidence cells gathered from the sub-questions (optional).
+
+Your task: output the final set of evidence cells (row, column) that justify the final
+    ,→ answer.
+Important:
+- Include implicit evidence cells needed for the reasoning chain (e.g., filter conditions,
+    ,→ intermediate values), even if they are not verbatim in the answer.
+- Exclude irrelevant cells.
+
+Indexing rules:
+- Use 0-based indexing for BOTH rows and columns.
+- Row indices refer to <Table Rows> (the pruned rows, header excluded).
+- Column indices refer to <Relevant-Columns> (the ordered list provided).
+
+Output format:
+- Output a single line:
+  <Final Cells>: [(row\_index, col\_index), (row\_index, col\_index), ...]
+- If no evidence is found, output:
+  <Final Cells>: []
+- Do not output anything else.
+
+Input:
+<Relevant-Columns>: {cols}
+<Table Rows>: {rows}
+Question: {question}
+Answer: {answer}
+<Sub-Questions>:
+{sub-questions}
+<Candidate Cells>: {cell_indexs}
+
+Output:
+
+
+
+
+                                            17
+

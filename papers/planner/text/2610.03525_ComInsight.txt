@@ -1,0 +1,764 @@
+                                                 Structured Composition of Verifiable Atomic
+                                                    Insights for Table-to-Report Generation
+                                                              Teng Lin                                   Xinyu Liu                              Nan Tang
+                                                           DSA Thrust                                 DSA Thrust                               DSA Thrust
+                                                           HKUST(GZ)                                  HKUST(GZ)                                HKUST(GZ)
+                                                         Guangzhou, China                           Guangzhou, China                        Guangzhou, China
+                                                  tlin280@connect.hkust-gz.edu.cn              xliu@connect.hkust-gz.edu.cn              nantang@hkust-gz.edu.cn
+
+
+
+                                           Abstract—Table-to-report generation refers to the task of         age_group, quarter, revenue, profit), survey (survey_id, region,
+arXiv:2610.03525v1 [cs.CL] 2 Oct 2026
+
+
+
+
+                                        automatically generating article-level analytical reports from       quarter, satisfaction_score, nps_score), and logistics (ship-
+                                        relational tables and is an essential capability for automated       ment_id, region, quarter, delivery_days, delay_flag). A valid
+                                        data science and decision support. Its central challenge lies in
+                                        systematically discovering verifiable composite insights across      analysis should produce a composite insight such as: “Driven
+                                        tables, attributes, and analytical perspectives, and organizing      by the 18-30 age group, East China leads in both revenue and
+                                        them into coherent, complete, and traceable evidence chains.         satisfaction; in contrast, North China exhibits similar satisfac-
+                                        Existing methods primarily rely on sequential, reactive data         tion but lags significantly in revenue growth, likely because
+                                        agents or direct Large Language Model(LLM) generation. They          its logistics delay rate (38% vs. East China’s 12%) constrains
+                                        suffer from exploration bias: early local observations constrain
+                                        subsequent actions, causing models to focus prematurely on local     revenue conversion.” This conclusion integrates five indepen-
+                                        analyzes and miss cross-table or cross-dimensional evidence. We      dent evidence chains drawn from three different tables and
+                                        propose ComInsight, which reformulates insight discovery as          involves four distinct analysis patterns (MAX/GROUP_BY,
+                                        the composition of atomic evidences. We first define an atomic       AVG/GROUP_BY, GROUP_BY with filter, and CORR).
+                                        insight as the smallest executable analytical unit conforming to
+                                        a predefined analysis pattern and enumerate all valid atomic            Yet existing data agents struggle to produce such in-
+                                        insights from database schema and content. These atoms are           sights [3, 7, 8]. Sequential exploration agents, such as ReAct-
+                                        then organized into a multi-relational insight graph, where          style agents(e.g., AgentPoirot) [7], after discovering that “East
+                                        nodes represent verified data facts and edges encode logical,        China has the highest revenue” in early interactions, tend to
+                                        temporal, or hierarchical relations. Finally, a set of composition
+                                        operators systematically fuses atomic nodes into higher-order
+                                                                                                             deepen along this direction, repeatedly querying further details
+                                        composite conclusions. Every composite output is accompanied         about East China, rather than proactively crossing over to the
+                                        by executable SQL and fine-grained provenance, ensuring full         survey table to examine the satisfaction dimension, let alone
+                                        verifiability. Across three benchmarks InsightBench, DDR-Bench,      further linking to the logistics table’s delay rate. DDR-Bench’s
+                                        and T2R-Bench, ComInsight consistently outperforms strong            failure analysis shows that 58% of errors stem from insufficient
+                                        baselines in factual correctness, novelty, and structural com-
+                                        pleteness. We believe ComInsight offers a reliable, efficient, and
+                                                                                                             exploration breadth rather than single-step execution errors [3].
+                                        explainable path toward table-to-report generation.                  These failures expose a fundamental limitation: current data
+                                                                                                             agents lack the capability for systematic discovery of compos-
+                                                              I. I NTRODUCTION                               ite insights. To address this problem, we propose ComInsight,
+                                                                                                             an evidence-driven framework for composite insight discovery
+                                           Table-to-report generation is the task of automatically syn-      in table-to-report generation. ComInsight follows three steps: it
+                                        thesizing article-level analytical reports from relational tables,   first systematically enumerates all valid atomic insights from
+                                        and it constitutes a fundamental capability for automated data       the database according to a predefined analysis grammar; it
+                                        science and decision support [1, 2]. Its central challenge           then organizes these insights into a typed evidence graph,
+                                        lies not only in generating fluent text but in systematically        where nodes represent verified data facts and edges encode
+                                        discovering valuable insights across tables, attributes, and         relations; finally, relation-specific composition operators fuse
+                                        analytical perspectives, and organizing them into coherent,          independent atomic insights into higher-order composite con-
+                                        complete, and traceable evidence chains [3, 4, 5, 6].                clusions. Every composite output is accompanied by exe-
+                                           An individual finding often captures only one aspect of the       cutable SQL, ensuring full verifiability. Our main contributions
+                                        data, whereas a comprehensive analysis requires connecting           are as follows:
+                                        multiple findings to reveal relationships that are not apparent
+                                        from any single finding alone. We refer to such higher-order           •   We formalize the problem of composite insight dis-
+                                        findings, supported by multiple atomic findings and explicit               covery for table-to-report generation and propose five
+                                        relationships among them, as composite insights. Consider a                structural composite types: comparative, correlative,
+                                        retail analytics scenario as illustrated in Figure 1. The database         contextual, temporal, and causal. Each structural com-
+                                        contains three tables: sales (order_id, region, product_category,          posite type is equipped with explicit composition condi-
+Fig. 1. Existing agent workflows suffer from exploration bias and lack of novelty. Exhaustive dimension analysis is unverifiable. The ComInsight framework
+shifts from sequential exploration to structured composition, using atom insight graphs to generate verifiable composite insights.
+
+
+
+    tions and reasoning semantics.                                            shifted from moved beyond traditional metrics (e.g., BLEU,
+  • We propose the ComInsight framework, comprising                           ROUGE, and BERTScore) toward LLM-as-a-Judge. Systems
+    three core modules: atomic insight generation, multi-                     such as DataShot [33], InsightPilot [34], InsightLens [35],
+    relational graph construction, and composite insight gen-                 AgentPoirot [7], ReActInsight [29], DataCross [36], and DAB-
+    eration, along with a Query Sematic Filter that tailors                   step [37] demonstrate strong exploration and single-insight
+    outputs to user-specific analytical goals.                                discovery, but none explicitly composes high-order insights
+  • We conduct a systematic evaluation on three bench-                        into analytical reports.
+    marks: InsightBench, DDR-Bench, and T2R-Bench. Ex-
+                                                                                  III. P RELIMINARIES AND P ROBLEM F ORMULATION
+    perimental results show that ComInsight significantly out-
+    performs existing baselines in factual correctness, insight                    a) Table-to-Report Task.: We consider a relational
+    novelty, and structural completeness.                                     database D consisting of a set of tables T = {T1 , . . . , Tn },
+                                                                              where tables are potentially linked through primary-foreign
+                        II. R ELATED W ORK                                    key or semantic associations. Given D, the task of table-to-
+      a) Table Understanding and Reasoning Benchmarks.:                       report generation is to automatically produce an article-level
+Early TableQA benchmarks such as WikiTableQuestions [9],                      analytical report R that summarizes the most important, non-
+HybridQA [10], FeTaQA [11], and TAT-QA [12] laid the                          redundant, and verifiable findings in the database. The user
+foundation for question answering over tabular data. More                     query (or report topic) q is optional depending on the specific
+recent comprehensive benchmarks include TableBench [13],                      task. The core problem of table-to-report generation is: how
+MMTU [14], SciTableQA [15], SciNumQA [16], Top-                               to define and achieve a comprehensive investigation process
+Bench [17], and M3TQA [18], which extend to complex                           that enables a model to discover, compose, and report as many
+layouts, multi-table reasoning, multilingual settings, and pre-               valuable insights in the database as possible, while ensuring
+dictive queries. For table-to-text generation, ToTTo [19] and                 traceability, factual correctness, and non-redundancy for each
+FreshTab [20] are representative efforts. Despite this diversity,             insight?
+all these benchmarks focus on atomic tasks, answering a                            b) Atomic Insight.: An atomic insight is defined as an
+single question or generating a single description, and do not                nine-tuple
+address the combination of multiple findings into higher-level                a = (id, src, type, dims, metrics, metadata, sql, result, description),
+narratives.
+      b) Data Analysis Agents and Insight Generation.: LLM-                   where type ∈ T = {MAX, MIN, AVG, SUM, COUNT, GROUP_BY, CO
+based agents have spurred benchmarks for end-to-end data                      T is the set of pattern types. Pattern type is a parameterizable
+analysis requiring information structuring [21, 5, 22, 23,                    data query template that encapsulates a single data exploration
+24],multi-step reasoning and tool use [25, 26]. InfiAgent-                    logic.The Patterns and SQL Templates are in Appendix
+DABench [27], DataSciBench [28], UniDataBench [29], and                       Table III. dims and metrics specify the analytical context;
+WebDS [30]. For insight generation, InsightBench [7], In-                     sql is the executable query; result is the returned value; and
+sightEval [31] and MedInsightBench [32] evaluate agents on                    description is a natural language statement of the finding.
+                                                                                   c) Composite Insight.: An composite insight c is a six-
+producing analytical insights, while DDR-Bench [3], MMDR-
+                                                                              tuple
+Bench [4], and T2R-Bench [1] target open-ended deep re-
+search and article-level report generation. Evaluation has                       c = (id, type, atoms, summary, conf idence, evidence),
+where atoms is the set of constituent atomic insights with           B. Multi-Relational Graph Construction
+|atoms| ≥ 2, type ∈ {Comparative, Correlative, Contextual,
+                                                                        Atomic insights are modeled as nodes in a
+Temporal, Causal}, summary is a natural language state-
+                                                                     multi-relational graph G              =       (V, E, R) where
+ment, evidence contains the SQL queries and results, and
+                                                                     nodes V correspond to atomic insights, R                        =
+conf idence measures its credibility in terms of statistical
+                                                                     {Comparative, Correlative, Contextual, Temporal, Causal}
+significance and logical consistency. Formally, let A be the
+                                                                     denotes the five relation types, and E is the set of typed edges.
+set of all possible atomic insights , and C be the set of all
+                                                                     The first four relations are treated as undirected edges.
+valid composite insights.
+                                                                     As illustrated in Figure 3-1, each edge is equipped with a
+     d) Research Goals.: The objective is to construct a report      type-specific weight that quantifies the strength of the relation.
+R such that: Traceability: every insight contains a complete         Comparative edges connect same-metric/aggregation atoms
+evidence chain; Factual Correctness: every insight is sup-           with different dimension values, weighted by normalized
+ported by verifiable atomic insights and executable SQL; Non-        relative difference and retained if it > 0.15. Correlative
+Redundancy: R does not contain duplicate or semantically             edges connect statistically dependent or co-moving trend
+equivalent insights.                                                 atoms, and retained if the weight > 0.6. Contextual edges
+                                                                     link global aggregates with local segments, weighted by
+            IV. T HE C OM I NSIGHT F RAMEWORK                        slope or magnitude deviation with sign reversal weighted
+                                                                     double. Temporal edges connect adjacent segmented trends
+A. Atomic Insight Representation and Generation                      partitioned by PELT, weighted by absolute slope difference
+                                                                     with a minimum segment length of three. As illustrated in
+   The generation pipeline is illustrated in Figure 2. Atomic        Figure 3-2, Causal edges are directed and are established
+insights are generated through Column Semantic Recogni-              only when two conditions are satisfied simultaneously: (1)
+tion, Pattern template Instantiation, Interestingness Fil-           a Granger causality test on the corresponding time series
+ter(statistical significance filter and LLM-based semantic fil-      of the two atomic insights is statistically significant, i.e., the
+ter), and Semantic Deduplication, yielding a non-redundant           p-value is below 0.05 after appropriate lag selection; (2) an
+set A of atomic insight units. If the query or topic is given, we    LLM-based causal verifier judges that a plausible causal
+apply a Query Sematic Filter based on embedding relevance            relation exists, based on the descriptions, SQL results, and
+to select top-50 atomic insights before Interestingness Filter.      domain context, and assigns a mechanism score smech ∈ [0, 1]
+The detailed definition and implementation steps of atomic           as well as a confounding-risk score cij ∈ [0, 1]. Temporal
+insights are provided in the Appendix A.                             precedence ti < tj is required as a prerequisite for the
+      a) Training Data Construction.: We build training data         Granger test. The weight of a directed causal edge i → j is
+by selecting a subset of instances from three benchmarks:
+                                                                     wcausal (i, j) = I[ti < tj ]·I[pGranger < 0.05]·|rij |(1−pij )·smech (i, j)·(1−cij ),
+40 datasets from InsightBench (out of 100 instances), 100
+                                                                                                                                        (1)
+tasks from DDR-Bench (out of 291), and 150 industrial tables
+                                                                     where pGranger is the p-value from the Granger causality test,
+from T2R-Bench (out of 457), totaling 290 instances. These
+                                                                     and rij , pij are the adjusted correlation coefficient and its p-
+instances serve two purposes: (i) calibrating the statistical
+                                                                     value. A directed edge i → j is retained only if wcausal (i, j) >
+significance filtering rules and thresholds, and (ii) training
+                                                                     0.6. This dual requirement ensures that causal edges are both
+the lightweight LLM-as-Judge. Experts then annotate their
+                                                                     statistically supported and semantically plausible.
+semantic interestingness, yielding 1,200 (labeled interesting /
+not interesting) samples for supervised fine-tuning (SFT) and           The graph is implemented as a MultiGraph, allowing mul-
+600 preference pairs (Triplet (inputs, chosen, rejected)) for        tiple parallel edges between the same node pair to capture
+direct preference optimization (DPO).                                different relational facets. The detailed edge weight computa-
+                                                                     tion is shown in Appendix B.
+      b) Statistical significance rules and Interestingness
+Judge.: We first classify training insights into eight pattern
+                                                                     C. Composite Insight Generation
+types, parse their SQL to extract metrics, dimensions, aggre-
+gations, and columns, then select the corresponding statistical            a) Community-based Construction.: We perform com-
+test for each type and calibrate thresholds on a validation set by   munity detection on each of the four undirected relation
+F1, yielding the final significance rules.(e.g., for CORR, retain    subgraphs. For each relation type, we run the Leiden algorithm
+candidates whose absolute Pearson correlation coefficient |r|        on the subgraph to partition atomic insights into communities.
+exceeds 0.6 and whose significance level p is below 0.05), and       Communities with modularity greater than 0.3 and size at
+rules for the eight types are in Appendix A2d. A lightweight         least 3 are retained. For each retained community, we prompt
+LLM-as-Judge (Llama-3-8B), trained via SFT on labeled                an LLM to synthesize a higher-order composite insight that
+samples and DPO on 600 preference pairs, evaluates semantic          integrates all atomic insights in the community, producing
+interestingness. In our experiments, the Interestingness Filter      a coherent narrative that reflects the underlying relational
+module filters about 85% of atomic insights while preserving         structure. The LLM receives the descriptions, types, and SQL
+high-value discoveries.                                              results of all constituent atoms, and is instructed to generate a
+                                                    Fig. 2. The pipeline of Atomic Insight Generation.
+
+
+
+
+Fig. 3. 1. Diagram of the multi-relational graph constructed. Each node represents an atomic insight. Edges between nodes are established according to five
+relation types. 2. Diagram of Causal insights generation. 3. Composite Value Evaluator.
+
+
+
+summary that captures the shared theme and relational pattern.                 D. Report Generation
+The steps and prompts are in Appendix D.                                          Given the set of insights and an optional user query(topic)
+      b) Causal Insights Construction.: For causal relations,                  q, the report generation module first removes insights whose
+we search directed causal paths of length up to Lmax (e.g., 3).                embedding similarity to q falls below a threshold (or keeps all
+Each path is aggregated by an LLM into a causal composite                      if q is absent). Then we group related insights into thematic
+insight that states the causal chain and includes the Granger                  sections and uses an LLM to generate coherent narratives
+p-value, mechanism score, and confounding risk. Causal com-                    that cover all retained insights with every claim backed by
+posites are treated as hypotheses and are retained only if every               SQL evidence. The final report is assembled from these
+causal edge on the path has been validated by both the Granger                 sections and remains fully traceable and verifiable. Details is
+test and the LLM judge.                                                        in Appendix E.
+   After initial Composite Insight Generation, an LLM-                                                   V. E XPERIMENTS
+based Composite Value Evaluator compares each composite
+against its constituent atomic insights to determine retain the                A. Experimental Setup
+atoms or composite, which is shown in Figure 3-3. So the final                      a) Datasets.: We evaluate ComInsight on three bench-
+insights set includes generated composite insights and retain                  marks’s test sets: InsightBench: Consists of 100 datasets with
+atomic insights. More detailed definition and implementation                   475 insights. DDR-Bench (Deep Data Research Benchmark):
+steps of composite insights are provided in the Appendix C.                    Contains 291 tasks and 2058 insights. T2R-Bench: Contains
+910 questions on 457 real-world industrial tables from 19           42.31% to 42.87%), likely because GLOBEM’s checklist items
+industry domains. The LLM-as-Judge is trained on the 290            are closed-form (three-option multiple choice), leaving less
+training instances listed in Section IV-A. All training instances   room for composite reasoning.
+are excluded from test. Results are reported on held-out test          3) Performance on T2R-Bench: Figure 5 presents the per-
+splits.                                                             formance comparison on T2R-Bench. ComInsight outperforms
+      b) Baselines.: Pandas Agent [38]: A data science              baselines across all three evaluation dimensions. ComInsight
+agent optimized for single-turn question answering. Given a         achieves an Average score of 83.5% on T2R-Bench, out-
+dataframe and a question, it generates and executes Python          performing native GPT-5.5 (64.61%) by 18.89 percentage
+code to produce the answer. AgentPoirot: The baseline data          points. The improvement on Numerical Accuracy Criterion
+analysis agent proposed in InsightBench, capable of per-            (NAC) is most significant (+ 26.48%), suggesting that explicit
+forming end-to-end data analytics by generating Descriptive,        evidence chaining in composite insight generation helps reduce
+Diagnostic, Predictive, and Prescriptive questions. DeepSeek-       numerical hallucinations, the most common error type in
+R1 [39]: The best-performing model on T2R-Bench, achieving          T2R-Bench report generation. Information Coverage Criterion
+an overall score of 62.71%. Claude 4.5 Sonnet [40]: The best-       (ICC) improves from 49.75% to 73.73%, indicating that com-
+performing proprietary model on DDR-Bench and GPT-5.5.              posite insights more comprehensively cover report keypoints.
+      c) Evaluation Metrics.: We adopt benchmark-specific           This finding aligns with ComInsight’s design: through multi-
+metrics: For InsightBench, LLaMA-3-Eval (a G-Eval variant           relational graph traversal, the system systematically discovers
+based on LLaMA-3-70b) for insight-level and summary-level           associations between atomic insights, avoiding omissions of
+scores. For DDR-Bench, Checklist-based accuracy, where              important information.
+GPT-5-mini judges whether generated insights support each
+checklist fact. For T2R-Bench, there are three-dimensional          C. Ablation Studies
+evaluation: Numerical Accuracy Criterion (NAC), Information
+Coverage Criterion (ICC), and General Evaluation Criterion             To isolate the contribution of the three key stages in
+(GEC), and report their average score.                              ComInsight, we conduct ablations on T2R-Bench under the
+   1) Implementation Details: ComInsight’s atomic insight           same setting as the main experiment. The evaluated variants
+generation module is based on predefined analysis pattern           are: (1) w/o Composite Insight Generation (Simple LLM
+templates. The multi-relational graph is implemented using          Concatenation), which prompts an LLM(GPT-5.5) to concate-
+NetworkX’s MultiGraph structure. All experiments are con-           nate atomic insights into a report; (2) w/o Composite Value
+ducted on 8 NVIDIA RTX4090 GPUs. The LLM used for                   Evaluation, which retains composite candidates but removes
+composite insights generation and report generation is gpt-5.5      the LLM-based incremental-value judge and (3) w/o Causal
+(OpenAI API). Sampling temperature is set to 0.0 for repro-         Relationship Generation, which removes causal assessment
+ducibility, with each experiment repeated 5 times reporting         and causal composite merging.
+average results.                                                       On T2R-Bench, full ComInsight achieves an Average of
+                                                                    83.5% ; removing composite insight generation and reverting
+B. Main Results                                                     to simple LLM concatenation reduces Average to 64.61%
+   1) Performance on InsightBench: Table I presents the per-        (∆Avg = −18.89%), indicating that structured composition
+formance comparison on InsightBench. ComInsight signif-             over the multi-relational graph is the dominant source of
+icantly outperforms all baselines on both insight-level and         improvement; removing composite value evaluation yields
+summary-level LLaMA-3-Eval scores. ComInsight achieves              71.34%, showing that the incremental-value judge is important
+an insight-level LLaMA-3-Eval score of 0.73, outperforming          for suppressing redundant or low-utility composites and pre-
+AgentPoirot (gpt-5.5) by 13.3 percentage points. This signifi-      serving coverage; and removing causal relationship generation
+cant improvement demonstrates that explicit composite insight       gives 76.75%, suggesting that causal chains contribute less to
+generation effectively integrates multiple atomic insights, pro-    T2R-Bench numerical accuracy and information coverage but
+ducing richer and more accurate conclusions than single-step        still support reasoning depth and narrative completeness.
+analysis. Meanwhile, GPT-5.5 achieves only 0.51, significantly         1) Efficiency and Time Analysis: Across the three bench-
+below ComInsight’s 0.73, demonstrating that simple linguistic       marks test set, ComInsight generates on average about 28
+concatenation cannot replace structured evidence combination        atomic insights, 142 typed edges, and 41 final composite
+reasoning.                                                          insights per task. The end-to-end pipeline takes about 102.3
+   2) Performance on DDR-Bench: Figure 4 presents the               seconds: 14.2s for atomic enumeration and SQL execution,
+performance comparison on DDR-Bench across three scenar-            17.6s for statistical filtering and semantic evaluation, 1.4s for
+ios. ComInsight achieves the best performance on MIMIC,             graph construction, 52.8s for composite generation (51.6%,
+GLOBEM and 10-K scenarios. On the MIMIC scenario,                   the main bottleneck), and 16.3s for report generation. T2R-
+ComInsight achieves 41.23% accuracy, outperforming Claude           Bench is the slowest due to larger tables and more atoms,
+4.5 Sonnet by 14.3%. On the 10-K scenario, ComInsight               while InsightBench is the fastest; batching LLM calls and
+reaches 79.34%, a 2.2% improvement over the native model.           parallelizing composite generation can reduce the time by
+The improvement on GLOBEM is relatively modest (from                4–6×.
+                                                                            TABLE I
+               P ERFORMANCE COMPARISON ON I NSIGHT B ENCH . I STANDS FOR I NSIGHT- LEVEL , S IS S UMMARY- LEVEL , AND E VAL IS LL A MA-3-E VAL . B OLD
+                                            INDICATES THE BEST METRIC , U NDERLINE INDICATES THE SECOND BEST.
+
+
+                                             Method                        I-Eval         S-Eval        I-ROUGE-1        S-ROUGE-1
+                                             Pandas Agent (gpt-5.5)      0.54 ± 0.01    0.40 ± 0.04     0.35 ± 0.03      0.35 ± 0.01
+                                             AgentPoirot (gpt-5.5)       0.60 ± 0.03    0.44 ± 0.03     0.32 ± 0.02      0.37 ± 0.09
+                                             DeepSeek-R1                 0.47 ± 0.03    0.31 ± 0.02     0.29 ± 0.02      0.31 ± 0.01
+                                             Claude 4.5 Sonnet           0.45 ± 0.03    0.27 ± 0.02     0.23 ± 0.02      0.29 ± 0.05
+                                             GPT-5.5                     0.51 ± 0.02    0.36 ± 0.03     0.31 ± 0.02      0.33 ± 0.04
+                                             ComInsight                  0.73 ± 0.03    0.55 ± 0.03     0.42 ± 0.02      0.43 ± 0.03
+
+
+
+                                                                 MIMIC              GLOBEM              10-K               Average
+
+               100%
+
+
+                                77.61                                                                                                             79.34
+                 80%
+Accuracy (%)
+
+
+
+
+                                                         60.08
+                 60%                                                                                                                                   54.48
+                                    51.27                                                                                         46.53
+                                                                                                         47.10                                 42.87
+                            40.13                             42.51              44.89
+                                                                                                                              42.31 40.78   41.23
+                                                      38.46                  38.81 37.52              38.11    38.04
+                 40%    36.07
+                                                                                                                           33.51
+                                                 28.98                   28.85                 28.91
+
+                 20%
+
+
+                  0%
+                                                                                                         PA                         AP
+
+                              Claude               DeepSeek-R1                GPT-5.5              PandasAgent               AgentPoirot      ComInsight
+                            4.5 Sonnet                                                               (GPT-5.5)                (GPT-5.5)
+
+
+                                                                 Fig. 4. Performance comparison on DDR-Bench.
+
+                                                                            TABLE II
+                                         A BLATION STUDY ON T2R-B ENCH . ∆AVERAGE IS COMPUTED AGAINST FULL C OM I NSIGHT .
+
+                                         Configuration                                                        Average(%)     ∆Average(%)
+                                         Full ComInsight                                                          83.5                –
+                                         w/o Composite Insight Generation (Simple LLM Concatenation)             64.61             -18.89
+                                         w/o Composite Value Evaluation                                          71.34             -12.16
+                                         w/o Causal Relationship Generation                                      76.75              -6.75
+
+
+
+                                    VI. C ONCLUSION                                       operators. This work thus offers a principled and verifi-
+                                                                                          able structured-composition paradigm for automated, report-
+   In conclusion, this paper addresses the exploration bias                               oriented data analysis.
+and limited novelty of existing data agents in table-to-report
+generation by formalizing composite insight discovery and                                                         VII. AI USE STATEMENT
+proposing ComInsight. ComInsight generates verifiable atomic                                 In this work, we used generative AI tools for required-
+insights, organizes them into a typed multi-relational evidence                           disclosure tasks involved in implementing and evaluating the
+graph, and applies relation-specific composition operators to                             proposed method: a Llama-3-8B model was fine-tuned via
+fuse them into comparative, correlative, contextual, tempo-                               SFT and DPO and used as an LLM-as-Judge for semantic
+ral, and causal composite insights, while query-driven intent                             interestingness evaluation; GPT-5.5 was used for composite in-
+alignment and executable SQL provenance ensure relevance,                                 sight generation and report generation; and LLaMA-3-70B and
+factual correctness, structural completeness, and traceability.                           GPT-5-mini were used as automatic evaluators for benchmark
+Experiments on InsightBench, DDR-Bench, and T2R-Bench                                     experiments. These uses are part of the ComInsight method-
+demonstrate that ComInsight substantially outperforms exist-                              ology and evaluation pipeline and are described in Sections 4
+ing baselines in factual correctness, novelty, and structural                             and 5. We have not used generative AI tools for generating
+completeness, and ablation studies confirm the critical roles                             synthetic datasets, developing theoretical models or conceptual
+of the multi-relational graph and specialized composition                                 frameworks, formulating mathematical claims, assisting in the
+                                                            NAC             ICC          GEC                Average
+
+            100%                                                                                                                            93.23
+                           88.94                 89.51                  89.61
+                                                                                               86.35                   85.25        83.74      83.50
+            80%                                                                                                                        73.53
+
+                                                    62.71                   64.61                   63.89                   63.12
+                              61.65
+Score (%)
+
+
+
+
+            60%                                                 56.39                  55.57                   57.26
+                   52.44                53.51
+                                                                    47.83                  49.75
+                                           45.12                                                                  46.85
+                      43.57
+            40%
+
+
+            20%
+
+
+             0%
+                                                                                               PA                      AP
+
+                        Claude            DeepSeek-R1                GPT-5.5             PandasAgent             AgentPoirot          ComInsight
+                      4.5 Sonnet                                                           (GPT-5.5)              (GPT-5.5)
+
+
+                                                         Fig. 5. Performance comparison on T2R-Bench.
+
+
+
+writing of proofs, proposing or refining hypotheses, designing                     [5] T. Lin, “Structured retrieval-augmented generation for
+research methodology or experiments, cleaning or reformatting                          multi-entity question answering over heterogeneous
+datasets, supporting qualitative/thematic data analysis, or inter-                     sources,” in 2025 IEEE 41st International Conference on
+preting results beyond the LLM-based components explicitly                             Data Engineering Workshops (ICDEW), 2025, pp. 253–
+described above. We have reviewed all AI-assisted work. For                            258.
+example, all LLM-generated outputs used as evidence were                           [6] T. Lin, Y. Luo, and N. Tang, “Eidosdoc:
+checked against executable SQL and experimental results, and                           Implicit structure encoding for cost-effective semi-
+all references were verified manually. We take responsibility                          structured document qa,” 2026. [Online]. Available:
+for the final content of this work, including text, claims, or                         https://arxiv.org/abs/2609.27784
+artifacts produced with the aid of generative AI.                                  [7] G. Sahu, A. Puri, J. A. Rodriguez, A. Abaskohi,
+                                                                                       M. Chegini, A. Drouin, P. Taslakian, V. Zantedeschi,
+                                   R EFERENCES                                         A. Lacoste, D. Vazquez et al., “Insightbench: Evaluat-
+                                                                                       ing business analytics agents through multi-step insight
+ [1] J. Zhang, C. Pan, S. Xiong, K. Wei, Y. Zhao, X. Li,                               generation,” in International Conference on Learning
+     J. Peng, X. Gu, J. Yang, W. Chang, Z. Wu, J. Zhong,                               Representations, vol. 2025, 2025, pp. 4683–4715.
+     S. Song, and X. Li, “T2R-BENCH: A benchmark                                   [8] T. Lin, Y. Luo, H. Zhang, J. Zhang, C. Liu, K. Wu, and
+     for real world table-to-report task,” in Proceedings                              N. Tang, “MEBench: Benchmarking large language
+     of the 2025 Conference on Empirical Methods in                                    models for cross-document multi-entity question
+     Natural Language Processing, C. Christodoulopoulos,                               answering,” in Proceedings of the 2025 Conference
+     T. Chakraborty, C. Rose, and V. Peng, Eds. Suzhou,                                on Empirical Methods in Natural Language Processing,
+     China: Association for Computational Linguistics,                                 C. Christodoulopoulos, T. Chakraborty, C. Rose,
+     Nov. 2025, pp. 22 427–22 451. [Online]. Available:                                and V. Peng, Eds. Suzhou, China: Association for
+     https://aclanthology.org/2025.emnlp-main.1141/                                    Computational Linguistics, Nov. 2025, pp. 1481–1494.
+ [2] T. Lin, Z. Zhang, Y. Luo, and N. Tang, “Monte carlo tree                          [Online]. Available: https://aclanthology.org/2025.emnlp-
+     search for table-to-multimodal report generation,” 2026.                          main.77/
+     [Online]. Available: https://arxiv.org/abs/2608.04071                         [9] P. Pasupat and P. Liang, “Compositional semantic parsing
+ [3] W. Liu, P. Yu, M. Orini, Y. Du, and Y. He, “Hunt                                  on semi-structured tables,” in Proceedings of the 53rd
+     instead of wait: Evaluating deep data research on                                 Annual Meeting of the Association for Computational
+     large language models,” 2026. [Online]. Available:                                Linguistics and the 7th International Joint Conference on
+     https://arxiv.org/abs/2602.02039                                                  Natural Language Processing (Volume 1: Long Papers),
+ [4] P. Huang, Z. Zhong, Z. Wan, D. Zhou, S. Alam,                                     2015, pp. 1470–1480.
+     X. Wang, Z. Li, Z. Dou, L. Zhu, J. Xiong, C. Tao,                            [10] W. Chen, H. Zha, Z. Chen, W. Xiong, H. Wang,
+     Y. Xu, D. Dimitriadis, T. Zhang, and M. Zhang,                                    and W. Y. Wang, “HybridQA: A dataset of multi-hop
+     “Mmdeepresearch-bench: A benchmark for multimodal                                 question answering over tabular and textual data,”
+     deep research agents,” 2026. [Online]. Available:                                 in Findings of the Association for Computational
+     https://arxiv.org/abs/2601.12346
+     Linguistics: EMNLP 2020, T. C ohn, Y. He, and Y. Liu,           tion evaluation,” in Proceedings of the 18th International
+     Eds. Online: Association for Computational Linguistics,         Natural Language Generation Conference, 2025, pp.
+     Nov. 2020, pp. 1026–1036. [Online]. Available:                  108–121.
+     https://aclanthology.org/2020.findings-emnlp.91/           [21] T. Lin, Y. Zhu, Y. Luo, and N. Tang, “Srag:
+[11] L. Nan, C. Hsieh, Z. Mao, X. V. Lin, N. Verma, R. Zhang,        Structured retrieval-augmented generation for multi-
+     W. Kryściński, H. Schoelkopf, R. Kong, X. Tang et al.,        entity question answering over wikipedia graph,” CoRR,
+     “Fetaqa: Free-form table question answering,” Transac-          vol. abs/2503.01346, March 2025. [Online]. Available:
+     tions of the Association for Computational Linguistics,         https://doi.org/10.48550/arXiv.2503.01346
+     vol. 10, pp. 35–49, 2022.                                  [22] T. Lin, “Lightkgg: Simple and efficient knowledge graph
+[12] F. Zhu, W. Lei, Y. Huang, C. Wang, S. Zhang,                    generation from textual data,” 2025. [Online]. Available:
+     J. Lv, F. Feng, and T.-S. Chua, “TAT-QA: A                      https://arxiv.org/abs/2510.23341
+     question answering benchmark on a hybrid of tabular        [23] T. Lin, Y. Zhu, Z. Zhang, Y. Luo, and N. Tang,
+     and textual content in finance,” in Proceedings of              “Docsage: An information structuring agent for multi-
+     the 59th Annual Meeting of the Association for                  doc multi-entity question answering,” 2026. [Online].
+     Computational Linguistics and the 11th International            Available: https://arxiv.org/abs/2603.11798
+     Joint Conference on Natural Language Processing            [24] T. Lin, Y. Luo, and N. Tang, “Structure then
+     (Volume 1: Long Papers), C. Zong, F. Xia, W. Li, and            query: Enabling precise analytical queries over
+     R. Navigli, Eds. Online: Association for Computational          unstructured documents,” 2026. [Online]. Available:
+     Linguistics, Aug. 2021, pp. 3277–3287. [Online].                https://arxiv.org/abs/2608.13384
+     Available: https://aclanthology.org/2021.acl-long.254/     [25] T. Lin, “Simplifying data integration: Slm-driven sys-
+[13] X. Wu, J. Yang, L. Chai, G. Zhang, J. Liu, X. Du,               tems for unified semantic queries across heterogeneous
+     D. Liang, D. Shu, X. Cheng, T. Sun et al., “Tablebench:         databases,” in 2025 IEEE 41st International Conference
+     A comprehensive and complex benchmark for table ques-           on Data Engineering (ICDE), May 2025, pp. 4690–4693.
+     tion answering,” in Proceedings of the AAAI Conference     [26] T. Lin, Y. Luo, and N. Tang, “Annoretrieve:
+     on Artificial Intelligence, vol. 39, no. 24, 2025, pp.          Efficient     structured    retrieval  for    unstructured
+     25 497–25 506.                                                  document analysis,” 2026. [Online]. Available:
+[14] J. Xing, Y. He, M. Zhou, H. Dong, S. Han, L. Chen,              https://arxiv.org/abs/2604.02690
+     D. Zhang, S. Chaudhuri, and H. Jagadish, “Mmtu: A          [27] X. Hu, Z. Zhao, S. Wei, Z. Chai, Q. Ma, G. Wang,
+     massive multi-task table understanding and reasoning            X. Wang, J. Su, J. Xu, M. Zhu et al., “Infiagent-dabench:
+     benchmark,” Advances in Neural Information Processing           Evaluating agents on data analysis tasks,” arXiv preprint
+     Systems, vol. 38, 2026.                                         arXiv:2401.05507, 2024.
+[15] K. Ajayi, Y. He, M. Maisonave, K. SeekFord, and            [28] D. Zhang, S. Zhoubian, M. Cai, F. Li, L. Yang, W. Wang,
+     J. Wu, “Scitableqa: A question-answering benchmark for          T. Dong, Z. Hu, J. Tang, and Y. Yue, “Datascibench: An
+     complex scientific tables,” in International Conference         llm agent benchmark for data science,” arXiv preprint
+     on Theory and Practice of Digital Libraries. Springer,          arXiv:2502.13897, 2025.
+     2025, pp. 90–107.                                          [29] H. Weng, Z. Liu, Y. Song, X. Yin, X. Chen, and
+[16] S. Son, Y. Kim, G. Kim, D. Choi, and M. Sung,                   W. Zhang, “UniDataBench: Evaluating data analytics
+     “Scinumqa: A benchmark for complex numerical reason-            agents across structured and unstructured data,” in
+     ing over scientific tables,” IEEE Access, 2026.                 Proceedings of the 64th Annual Meeting of the
+[17] A.-Y. Ji, J.-P. Jiang, D.-C. Zhan, and H.-J. Ye, “Top-          Association for Computational Linguistics (Volume 1:
+     bench: A benchmark for implicit prediction and rea-             Long Papers), M. Liakata, V. P. Moreira, J. Zhang, and
+     soning over tabular question answering,” arXiv preprint         D. Jurgens, Eds. San Diego, California, United
+     arXiv:2604.28076, 2026.                                         States: Association for Computational Linguistics,
+[18] Z. Zha, P. Qi, X. Bao, M. Tian, and B. Qin, “M 3                Jul. 2026, pp. 33 755–33 780. [Online]. Available:
+     tqa: Multi-view, multi-hop and multi-stage reasoning for        https://aclanthology.org/2026.acl-long.1556/
+     temporal question answering,” in ICASSP 2024-2024          [30] E. Hsu, H. M. Yam, I. Bouissou, A. M. John, R. Thota,
+     IEEE International Conference on Acoustics, Speech and          J. Koe, V. S. Putta, G. Dharesan, A. Spangher, S. Murty
+     Signal Processing (ICASSP). IEEE, 2024, pp. 10 086–             et al., “Webds: An end-to-end benchmark for web-based
+     10 090.                                                         data science,” arXiv preprint arXiv:2508.01222, 2025.
+[19] A. Parikh, X. Wang, S. Gehrmann, M. Faruqui, B. Dhin-      [31] Z. Zhu, Y. Song, X. Chen, C. Liu, C. Yakun,
+     gra, D. Yang, and D. Das, “Totto: A controlled table-           C. C. Cao, S. Han, and Y. Guo, “InsightEval:
+     to-text generation dataset,” in Proceedings of the 2020         An expert-curated benchmark for assessing insight
+     Conference on Empirical Methods in Natural Language             discovery in LLM-driven data agents,” in Findings of
+     Processing (EMNLP), 2020, pp. 1173–1186.                        the Association for Computational Linguistics: ACL
+[20] K. Onderková, O. Plátek, Z. Kasner, and O. Dušek,               2026, M. Liakata, V. P. Moreira, J. Zhang, and
+     “Freshtab: Sourcing fresh data for table-to-text genera-        D. Jurgens, Eds. San Diego, California, United
+     States: Association for Computational Linguistics,              •  Multi-Relational Graph Construction Module. It mod-
+     Jul. 2026, pp. 34 632–34 656. [Online]. Available:                 els atomic insights as nodes and computes type-specific
+     https://aclanthology.org/2026.findings-acl.1729/                   edge weights for four structural relation types: compara-
+[32] Z. Zhu, C. Cao, S. Han, Y. Song, X. Chen, C. C. Cao, and           tive, correlative, contextual, and temporal. The resulting
+     Y. Guo, “Medinsightbench: Evaluating medical analytics             typed evidence graph provides an interpretable search
+     agents through multi-step insight discovery in multi-              space for composite discovery.
+     modal medical data,” arXiv preprint arXiv:2512.13297,           • Composite Insight Generation Module. It performs
+     2025.                                                              edge-based traversal and type-specific composition, fol-
+[33] Y. Wang, Z. Sun, H. Zhang, W. Cui, K. Xu, X. Ma, and               lowed by causal verification, deduplication, and confi-
+     D. Zhang, “Datashot: Automatic generation of fact sheets           dence scoring. It outputs five categories of composite
+     from tabular data,” IEEE transactions on visualization             insights: comparative, correlative, contextual, temporal,
+     and computer graphics, vol. 26, no. 1, pp. 895–905,                and causal.
+     2019.                                                           In addition, a Query-driven Intent Alignment Layer sits
+[34] P. Ma, R. Ding, S. Wang, S. Han, and D. Zhang,                between atomic generation and graph construction. Given a
+     “Insightpilot: An llm-empowered automated data explo-         user query, it filters the atomic insight pool by semantic rel-
+     ration system,” in Proceedings of the 2023 conference         evance, so that subsequent composition focuses on directions
+     on empirical methods in natural language processing:          genuinely relevant to the user. A Semantic Interestingness
+     system demonstrations, 2023, pp. 346–352.                     Judge and a Causal Verifier are integrated into the atomic
+[35] L. Weng, X. Wang, J. Lu, Y. Feng, Y. Liu, H. Feng,            and composite stages, respectively.
+     D. Huang, and W. Chen, “Insightlens: Augmenting llm-
+     powered data analysis with interactive insight manage-        A. Atomic Insight Representation and Generation
+     ment and navigation,” arXiv preprint arXiv:2404.01644,          1) Definition of Atomic Insight: An atomic insight is the
+     2024.                                                         smallest executable analytical unit conforming to a predefined
+[36] R. Qi, Z. Liu, and W. Zhang, “Datacross: A unified            analysis grammar. Formally, an atomic insight a is an nine-
+     benchmark and agent framework for cross-modal hetero-         tuple:
+     geneous data analysis,” arXiv preprint arXiv:2601.21403,
+     2026.                                                         a = (id, src, type, dims, metrics, metadata, sql, result, description),
+[37] A. Egg, M. I. Goyanes, F. Kingma, A. Mora, L. von                                                                            (2)
+     Werra, and T. Wolf, “Dabstep: Data agent benchmark for        where:
+     multi-step reasoning,” arXiv preprint arXiv:2506.23719,          • id: a globally unique identifier;
+
+     2025.                                                            • src: the data source, e.g., a database table or a cross-table
+
+[38] H. Chase, “LangChain,” Oct. 2022. [Online]. Available:              view;
+     https://github.com/langchain-ai/langchain                        • type ∈ T : the analysis pattern type, where
+
+[39] D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu,                T = {MAX, MIN, AVG, SUM, COUNT, GROUP_BY, CORR, TR
+     R. Xu, R. Zhang, S. Ma, X. Bi et al., “Deepseek-                 • dims: the set of dimension columns and their filter
+
+     r1 incentivizes reasoning in llms through reinforcement             values, e.g., {region : East, quarter : Q1};
+     learning,” Nature, vol. 645, no. 8081, pp. 633–638, 2025.        • metrics: the set of metric columns and their aggrega-
+
+[40] Anthropic, “Claude 4.5,” Anthropic Blog, 2025, intro-               tions, e.g., {revenue : SUM};
+     ducing Claude Sonnet 4.5, released 29 Sep 2025. [On-             • metadata: structured numerical evidence, e.g., “slope =
+
+     line]. Available: https://www.anthropic.com/news/claude-            +12.5, p-value = 0.01”;
+     sonnet-4-5                                                       • sql: the executable query used to reproduce and verify
+                                                                         the insight;
+                                                                      • result: the numeric or tabular result returned by the SQL
+                          A PPENDIX
+                                                                         query.
+   ComInsight takes relational tables as input and produces        Let A denote the space of all atomic insights. However, not
+a set of high-quality composite insights as output. Its design     every generated candidate is retained. An atomic insight is
+follows a four-stage progression: atomic discovery → rela-         included in the final evidence pool only if it passes both
+tional modeling → structured composition → causal verifica-        statistical salience and semantic interestingness checks.
+tion. The framework consists of three core modules and two            2) Generation Pipeline for Atomic Insights: The atomic
+auxiliary layers.                                                  insight generation module takes arbitrary relational tables as
+  •   Atomic Insight Generation Module. It performs multi-         input and produces a curated set of atomic findings through
+      dimensional analysis pattern enumeration over input ta-      five stages.
+      bles, followed by statistical salience filtering, semantic         a) Training Data Construction.: We build training data
+      interestingness evaluation, and semantic deduplication.      by selecting a subset of instances from three benchmarks:
+      The output is a set of high-quality atomic insights that     40 datasets from InsightBench (out of 100 instances), 100
+      serve as elementary evidence units for composition.          tasks from DDR-Bench (out of 291), and 150 industrial tables
+from T2R-Bench (out of 457), totaling 290 instances. These                •   MAX / MIN: Extrema are inherently interesting;
+instances serve two purposes: (i) calibrating the statistical                 retain all extrema without additional thresholds, i.e.,
+salience filtering rules and thresholds, and (ii) training the                Sstat (a) = 1.
+lightweight LLM-as-Judge.                                                  • AVG: If it is a global average, retain it directly. If
+   Specifically, from these 290 instances we automatically                    grouped by a dimension, compute the standardized
+enumerate approximately 3,200 candidate atomic insights.                                        group mean from the global mean,
+                                                                              deviation of each √
+Domain experts then annotate their semantic interestingness,                  z = |x̄g − µ|/(σ/ n), and retain groups with |z| >
+yielding 1,200 supervised fine-tuning (SFT) samples and 600                   2.
+preference pairs for direct preference optimization (DPO).                 • SUM: If it is a global sum, retain it directly. If
+
+     b) Stage 1: Column Semantic Recognition.: The system                     grouped, compute the standardized deviation of each
+classifies each column into three semantic categories:                        group sum from the global sum, or its proportion,
+                                                                              and retain groups whose deviation exceeds two
+  • Dimension Column: low-cardinality categorical columns                     standard errors or whose proportion exceeds the
+    (cardinality ≤ 50), or numerical columns with a small                     90th percentile.
+    value set that semantically serves as grouping criteria,               • COUNT: If it is a global count, retain it directly. If
+    e.g., “region”;                                                           grouped, use a binomial test or chi-square test and
+  • Metric Column: high-cardinality numerical columns                         retain groups with p < 0.05.
+    suitable for aggregation, e.g., SUM, AVG, MAX/MIN;                     • GROUP_BY: Retain groups whose aggregate devi-
+  • Time Column: datetime/timestamp columns, or columns                       ates from the global mean by more than two stan-
+    whose names contain time-related keywords such as                         dard errors, with multiple-comparison correction.
+    “date”, “time”, “year”, “quarter”, or “month”.                         • CORR: Retain candidates with |r| > 0.6 and p <
+
+The classification combines column statistics and naming                      0.05.
+                                                                           • TREND: Retain candidates with regression p <
+heuristics.
+                                                                              0.05.
+     c) Stage 2: Pattern Template Instantiation.: For each
+                                                                  We define a binary statistical salience indicator Sstat (a) ∈
+combination of metric columns and dimension columns, the
+                                                                  {0, 1}, where Sstat (a) = 1 if atomic insight a passes the rule
+system instantiates parameterized SQL templates for the anal-
+                                                                  for its corresponding type, and 0 otherwise.
+ysis patterns in T . This stage enumerates all reasonable
+                                                                        e) Stage 4: Semantic Interestingness Evaluation.: Sta-
+dimension–metric–pattern combinations and yields a set of
+                                                                  tistical significance alone does not guarantee that an atomic
+raw candidate atomic insights.
+                                                                  insight is semantically interesting, novel, or actionable. We
+     d) Stage 3: Statistical Significance Filtering.: We cali-    therefore train a lightweight LLM-as-Judge to score the
+brate the significance thresholds for each analysis pattern by    semantic interestingness of each candidate.
+processing the insights in the training dataset as follows:          We use Llama-3-8B as the judge. The training data come
+  1) Type classification: Classify each insight in the training   from the 290 instances described above: candidate atomic
+     set into one of eight types according to its analysis pat-   insights are generated from these instances, and experts an-
+     tern: MAX, MIN, AVG, SUM, COUNT, GROUP_BY,                   notate their interestingness, forming 1,200 SFT samples and
+     CORR, TREND.                                                 600 DPO preference pairs.
+  2) SQL parsing: Parse the SQL query of each insight                Base Configuration and LoRA Setup. We adopt QLoRA
+     to extract the metric columns, dimension columns, ag-        for parameter-efficient fine-tuning with 4-bit NF4 quantization
+     gregation functions, grouping conditions, time columns,      and bf16 computation. The LoRA configuration is: rank r =
+     returned values, and metadata.                               16, α = 16, dropout = 0.05, with target modules q_proj,
+  3) Statistical test selection: Choose the corresponding         k_proj, v_proj, o_proj. The optimizer is AdamW with
+     statistical test based on the type:                          weight decay 0.05, and the learning rate schedule is cosine de-
+                                                                  cay with a warmup ratio of 0.1. All experiments are conducted
+       • CORR: compute the Pearson correlation coefficient        on 8 NVIDIA RTX 4090 GPUs with sampling temperature set
+         r and its significance p-value;                          to 0.0 for reproducibility.
+       • TREND: fit a linear regression of the metric over
+                                                                     SFT Stage. We perform supervised fine-tuning on 1,200
+         time to obtain the slope and its significance p-value;   expert-annotated samples for 3 epochs. The learning rate is 2×
+       • GROUP_BY: compute the standardized deviation of
+                                                                  10−5 , per-device batch size is 4, gradient accumulation steps
+         each group aggregate from the global mean;               is 4, yielding an effective batch size of 128. The maximum
+       • MAX/MIN: identify extrema;
+                                                                  sequence length is 2,048 tokens. Loss is computed only on
+       • AVG, SUM, COUNT: compute distributional statis-
+                                                                  response tokens, not on prompts.
+         tics for subsequent thresholding.                           DPO Stage. Starting from the SFT model, we apply DPO
+  4) Threshold determination: On a validation set, select         on 600 preference pairs for 1 epoch. The learning rate is
+     the threshold that optimizes F1 or agreement with expert     5 × 10−7 , per-device batch size is 2, gradient accumulation
+     judgments. The final rules are:                              steps is 8, yielding an effective batch size of 16. The DPO
+temperature β is set to 0.1, and the maximum sequence length            c) Contextual Edge Weight.: A contextual edge connects
+is 2,048 tokens. The number of warmup steps is 100. The            a global aggregate insight with a local segmented insight. Its
+training data are derived from 290 benchmark instances (40         weight quantifies the deviation of the local pattern from the
+from InsightBench, 100 from DDR-Bench, and 150 from T2R-           global baseline:
+Bench).                                                                                                                              
+                                                                                            |si − sj |
+      f) Stage 5: Deduplication and Merging.: Different anal-      wcontext (i, j) = max               , I[sign(si ) ̸= sign(sj )] · 2 ,
+                                                                                             |sj | + ϵ
+ysis patterns may produce semantically equivalent or near-                                                                            (8)
+redundant insights, e.g., a MAX result and a GROUP_BY              where si and sj are the trend slopes or magnitude values of the
+extreme referring to the same fact. We normalize each atomic       local and global insights, and ϵ is a small constant to prevent
+insight by the triple (description, metrics, type) and merge       division by zero.
+equivalent items, keeping the one with the most concise                 d) Temporal Edge Weight.: A temporal edge connects
+description.                                                       segmented trend insights of the same metric across adjacent
+   3) Query Sematic Filter: Given a user query q and the           time intervals partitioned by the PELT change-point detection
+atomic insight set A′ , the intent alignment layer computes a      algorithm. Its weight is
+relevance score
+                                                                 wtemp (i, j) = |si − sj | · I[len(Ti ) ≥ 3 ∧ len(Tj ) ≥ 3], (9)
+r(q, a) = sim enc(q), enc(a., description⊕a.metrics⊕a.type) ,
+                                                                 where si and sj are the trend slopes of adjacent intervals, and
+                                                            (3)
+                                                                 len(T ) is the number of time points in the interval. The min-
+where enc(·) is a text embedding model, ⊕ denotes string
+                                                                 imum segment length of three suppresses over-segmentation.
+concatenation, and sim(·, ·) is cosine similarity. The filtered
+candidate set is                                                 C. Composite Insight Generation
+                                                                             . of Composite Insight: We extend the compos-
+                                                                 1) Definition
+A′′ = {a ∈ A′ | r(q, a) > τ }∪{a ∈ A′ | pattern(a) ∈ required_patterns(q)}
+                                                        (4)   ite insight taxonomy  to five types:
+  We keep top-50 atomic insights.                             type(c) ∈ {comparative, correlative, contextual, temporal, causal}.
+                                                                                                                      (10)
+B. Multi-Relational Graph Construction                        A composite insight c is a six-tuple:
+   We organize the filtered atomic insights into a typed multi-       c = (id, type, atoms, summary, confidence, evidence),
+relational graph                                                                                                            (11)
+                        G = (V, E, R),                       (5)   where:
+                                                                     • id: a globally unique identifier;
+where nodes V = A′′ represent atomic insights, and R =               • type: one of the five composite categories above;
+{Comparative, Correlative, Contextual, Temporal} denotes                           ′′
+                                                                     • atoms ⊆ A : the set of constituent atomic insights, with
+four structural relation types. Edges E are typed and weighted.         |atoms| ≥ 2;
+The graph is implemented as a MultiGraph, allowing multiple          • summary: a natural language summary;
+parallel edges between the same node pair to capture different       • confidence ∈ [0, 1]: a confidence score;
+relational facets.                                                   • evidence: the evidence package containing the SQL
+      a) Comparative Edge Weight.: A comparative edge con-              queries and results of the supporting atoms.
+nects two atomic insights if they involve the same metric and
+                                                                   In addition, for every generated composite, we compute a
+aggregation but differ in dimension values. Its weight is the
+                                                                   causal score Causal(c) ∈ [0, 1]. If Causal(c) > τcausal , the
+normalized relative difference:
+                                                                   composite is marked as a causal composite insight.
+                                   |vi − vj |
+                 wcomp (i, j) =                 ,            (6)   D. Community-based Aggregation: Implementation Steps
+                                  max(vi , vj )
+                                                                     1) Subgraph construction. For each of the four undirected
+where vi and vj are the result values. We retain only edges             relation types (Comparative, Correlative, Contextual,
+with wcomp (i, j) > 0.15.                                               Temporal), extract a subgraph Gr containing only edges
+     b) Correlative Edge Weight.: A correlative edge connects           of that type. Nodes are atomic insights; edges are the
+atomic insights that exhibit statistical dependencies, including        corresponding relations.
+CORR-type insights and co-moving TREND-type insights. Its            2) Community detection. Run the Leiden algorithm on
+weight is                                                               each subgraph Gr to obtain communities. Leiden guar-
+                wcorr (i, j) = |rij | · (1 − pij ),          (7)        antees internal connectivity and works well on weighted
+                                                                        graphs.
+where rij is the Pearson correlation coefficient and pij is          3) Community filtering. Keep communities with mod-
+the corresponding p-value. Edges with wcorr (i, j) > 0.6 are            ularity greater than 0.3 and size at least 3. Discard
+considered strongly correlative.                                        communities that are too small or loosely connected.
+  4) Community summary generation. For each retained             redundant, causally verified, and fully traceable for automated
+     community, call an LLM to generate a higher-order           data analysis.
+     composite insight.
+                                                                 E. Report Generation
+       System: You are a strict reviewer.
+       User: Score the incremental value                            Given the set of composite insights C ∗ and an optional user
+       of the composite insight relative                         query q, the report generation module synthesizes an article-
+       to the atomic insights using the                          level analytical report R as follows.
+       following five criteria:                                     1) Relevance filtering. If q exists, encode q and the sum-
+                                                                       mary of each composite insight c with an embedding
+         a) Novel Synthesis (0-3): Does
+                                                                       model, and compute cosine similarity rel(c, q). Set a
+            it form a new synthesized
+                                                                       threshold τrel and discard composites with rel(c, q) <
+            conclusion rather than listing
+                                                                       τrel , keeping only those relevant to the query topic. If q
+            atoms?
+                                                                       is absent, keep all composites.
+         b) Information Gain (0-2): Does
+                                                                    2) Thematic grouping. Cluster the embeddings of all
+            it contain new information not
+                                                                       atomic insights into K themes (K-means clustering).
+            directly stated but reasonably
+                                                                       Assign each selected composite to the theme containing
+            derivable from the atoms?
+                                                                       the majority of its atoms. Each theme becomes a section
+         c) Logical Coherence (0-2): Is it
+                                                                       of the report.
+            logically consistent and free
+                                                                    3) Narrative generation. For each section, feed the com-
+            of contradictions?
+                                                                       posites and their evidence (atomic insights, SQL, meta-
+         d) Relational Explanation (0-2):
+                                                                       data) into an LLM to generate coherent paragraphs. En-
+            Does it explain the relational
+                                                                       sure all insights are mentioned, transitions are smooth,
+            pattern or mechanism among
+                                                                       and every claim is accompanied by evidence references.
+            atoms?
+                                                                    4) Report assembly. Assemble all sections in logical order
+         e) Decision Utility (0-1): Does it
+                                                                       into a complete report with title, abstract, and conclu-
+            provide practical guidance for
+                                                                       sion. Output the final report R, where every claim is
+            the analysis goal?
+                                                                       traceable to its supporting evidence.
+          Output the score and a brief
+          reason for each criterion, then                        F. Basic Analysis Patterns and SQL Templates
+          give the total score. If total ≥ 6,                       In Table III, the basic Analysis Patterns and SQL Templates
+          answer “Yes”; otherwise “No”.                          is shown.
+          Atomic insights: {...}
+          Composite insight: {...}
+   1) Deduplication and Confidence Scoring: Generated com-
+posite candidates undergo two quality-control steps.
+      a) Deduplication.: We deduplicate composites based on
+the set of constituent atomic insight IDs. If two composites
+have identical atomic ID sets, only the one with higher
+confidence is retained.
+      b) Confidence Scoring.: The confidence score Conf(c) ∈
+[0, 1] of a composite insight c is computed as
+                                    1 X
+     Conf(c) = consistency(c) ×          sig(a),         (12)
+                                   |Ac |
+                                        a∈Ac
+
+where sig(a) ∈ [0, 1] is the normalized statistical signif-
+icance of atomic insight a, and consistency(c) ∈ {0, 1}
+is a binary logical-coherence check. The field evidence(c)
+records whether the composite is directly validated by a joint
+SQL query (direct) or indirectly through atomic SQLs
+(indirect); it does not enter the confidence product. Only
+composites with Conf(c) > 0.6 are retained. Indirect compos-
+ites are additionally audited manually in the evaluation. The
+causal score Causal(c) is stored as an additional field, and
+composites with Causal(c) > τcausal are labeled as causal.
+This design ensures that the final output is reliable, non-
+                                                         TABLE III
+                                       BASIC A NALYSIS PATTERNS AND SQL T EMPLATES
+
+Pattern Type   Description                                                   SQL Template Example
+MAX            Returns maximum value of a metric with associated dimension   SELECT MAX({metric}) FROM
+                                                                             {table}
+MIN            Returns minimum value of a metric with associated dimension   SELECT MIN({metric}) FROM
+                                                                             {table}
+AVG            Computes the average of a metric                              SELECT AVG({metric}) FROM
+                                                                             {table}
+SUM            Computes the total of a metric                                SELECT SUM({metric}) FROM
+                                                                             {table}
+COUNT          Counts the number of records                                  SELECT COUNT(*) FROM {table}
+GROUP_BY       Groups by dimension and computes aggregate per group          SELECT {dim}, {agg}({metric})
+                                                                             FROM {table} GROUP BY {dim}
+CORR           Computes correlation between two metrics                      SELECT CORR({m1}, {m2}) FROM
+                                                                             {table}
+TREND          Performs linear regression of metric over time                SELECT slope, p_value FROM
+                                                                             ({table} time regression)
+

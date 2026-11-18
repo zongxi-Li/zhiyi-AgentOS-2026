@@ -1,0 +1,1295 @@
+                                         Q U I E TT: Query-Independent Table Transformation for Robust Reasoning
+
+                                                  Gaurav Najpande     Tampu Ravi Kumar*          Manan Roy Choudhury*
+                                                                          *
+                                                              Neha Valeti     Yanjie Fu       Vivek Gupta
+                                                                        Arizona State University
+                                                 {gnajpand,traviku2,mroycho1,nvaleti1,yanjie.fu,vgupt140}@asu.edu
+
+
+
+                                                               Abstract
+                                             Real-world tables often contain schema incon-
+                                             sistencies, heterogeneous value formats, and
+                                             implicit relational structures that degrade table
+                                             reasoning and question answering. Existing ap-
+                                             proaches address these issues at query time, re-
+                                             peating normalization and restructuring for ev-
+arXiv:2602.20017v2 [cs.CL] 13 Aug 2026
+
+
+
+
+                                                                                                   Figure 1: Q U I E TT transforms a raw table into a single SQL-
+                                             ery new question and producing representations        ready canonical representation before any evaluation query is
+                                             that do not generalize to unseen queries. We          observed. The transformed table is reused across all queries
+                                             introduce Q U I E TT, a transform-first, query-       without modification.
+                                             later framework that converts each raw table
+                                             into a single SQL-ready canonical representa-            Normalization methods such as NormTab (Nahid
+                                             tion before any evaluation query is observed,         and Rafiei, 2025) and E5 (Zhang et al., 2024) re-
+                                             under three constraints: no evaluation query          duce surface-form variability by standardizing val-
+                                             access, information preservation, and single-
+                                                                                                   ues and applying lightweight structural fixes, but
+                                             table reuse. Q U I E TT operates through a three-
+                                             stage pipeline: issue probing, where synthetic        leave schema-level issues including heterogeneous
+                                             queries surface structural deficiencies such as       layouts, implicit relations, and undecomposed at-
+                                             ambiguous schemas and heterogeneous for-              tributes to downstream reasoning. Because these
+                                             mats; plan generation; and structured execution.      methods assume mostly fixed schemas, they can-
+                                             Experiments on four benchmarks across five            not resolve the structural deficiencies that degrade
+                                             model families show consistent improvements           reasoning on real-world tables.
+                                             over strong baselines in both direct prompting
+                                             and agentic reasoning paradigms, with particu-           Reasoning-coupled methods integrate transfor-
+                                             larly strong gains on a manually annotated chal-      mation directly into the query pipeline. Chain-
+                                             lenge set of structurally diverse unseen ques-        of-Table (Wang et al., 2024) and TableRea-
+                                             tions.                                                soner (Xiong et al., 2025b) perform query-
+                                                                                                   driven schema selection and iterative restructuring;
+                                         1   Introduction                                          Binder (Cheng et al., 2023) and Dater (Ye et al.,
+                                         Table based reasoning is a central component of           2023) condition execution and decomposition on
+                                         many natural language understanding tasks, includ-        the observed question. These methods improve
+                                         ing question answering, information retrieval and         accuracy on seen queries but couple table represen-
+                                         decision support (Zhu et al., 2021; Herzig et al.,        tation to the query at hand: the same table yields
+                                         2020), yet real-world tables rarely arrive in a form      different transformed views for different questions,
+                                         suitable for natural-language or symbolic query-          transformation work repeats for every new query,
+                                         ing. For example, result columns embed outcome            and representation quality cannot be evaluated in-
+                                         and score in a single string ("W 24-17"), columns         dependently of reasoning behavior. In every case,
+                                         mix scales and currencies ("$1.2M", "EUR 850K",           reuse across questions, models, and tasks is struc-
+                                         "1,500,000"), symbols stand in for missing val-           turally precluded.
+                                         ues ("†", "-"), and hierarchical headers collapse            Standard data engineering offers a useful anal-
+                                         ambiguously when flattened (Cheng et al., 2022).          ogy. In the widely adopted medallion architecture,
+                                             Code and data available at https://anonymous.4open.   data engineers prepare analytics-ready representa-
+                                         science/r/QuIeTT-2B73/                                    tions before any downstream query is posed (Chu
+et al., 2016), and that single representation serves    questions over 529 tables (Fleiss’ κ = 0.93) target-
+diverse analytical workloads without query-specific     ing structural diversity absent from standard bench-
+adaptation. Table QA lacks an equivalent. Q U I E TT    marks. (4) Ablation studies show that issue probing
+draws on this intuition, motivated by the medal-        is the primary driver of gains, with transformation
+lion architecture’s principle of preparing analytics-   quality mattering more than QA model capacity.
+ready representations before queries arrive. How-
+ever, applying this principle to open-domain table      2     Q U I E TT Framework
+QA introduces challenges that ETL does not face.        2.1    Problem Setup
+ETL assumes a known target schema and a fixed           Let Traw ∈ T denote a raw, semi-structured table
+query workload. In open-domain table QA, ta-            and Q the space of possible downstream queries.
+bles arrive with unknown structure and no future        We construct a transformation function f : T → T
+queries are observed at transformation time. Q U I-     that maps Traw to a canonical, SQL-ready table
+E TT addresses this by treating schema discovery as
+                                                        TC = f (Traw ), reused across all subsequent queries
+intrinsic to transformation: it derives the canonical   without modification, under three constraints:
+representation from the raw table’s own structural
+                                                        (a) No query access. f depends only on Traw , not
+properties through issue probing. The result is a
+                                                        on any q ∈ Q.
+framework evaluated by a criterion that ETL sys-
+                                                        (b) Information preservation. All original content
+tems never impose: a single canonical representa-
+                                                        is grounded in TC ; f reorganizes and normalizes
+tion, constructed without query access and without
+                                                        rather than discards, preserving source-table prove-
+a predefined schema, must improve downstream
+                                                        nance without dropping information.
+QA across diverse datasets, model families, and
+                                                        (c) Single-table reuse. TC is produced exactly once
+reasoning strategies.
+                                                        and reused unchanged, so performance differences
+   We introduce Q U I E TT, a transform-first, query-
+                                                        between Traw and TC reflect representation quality
+later framework that converts each raw table into a
+                                                        alone.
+single SQL-ready canonical representation before
+                                                        Given a fixed reasoning model M and prompt-
+any evaluation query is observed. Q U I E TT oper-
+                                                        ing strategy S, a query q is answered as â =
+ates under three explicit constraints: it accesses no
+                                                        M (S(q, TC )), isolating the effect of table repre-
+downstream evaluation queries during transforma-
+                                                        sentation from model or prompt variation.
+tion, it preserves all original table content so that
+nothing is discarded, and it produces exactly one       2.2    Pipeline Overview
+canonical table reused across all queries. These        Q U I E TT instantiates this setting as a three-stage
+constraints isolate the effect of table representa-     pipeline (Algorithm 1): (1) probe the raw table to
+tion from model and prompt variation. When the          identify structural issues, (2) generate a transfor-
+same reasoning model and prompting strategy are         mation plan that resolves them, and (3) execute the
+held fixed, performance differences between raw         plan to produce the canonical table TC .
+and canonical tables reflect representation quality
+alone. Q U I E TT targets the regime where tables are   2.3    Issue Probing
+preprocessed once and reused across arbitrary fu-       Issue probing generates a set of synthetic queries
+                                                                                 (1)         (M )
+ture queries, complementing rather than replacing       Qprobe (Traw ) = {qsyn , . . . , qsyn } directly from
+query-adaptive methods that condition transforma-       Traw , where each query targets a structural pat-
+tion on observed queries.                               tern that would hinder SQL or general-purpose
+Our main contributions are: (1) We introduce            querying, such as ambiguous column schemas, het-
+Q U I E TT, a three-stage transform-first framework     erogeneous value formats, type inconsistencies,
+that converts raw tables into a single SQL-ready        packed multi-value cells, or implicit relational
+canonical representation before any evaluation          structure (see Appendix I.1 for prompt design and
+query is observed, decoupling table preprocess-         issue aggregation). Each probe query carries a
+ing from query-time reasoning. (2) Across four          failure_reason field that records why the raw
+benchmarks and five model families, Q U I E TT con-     table cannot answer it reliably; grouping queries
+sistently outperforms strong baselines by 4-8 F1        by identical failure reasons yields the issue set
+and 3-6 accuracy points across both direct prompt-      I(Traw ) = {i1 , i2 , . . . , iN } that drives transforma-
+ing and agentic reasoning paradigms. (3) We con-        tion planning. The probe queries themselves are
+struct a manually annotated challenge set of 2,500      discarded after issue extraction and later stages ac-
+                            Raw I nput Table                                                                                                            QuI eTT Pipeline                                                                           Stage 3 - Downstream QA
+
+                 Assumed          Departed                                                          Stage 1 - I ssue Probing                                 Stage 2.1 - Transformation Planning                    Stage 2.2 - Plan Execution
+      Name                                       Political party        Notes/ Events
+                  office           office
+
+    Benjamin     March 4,         March 3,                                                        Synthetic Query Generation                                         JSON Plan Generation                                   Code Generation
+                                               Anti-Administration
+     Contee       1789             1791                                                  - How long was Benjamin Cardin in office?                                                                                                                Q: What is the average duration of
+                                                                                                                                                           - Row identity & raw data preserved                               Plan ? Code
+                                                                                        ---------------------------------------------------                                                                                                       representatives in Democratic
+     William     March 4,       November                                                                                                                   - Canonicalize textual placeholders
+                                               Pro-Administration         Resigned                                                                                                                                                                Party?
+     Pinkney      1791            1791                                                   - Who served for more than two terms?                             - Parse free-text dates
+                                                                                                                                                                                                                                                  A: 20.0
+    Benjamin     January 3,    January 3,
+                                                   Democratic
+     Cardin         1987         2007                                                                 Table I ssues Exposed
+      John       January 3,                                                                                                                                                                                                 Code Execution         Q: Which representatives of
+                               I ncumbent       Democratic Party                        - Date fields are strings
+    Sarbanes       2007                                                                                                                                                                                                                           Democratic Party assumed office
+                                                                                        - I nconsistent party labels                                                  Transformation Ops
+        ...          ...             ...                ...                   ...       - I mplicit end dates (I ncumbent)                                                                                                                        after 1980?
+                                                                                                                                                           - Derived column
+                                                                                        - Term duration not explicit                                                                                                                              A: Benjamin Cardin and John
+                                                      Names not decomposed                                                                                 - Normalization                                          Materialize canonical table
+        Date fields are strings                                                                                                                                                                                                                   Sarbanes
+                                                                                        - Names not decomposed                                             - Restructuring
+        Term duration not explicit                    I nconsistent party labels
+                                                                                         Probe questions discarded, only issues kept
+
+                                                                                                                                                                                                                                                              Question 3
+                                                                                                                                                        Transformed Table                                                                                COT ? SQL ? answer
+                                                                                                     First                                                   Start End       Term
+                                                                                                               Last Name      Start Date      End Date                                   Political Affiliation   Notes/ Events
+                                                                                                     Name                                                    Year Year      Duration
+                                                                                                   Benjamin      Contee       1789-03-04      1791-03-03     1789    1791     2.0       Anti-Administration      Not available
+                                                                                                    William     Pinkney       1791-03-04      1791-11-01     1791    1791     0.0       Pro-Administration         Resigned
+                                                                                                   Benjamin      Cardin       1987-01-03      2007-01-03     1987 2007        20.0          Democratic           Not available
+   Q: What is the average duration of representatives in Democratic Party?
+   Q: Which representatives of Democratic Party assumed office after 1980?                           John      Sarbanes       2007-01-03                     2007                           Democratic           Not available
+                                                                                                                                                                                                                                                              Question n
+                                                                                                       ...          ...           ...             ...          ...    ...      ...                ...                 ...
+                                                                                                                                                                                                                                                         COT ? SQL ? answer
+                           ----- SQL fails on string dates -----
+                                                                                                         Dates: YYYY-DD-MM                       Canonical version                     Duration                     NaN
+                                  Before transformation                                                                                                                                                                                                    Query n times
+                                                                                                                                                        Transform once per-table
+
+
+
+
+Figure 2: Q U I E TT framework for robust table reasoning. Stage 1: Issue Probing. Synthetic queries are generated from the
+raw table to expose structural issues such as inconsistent formats, implicit relations, missing derived fields, and undecomposed
+attributes. Stage 2: Transformation. Detected issues guide a transformation plan that applies normalization, parsing, restructur-
+ing, and derived column creation, executed via code to materialize a canonical, SQL-ready table. Stage 3: QA. The transformed
+table is reused across all downstream queries, enabling accurate and consistent reasoning without modifying the underlying
+model or prompting strategy.
+Algorithm 1 Q U I E TT Framework                                                                                                                          tor (e.g., eastern ontario / french-language
+  Input: raw table Traw                                                                                                                                   workers), as illustrated in Appendix H. While this
+  Output: canonical table TC , answers {â}                                                                                                               produces a uniform columnar representation that is-
+  Stage 1: Issue Probing
+  Qprobe ← GenerateSyntheticQueries(Traw )                                                                                                                sue probing can operate over, the underlying seman-
+  I ← ExtractIssues(Qprobe )     ▷ probes discarded                                                                                                       tics remain implicitly encoded in column names
+  π ← GeneratePlan(Traw , I)                                                                                                                              rather than explicit fields. Issue probing then sur-
+  Validate(π)                ▷ format, completeness
+  Stage 2: Transformation                                                                                                                                 faces these residual structural deficiencies, and the
+  T ← Traw                                                                                                                                                transformation plan resolves them by decomposing
+  for operation o ∈ π do
+     if o is deterministic then
+                                                                                                                                                          composite headers into atomic attributes such as
+         T ← ApplyOp(o, T )                                                                                                                               region and worker type.
+     else
+         T ← GenerateAndExecuteCode(o, T )                                                                                                                2.4               Transformation Planning
+     end if
+  end for                                                                                                                                                 A transformation plan is an ordered sequence
+  TC ← T                    ▷ information preserved                                                                                                       π = ⟨o1 , . . . , oK ⟩, where the plan length K and
+  Stage 3: Downstream QA
+  for query q do
+                                                                                                                                                          the specific operations are determined dynamically
+     r ← Reason(q, TC )                ▷ CoT → SQL                                                                                                        from the issue set I(Traw ) = {i1 , i2 , . . . , iN } de-
+     â ← Execute(r, TC )                                                                                                                                 tected in Stage 1. Each operation oi declares its
+  end for
+  Return TC , {â}
+                                                                                                                                                          input columns, output columns, and dependencies,
+                                                                                                                                                          yielding an auditable transformation graph. Col-
+                                                                                                                                                          lectively, π induces an explicit target schema Sπ
+                                                                                                                                                          that fixes the column set, names, types, and derived
+cess only I(Traw ), preserving constraint (a). We                                                                                                         fields of the transformed table before any execu-
+generate 12-20 probe queries per table; Appendix F                                                                                                        tion begins. The plan is produced by a function
+shows this budget achieves 98.5% structural cover-                                                                                                        P : T × I → Π, giving π = P(Traw , I(Traw )).
+age.                                                                                                                                                      Constraining operation semantics while allowing
+Handling hierarchical tables. Hierarchical tables                                                                                                         variable plan length and composition lets Q U I E TT
+encode information across implicit parent-child                                                                                                           produce reproducible plans while limiting halluci-
+levels rather than explicit columns (Zhao et al.,                                                                                                         nated or unsupported transformations.
+2023), which can cause issue probing to miss cross-
+level dependencies. Before probing, we apply a                                                                                                            2.5               Plan Execution
+deterministic flattening step that collapses multi-                                                                                                       The plan π is executed by a structured engine that
+level headers into composite column names by con-                                                                                                         separates symbolic planning from code-level imple-
+catenating parent and child labels with a separa-                                                                                                         mentation, following the design principle of Khoja
+                                                            Expert Pair        Cohen’s Kappa Jaccard Coeff.
+et al. (2025). Given π and Traw , the executor pro-         α1,2                   92.9           96.9
+cesses each operation oi ∈ π according to its de-           α2,3                   92.0           96.6
+                                                            α1,3                   94.9           97.7
+clared inputs, outputs, and dependencies, produc-           α1,2,3 (Fleiss’ κ)    0.9328         0.9562
+ing the canonical table TC = E(π, Traw ).
+                                                         Table 1: Inter-rater agreement for challenge set annotation.
+   Execution follows two paths depending on the
+operation type. Operations with registered imple-          Statistic                  Values     Table Dimension
+mentations (see Appendix A) are applied directly           Total tables                 529      Mean: (20, 11)
+                                                           Total questions             2,500     Median: (8, 8)
+through a fixed operator library. Operations re-           Questions per table        4/5/7      Min: (1, 1)
+quiring table-specific logic are handled by LLM-           (mean / median / max)                 Max: (380, 76)
+generated Python code executed against the current       Table 2: Challenge set composition and table structure
+table state. In both paths, each step is restricted      statistics. The set comprises 2,500 questions over 529 tables.
+to its declared inputs and outputs in π. Steps that      Tuple-valued entries in the Table Dimension column report
+                                                         (rows, columns); the wide size range reflects the structural
+fail validation trigger a retry: the validator appends   diversity the challenge set targets.
+the error message to the prompt and re-queries the
+model up to two additional times. If all attempts
+                                                         for stress-testing table-intrinsic representation.
+fail, the original column values are preserved as
+a fallback and execution continues with the next         Dataset Creation. For each table, we generate
+plan step, bounding the effect of any variability in     structurally challenging question-answer pairs di-
+LLM-generated steps to the plan structure.               rectly from the raw table, targeting structural pat-
+   The executor enforces schema conformance              terns that hinder reliable answering without trans-
+throughout, so the final table conforms to Sπ re-        formation, following prior LLM-based table QA
+gardless of which path individual steps take. When-      benchmarks (Choudhury et al., 2025; Tian et al.,
+ever a transformation changes the original surface       2025; Choudhury et al., 2026). We acknowledge
+form of a value, such as parsing a date or splitting     that generating questions from raw tables may
+a packed cell into separate columns, the original        not surface all structural complexity compared to
+information is reorganized into the new representa-      canonical representations, but ensures question gen-
+tion rather than discarded. Columns that require no      eration is independent of Q U I E TT’s transforma-
+transformation are carried over to TC unchanged          tion. To ensure evaluation neutrality, we apply
+(see Appendix G). Because TC is produced once            two controls. First, all answers must be derivable
+and cached, the pre-processing cost is amortized         exclusively from the source raw table. Second,
+across all downstream queries (see Appendix B.3).        all question-answer pairs are manually verified by
+                                                         three independent NLP annotators against the raw
+2.6    Downstream Question Answering
+                                                         table, without access to the canonical representa-
+Once TC is produced, downstream question answer-         tion or model outputs. Because all methods share
+ing proceeds over the canonical table without fur-       the same fixed question set and Q U I E TT has no
+ther modification. Given a query q, the reasoning        access to these questions during transformation,
+model M generates a chain-of-thought reasoning           any representational alignment introduced during
+trace that decomposes the question into sub-steps,       question generation cannot advantage Q U I E TT at
+then translates it into a SQL query executed against     evaluation time.
+TC to produce the final answer â. Because TC al-
+ready conforms to Sπ , this CoT→SQL pipeline             Dataset Verification. Three independent NLP an-
+operates over a consistent representation regardless     notators validate each question-answer pair against
+of the original table’s structural complexity.           the raw source table. Table 1 reports inter-annotator
+                                                         agreement, which is consistently high across all
+3     Q U I E TT Challenge Set                           pairs, supporting the reliability of the challenge set.
+To evaluate generalization under increased struc-        3.1   Dataset Statistics.
+tural complexity, we construct a challenge set
+from WikiTQ (Pasupat and Liang, 2015) and NQ-            Table 2 details scale and question type distribution.
+Table (Kwiatkowski et al., 2019), two datasets              We evaluate Q U I E TT across four benchmarks,
+whose structural issues, heterogeneous formats, im-      five model families, and two reasoning paradigms,
+plicit relations, and irregular schemas are latent and   holding downstream QA models and prompting
+unlabeled, making them the most suitable sources         strategies fixed across all conditions.
+4     Experiments                                       2023), DeepSeek-V3.1 (DeepSeek-AI, 2024),
+4.1    Benchmark Datasets.                              Qwen3-80B, and GPT-OSS-120B1 , spanning both
+                                                        proprietary and open-weight settings. Baselines in-
+We conduct experiments on four widely used ta-          clude prompting-based methods (CoT, CoT+SQL,
+ble QA benchmarks covering diverse table struc-         E5 (Zhang et al., 2024), EEDP (Srivastava et al.,
+tures and reasoning requirements. WikiTQ (Pasu-         2024)), normalization and restructuring meth-
+pat and Liang, 2015) consists of semi-structured        ods (NormTab (Nahid and Rafiei, 2025), Tab-
+Wikipedia tables paired with natural language ques-     leSQLify (Nahid and Rafiei, 2024), TableRea-
+tions, emphasizing lookup and aggregation. NQ-          soner (Xiong et al., 2025b), GraphOTTER (Li et al.,
+Table (Kwiatkowski et al., 2019) is derived from        2024)), an execution-based system (Binder (Cheng
+Natural Questions and contains noisier web ta-          et al., 2023)), and multi-step agentic methods
+bles with implicit schemas. SequentialQA (Iyyer         (Chain-of-Table (Wang et al., 2024), Program-of-
+et al., 2017) requires multi-turn reasoning where       Thoughts). All baselines are implemented fol-
+later questions depend on earlier answers. HiTab        lowing their original papers and publicly released
+(Cheng et al., 2022) focuses on hierarchical and        code, using default hyperparameters and prompting
+numerical reasoning over complex table structures.      strategies without additional tuning.
+We additionally evaluate on the challenge set con-
+structed from WikiTQ and NQ-Table (Section 3) to        5       Results and Analysis
+assess robustness on structurally harder cases. Wik-
+                                                        We structure our analysis around four questions:
+iTQ and NQ-Table are selected for the challenge
+                                                        (1) Does Q U I E TT improve consistently across
+set because their structural issues, heterogeneous
+                                                        model families and scales? (2) Do gains gener-
+formats, implicit relations, and irregular schemas
+                                                        alize across diverse table structures and reasoning
+are latent and unlabeled, making them the most
+                                                        settings? (3) Is transformation quality a stronger
+suitable sources for stress testing table-intrinsic
+                                                        driver of performance or QA model capacity?
+representation quality. HiTab’s difficulty is well
+                                                        (4) How does Q U I E TT perform on structurally
+characterized by its explicit hierarchical structure
+                                                        challenging unseen queries?
+and SequentialQA’s by conversational context, so
+neither isolates the schema-level variation the chal-   Does Q U I E TT generalize across model families?
+lenge set targets.                                      Q U I E TT consistently improves over the strongest
+                                                        baseline for each model across both F1 and accu-
+4.2    Evaluation Metrics.
+                                                        racy, with F1 gains of approximately 4-8 points
+We report both token-level F1 and accuracy across       and corresponding accuracy gains of 3-6 points
+all datasets. Before scoring, we apply lightweight      across datasets. These improvements hold for
+surface normalization to both predictions and gold      both proprietary models (Gemini 2.0, Gemini 2.5)
+answers such as date strings are converted to           and open-weight models (DeepSeek-V3.1, Qwen3-
+a canonical format (e.g., “Jan 5, 2018” →               80B, GPT-OSS-120B), indicating that the benefits
+“2018-01-05”), non-semantic characters such as          of improved table representation generalize across
+@, ;, and | are removed, and Roman numerals are         model families and scales.
+mapped to integers (e.g., “III” → “3”). Token-
+level F1 is then computed over the normalized to-       Does Q U I E TT generalize across table struc-
+kens, and accuracy is computed as exact match           tures? Q U I E TT generalizes across diverse table
+after the same normalization. We report both met-       types and reasoning settings. On WikiTQ and NQ-
+rics because most table QA benchmarks and prior         Table, which contain semi-structured web tables,
+methods report accuracy as their primary metric,        Q U I E TT reaches F1 of 79.80 and 80.10 with ac-
+while F1 additionally captures graded recovery for      curacy of 78.56 and 76.19 respectively with Gem-
+list-valued and compositional answers where a pre-      ini 2.5. On SequentialQA, where questions are
+diction may be partially correct. All methods are       inter-dependent across turns, Q U I E TT achieves up
+evaluated using the same normalization and scoring      to 72.32 F1 and 66.69 accuracy, showing that pre-
+scripts.                                                processing benefits extend beyond single-turn an-
+
+4.3    Models and Baselines.                                1
+                                                             Qwen3-80B and GPT-OSS-120B are open-weight models
+                                                        accessed via Vertex AI Model-as-a-Service. GPT-OSS-120B
+We evaluate across five large language models:          is a 120B-parameter model from OpenAI; Qwen3-80B is an
+Gemini-2.0-flash and Gemini-2.5-flash (Google,          80B-parameter model.
+                                                    Gemini 2.5                                            GPT-OSS
+                                WikiTQ       NQ-Table SequentialQA       HiTab        WikiTQ       NQ-Table SequentialQA       HiTab
+    Category Method
+                               F1    EM      F1    EM    F1     EM     F1    EM      F1    EM      F1    EM    F1    EM      F1    EM
+               CoT            74.31 72.85   71.22 66.36 61.98 57.21   75.21 71.00   69.40 66.56   66.60 63.54 60.26 58.29   53.90 50.80
+               CoT + SQL      54.66 52.49   36.64 30.96 58.23 53.37   69.01 67.00   43.00 42.29   47.90 33.95 55.20 49.60   31.90 30.70
+               NormTab        58.70 56.19   53.00 51.05 50.00 49.92   56.81 54.60   65.91 62.61   50.30 48.34 48.60 43.10   54.67 52.00
+               E5             74.35 70.30   55.90 52.92 31.64 29.81   78.89 75.10   56.90 52.15   54.00 51.76 43.80 40.46   77.47 75.00
+     Direct
+               EEDP           65.00 51.10   72.79 70.17 60.30 57.13   77.60 73.00   60.10 59.54   71.80 58.28 54.90 50.31   55.48 52.40
+               Binder         51.89 49.69   67.24 59.59 22.49 19.84   59.03 56.30   61.50 58.47   66.50 64.30 21.50 17.23   58.55 55.03
+               TableSQLify    53.02 49.50   34.78 27.77 26.78 24.44   69.92 67.90   73.90 68.98   46.99 41.52 26.73 23.87   53.00 40.41
+               TableReasoner 54.32 50.05    64.71 57.58 42.51 39.15   61.68 59.54   69.79 64.64   62.70 59.45 66.22 63.37   56.81 52.78
+               Chain-of-Table 74.30 73.20   69.56 67.45 22.27 20.93   70.12 65.80   62.11 57.53   60.21 53.47 23.20 19.14   65.60 53.80
+               POT            60.21 58.39   67.70 65.69 63.52 54.58   69.12 65.40   69.90 68.16   57.60 50.08 44.50 41.84   43.50 38.23
+     Agentic
+               GraphOTTER 49.29 42.75       61.79 56.09 42.76 43.98   81.05 79.71   57.50 52.50   55.88 48.47 44.26 42.26   78.60 74.61
+               Q U I E TT     79.80 78.56   80.10 76.19 72.32 66.69   84.41 83.10   76.21 73.23   72.75 68.50 73.00 64.58   79.50 78.70
+                                                  DeepSeek V3.1                                            Qwen 3
+                                WikiTQ       NQ-Table SequentialQA       HiTab        WikiTQ       NQ-Table SequentialQA       HiTab
+                               F1    EM      F1    EM    F1     EM     F1    EM      F1    EM      F1    EM    F1    EM      F1    EM
+               CoT            60.92 59.62   63.60 59.12 59.50 50.36   71.13 68.00   58.95 57.55   61.34 59.91 57.12 54.03   72.97 69.00
+               CoT + SQL      51.21 47.39   34.21 29.28 56.30 55.12   65.45 61.00   51.55 48.95   34.54 33.36 59.64 58.11   56.23 51.00
+               NormTab        53.19 51.33   55.40 52.34 45.57 43.24   43.35 42.27   51.12 47.72   46.80 41.92 48.68 46.69   43.30 42.78
+               E5             73.00 68.20   54.55 49.45 42.75 35.11   80.50 76.80   62.30 57.30   53.16 50.23 42.69 33.97   72.21 71.20
+     Direct
+               EEDP           62.20 52.40   72.29 69.42 60.25 52.79   74.18 69.60   62.40 53.70   62.21 61.31 55.90 53.18   71.27 67.70
+               Binder         50.62 47.22   67.44 61.20 20.19 16.63   58.66 55.90   61.68 58.48   61.56 59.38 20.54 20.34   56.29 53.50
+               TableSQLify    73.00 71.45   56.94 48.03 30.01 28.58   67.62 63.40   48.40 45.45   51.34 47.67 29.18 27.27   62.30 60.40
+               TableReasoner 47.63 41.38    33.33 32.36 56.89 50.36   48.63 46.42   62.49 61.53   63.77 60.11 60.59 58.99   52.95 49.18
+               Chain-of-Table 63.67 61.29   70.10 61.23 44.53 41.66   75.55 70.80   61.39 59.17   64.33 61.20 44.28 38.88   76.18 71.80
+               POT            48.39 45.72   65.33 58.68 59.79 56.47   56.55 53.30   46.56 44.33   62.10 59.68 59.28 53.12   32.30 30.70
+     Agentic
+               GraphOTTER 34.80 30.30       35.29 32.63 44.05 39.73   61.30 58.82   50.84 46.94   55.80 51.41 42.93 40.53   77.05 73.63
+               Q U I E TT     74.56 72.21   79.20 72.29 66.15 59.57   81.30 79.40   64.20 60.96   72.60 65.23 62.54 58.39   81.22 81.00
+
+Table 3: Main results. Q U I E TT is compared against direct prompting methods and agentic methods across four benchmarks
+and four model families. Top half: Gemini 2.5 and GPT-OSS; bottom half: DeepSeek V3.1 and Qwen 3. Bold indicates best
+result per column. Gemini 2.0 results are in Table 12.
+
+swering. On HiTab, which emphasizes hierarchical                        challenge set described in Section 3. Q U I E TT
+numerical reasoning, Q U I E TT achieves peak F1                        achieves 74.41 F1 and 71.37 accuracy on WikiTQ
+of 84.41 and accuracy of 83.10, the highest across                      and 77.16 F1 and 76.50 accuracy on NQ-Table with
+all methods and models. Together, these results                         Gemini 2.5, outperforming all baselines by 5-8 F1
+suggest that table-intrinsic structural issues are a                    and 4-7 accuracy points. These gains are larger
+consistent bottleneck across table types, and that                      than those on the standard benchmarks, consistent
+resolving them before reasoning is broadly benefi-                      with the challenge set targeting structurally diverse
+cial.                                                                   cases where table-intrinsic representation issues
+                                                                        are most acute. The rationale for selecting WikiTQ
+Does transformation quality matter more or                              and NQ-Table for the challenge set is discussed in
+model capacity? Table 15 shows that transforma-                         Section 3.
+tion quality is a stronger driver of downstream per-
+formance than QA model capacity. On WikiTQ,                                  Dataset       MethodGemini 2.5 GPT-OSS
+                                                                                                  F1    EM    F1    EM
+tables transformed with Gemini 2.5 achieve 65.12                                      CoT        67.11 65.50 63.58 60.36
+F1 and 62.23 accuracy with Mistral, compared to                                       NormTab 62.28 61.90 61.71 57.23
+63.33 F1 and 59.35 accuracy when Qwen 3 per-                                 WikiTQ EEDP         67.60 66.34 65.12 61.86
+                                                                                      Binder     65.56 63.39 65.12 64.48
+forms the transformation with the same QA model.                                      Q U I E TT 74.41 71.37 70.06 68.59
+Similar trends hold on NQ-Table (63.28 & 58.12 vs.                                    CoT        65.63 63.35 61.38 58.49
+62.56 & 60.23) and SequentialQA (47.24 & 44.84                                        NormTab 66.84 66.12 65.68 64.23
+                                                                             NQ-Table EEDP       71.94 68.50 67.18 63.87
+vs. 42.81 & 41.12). The pipeline is also not criti-                                   Binder     72.28 67.22 68.33 67.30
+cally dependent on large models for issue detection,                                  Q U I E TT 77.16 76.50 71.19 70.66
+replacing the issue probing model with LLaMA-                                            Table 4: Challenge set results
+14B Scout (Table 13) achieves 68.34 F1 and 68.14
+accuracy on WikiTQ and 70.11 F1 and 69.34 ac-                           How often does Q U I E TT improve vs. degrade
+curacy on NQ-Table with Gemini 2.5, within 6-10                         per table? Figure 3 shows per-table outcomes af-
+scores across both metrics, suggesting that struc-                      ter applying Q U I E TT. On web tables, 60% im-
+tural deficiencies are detectable even by smaller                       prove, 31% show no change, and 9% degrade. On
+models.                                                                 HiTab, 57% improve, 36% show no change, and
+                                                                        7% degrade. The higher proportion of unchanged
+How are gains on structurally challenging un-                           cases on HiTab reflects that hierarchical tables of-
+seen queries? Table 4 reports performance on the                        ten already encode relational structure explicitly.
+                                                                                      Gemini 2.5       GPT-OSS
+                                                                         Dataset
+                                                                                       F1     EM       F1     EM
+                                                                         WikiTQ   53.22 52.06 51.40 51.15
+                                                                         NQ-Table 56.80 54.37 54.90 51.82
+
+                                                                  Table 5: Q U I E TT performance without issue probing.
+
+                                                                                      Gemini 2.5       GPT-OSS
+Figure 3: Table-level performance outcomes. Win, No                      Dataset
+Change, and Loss indicate whether Q U I E TT improves, leaves                          F1     EM       F1     EM
+unchanged, or degrades per-table QA performance relative to
+                                                                         WikiTQ   60.57 58.26 58.33 57.29
+the raw table baseline.
+                                                                         NQ-Table 63.20 60.56 61.08 58.66
+
+
+Provenance columns are introduced in only 13%                   Table 6: Q U I E TT performance when planning and execution
+                                                                are merged into a single-agent transformation pipeline.
+of web tables and 9% of HiTab tables, confirming
+that most canonical representations do not rely on
+auxiliary columns for information completeness.                 Removing issue probing. Skipping the issue prob-
+When does transformation hurt? To character-                    ing stage entirely (Table 5) causes the largest per-
+ize the 7-9% of tables where performance degrades               formance drops: from 79.80 to 53.22 F1 and 78.56
+(Figure 3), we analyze all degraded cases across                to 52.06 accuracy on WikiTQ, and from 80.10 to
+both web and hierarchical tables (Figure 4). The                56.80 F1 and 76.19 to 54.37 accuracy on NQ-Table
+dominant failure mode (62.6%) is ambiguous multi-               with Gemini 2.5, decreases exceeding 25 F1 and
+value cells or packed cells that are difficult to split         accuracy points. Similar drops are observed with
+cleanly, causing answer spans to become partial or              GPT-OSS, falling to 51.40 F1 and 51.15 accuracy
+harder to recover. The remaining failures arise from            on WikiTQ and 54.90 F1 and 51.82 accuracy on
+surface-form changes like type casting (18.0%)                  NQ-Table. Without issue detection, the transforma-
+alters matching behavior, and value replacement                 tion plan has no structured basis for deciding what
+(17.5%) occasionally normalizes a value that was                to normalize or derive, and the pipeline reduces to
+useful for answer extraction. Over-normalization,               undirected table restructuring.
+downstream QA errors on valid tables, and unneces-              Merging planning and execution. Collapsing
+sary transformation of already-clean tables together            plan generation and code execution into a single-
+account for under 2% of degraded cases. These fail-             agent pipeline (Table 6) degrades performance con-
+ure modes are localized and interpretable, reflect-             sistently across both models and metrics. On Wik-
+ing inherent ambiguities in specific tables rather              iTQ, performance drops from 79.80 to 60.57 F1
+than a systematic weakness of the transform-first               and 78.56 to 58.26 accuracy with Gemini 2.5, and
+approach. The 7-9% degradation also provides a                  from 76.21 to 58.33 F1 and 73.23 to 57.29 accu-
+natural signal for identifying tables that may benefit          racy with GPT-OSS. NQ-Table follows the same
+from complementary query-conditioned methods.                   pattern, falling from 80.10 to 63.20 F1 and 76.19
+                                                                to 60.56 accuracy with Gemini 2.5, and from 72.75
+                                                                to 61.08 F1 and 68.50 to 58.66 accuracy with GPT-
+                                                                OSS. This confirms that separating symbolic plan-
+                                                                ning from code-level execution provides meaning-
+                                                                ful structure. The plan constrains what is trans-
+                                                                formed, and the executor enforces how.
+                                                                Performance under constrained inputs. Table 7
+                                                                reports performance when QA models receive only
+      Figure 4: Error Analysis for degraded tables.
+                                                                the schema, data types, and two representative rows
+                                                                (n = 2) of the transformed table, without access to
+                                                                the full table, raw tables, or execution traces. Per-
+5.1   Ablation studies.                                         formance decreases relative to full-context settings,
+We conduct three targeted ablations to isolate the              as expected, but Q U I E TT retains a substantial frac-
+contribution of individual pipeline components.                 tion of its gains across all datasets and models, with
+Dataset      Gemini 2.0 Gemini 2.5 DeepSeek V3.1      Qwen 3      GPT-OSS
+                                                                               representations. Q U I E TT differs in that no tar-
+              F1   EM     F1   EM     F1     EM       F1   EM     F1   EM
+WikiTQ       37.61 36.34 38.92 35.12 27.65   26.78   27.19 23.50 28.21 24.59
+                                                                               get schema is predefined, and transformation is
+NQ-Table     35.42 33.32 32.49 32.03 25.38   24.23   35.31 31.21 32.44 30.46   evaluated by downstream QA improvement across
+SequentialQA 40.71 38.90 42.97 36.32 38.98   35.33   36.67 31.12 41.98 38.48
+                                                                               arbitrary queries and models.
+HiTab        59.60 56.80 62.30 59.60 58.12   58.30   46.27 45.30 53.60 52.50
+                                                                               Transformation coupled with reasoning. Other
+Table 7: Q U I E TT with limited table representations (n=2).                  approaches integrate transformation directly into
+                                                                               reasoning. TabFormer (Dong et al., 2025a) jointly
+                                                                               applies restructuring and SQL answering within a
+HiTab showing the strongest retention (62.30 F1
+                                                                               single prompted process, making transformations
+and 59.60 accuracy with Gemini 2.5) while Wik-
+                                                                               dependent on the query set. Chain-of-Table (Wang
+iTQ and NQ-Table drop more sharply, suggesting
+                                                                               et al., 2024) and TableReasoner (Xiong et al.,
+that web tables benefit more from full table ac-
+                                                                               2025a) adopt query-driven schema selection or it-
+cess. Nevertheless, the canonical representation re-
+                                                                               erative reasoning, improving efficiency but cou-
+mains more useful than raw tables under the same
+                                                                               pling table structure to query-time decisions. In
+constraints, indicating that structural normalization
+                                                                               contrast, Q U I E TT treats transformation as a query-
+provides value beyond simply exposing more con-
+                                                                               independent preprocessing step that produces a sin-
+tent.
+                                                                               gle canonical representation reused across queries,
+6       Related Work                                                           tasks, and models, cleanly separating represen-
+                                                                               tation quality from downstream reasoning. A
+Table QA methods differ primarily in when and                                  detailed discussion of the limitations of query-
+how they address structural issues in raw tables. We                           conditioned transformation is provided in Ap-
+organize prior work along three axes: lightweight                              pendix E.
+normalization, programmatic restructuring, and
+transformation coupled with reasoning, and clarify                             7   Conclusion
+where Q U I E TT sits relative to each.                                        Q U I E TT converts raw, semi-structured tables into
+                                                                               a single SQL-ready canonical representation before
+Lightweight normalization for table QA. Some
+                                                                               any evaluation query is observed, decoupling table
+methods apply one-time normalization to reduce
+                                                                               pre-processing from downstream reasoning. Ex-
+surface-form variability while preserving the origi-
+                                                                               periments across four benchmarks and five model
+nal structure. NormTab (Nahid and Rafiei, 2025)
+                                                                               families show consistent gains in F1 and accuracy
+standardizes values such as dates and numbers and
+                                                                               under identical prompting conditions, including
+applies limited structural fixes, but leaves hierar-
+                                                                               with smaller models and constrained inputs, in-
+chical structure, implicit relations, and heteroge-
+                                                                               dicating that structural normalization of the table
+neous layouts to downstream reasoning. Related
+                                                                               itself, independent of the query, is a reliable and
+approaches similarly assume mostly fixed schemas
+                                                                               underexplored source of improvement in table QA.
+and rely on query-time reasoning to resolve remain-
+                                                                               These results suggest that the field has focused
+ing ambiguity (Pasupat and Liang, 2015; Nahid
+                                                                               heavily on query-adaptive reasoning while leaving
+and Rafiei, 2024). Unlike these methods, Q U I E TT
+                                                                               systematic table preparation largely unaddressed.
+resolves structural issues proactively, before any
+                                                                               A single reusable canonical representation, con-
+query is observed, and enforces a single reusable
+                                                                               structed without query access, can serve as a stable
+canonical representation.
+                                                                               foundation for diverse reasoning strategies, models,
+Programmatic table restructuring. A second                                     and tasks. Future work should extend this direction
+line of work performs restructuring via explicit                               to large tables, multimodal formats, and multi-table
+transformation programs. Auto-Tables (Li et al.,                               reasoning settings.
+2023) synthesizes multi-step pipelines from a fixed
+operator vocabulary but is limited to predefined                               Limitations
+transformations and known target schemas. Data-                                Q U I E TT has five limitations. First, the pipeline
+Morpher (Sharma et al., 2025) and Relational-                                  targets tables processable within current context
+Coder (Dong et al., 2025b) generate Python or                                  windows; very large tables remain challenging due
+SQL programs for ETL or schema matching, but                                   to input length constraints and the difficulty of pro-
+remain coupled to user-specified target schemas                                ducing compact canonical representations. Second,
+and do not enforce reusable, query-independent                                 Q U I E TT operates on structured tabular data only
+and does not handle tables interleaving free-form           ing of the Association for Computational Linguistics
+text or images. Third, while the canonical repre-           (Volume 1: Long Papers), pages 1094–1110, Dublin,
+                                                            Ireland. Association for Computational Linguistics.
+sentation enables effective QA with smaller down-
+stream models, the transformation stage itself re-        Zhoujun Cheng, Tianbao Xie, Peng Shi, Chengzu
+quires sufficiently capable models for issue probing        Li, Rahul Nadkarni, Yushi Hu, Caiming Xiong,
+and plan generation. Fourth, a single fixed transfor-       Dragomir Radev, Mari Ostendorf, Luke Zettlemoyer,
+                                                            Noah A. Smith, and Tao Yu. 2023. Binding language
+mation cannot anticipate every future query; cases          models in symbolic languages. ICLR.
+requiring latent relations not surfaced during prob-
+ing may still benefit from query-conditioned meth-        Manan Roy Choudhury, Adithya Chandramouli, Man-
+ods such as Chain-of-Table (Wang et al., 2024), and        nan Anand, and Vivek Gupta. 2026. Better call
+                                                           clause: A discrepancy benchmark for auditing llms
+Q U I E TT works best alongside rather than instead        legal reasoning capabilities.
+of such approaches. Finally, ambiguous packed
+cells remain the dominant failure mode (62.6% of          Manan Roy Choudhury, Anirudh Iyengar Kani-
+degraded cases, Figure 4); more principled alterna-        yar Narayana Iyengar, Shikhhar Siingh, Sugeeth Pu-
+                                                           ranam, and Vivek Gupta. 2025. TABARD: A novel
+tives such as child-table relationalization (Li et al.,    benchmark for tabular anomaly analysis, reasoning
+2023; Dong et al., 2025b) would handle these more          and detection. In Findings of the Association for
+robustly but require relaxing the single-table reuse       Computational Linguistics: EMNLP 2025, pages
+constraint 2.1 (c).                                        21783–21817, Suzhou, China. Association for Com-
+                                                           putational Linguistics.
+Ethics Statement
+                                                          Xu Chu, Ihab F. Ilyas, Sanjay Krishnan, and Jiannan
+This work studies table transformation and reason-          Wang. 2016. Data cleaning: Overview and emerging
+ing over publicly available benchmark datasets, in-         challenges. In Proceedings of the 2016 International
+                                                            Conference on Management of Data, SIGMOD ’16,
+cluding WikiTQ, HiTab, NQ-Table, and Sequen-                page 2201–2206, New York, NY, USA. Association
+tialQA. All datasets consist of tabular data derived        for Computing Machinery.
+from publicly accessible sources (e.g., Wikipedia)
+and do not contain personally identifiable informa-       DeepSeek-AI. 2024. Deepseek-v3 technical report.
+                                                            Technical report, DeepSeek.
+tion beyond what is already publicly disclosed. The
+proposed framework, Q U I E TT, operates purely on        Haoyu Dong, Yue Hu, and Yanan Cao. 2025a. Reason-
+tabular structure and content and does not intro-           ing and retrieval for complex semi-structured tables
+duce new data or modify the semantic content of             via reinforced relational data transformation. In Pro-
+                                                            ceedings of the 48th International ACM SIGIR Con-
+the original tables beyond information preserving           ference on Research and Development in Information
+normalization and restructuring. The challenge              Retrieval, pages 1382–1391, Padua, Italy. ACM.
+set introduced in this work is automatically gener-
+ated from existing tables and manually verified by        Haoyu Dong, Yue Hu, Huailiang Peng, and Yanan Cao.
+                                                            2025b. RelationalCoder: Rethinking complex ta-
+expert annotators to ensure correctness and faith-          bles via programmatic relational transformation. In
+fulness; no human subjects are involved beyond              Proceedings of the 63rd Annual Meeting of the As-
+standard dataset verification, and no personal or           sociation for Computational Linguistics (Volume 1:
+sensitive attributes are inferred or labeled. We do         Long Papers), pages 1771–1784, Vienna, Austria.
+                                                            Association for Computational Linguistics.
+not anticipate any harmful or unethical use of the
+proposed method. However, as with all large lan-          Google. 2023. Gemini: A family of highly capable
+guage model-based systems, care should be taken             multimodal models. Technical report, Google Deep-
+when applying Q U I E TT to proprietary, sensitive,         Mind.
+or private data, and appropriate data governance          Jonathan Herzig, Pawel Krzysztof Nowak, Thomas
+and privacy safeguards should be followed. AI               Müller, Francesco Piccinno, and Julian Eisenschlos.
+tools were used for manuscript and code editing.            2020. TaPas: Weakly supervised table parsing via
+                                                            pre-training. In Proceedings of the 58th Annual Meet-
+                                                            ing of the Association for Computational Linguistics,
+                                                            pages 4320–4333, Online. Association for Computa-
+References                                                  tional Linguistics.
+Zhoujun Cheng, Haoyu Dong, Zhiruo Wang, Ran Jia,
+  Jiaqi Guo, Yan Gao, Shi Han, Jian-Guang Lou, and        Mohit Iyyer, Wen-tau Yih, and Ming-Wei Chang. 2017.
+  Dongmei Zhang. 2022. HiTab: A hierarchical table         Search-based neural structured learning for sequen-
+  dataset for question answering and natural language      tial question answering. In Proceedings of the 55th
+  generation. In Proceedings of the 60th Annual Meet-      Annual Meeting of the Association for Computational
+  Linguistics (Volume 1: Long Papers), pages 1821–         Shi-Yu Tian, Zhi Zhou, Wei Dong, Kun-Yang Yu, Ming
+  1831, Vancouver, Canada. Association for Computa-          Yang, Zi-Jian Cheng, Lan-Zhe Guo, and Yu-Feng Li.
+  tional Linguistics.                                        2025. Tabulargsm: Understanding the limitations of
+                                                             llms in tabular math reasoning.
+Rohit Khoja, Devanshu Gupta, Yanjie Fu, Dan Roth,
+  and Vivek Gupta. 2025. Weaver: Interweaving SQL          Zilong Wang, Hao Zhang, Chun-Liang Li, Julian Martin
+  and LLM for table reasoning. In Proceedings of the          Eisenschlos, Vincent Perot, Zifeng Wang, Lesly Mi-
+  2025 Conference on Empirical Methods in Natural             culicich, Yasuhisa Fujii, Jingbo Shang, Chen-Yu Lee,
+  Language Processing, pages 28282–28308, Suzhou,             and Tomas Pfister. 2024. Chain-of-table: Evolving
+  China. Association for Computational Linguistics.           tables in the reasoning chain for table understanding.
+                                                              In The Twelfth International Conference on Learning
+Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-             Representations.
+  field, Michael Collins, Ankur Parikh, Chris Alberti,
+  Danielle Epstein, Illia Polosukhin, Jacob Devlin, Ken-   Tianbao Xie, Chen Henry Wu, Peng Shi, Ruiqi Zhong,
+  ton Lee, Kristina Toutanova, Llion Jones, Matthew          Torsten Scholak, Michihiro Yasunaga, Chien-Sheng
+  Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob               Wu, Ming Zhong, Pengcheng Yin, Sida I. Wang, Vic-
+  Uszkoreit, Quoc Le, and Slav Petrov. 2019. Natu-            tor Zhong, Bailin Wang, Chengzu Li, Connor Boyle,
+  ral questions: A benchmark for question answering          Ansong Ni, Ziyu Yao, Dragomir Radev, Caiming
+  research. Transactions of the Association for Compu-       Xiong, Lingpeng Kong, Rui Zhang, Noah A. Smith,
+  tational Linguistics, 7:452–466.                            Luke Zettlemoyer, and Tao Yu. 2022. UnifiedSKG:
+Peng Li, Yeye He, Cong Yan, Yue Wang, and Sura-               Unifying and multi-tasking structured knowledge
+  jit Chaudhuri. 2023. Auto-tables: Synthesizing              grounding with text-to-text language models. In Pro-
+  multi-step transformations to relationalize tables          ceedings of the 2022 Conference on Empirical Meth-
+  without using examples. Proc. VLDB Endow.,                  ods in Natural Language Processing, pages 602–631,
+  16(11):3391–3403.                                          Abu Dhabi, United Arab Emirates. Association for
+                                                              Computational Linguistics.
+Qianlong Li, Chen Huang, Shuai Li, Yuanxin Xiang,
+  Deng Xiong, and Wenqiang Lei. 2024. Graphotter:          Sishi Xiong, Mengxiang Li, Dakai Wang, Yu Zhao, Jie
+  Evolving llm-based graph reasoning for complex ta-          Zhang, Changzai Pan, Haowei He, Xiangyu Li, Wen-
+  ble question answering.                                     han Chang, Zhongjiang He, Shuangyong Song, and
+                                                              Yongxiang Li. 2025a. TeleAI at SemEval-2025 task
+Md Mahadi Hasan Nahid and Davood Rafiei. 2024.                8: Advancing table reasoning framework with large
+ TableSQLify: Enhancing reasoning capabilities of             language models. In Proceedings of the 19th Interna-
+ LLMs through table decomposition. arXiv preprint             tional Workshop on Semantic Evaluation (SemEval-
+ arXiv:2404.10150.                                            2025), pages 1828–1841, Vienna, Austria. Associa-
+                                                              tion for Computational Linguistics.
+Md Mahadi Hasan Nahid and Davood Rafiei. 2025.
+ NormTab: Improving symbolic reasoning in LLMs             Sishi Xiong, Dakai Wang, Yu Zhao, Jie Zhang,
+ through tabular data normalization. arXiv preprint           Changzai Pan, Haowei He, Xiangyu Li, Wenhan
+ arXiv:2406.17961.                                            Chang, Zhongjiang He, Shuangyong Song, and
+                                                             Yongxiang Li. 2025b. Tablereasoner: Advancing
+Panupong Pasupat and Percy Liang. 2015. Composi-
+                                                              table reasoning framework with large language mod-
+  tional semantic parsing on semi-structured tables. In
+                                                              els.
+  Proceedings of the 53rd Annual Meeting of the As-
+  sociation for Computational Linguistics and the 7th
+  International Joint Conference on Natural Language       Yunhu Ye, Binyuan Hui, Min Yang, Binhua Li, Fei
+  Processing (Volume 1: Long Papers), pages 1470–            Huang, and Yongbin Li. 2023. Large language mod-
+  1480, Beijing, China. Association for Computational        els are versatile decomposers: Decomposing evi-
+  Linguistics.                                               dence and questions for table-based reasoning. In
+                                                             Proceedings of the 46th International ACM SIGIR
+Ankita Sharma, Jaykumar Tandel, Xuanmao Li, Lan-             Conference on Research and Development in Infor-
+  jun Wang, Anna Fariha, Liang Zhang, Syed Ar-               mation Retrieval, SIGIR ’23, page 174–184, New
+  salan Ahmed Naqvi, Irbaz Bin Riaz, Lei Cao, and            York, NY, USA. Association for Computing Machin-
+  Jia Zou. 2025. Datamorpher: Automatic data trans-          ery.
+  formation using llm-based zero-shot code generation.
+  In 2025 IEEE 41st International Conference on Data       Pengcheng Yin, Graham Neubig, Wen-tau Yih, and Se-
+  Engineering (ICDE), pages 4536–4539.                       bastian Riedel. 2020. TaBERT: Pretraining for joint
+                                                             understanding of textual and tabular data. In Proceed-
+Pragya Srivastava, Manuj Malik, Vivek Gupta, Tanuja          ings of the 58th Annual Meeting of the Association
+  Ganu, and Dan Roth. 2024. Evaluating LLMs’ math-           for Computational Linguistics, pages 8413–8426, On-
+  ematical reasoning in financial document question          line. Association for Computational Linguistics.
+  answering. In Findings of the Association for Com-
+  putational Linguistics: ACL 2024, pages 3853–3878,       Zhehao Zhang, Yan Gao, and Jian-Guang Lou. 2024.
+  Bangkok, Thailand and Virtual Meeting. Association         E5: Zero-shot hierarchical table analysis using aug-
+  for Computational Linguistics.                             mented LLMs via explain, extract, execute, exhibit,
+  and extrapolate. In Proceedings of the 2024 Confer-
+  ence of the North American Chapter of the Associ-
+  ation for Computational Linguistics: Human Lan-
+  guage Technologies (Volume 1: Long Papers), pages
+  1244–1258, Mexico City, Mexico. Association for
+  Computational Linguistics.
+Bowen Zhao, Changkai Ji, Yuejie Zhang, Wen He, Ying-
+  wen Wang, Qing Wang, Rui Feng, and Xiaobo Zhang.
+  2023. Large language models are complex table
+  parsers. In Proceedings of the 2023 Conference on
+  Empirical Methods in Natural Language Process-
+  ing, pages 14786–14802, Singapore. Association for
+  Computational Linguistics.
+Fengbin Zhu, Wenqiang Lei, Chao Wang, Jianming
+  Zheng, Soujanya Poria, and Tat-Seng Chua. 2021.
+  Retrieving and reading: A comprehensive survey on
+  open-domain question answering.
+Appendix                                                of tables is computed as:
+A     Transformation Operators                                     T
+                                                                   X            X
+QUIETT represents table transformations using           Tokens =                                (ini,s + outi,s ) ,
+                                                                    i=1 s∈{issue, plan, code}
+a vocabulary of atomic operators that capture
+common normalization, restructuring, and enrich-        where T denotes the total number of tables.
+ment patterns observed in semi-structured tables.
+                                                        B.3   Amortization Across Queries
+These operators are deterministic, schema-aware,
+and composable, enabling reproducible execution         Because the pipeline preprocesses each table once
+across datasets. Rather than enforcing a closed         and caches the result, the marginal preprocess-
+operator set, QUIETT exposes this vocabulary to         ing token cost per downstream query is zero.
+the planner as a set of canonical primitives. When      All downstream question answering is performed
+necessary, the language model may synthesize ad-        on the canonical transformed table using an un-
+ditional operators, provided they can be expressed      changed QA model, without incurring any addi-
+as deterministic functions over tabular inputs and      tional preprocessing-related language model cost.
+conform to the executor interface.
+                                                        C     Hyperparameters
+   Table 8 summarizes the core operators most fre-
+quently used in our implementation.                     This section reports the inference and execution
+                                                        hyperparameters used in the QUIETT pipeline. Un-
+B     Resource Usage                                    less otherwise noted, all LLM calls use determinis-
+QUIETT incurs language model cost exclusively           tic decoding to improve reproducibility.
+during a one-time, query-independent preprocess-        C.1    Language Model Inference Settings
+ing stage that is executed once per table. For each
+                                                        Table 10 summarizes the decoding and retry config-
+table, the pipeline invokes a language model ex-
+                                                        uration used across pipeline stages. We use greedy
+actly three times: (i) issue generation, (ii) trans-
+                                                        decoding (temperature = 0.2) for all stages. Max-
+formation plan generation, and (iii) executor code
+                                                        imum output tokens are stage-specific and follow
+generation. Registered operator execution is deter-
+                                                        the values used in our implementation.
+ministic and does not require any language model
+calls. LLM-generated code steps are bounded by          C.2    Input Construction and Truncation
+the plan structure.                                     For prompt construction, we serialize each table
+B.1    Models and Context Limits                        into markdown that includes the header and up to
+                                                        50 rows (uniformly truncated to the first 50 rows
+We evaluate the preprocessing pipeline using mul-       when the table is longer). We do not apply explicit
+tiple large language models, including DeepSeek-        cell-level character truncation; long cell values are
+V3.1, Qwen-3-80B, Gemini-2.0, Gemini-2.5, and           passed through as-is.
+GPT-OSS-120B. These models support long-
+context inference, which is necessary to process        C.3    Executor and Determinism Settings
+table schemas together with representative cell sam-    A deterministic table executor runs each transfor-
+ples within a single prompt.                            mation plan produced in Step 2. Determinism is
+   Table 9 summarizes the documented context win-       enforced by fixed operator semantics, stable row
+dow limits for each model. Effective throughput         referencing (via row identifiers when required),
+and request rates are governed by provider- and         and deterministic implementations for any oper-
+project-level quota policies, which may vary across     ation that may reorder rows (e.g., sorting) or drop
+deployments, regions, and time.                         duplicates (via a fixed deduplication policy when
+                                                        enabled). The executor introduces no stochasticity.
+B.2    Token Usage Accounting
+For reproducibility, we log token usage at the granu-   C.4    LLM-Generated Code: Safety,
+larity of individual tables and preprocessing stages           Sandboxing, and Determinism
+(issue generation, plan generation, and code gen-       LLM-generated code steps in Stage 2 operate over
+eration). For each language model invocation, we        the in-memory pandas DataFrame produced by
+record the number of input tokens, output tokens,       the preceding deterministic step. The execution
+and total tokens consumed.                              scope exposes only pandas, numpy, re, and the op-
+   Total preprocessing token usage over a corpus        erator runtime library, with no direct filesystem or
+ Operator              Description
+ add_row_id            Adds a unique, stable row identifier column to the table.
+ rename                Renames columns according to a provided name mapping.
+ select                Selects and retains a specified subset of columns.
+ parse_date_text       Parses free-text date strings into a normalized date representation.
+ parse_number          Extracts numeric values (and optional units) from text fields.
+ extract_regex         Extracts structured groups from a column using a regular expression.
+ derive_conditional    Creates a new column based on conditional rules applied row-wise.
+ derive_math           Derives a new column by applying a mathematical expression over existing columns.
+ map_values            Maps raw values in a column to normalized or canonical values.
+ replace_value         Replaces exact cell values with specified alternatives.
+ replace_string        Performs string replacement within column values (optionally regex-based).
+ cast_column           Casts a column to a specified data type.
+ fillna_static         Fills missing values using a fixed constant.
+ fillna_dynamic        Fills missing values using a dynamic rule (e.g., forward fill).
+ combine_columns       Combines multiple columns into a single column using a separator.
+ trim_whitespace       Removes leading and trailing whitespace from column values.
+ filter_rows           Filters rows based on a boolean condition.
+ sort                  Sorts rows according to one or more columns.
+ deduplicate_rows      Removes duplicate rows, optionally using a column subset.
+ keep_raw_snapshot     Preserves original raw values in a snapshot column.
+ bin_numeric           Discretizes numeric values into bins with optional labels.
+ one_hot               Expands a categorical column into one-hot encoded indicator columns.
+ custom                Applies a user-defined transformation not covered by built-in operators.
+
+                 Table 8: Atomic table transformation operators used in the transformation plan.
+
+
+       Model            Context window                        Hyperparameter                      Value
+       DeepSeek-V3.1    Up to 128K tokens                     Decoding                            Greedy / temperature
+       Qwen-3-80B       Up to 128K tokens                                                         = 0.2
+       GPT-OSS-120B     Up to 131K tokens                     Max output tokens (Step 1: Issue)   8000
+       Gemini-2.0       Up to ∼1,048,576 tokens               Max output tokens (Step 2: Plan)    6000
+       Gemini-2.5       Up to ∼1,048,576 tokens
+                                                              Max output tokens (Step 3: Code)    1024
+                                                              Max output tokens (Step 4: Q&A)     4096
+Table 9: Documented context window limits for models          Stop sequences:                     none          (gener-
+used during QUIETT preprocessing. Actual rate limits                                              ation      is   post-
+depend on provider- and project-specific quota configu-                                           processed/validated)
+rations.                                                      Retries on rate limit/errors        3 attempts
+                                                              Backoff schedule                    exponential backoff,
+                                                                                                  initial delay = 2.0s,
+                                                                                                  doubling each retry
+network access from generated code. The execu-
+tor restricts each generated snippet to the declared        Table 10: Inference hyperparameters used in the QUI-
+input and output columns specified in the plan,             ETT pipeline. Step 1-3 are query-independent prepro-
+and validates that: (i) all declared writes columns         cessing; Step 4 performs downstream QA on the canon-
+are present in the output, (ii) no all-NaN columns          ical table.
+are introduced, and (iii) row count is preserved
+unless the operation legitimately modifies table
+length (e.g., split_multi_value, filter_rows,
+or pivot_longer). Snippets that fail any check
+are rejected and the model is re-queried with the           ditionally routes to LLM code generation rather
+error appended to the prompt, up to two additional          than attempting a registered implementation. All
+attempts.                                                   safety and validation checks described above apply
+   The custom operator serves as an explicit fall-          equally to custom steps: the generated snippet is
+back for transformations that cannot be expressed           restricted to the declared input and output columns,
+within the fixed operator vocabulary. When a plan           validated against the same three criteria, and re-
+step declares op: custom, the executor uncon-               queried on failure.
+D     Human Verification Guidelines and                   Criterion              Description
+                                                          Answer Correctness     The provided answer exactly matches the value(s) sup-
+      Annotation Rubric                                                          ported by the table.
+                                                          Answerability          The question can be answered using only the table con-
+To assess the correctness, faithfulness, and clarity                             tent.
+                                                          Clarity                The question is unambiguous and clearly specifies the
+of the automatically generated QUIETT challenge                                  required reasoning.
+set, we conduct a structured human verification           Structural Reasoning   The question requires aggregation, comparison, filtering,
+                                                                                 or reasoning over derived or normalized fields.
+study. This section documents the annotation setup,
+verification objectives, and rubric provided to an-       Table 11: Annotation rubric used for human verification
+notators.                                                 of the QUIETT challenge set.
+D.1     Annotation Setup
+Each annotator is presented with the following ma-              fields (e.g., parsed dates or normalized units)
+terials: (i) the original raw table drawn from the              are considered valid.
+source dataset, (ii) a generated natural-language
+question, and (iii) the corresponding proposed               • Ambiguity handling: If a question admits
+ground-truth answer. Annotators perform verifi-                multiple reasonable interpretations or more
+cation independently and without access to model               than one valid answer, it must be marked in-
+predictions or outputs. All judgments are based                correct.
+solely on the provided table content.
+                                                             • Incomplete answers: Answers that partially
+D.2     Verification Objectives                                satisfy the question (e.g., missing entities in
+Annotators are instructed to evaluate each question-           list-valued outputs or incorrect aggregation
+answer pair according to the following criteria:               results) are marked incorrect.
+    1. Well-formedness: The question is clearly              • Assumption prohibition: Questions requir-
+       phrased and free of ambiguity.                          ing assumptions not grounded in the table
+    2. Answerability: The question can be answered             (e.g., inferred semantics, unstated ordering,
+       using only the table content.                           or missing values) are marked incorrect.
+
+    3. Answer correctness: The provided answer is         D.4       Annotation Rubric
+       fully supported by the table.                      Each question-answer pair is evaluated using the
+                                                          rubric shown in Table 11. A pair is marked valid if
+    4. Structural reasoning: The question requires
+                                                          and only if all criteria are satisfied.
+       non-trivial reasoning, such as aggregation,
+       comparison, filtering, or reasoning over nor-      D.5       Disagreement Analysis
+       malized or derived fields, rather than simple      All annotations are performed independently with-
+       cell lookup.                                       out discussion or adjudication during the annota-
+                                                          tion phase. Inter-annotator agreement is reported
+  Annotators are explicitly instructed not to assess
+                                                          using pairwise Cohen’s Kappa and multi-rater
+model difficulty, linguistic style beyond clarity, or
+                                                          agreement metrics (Fleiss’ Kappa and Jaccard co-
+subjective preferences.
+                                                          efficient), as described in Section 4.
+D.3     Annotation Guidelines
+                                                          D.6       Annotator Qualifications
+The following guidelines are provided to annotators
+to ensure consistent judgments:                           All annotators are NLP researchers with prior expe-
+                                                          rience in table-based question answering, semantic
+    • Table faithfulness: All answers must be             parsing, or structured data reasoning. We briefed
+      derivable exclusively from the table content,       all annotators using written instructions and exam-
+      including normalized or derived columns in-         ple annotations before the study.
+      troduced by QUIETT. External knowledge              D.7       Rationale
+      may not be used.
+                                                          This verification protocol ensures that the QUIETT
+    • Table representation awareness: Annota-             challenge set evaluates faithful, well-defined, and
+      tors should treat the raw table as authoritative.   structurally grounded reasoning over tables, rather
+      Questions relying on derived or normalized          than exploiting annotation artifacts or superficial
+                                                                              Gemini 2.0
+                                                 WikiTQ           NQ-Table             SequentialQA            HiTab
+          Category    Method
+                                            F1         EM       F1          EM         F1       EM      F1             EM
+                      CoT               61.76          60.67   68.70       67.50      62.33    59.87   76.11           72.00
+                      CoT + SQL         44.43          44.02   43.29       41.45      50.06    46.83   52.10           50.00
+                      NormTab           55.95          52.42   51.80       49.76      47.95    42.14   56.24           53.60
+                      E5                66.60          65.90   48.40       46.34      42.75    38.18   75.83           71.40
+           Direct
+                      EEDP              61.80          59.30   70.31       63.81      61.10    54.27   76.53           72.00
+                      Binder            60.81          57.88   62.25       54.90      21.82    20.91   55.62           53.00
+                      TableSQLify       64.50          61.91   47.51       38.10      10.71     9.74   64.20           60.10
+                      TableReasoner     60.19          57.89   56.52       53.45      59.52    51.23   60.84           54.31
+                      Chain-of-Table    63.27          61.58   62.30       59.28      41.24    39.79   69.43           65.10
+                      POT               52.11          50.32   61.70       52.07      56.10    52.43   64.00           61.00
+          Agentic
+                      GraphOTTER        55.39          51.16   69.29       65.69      50.36    49.35   64.64           61.62
+                      Q U I E TT        67.60          66.56   73.25       68.75      70.11    65.69   77.82           76.50
+
+Table 12: Gemini 2.0 results (F1 / EM). Q U I E TT compared against direct prompting methods (CoT, CoT+SQL, NormTab, E5,
+EEDP, Binder, TableSQLify, TableReasoner) and agentic methods (Chain-of-Table, POT, GraphOTTER) across four benchmarks.
+Bold indicates best result per column.
+
+
+                     Gemini 2.5        GPT-OSS                         tiple tasks and users (Chu et al., 2016).
+         Dataset
+                      F1       EM      F1         EM                      Third, coupling transformation with reasoning
+                                                                       introduces representation instability: the same ta-
+         WikiTQ   68.34 68.14 66.72 63.57
+         NQ-Table 70.11 69.34 68.20 65.56                              ble yields different transformed views depending
+                                                                       on the query, making it harder to characterize when
+Table 13: Q U I E TT performance when a smaller model                  and why a method fails, since representation qual-
+(LLaMA-14B Scout) is used for issue generation.                        ity and reasoning behavior are entangled by de-
+                                                                       sign (Xie et al., 2022; Pasupat and Liang, 2015).
+patterns. The high inter-annotator agreement re-                          Q U I E TT addresses these limitations by convert-
+ported in Section 4 indicates strong consistency in                    ing each table once into a single, information-
+judgments and supports the reliability of the chal-                    preserving canonical representation before any
+lenge set.                                                             downstream queries arrive, cleanly separating rep-
+                                                                       resentation quality from reasoning behavior.
+E    Limitations of Query-Conditioned
+     Transformation                                                    F   Probe Budget Analysis
+Several methods perform table restructuring con-                     QUIETT generates a finite set of synthetic probe
+ditioned on the input query or query set, where                      queries during issue generation to expose structural
+schema selection, decomposition, or transforma-                      deficiencies in the input table. In our implemen-
+tion is guided by the reasoning objective (e.g.,                     tation we generate 12-20 probe queries per table.
+Chain-of-Table (Wang et al., 2024), TableRea-                        This range is treated as a probe budget chosen to
+soner (Xiong et al., 2025a), TabFormer (Dong et al.,                 balance structural coverage and redundancy.
+2025a), Dater (Ye et al., 2023), Binder (Cheng                          To empirically validate this design choice, we
+et al., 2023)). While effective for improving ef-                    analyze the number of issues discovered during
+ficiency and accuracy on observed queries, this                      probing across two benchmark datasets (WikiTQ
+design introduces a fundamental coupling between                     and NQ-Table) using two backbone models (Gem-
+table representation and query distribution.                         ini 2.5 and GPT-OSS-120B). Across 3,491 table-
+   First, query-conditioned transformation limits                    model pairs, issue discovery naturally concentrates
+generalization to unseen queries. A representation                   within this range.
+tailored to a specific query or narrow query set                        Table 14 summarizes the distribution of detected
+may omit information irrelevant to those queries,                    issues per table. We observe that 98.5% of WikiTQ
+reducing robustness when new questions arrive, as                    tables and 99.4% of NQ-Table tables produce be-
+observed in prior table QA and semantic parsing                      tween 11-20 issues, with mean ≈ 16.1 and median
+work (Yin et al., 2020; Herzig et al., 2020).                        ≈ 15.
+   Second, query-conditioned methods assume                             Figure 5 visualizes the distribution of detected
+query access at transformation time, which does                      structural issues per table across datasets. The dis-
+not hold in common data processing settings where                    tribution is concentrated around ≈ 16 issues, indi-
+tables are preprocessed once and reused across mul-                  cating that most structural deficiencies are uncov-
+    Dataset      Mean Issues   Median     % in 11-20        hoc cell-level grounding analysis over transformed
+    WikiTQ          16.1          15        98.5%           tables. For each output value in the canonical ta-
+    NQ-Table        16.1          15        99.4%           ble, we determine whether it is (a) an exact string
+                                                            match to a value appearing in the original table
+Table 14: Issue statistics across datasets demonstrating    or (b) a deterministic derivation of source content.
+that most tables naturally fall within the 11-20 issue
+                                                            Deterministic derivations include operations such
+range.
+                                                            as splitting “John Doe” into first and last name
+            Transform model: Gemini 2.5
+      QA model →       LLaMA       Mistral                  columns, extracting year components from date
+                      F1    EM    F1    EM                  strings, or casting string values to numeric types.
+      WikiTQ         59.87 57.50 65.12 62.23                    Our analysis shows that 86.0% of output values
+      NQ-Table       59.01 53.78 63.28 58.12
+      SequentialQA 46.72 43.12 47.24 44.84
+                                                            are exact string matches to source cells, while the
+      HiTab          62.30 61.20 59.61 58.40                remaining 14.0% arise from deterministic deriva-
+              Transform model: Qwen 3                       tions grounded in the original table. We do not
+      QA model →       LLaMA       Mistral                  observe unsupported values that lack a source-table
+                      F1    EM    F1    EM
+      WikiTQ         53.67 50.12 63.33 59.35                justification. These findings provide additional em-
+      NQ-Table       51.60 50.70 62.56 60.23                pirical evidence that Q U I E TT preserves table con-
+      SequentialQA 37.70 36.50 42.81 41.12                  tent while making structure more explicit for down-
+      HiTab          46.22 45.60 51.30 47.83
+                                                            stream reasoning.
+Table 15: F1 / EM performance across transformation model       This analysis is intended as supporting evidence
+and QA model combinations. Stronger transformations con-
+sistently improve downstream QA regardless of QA model      for grounding and traceability. It is not an addi-
+size.                                                       tional runtime constraint of the executor; rather,
+                                                            it is a post-hoc measurement of how transformed
+                                                            values relate to the source table.
+ered within this probing regime.
+                                                                We note that information preservation, as defined
+                                                            in constraint (b) of Section 2, refers to ground-
+                                                            ing and provenance rather than strict invertibility.
+                                                            The canonical table retains all source content in
+                                                            an accessible, structured form, though exact recon-
+                                                            struction of the original surface representation is
+                                                            not guaranteed for values that undergo parsing or
+                                                            normalization (e.g., date strings converted to ISO
+                                                            format).
+
+                                                            H     Illustrative Examples
+Figure 5: Distribution of detected structural issues per
+table across WikiTQ and NQ-Table. Nearly all tables
+                                                            This section presents representative examples high-
+exhibit between 11-20 issues, supporting the probe bud-     lighting common failure modes in table-based rea-
+get used by QUIETT.                                         soning and how QUIETT transformations resolve
+                                                            them.
+   We further observe that probe count correlates           H.1    Example 1: Hierarchical Table
+strongly with issue discovery (r ≈ 0.72), suggest-
+ing that each probe typically surfaces a distinct
+structural deficiency. At the same time, no tables
+exceed 20 detected issues, indicating diminishing
+returns beyond this range.
+   Together, these observations suggest that the 12-
+20 probe range provides sufficient structural cover-        Figure 6: Original hierarchical table with multi-level
+age while avoiding redundant probing.                       headers for agri-food employment distribution across
+                                                            two Ontario regions (2011).
+G    Grounding Analysis of Transformed
+     Values                                                 Flattened Representation. The original table
+To assess whether Q U I E TT preserves source-table         (Figure 6) contains hierarchical headers encoding
+content during transformation, we conduct a post-           attributes such as region and worker category. We
+flatten this structure by collapsing multi-level head-     Relational Transformation (QUIETT). QUIETT
+ers into composite column names (e.g., “eastern            transforms the flattened table into a normalized rela-
+ontario / french-language workers”), as shown in           tional schema by decomposing composite headers
+Figure 7.                                                  into explicit attributes such as region and worker
+   While this removes the visual hierarchy, the un-        type. Each row represents a single observation with
+derlying semantics remain implicitly encoded in            well-defined fields, as shown in Figure 8.
+the column names. As a result, models must infer
+                                                              Correct SQL After Transformation
+both structure and meaning from text, often leading
+to reasoning and SQL generation errors.                       Generated SQL (Correct):
+                                                              SELECT value_percent
+                                                              FROM transformed_table
+                                                              WHERE region_area = ’Northern’
+                                                                AND region_province = ’Ontario’
+                                                                AND industry_subgroup = ’Food service’
+                                                                AND worker_language = ’French’;
+Figure 7: Flattened table obtained by collapsing hierar-
+                                                              Predicted Answer: 55.0
+chical column headers into composite columns combin-
+ing region and worker type.                                   Gold Answer: 55.0
+                                                              Observation:
+                                                              The transformation (Figure 8) eliminates
+   Question and Reasoning Failure                             ambiguity by representing attributes such
+                                                              as region and worker language as explicit
+   Question:
+                                                              columns. This allows the query to operate
+   In Northern Ontario, what proportion of
+                                                              directly on atomic fields, enabling accurate
+   workers in the restaurant and food services
+                                                              mapping from natural language to schema
+   sector were French-language workers?
+                                                              and correct retrieval of the expected value.
+   Generated CoT (Incorrect):
+
+         The question refers to the “food                  H.2   Example 2: WebTables
+         service” row in Figure 7. For                     Initial Representation. The original WebTable
+         Northern Ontario, the value for                   (Figure 9) presents Ohio State Buckeyes football
+         French-language workers is 55.0                   season data in a flat format with columns such as
+         and for other workers is 58.1. To                 date, opponent, rank, site, result, and attendance.
+         compute the proportion of French-                 Although the structure is not hierarchical, multiple
+         language workers, we divide 55.0                  semantic attributes are embedded within individual
+         by (55.0 + 58.1), resulting in                    columns.
+         0.486.                                               For example, the result column in Figure 9 com-
+                                                           bines outcome and score (e.g., “W 21-14”), while
+   Predicted Answer: 48.6                                  the site column merges stadium and location, and
+   Gold Answer: 55.0                                       the rank column uses textual annotations (e.g.,
+   Reasoning Context:                                      “#14”). These implicit encodings, as shown in Fig-
+   The query requires interpreting composite               ure 9, require string parsing and can lead to errors
+   column semantics in Figure 7.                           in SQL generation.
+   Issue:
+   The reasoning misinterprets the values in                  Question and Reasoning Failure
+   Figure 7 as counts that can be combined,                   Question:
+   whereas they are already percentages repre-                Which opponent had the largest amount of
+   senting the distribution of workers within                 points scored?
+   each category. The correct answer corre-                   Generated CoT (Incorrect):
+   sponds directly to the value in the “northern
+   ontario / french-language workers” column                        The question asks to find the op-
+   for the “food service” row (55.0), without                       ponent against whom the Buck-
+   requiring any further computation.                               eyes scored the largest number of
+Figure 8: Relational table produced by QUIETT after decomposing composite headers into atomic attributes such
+as region and worker type. Each row represents a single observation suitable for SQL generation.
+
+
+
+                                                              (49) and selects the wrong opponent.
+
+
+
+                                                          Relational Transformation (QUIETT). The
+                                                          transformed table (Figure 10) converts the origi-
+                                                          nal WebTable (Figure 9) into a normalized schema
+                                                          by decomposing composite fields into atomic at-
+                                                          tributes. In particular, the result column is split into
+                                                          Is_Win, Team_Score, and Opponent_Score, and the
+                                                          site column into Stadium, City, and State.
+
+Figure 9: Original WebTable containing Ohio State            This representation, as shown in Figure 10, re-
+Buckeyes football season data. The table is already       moves ambiguity in textual encodings and enables
+flat but contains implicit structure such as game loca-   direct, reliable SQL querying over structured fields.
+tion, ranking, and match outcomes embedded in textual
+fields.
+
+
+                                                              Correct SQL After Transformation
+         points. Looking at the result col-
+         umn in Figure 9, we identify the                     Generated SQL (Correct):
+         largest number to the left of the                    SELECT Opponent_Name
+         dash. The maximum value is 49,                       FROM games
+         which corresponds to Indiana.                        ORDER BY Opponent_Score DESC
+                                                              LIMIT 1;
+   Predicted Answer: Indiana                                  Predicted Answer: Florida State
+   Gold Answer: Florida State                                 Gold Answer: Florida State
+   Reasoning Context:                                         Observation:
+   The query requires extracting structured in-               Using the transformed table (Figure 10), the
+   formation from the result column in Fig-                   query directly operates on the structured at-
+   ure 9.                                                     tribute Opponent_Score, enabling correct
+   Issue:                                                     identification of the maximum value with-
+   The reasoning incorrectly interprets the re-               out requiring string parsing.
+   sult column in Figure 9 by assuming that the
+   left-hand value always represents the Buck-
+   eyes’ score. However, the ordering of scores           I   Prompt Templates
+   varies depending on whether the game was
+   played at home or away. As a result, the               For readability, we summarize the fixed stage-wise
+   model extracts an incorrect maximum value              prompts here. The released code contains the exact
+                                                          prompt strings used in all experiments.
+Figure 10: QUIETT-transformed relational representation of the original WebTable (Figure 9). Composite fields
+such as result and site are decomposed into atomic attributes including Is_Win, Team_Score, Opponent_Score,
+Stadium, City, and State. The resulting schema enables direct and unambiguous SQL querying.
+
+
+I.1     Issue Generation (Step 1)                              - TABLE_TITLE        : short description of the table.
+                                                               - COLUMN_DESCRIPTIONS: optional text describing
+      Issue Generation Prompt                                        columns.
+                                                               - TABLE_PREVIEW      : first 3 rows in Markdown.
+                                                               - ISSUES_JSON        : issues detected in Step 1.
+      You are generating analysis questions from a RAW table
+            .                                                  Design a transformation plan that:
+                                                                 1. FIXES ALL ISSUES from ISSUES_JSON
+      Table Title: {table_title}                                 2. OPENS UP THE TABLE with derived columns
+      Column Descriptions: {column_descriptions}                 3. PRESERVES original information without redundancy
+      Table (Markdown): {raw_markdown_table}
+                                                               Output ONE JSON OBJECT:
+      Objective:                                               {
+      - Produce 12-20 diverse, realistic questions that          "table_id": string,
+            expose structural                                    "strategy": string,
+        or semantic deficiencies in the raw table.               "steps": [
+      - Questions should not be reliably answerable from            {
+            this RAW table                                            "step_id":      string,
+        without cleaning, structuring, or transforming the            "op":           string,
+            data.                                                     "description": string,
+                                                                      "reads":        [string],
+      Output format:                                                  "writes":       [string],
+      - Return ONLY a JSON ARRAY (no prose, no markdown, no           "params":       { ... },
+            backticks).                                               "fixes_issues": [string],
+      - Each item MUST be a JSON OBJECT with these exact              "depends_on": [string]
+            keys:                                                   }
+        - "qid": string like "Q1", "Q2", ... (contiguous, no     ],
+             gaps)                                               "final_output": {
+        - "text": natural language question                         "primary_key": [string],
+        - "depends_on": list of raw column names, or ["             "columns": [
+            unknown"] if unclear                                      {
+        - "requires": list of data-prep needs                           "name": string,
+        - "failure_reason": short phrase on why naive                   "role": "canonical" | "derived" | "helper" | "
+            analysis fails                                            raw_snapshot"
+                                                                      }
+      - Return ONLY raw JSON. No text before or after the           ]
+            array.                                               }
+      - All strings must use double quotes. No trailing        }
+            commas.
+                                                               Column roles:
+                                                                 canonical : original column retained in final
+                                                                     table
+                                                                 derived     : new column created; always in final
+Issue Aggregation. Step-1 questions are                              table
+                                                                 helper      : intermediate column; dropped via
+post-processed by grouping on identical                              select
+failure_reason strings.        Each unique fail-                 raw_snapshot: original column dropped from final
+                                                                     table
+ure reason becomes one issue (issue_id,
+                                                               Use only operators from the fixed operator vocabulary
+description, union of referenced cols, and                     (Table~\ref{tab:operator_vocab}). Each op must match a
+the list of blocking_questions). The resulting                        registry
+                                                               entry and its params must satisfy required-parameter
+issues array is the input to Step 2.                                 constraints.
+
+                                                               CRITICAL CONSTRAINTS:
+I.2     Plan Generation (Step 2)
+                                                               1. derive_conditional - use EXACT structure:
+      Plan Generation Prompt                                      { "conditions": [{"condition": "col contains ’v’",
+                                                                     "value": true}],
+                                                                    "default": false }
+      You are a transformation planner for arbitrary tabular
+             data.                                             2. derive_math:
+      You NEVER write code. Output only a MACHINE-EXECUTABLE      "len(col)", "year(col)", "col_a + col_b"
+             PLAN in JSON.
+                                                               3. extract_regex / parse_number - include commas in
+      Inputs:                                                        numeric patterns:
+         "[0-9,]+" not "[0-9]+"
+                                                                      REQUIREMENTS:
+      4. Row count may increase only when split_multi_value           1. All output columns MUST be created.
+            with                                                      2. On extraction/parsing failure, fall back to the
+         explode=true is explicitly declared in the plan                    original value.
+            strategy.                                                 3. Do NOT create all-NaN columns.
+                                                                      4. Handle missing data gracefully.
+      COLUMN RETENTION:                                               5. Do NOT drop rows unless explicitly required.
+        KEEP (canonical) when derived columns capture only
+            PART of the info.                                         EXAMPLE PATTERNS:
+        DROP (raw_snapshot) when derived columns capture ALL            df[’new’] = df[’src’].str.extract(r’pattern’)[0]
+             info, e.g.:                                                df[’new’] = df[’new’].fillna(df[’src’]) # fallback
+          "W 27-7"   -> is_win + score_for + score_against              df[’parsed’] = pd.to_datetime(df[’date’], errors=’
+            -> raw_snapshot                                                 coerce’)
+          "45.2%"    -> pct_numeric
+            -> raw_snapshot                                           Return ONLY valid Python code. Assume df, pd, np, re
+          "1990-2005"-> start_year + end_year                               exist.
+            -> raw_snapshot
+
+      WORKED EXAMPLES:
+
+      EXAMPLE A - Athletics Table (numeric, ordinal, boolean    Execution Loop. For every step in the plan, Step 3
+            ):                                                  first attempts deterministic execution via the oper-
+        Plan: add_row_id -> parse_number(Best) -> map_values
+            (Position) ->                                       ator library. Only when the operation is custom
+               cast_column(pos_numeric) -> derive_conditional
+            (is_podium) ->                                      or the deterministic call raises an exception does
+               select(...)                                      the system fall back to LLM code generation.
+      EXAMPLE B - Race Results with Multi-Driver Rows (         The generated snippet is checked for: (i) all de-
+            explode):
+        Plan: split_multi_value(Co-Drivers, explode=true) ->    clared writes columns existing, (ii) no all-NaN
+              trim_whitespace -> add_row_id ->
+              derive_conditional(is_classified) -> select
+                                                                columns, and (iii) row-count preservation unless
+            (...)                                               split_multi_value with explode=true is de-
+      ANTI-PATTERNS (NEVER DO):                                 clared. Validation failures are appended to the
+        1. Writing raw "W"/"L" instead of is_win boolean.
+        2. cast_column without out= parameter.                  prompt and the model is re-queried up to two addi-
+        3. Skipping the final select step.                      tional times.
+        4. Exploding a notes or description column.
+
+      MANDATORY: Every plan MUST end with a select step         I.4       SQL Query Generation for Q/A
+            containing:
+        _row_id, all derived columns, all canonical columns.
+        NO raw_snapshot or helper columns.
+                                                                      Question Answering Prompt
+      Return ONLY the JSON object. No markdown, no backticks
+            , no comments.                                            You are answering a question about a structured table.
+                                                                             Analyze the table and find the answer.
+
+                                                                      ## TABLE: {table_name}
+Plan Validation. The emitted plan is validated                        ### Columns:
+against a fixed operator schema before execution.                     {column_description}
+
+Unknown operators, missing required parameters,                       ### Data:
+                                                                      {transformed_table}
+undefined reads, dangling depends_on, or dupli-
+cate writes are all rejected. A failed validation                     -
+
+triggers a single regeneration attempt with the val-                  ## QUESTION: {question}
+
+idator’s error list appended to the prompt.                           -
+
+I.3     Code Generation (Step 3)
+                                                                      1. **Interpret the question** - Identify what
+                                                                            information is being requested
+      Code Generation Prompt
+                                                                      2. **Identify relevant columns** - Determine which
+                                                                            column(s) contain the needed data
+      You are a Python Data Engineer. Write a snippet to
+            transform                                                 3. **Determine filtering criteria** - Identify any row
+      DataFrame ‘df‘.                                                       -level conditions (e.g., specific entity, date,
+                                                                            value)
+      CONTEXT:
+      - Current columns: {columns}                                    4. **Identify required operation** - Determine if
+      - DataFrame shape: {n_rows} rows x {n_cols} columns                   aggregation is needed:
+      - Sample data (first 3 rows of input columns): {                   - Counting: COUNT
+            sample_rows}                                                 - Maximum/minimum: MAX/MIN or ORDER BY with LIMIT
+                                                                         - Summation: SUM
+      TASK: {task_description}                                           - Lookup: Direct selection
+      OPERATION: {operation}
+      Parameters: {parameters}                                        5. **Extract the answer** - Locate the answer in the
+      Input columns: {input_columns}                                        table data
+      Output columns: {output_columns}
+<reasoning>
+[Step-by-step analysis]
+</reasoning>
+
+<answer>
+[Extracted answer value]
+</answer>
+
+<sql_plan>
+SELECT: [target column]
+FROM: {table_name}
+WHERE: [filter condition if applicable]
+ORDER BY: [ordering if applicable]
+AGGREGATION: [function if applicable]
+</sql_plan>
+

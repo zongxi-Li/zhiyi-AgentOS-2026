@@ -1,0 +1,1107 @@
+     TALON: A Multi-Agent Framework for Long-Table Exploration and
+                         Question Answering
+
+    Ruochun Jin1 , Xiyue Wang1 , Dong Wang1† , Haoqi Zheng1† , Yunpeng Qi1 , Silin Yang2 ,
+                                      Meng Zhang1 ,
+       1
+           College of Computer Science and Technology, National University of Defense Technology
+                             2
+                               School of Computer Science, Peking University
+
+
+
+                       Abstract
+     Table question answering (TQA) requires ac-
+     curate retrieval and reasoning over tabular data.
+     Existing approaches attempt to retrieve query-
+     relevant content before leveraging large lan-
+     guage models (LLMs) to reason over long ta-
+     bles. However, these methods often fail to
+     accurately retrieve contextually relevant data
+     which results in information loss, and suffer          Figure 1: Failure case on Long-TQA. Text-to-SQL
+     from excessive encoding overhead. In this pa-          methods fail to recognize that the attendance column is
+     per, we propose TALON, a multi-agent frame-            stored as text, while RAG-based methods fail to retrieve
+     work designed for question answering over              relevant rows (e.g., attendance > 30,000), as embed-
+     long tables. TALON features a planning agent           ding models struggle to encode numerical comparison
+     that iteratively invokes a tool agent to access        semantics.
+     and manipulate tabular data based on interme-
+     diate feedback, which progressively collects
+     necessary information for answer generation,
+     while a critic agent ensures accuracy and ef-          performance degrading as the table size increases
+     ficiency in tool usage and planning. In or-            (Chen, 2023). This issue is exacerbated when tables
+     der to comprehensively assess the effective-           exceed the model’s context window, since trunca-
+     ness of TALON, we introduce two bench-                 tion inevitably discards essential information. To
+     marks derived from the WikiTableQuestion               address these limitations, researchers have explored
+     and BIRD-SQL datasets, which contain tables
+                                                            retrieval-augmented generation (RAG) (Sui et al.,
+     ranging from 50 to over 10,000 rows. Ex-
+     periments demonstrate that TALON achieves              2023; Lin et al., 2023; Chen et al., 2024) and Text-
+     average accuracy improvements of 7.5% and              to-SQL (Nahid and Rafiei, 2024; Zhang et al., 2024;
+     12.0% across all language models, establishing         Cheng et al., 2023) approaches, both of which aim
+     a new state-of-the-art in long-table question          to supply LLMs with relevant table content instead
+     answering. Our code is publicly available at:          of the full table. Specifically, RAG-based meth-
+     https://github.com/Wwestmoon/TALON.                    ods encode the table and retrieve rows or columns
+                                                            most relevant to the query embedding, while Text-
+1    Introduction                                           to-SQL methods translate the query into SQL and
+Table question answering (TQA) is the task of gen-          execute it to obtain a targeted sub-table.
+erating answers from tabular data in response to               Although these methods alleviate the limitations
+user queries (Pasupat and Liang, 2015), thereby             of long tables, they often fail to accurately un-
+enhancing data accessibility and usability without          derstand the structure and content of long tables,
+requiring specialized analytical skills. Recent stud-       which prevents them from extracting the informa-
+ies have commonly employed large language mod-              tion required to answer queries and results in inac-
+els (LLMs) for this task by flattening entire tables        curate sub-tables. As illustrated in Figure 1, Text-
+into linearized textual sequences as input (Ye et al.,      to-SQL methods fail to recognize that the "atten-
+2023; Zhang et al., 2023; Wang et al., 2024b). How-         dance" column is stored as text, leading to erro-
+ever, LLMs often struggle to generalize effectively         neous outputs when attendance > 30000 is ex-
+to long tables (e.g., with more than 30 rows), with         ecuted. Similarly, RAG methods fail to interpret
+                                                         27397
+      Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, pages 27397–27413
+                           November 4-9, 2025 ©2025 Association for Computational Linguistics
+numerical constraints, such as "exceeding 30,000",       2     Related Works
+due to the limited capacity of embedding models
+                                                         2.1    Table QA
+to encode quantitative semantics. Moreover, RAG-
+based methods require encoding the entire table,         Recent studies such as Dater(Ye et al., 2023), Re-
+incurring high computational cost and latency as         AcTable(Zhang et al., 2023), and their succes-
+the table size increases (Chen et al., 2024).            sors(Lu et al., 2024; Zhou et al., 2025) demonstrate
+   In order to overcome these challenges, we pro-        strong reasoning and program synthesis capabilities
+pose TALON, a multi-agent framework that dy-             for TQA. However, these methods require LLMs
+namically gathers and processes relevant informa-        to process entire tables, which is often infeasible
+tion to fully explore the structure and content of       for long tables due to context length limitations.
+long tables, which relies solely on table schema            To address the limitations of processing full ta-
+as input without extra encoding. This design is in-      bles, two main streams have emerged: Text-to-SQL
+spired by human reasoning: similar to how humans         and RAG methods. Text-to-SQL methods, such as
+first identify relevant areas and then iteratively re-   MAC-SQL (Wang et al., 2025), TA-SQL (Qu et al.,
+fine their focus to answer a question. Specifically,     2024), and DAIL-SQL (Gao et al., 2023), translate
+TALON consists of three collaborative agents: (1)        natural language queries into executable SQL state-
+A planning agent that dynamically orchestrates tool      ments over table schemas. Middleware (Gu et al.,
+usage based on the question and intermediate feed-       2024) introduces a toolset for handling complex en-
+back; (2) A tool agent equipped with a suite of op-      vironments. TabSQLify (Nahid and Rafiei, 2024)
+erations (e.g., get_value, get_column_meaning,           and Alter (Zhang et al., 2024) first identify rele-
+python_code) for content retrieval, structural anal-     vant sub-tables using Text-to-SQL and then apply
+ysis, and tabular data manipulation; (3) A critic        LLMs for reasoning. While Text-to-SQL meth-
+agent that monitors execution correctness and plan       ods achieve strong performance on precise queries,
+effectiveness, which ensures robust and reliable         they often struggle to align query intent with un-
+reasoning.                                               derlying value representations and to handle ques-
+   As for evaluating TALON in long table ques-           tions beyond SQL’s expressive capabilities(Cheng
+tion answering (Long-TQA), we construct two              et al., 2023). Moreover, SQL execution demands
+benchmarks WTQ-L and BirdQA, based on the                that tables and their values adhere to a strict struc-
+WikiTableQuestion (Pasupat and Liang, 2015) and          ture, while ordinary tables can often accommodate
+BIRD-SQL(Li et al., 2024a) datasets, featuring ta-       numeric values stored as strings or columns with
+bles ranging from 50 to over 10,000 rows. Ex-            mixed types.
+perimental results show that TALON significantly            Classical RAG approaches (Lin et al., 2023; Sui
+outperforms existing methods across multiple lan-        et al., 2023) encode entire tables and retrieve the
+guage models, achieving average accuracy im-             most relevant rows or columns to LLMs, which can
+provements of 7.5% and 12.0%, and enabling scal-         be computationally expensive. TableRAG(Chen
+able, robust reasoning over long tables.                 et al., 2024) leverages query expansion combined
+   Our contributions are three-fold as follows:          with schema and cell retrieval to pinpoint crucial
+                                                         information. While embeddings capture semantic
+   • We develop a specialized toolkit for tabular        information, they often struggle to preserve struc-
+     data that enables accurate content retrieval,       tural relationships across rows and columns, mak-
+     structure analysis, and data manipulation;          ing it difficult to retrieve relevant context or sum-
+                                                         marize information spanning multiple rows and
+   • We first propose a multi-agent framework for
+                                                         columns. In this paper, we introduce a set of tools
+     Long-TQA, which progressively gathers rele-
+                                                         for accurate table information retrieval, structural
+     vant information and performs precise opera-
+                                                         understanding, and data manipulation.
+     tions on the table to generate the final answer.
+                                                         2.2    Multi-Agent System
+   • We conduct experiments on datasets contain-
+     ing tables of varying lengths, ranging from 50      LLMs have demonstrated exceptional capabilities
+     to over 10,000 rows, demonstrating the robust-      in environmental interaction and decision-making,
+     ness and scalability of our approach on long        offering new possibilities for the development of
+     tables.                                             intelligent agent systems (Li et al., 2024c). Inspired
+                                                         by the specialization and division of labor in hu-
+                                                    27398
+                 Schema                    Question                    Tools                                  Execute
+                                                               Content Position                 date                  attendence
+                                       How many                     fuzzy_match                                         79,483
+                                       people showed                 get_value                        get_column_meaning
+                                       up in October?                 get_rows                 attendence: people showed up.
+                                                                                                Sample value: 63,198 and
+                                                              Structure Analysis               79,483...
+                                                                                               date: game time.
+                                            Input              get_column_meaning              Sample value: october 26,1981
+                                                              process_column_format
+                                                 ①                                                              ...
+               Thought                                        Data Manipulation
+                                                                 code_generation                date                  attendence
+       I need to identify the key                                                                                         79483
+       columns ...
+                                                                                                    process_column_format
+                                                                                   Execute    df['attendance'] =
+                Action                                                             Execute
+                                                                                              df['attendance'].str.replace(',', '').astype(int)
+                                          Planning             Tool Agent           Error
+         get_column_meaning
+                                           Agent
+                                                               ③
+             Observation
+                                                        ②
+                   ...
+               Thought                                                                   Loop Detect
+                                                              Critic Agent                        Action
+                                                                                                                      Code
+      I have already retrieved and                                                                                    Correction
+      processed all the information.       Answer                                                 Loop
+
+
+
+
+Figure 2: The framework of TALON, which includes: (1) A planning agent that dynamically orchestrates tool usage
+based on the question and intermediate feedback. (2) A tool agent equipped with a suite of operations for retrieving
+content, analyzing structure, and manipulating tabular data. (3) A critic agent that monitors execution correctness
+and plan effectiveness, ensuring robust and reliable reasoning.
+
+
+man society, researchers have found that adopting               3      Method
+a multi-agent collaborative paradigm can signifi-
+                                                                In this paper, we propose a multi-agent framework
+cantly improve the efficiency and accuracy of ex-
+                                                                for Long-TQA that facilitates accurate retrieval and
+ecuting complex tasks (Qian, 2024; Islam et al.,
+                                                                reasoning over long tables. The framework consists
+2024; Li et al., 2024b).
+                                                                of three specialized agents working collaboratively:
+   The core idea of multi-agent systems is to                   the planning agent, which identifies appropriate
+decompose complex tasks into several subtasks,                  tools for table interaction and formulates solution
+which are then completed through collaboration                  strategies based on intermediate feedback; the tool
+among agents to achieve the overall goal. Depend-               agent, which executes the selected tools to retrieve
+ing on the nature of the task, the collaboration                content, analyze table structure, and perform data
+modes among agents primarily follow three typ-                  manipulations; and the critic agent, which ensures
+ical paradigms: first, linear pipeline collaboration,           the quality of the planning agent’s strategy and
+where agents process tasks in a fixed sequence (Yue             the correctness of the tool agent’s execution. To
+et al., 2025; Liu et al., 2023; Niu et al., 2025; Zheng         handle tables of varying lengths efficiently, we do
+et al., 2025); second, collective decision-making,              not include the full content of tables in the prompt.
+where agents reach consensus through negotiation                Instead, tables are loaded into memory as Pandas
+(Cheng et al., 2024; Liang et al., 2024); and third,            DataFrames. The planning agent has access only to
+iterative optimization, where agents continuously               the table schema, which consists of column names
+improve output quality through feedback loops                   and data types, while the tool agent is exclusively
+(Wang et al., 2024a; Tang, 2024). These collab-                 responsible for interacting directly with the table
+oration methods provide the theoretical foundation              content.
+and methodological support for building efficient
+multi-agent systems. In this paper, we propose a                3.1      Task Formulation
+multi-agent framework that improves performance                 In Long-TQA, given a natural language question
+on Long-TQA by distributing the entire table QA                 Q and a table T represented as: T = {vij | i =
+process across three collaborative agents.                      1, . . . , N ; j = 1, . . . , M }, where N is the number
+                                                            27399
+of rows, M is the number of columns, and vij                         (1) Table Content Retrieval, which utilizes
+denotes the cell value at row i and column j. The                 fuzzy_match, get_value, and get_row tools by
+objective is to produce an answer A through the                   executing the pre-defined function to enable robust
+collaborative efforts of LLMs denoted as L.                       data localization and row-level extraction.
+                                                                     (2) Table Structure Analysis, which com-
+3.2 Planning Agent                                                prises tools of get_column_meaning and
+The planning agent generates reasoning steps and                  process_column_format by invoking the LLM
+selects the most appropriate tools according to                   for comprehending table structure and normalizing
+the contextual information it perceives. We adopt                 column content.
+ReAct (Yao et al., 2023) as the backbone of our                      (3) Table Data Manipulation,                 where
+planning agent Lplan , enabling the model to iter-                code_generation performs logical reason-
+atively generate rationales and corresponding ac-                 ing and numerical computation by invoking the
+tions through intermediate feedback based on its                  LLM to generate python code, thereby mitigating
+own chain-of-thought (Wei et al., 2023). The plan-                hallucinations in LLM outputs. The pseudo-code
+ning agent allows concurrent invocations of the                   of the toolset is provided in Appendix B.
+same tool with different arguments, enabling it to                   Formally, upon receiving an action ai validated
+address multiple information needs in a single plan-              by the critic agent, the tool agent Ltool executes the
+ning step and thereby reduce overall latency.                     corresponding tooli and generates an observation
+   Formally, at each reasoning step i ≤ Iplan ,                   oi depending on whether the tool need to invoked
+the planning agent produces a rationale ri and                    the LLM:
+an action ai = (tooli (args1 ), . . . , tooli (argsn )),                  (
+                                                                            ftooli (ai , T ), if not invoking LLM
+where (ri , ai ) ∼ Lplan (ri , ai | τi−1 , ϕplan ), and             oi =                               
+τi = (r1 , a1 , o1 , . . . , ri , ai , oi ) denotes the cumula-             Ltool oi | ri , ai , ϕtooli , otherwise
+tive reasoning trajectory, ϕplan denotes the prompt               where ϕtooli denotes the prompt guiding the LLM-
+of the planning agent (as detailed in Appendix E).                based tool (as detailed in Appendix E). The obser-
+The generated action ai , after being validated by                vation oi is then returned to the planning agent to
+the critic agent, is then passed to the tool agent                inform the subsequent reasoning steps.
+Ltool , which returns an observation oi that informs
+the planning agent’s subsequent reasoning.                        3.4   Critic Agent
+   To improve robustness and consistency, we apply                The critic agent reviews the plans generated by the
+the self-consistency mechanism (Wang et al., 2023).               planning agent, detects any loops, and forwards
+For each input τi−1 , we sample the planning agent                the corrected tool invocations to the tool agent.
+Lplan k times to generate a set of candidate action               Moreover, it evaluates the quality of tool execu-
+sequences: {ani }kn=1 = {a1i , a2i , . . . , aki }, We then       tions performed by the tool agent, corrects any
+apply majority voting over the sampled sequences                  erroneous outputs, and returns the revised code for
+to select the most consistent plan:                               re-execution.
+                                                                     Loop Resolution A loop is detected when an
+               a∗i = arg maxn count(a),                           action generated in the current iteration duplicates
+                           a∈{ai }
+                                                                  any action from previous iterations. Formally, the
+where count(a) denotes the number of times se-                    loop detection function L({a1 , . . . , ai }) is defined
+quence a appears among k samples.                                 as:
+                                                                           (
+3.3 Tool Agent                                                               1, if ∃ j < i such that ai ∩ aj ̸= ∅,
+                                                                      L=
+                                                                             0, otherwise.
+The tool agent receives tool names verified by the
+critic agent, executes the corresponding operations,              If L = 1, indicating a detected loop, the critic agent
+and returns the resulting observations to the plan-               Lcritic is invoked to revise the current step. Given
+ning agent. Inspired by human-like strategies for                 the previous trajectory τi−1 and the repeated action
+processing long tables, we designed a comprehen-                  ai , the critic agent generates a revised rationale and
+sive toolset that supports content retrieval, struc-              an alternative action (ricritic , acritic ) by:
+                                                                                                     i
+tural analysis, and data manipulation. The toolset
+is organized into three key categories:                                 Lcritic (ricritic , acritic
+                                                                                             i      | ri , ai , τi−1 , ϕloop ),
+                                                             27400
+where ϕloop denotes the prompt guiding the critic                Baselines. We conduct comprehensive experi-
+(as detailed in Appendix E). The pair (ricritic , acritic
+                                                       i  )   ments comparing TALON against several baseline
+is then appended to the trajectory τi−1 , resulting           methods: End-to-End QA leverages an LLM to
+in an updated trajectory τi and the revised action            directly generate answers using the entire table as
+acritic
+  i     will deliver to the tool agent. This mechanism        input, whereas Python QA generates and executes
+enables the system to mitigate redundant behavior             Python code to obtain answers. Binder (Cheng
+and maintain effective reasoning.                             et al., 2023) decomposes questions into executable
+    Code Correction When the tool agent Ltool gen-            SQL sub-programs. Dater (Ye et al., 2023) employs
+erates a python code snippet ci that results in an            a parsing-execution-filling strategy with sub-table
+execution error ei = error(ci ), the critic agent gen-        decomposition, followed by answer generation us-
+erates a revised python code:                                 ing LLMs.
+                                                                Both TableRAG (Chen et al., 2024) and RowCol-
+          ccorr
+            i   ∼ Lcritic ccorr
+                             i   | ci , ei , ϕcritic ,        Retrieval encode tabular data to retrieve relevant
+                                                              information followed by program-assisted table ma-
+where ϕcritic denotes the prompt guiding the cor-
+                                                              nipulation and analysis using PyReact.
+rection process (as detailed in Appendix E). The
+                                                                 Metrics. Both datasets are evaluated using Exact
+corrected code ccorr
+                 i   is then executed by the tool
+                                                              Match (EM) accuracy.
+agent to obtain the output ocorr
+                               i , which is subse-
+                                                                 Implementation Details. To ensure compre-
+quently passed to the planning agent for further
+                                                              hensive evaluation, we conduct experiments with
+decision making. This error correction mechanism
+                                                              three LLMs: Qwen2.5-72B-Instruct (Qwen et al.,
+prevents the propagation of errors and ensures that
+                                                              2025), DeepSeek-V3 (Liu et al., 2024a), and GPT-
+only valid observations are retained for subsequent
+                                                              4o-mini (AI, 2023). For all baseline methods, we
+reasoning steps.
+                                                              adopt their original settings, ensuring fair and re-
+4   Experiments                                               producible comparisons. For all experiments of
+                                                              TALON, we set the temperature as 0.7, Top P
+4.1 Experimental Setup                                        as 0.95, Top K as 5, and maximum output length
+Datasets. To evaluate the effectiveness of the                as 1024. We also implement the self-consistency
+proposed multi-agent framework on Long-TQA,                   mechanism by sampling 5 independent reasoning
+we constructed and utilized two key datasets:                 paths. For the Qwen2.5-72B-Instruct model, we
+WikiTableQuestions-Large(WTQ-L) and BirdQA.                   perform 5 independent generations and report the
+Detailed statistics of these datasets are provided in         average results due to the single-generation con-
+Appendix A.                                                   straint. We set the maximum planning iterations to
+   (1) WTQ-L: WikiTableQuestions (WTQ) (Pasu-                 Iplan = 10 and the maximum refinement iterations
+pat and Liang, 2015) is a classic benchmark dataset           for the critic agent to Icritic = 3. We process tab-
+for table reasoning. We construct a specialized sub-          ular data as a pandas DataFrame, incorporate the
+set, termed WTQ-L, consisting of 341 long tables              data schema into the prompt, and employ zero-shot
+with row counts ranging from 50 to over 500, cov-             learning to generate answers. Agent prompts are
+ering long tables of different sizes. To enable a             provided in Appendix E.
+fine-grained analysis, we further stratify these ta-
+bles into three categories based on their row counts:         4.2   Main Results
+50–100 rows, 100–200 rows, and 200+ rows. Com-                The performance of TALON was benchmarked
+prehensive experiments are conducted across these             against several baseline methods across two
+stratified groups.                                            datasets, WTQ-L and BirdQA, utilizing three
+   (2) BirdQA: Derived from the BIRD-SQL                      distinct large language models (GPT-4o-mini,
+dataset (Li et al., 2024a), which focuses on large-           Qwen2.5-72B-Instruct, and DeepSeek-V3), with
+scale database-driven Text-to-SQL tasks. We trans-            average performance also reported. The results, as
+form the original tasks into TQA tasks, extracting            presented in Table 1, are summarized as follows:
+314 question-answering instances involving a sin-                1. TALON consistently outperformed all
+gle table. The tables in the BirdQA dataset are of a          baseline methods across all datasets and mod-
+huge scale, with an average of 44,000 rows, which             els. As indicated by the bolded scores in the ta-
+can fully simulate the complexity and data volume             ble, TALON achieved the highest performance
+of long tables in real business scenarios.                    in every evaluated scenario. For instance, on the
+                                                         27401
+                          GPT-4o-mini        Qwen2.5-72B-Ins            DeepSeek-V3                 Average.
+    Method
+                        WTQ-L      BirdQA    WTQ-L      BirdQA         WTQ-L     BirdQA     WTQ-L        BirdQA
+    End-to-End QA         55.5        -        34.0        -            58.3       -          49.3          -
+    Python QA             53.8        -        36.3        -            52.5       -          47.5          -
+    Binder                61.0       60.8      60.3       59.2          56.7      59.6        59.3         59.9
+    Dater                 54.7        -        51.2        -            46.1       -          50.7          -
+    RowColRetrieval       47.2       48.4      49.9       42.7          51.6      53.8        49.6         48.3
+    TableRAG              52.1       54.7      59.6       53.5          59.1      60.2        56.9         56.1
+    TALON (Ours)          67.7      72.0       66.6      70.0           66.2      73.7        66.8        71.9
+                          ↑6.7      ↑11.2      ↑6.3      ↑10.8          ↑7.1      ↑13.5       ↑7.5        ↑12.0
+
+Table 1: Table reasoning results on WTQ-Large and BirdQA with GPT-4o-mini, Qwen2.5-72B-Instruct, DeepSeek-
+V3, and . Bold denotes the best performance and underline denotes the second-best performance, a dash ("–")
+indicates that the input exceeded the model’s context window limit. The red upward arrows indicate the margin of
+improvement over the second-best performing method.
+
+WTQ-L dataset, TALON with GPT-4o-mini scored             2. Experimental results show that our method
+67.7%, surpassing the second-best method, Binder,        also outperforms baselines. When using GPT-4o-
+with the improvement of 6.7%. Similarly, on              mini, it achieves a 9.6% improvement compared
+the BirdQA dataset with DeepSeek-V3, TALON               to the second-best performing method. Similarly,
+achieved 73.7%, outperforming TableRAG by                it demonstrates consistent gains across different
+7.1%. Overall, TALON outperforms the second-             models, with an average improvement of 9.4% on
+best model by an average of 7.5% on WTQ-L and            Qwen2.5-72B-Instruct and a 5.9% improvement
+12.0% on BirdQA. This consistent outperformance          on DeepSeek-V3 compared to the second-best per-
+demonstrates the robust and superior capabilities        forming method. These results highlight the uni-
+of TALON.                                                versality of our approach, confirming that its effec-
+   2. TALON demonstrates consistent perfor-              tiveness is independent of table length.
+mance across diverse LLM backbones. On the
+WTQ-L dataset, TALON outperforms the second-                  Method
+                                                                                GPT-4o    Qwen2.5    DeepSeek
+                                                                                                                  Avg.
+                                                                                 mini     72B-Ins       V3
+best methods by 6.7% on GPT-4o-mini, 6.3% on
+Qwen2.5-72B-Instruct, and 7.1% on DeepSeek-                   End-to-End QA      56.3      42.6         61.9      53.6
+                                                              Python QA          51.2      41.9         55.0      49.4
+V3, with the performance gap being relatively nar-            Binder             61.4      58.5         59.0      59.6
+row, ranging from 0.4% to 0.7%. On the BirdQA                 Dater              59.8      60.2         64.0      61.3
+dataset, the improvements are 11.2% on GPT-4o-                RowColRetrieval    55.2      53.4         54.0      54.2
+                                                              TableRAG           55.2      59.6         62.0      58.9
+mini, 10.8% on Qwen2.5-72B-Instruct, and 13.5%
+                                                              TALON (Ours)       71.0      69.6         69.9      70.2
+on DeepSeek-V3, with the difference range being
+                                                                                 ↑9.6      ↑9.4         ↑5.9      ↑8.9
+slightly wider but still comparable, around 2.7%.
+This consistency demonstrates that the TALON             Table 2: Results on WTQ with GPT-4o-mini, Qwen2.5-
+architecture effectively enhances Long-QA per-           72B-Instruct, and DeepSeek-V3. Bold denotes the best
+formance across different models, showcasing its         performance, and underline denotes the second-best per-
+strong backbone-agnostic stability.                      formance. The red upward arrows indicate the margin of
+                                                         improvement over the second-best performing method.
+4.3 Analysis                                                2. How do different lengths in WTQ-L affect the
+We conduct extensive experiments to analyze the          performance of the method?
+following questions:                                        Table 3 presents the performance of TALON
+   1. Does TALON still perform well on the WTQ           on WTQ-L across different table length intervals:
+dataset?                                                 50–100, 100–200, and 200+ rows. The results
+   Due to computational constraints, we evaluate         demonstrate that our method consistently outper-
+on a randomly sampled subset of 500 tables from          forms all baseline approaches across all length cat-
+the original WTQ dataset. Full-dataset results           egories. Furthermore, as shown in Table 2, Dater
+with Qwen2.5-72B-Instruct are provided in Ap-            outperforms Binder on the WTQ dataset, but under-
+pendix C.2. The results are presented in Table           performs on the WTQ-L dataset. This performance
+                                                      27402
+                               GPT-4o-mini             Qwen2.5-72B-Ins                                   DeepSeek-V3
+   Method
+                      50-100     100-200     200+   50-100      100-200                  200+       50-100         100-200          200+
+   End-to-End QA        56.7       55.6      54.2    33.3                       43.8      25.0           55.6         61.1          58.3
+   Python QA            51.2       54.6      55.6    32.3                       41.1      35.4           58.1         55.6          43.8
+   Binder               55.6       66.7      60.6    55.6                       66.7      58.5           54.0         63.3          52.8
+   Dater                51.5       59.8      52.8    50.5                       57.8      45.3           53.5         43.3          41.5
+   RowColRetrieval      49.5       42.2      50.0    47.5                       52.2      50.0           47.5         51.1          56.3
+   TableRAG             49.5       56.7      50.0    56.1                       64.4      58.3           55.6         63.3          58.3
+   TALON (Ours)         65.2       71.1      66.7    64.8                       70.0      65.0           64.8        73.3           60.4
+                        ↑8.5       ↑4.4      ↑6.1    ↑8.7                       ↑3.3      ↑6.5           ↑6.7        ↑10.0          ↑2.1
+
+Table 3: Performance of different methods on subsets with varying row counts of WTQ-L. Bold denotes the best
+performance, and underline denotes the second-best performance. The red upward arrows indicate the margin of
+improvement over the second-best performing method.
+
+discrepancy can be attributed to Dater’s approach       complex problems into multiple steps and lever-
+of encoding the entire table into the LLM during        ages tool invocation to generate intermediate re-
+inference, which leads to degraded effectiveness on     sults, such as filtered rows or computed aggregates,
+long tables. We further compare TALON against           which allows the LLM to more effectively retrieve
+the End-to-End QA baseline using GPT-4 on WTQ-          question-relevant information from the table and to
+L: End-to-End QA achieves only 55.65%, while            facilitate subsequent reasoning steps.
+TALON reaches 69.64%. As the number of rows in-            5. Can TALON decrease computational cost?
+creases, it becomes progressively more challenging         As shown in Figure 3, the token consumption
+for the LLM to identify relevant rows and correctly     of TALON remains largely stable regardless of
+evaluate numerical conditions accurately, which         the table length, since it only requires the table
+aligns with the findings reported in (Chen, 2023).      schema rather than the full table content. End-to-
+   3.    How does TALON compare with the                End QA consumes fewer tokens than TALON for
+state-of-the-art Text-to-SQL methods?                   shorter tables; however, its token usage increases
+   Since BirdQA is derived from the Bird-SQL            rapidly as the table length grows. Dater, on the
+benchmark, we additionally evaluate our method          other hand, consistently exhibits high token con-
+against mainstream Text-to-SQL approaches. As           sumption, which also increases significantly with
+shown in Table 4, TALON achieves the highest            the table length.
+accuracy compared to directly applying Text-to-
+SQL methods, thereby validating both the repre-                                 20000    TALON
+                                                                                         End-to-End QA
+sentativeness of BirdQA and the effectiveness of                                17500    Dater
+TALON. We evaluated MAC-SQL (Wang et al.,                                       15000
+                                                             Token Cosumption
+
+
+
+
+2025) with GPT-4o-mini using oracle schema ac-                                  12500
+cess and obtained 50.79% accuracy. This relatively                              10000
+low performance can be attributed to the challenge                               7500
+LLMs face when generating precise SQL queries                                    5000
+in a single step. In contrast, TALON decomposes                                  2500
+                                                                                    0
+                                                                                        50-100             100-200           200+
+                                                                                                 Different Numbers of Rows
+     Method                           EM(%)
+     Bird (Li et al., 2024a)               55.8         Figure 3: Token consumption across different methods.
+     MAC-SQL (Wang et al., 2025)           59.6
+     TA-SQL (Qu et al., 2024)              56.1           4.    Does TALON have preferences when
+     DAIL-SQL (Gao et al., 2023)           54.8         choosing tools?
+     TALON (Ours)                          72.0           As shown in Figure 4, Get_Row and Get_Value
+                                                        are the two most frequently invoked functions,
+Table 4: Comparison of TALON with mainstream meth-      highlighting that accurately locating the answer
+ods of Text-to-SQL on BirdQA.                           remains a key challenge in solving TQA tasks. An-
+                                                    27403
+other important tool is Python_Code, which is cru-                                           7. What is the performance when using different
+cial for handling computational tasks, especially                                         base LLMs for different roles?
+when dealing with ultra-long tables such as those in                                         We conducted experiments with different base
+BirdQA. This suggests that, given sufficient mem-                                         LLMs for each role in TALON to evaluate the effec-
+ory, converting long tables into DataFrames for                                           tiveness of our multi-agent design. In this setup, the
+processing is a viable solution. Moreover, the tool                                       planning agent employs Qwen-2.5-72B-Instruct for
+selection is not uniform across datasets, reflecting                                      robust reasoning and planning, the tool agent relies
+its adaptability to different data characteristics and                                    on the smaller Qwen-2.5-7B-Instruct for efficient
+task requirements.                                                                        tool execution, and the critic agent utilizes GPT-4o
+                                                                                          to provide high-fidelity evaluation of both planning
+                                                                                0.30      and tool execution. This configuration achieved an
+ WTQ-L(50-100) 0.14                   0.06   0.18      0.18     0.12   0.32
+                                                                                0.25      overall accuracy of 67.26% on the WTQ-L dataset,
+WTQ-L(100-200) 0.30                   0.02   0.15      0.20     0.17   0.16     0.20
+                                                                                          supporting our intuitive design of a strong planning
+                                                                                          agent, a lightweight tool agent, and a powerful
+                                                                                0.15
+    WTQ-L(200+) 0.22                  0.04   0.10      0.04     0.24   0.26               critic agent.
+                                                                                0.10
+                   BirdQA 0.16        0.17   0.27      0.21     0.10   0.19     0.05      4.4   Ablation Study
+                                                                                          We conduct ablation experiments on each key mod-
+                                                ow
+                                                lue
+
+
+
+
+                                                  e
+
+                                                  g
+                                                 at
+
+
+
+
+                                                  h
+                                               od
+
+                                              nin
+
+                                              atc
+                                            orm
+
+
+
+
+                                            t_R
+                         a
+
+
+
+
+                                            _C
+                      t_V
+
+
+
+
+                                           ea
+
+                                           _M
+
+
+
+
+                                                                                          ule on WTQ-L using GPT-4o-mini, with the results
+                                        n_F
+
+
+
+
+                                         Ge
+                                          n
+
+                                        _M
+
+                                       zzy
+                    Ge
+
+
+
+
+                                      hto
+                            lum
+
+
+
+
+                                   mn
+
+                                    Fu
+                                   Py
+
+                                olu
+
+
+
+
+                                                                                          shown in Table 5. The Self-Consistency module
+                          _ Co
+
+
+
+
+                            t_C
+                      ess
+
+
+
+
+                         Ge
+                        c
+
+
+
+
+                                                                                          has the most significant impact, with a 4.3% drop
+                    Pro
+
+
+
+
+                   Figure 4: Distribution of tools by datasets.                           in performance when removed. The critic agent is
+                                                                                          also a key component of TALON that plays a cru-
+                                                                                          cial role in refining the model’s decision-making
+   6. What is the iteration distribution of the
+                                                                                          process. When removed, the performance drops
+datasets?
+                                                                                          by 3.0%, indicating its significant contribution to
+   As illustrated in Figure 5, both WTQ-L and                                             the multi-agent framework. More specifically, both
+BirdQA exhibit similar trends in iteration distri-                                        loop resolution and code correction in the critic
+bution. Compared to WTQ-L, BirdQA exhibits a                                              agent are equally important. Removing them leads
+higher concentration of items in earlier iterations,                                      to performance drops of 1.8% and 1.2%, respec-
+with a peak at iteration 3. In contrast, WTQ-L                                            tively.
+shows a more gradual trend, peaking at iteration 4.
+This difference may be attributed to WTQ-L’s inher-
+                                                                                                Method                        EM (%)
+ently diverse table structures and the complexity of
+its question formulations, which likely require ad-                                             TALON                           67.0
+ditional iterations for effective resolution. Notably,                                          w/o Self-Consistency         62.7 (↓4.3)
+                                                                                                w/o Critic Agent             64.0 (↓3.0)
+both datasets converge to minimal activity beyond
+                                                                                                  w/o Loop Resolution        65.2 (↓1.8)
+iteration 6, suggesting that the models are generally                                             w/o Code Correction        65.8 (↓1.2)
+capable of resolving most tasks efficiently within a
+limited number of iterations.                                                              Table 5: Ablation study of each module on WTQ-L.
+
+                   200                                                     WTQ-L             We then investigated the role of each tool on
+                                                                           BirdQA         BirdQA, with the results shown in Table 6. When
+ Number of Items
+
+
+
+
+                   150                                                                    Python_Code was removed, the average number of
+                   100                                                                    iterations increased from 3 to 7, resulting in a sig-
+                                                                                          nificant performance drop of 44.4%. This decline
+                    50                                                                    can be attributed to the large size of the BirdQA
+                                                                                          dataset, which necessitates substantial data aggre-
+                     0                                                                    gation and consumption. Without python code, this
+                                  2          4            6            8       10         process would depend on LLMs to gather data in-
+                                                    Iteration
+                                                                                          crementally. The tool get_column_meaning also
+Figure 5: Number of items per iteration for each dataset.                                 plays a critical role, as it helps the model effec-
+                                                                                       27404
+     Setting                            EM(%)             oped two benchmarks, WTQ-L and BirdQA, with
+                                                          table sizes ranging from 50 to over 10,000 rows.
+     w/ all                              72.0
+     w/o get_value                   69.4 (↓2.6)          Experiments on both datasets demonstrate that our
+     w/o fuzzy_match                 68.5 (↓3.5)          method achieves state-of-the-art results, with av-
+     w/o get_row                     70.4 (↓1.6)          erage improvements of 7.5% and 12.0%, while
+     w/o get_column_meaning           63.4 (↓8.6)         maintaining robustness and scalability, making it
+     w/o process_column_format        69.4 (↓2.6)         well-suited for real-world deployment.
+     w/o python_code                 27.6 (↓44.4)
+                                                          Limitations
+    Table 6: Ablation study of each tool on BirdQA.
+                                                          Due to budget constraints, we conduct experiments
+                                                          on only three models, and testing on more mod-
+tively understand the table’s structure and content.
+                                                          els could provide stronger evidence. Due to the
+Removing any other tool similarly led to a decrease
+                                                          scarcity of long-table datasets, we plan to focus on
+in performance metrics, emphasizing the indispens-
+                                                          constructing more benchmarks for long-table QA
+able and unique contribution of each function.
+                                                          and conducting further experimental validation in
+   To explain the proposed function calls, we per-
+                                                          the future. Our method primarily focuses on struc-
+formed an additional experiment with our method
+                                                          tured tables with well-defined schemas. For hierar-
+using only the Python code on the WTQ-L dataset,
+                                                          chical or flattened tables without explicit schemas,
+with the result shown in Table 7. Consider a com-
+                                                          a preprocessing step is required to convert them
+mon practical challenge: user queries often do not
+                                                          into a standardized dataframe representation. This
+exactly match the table content. For example, when
+                                                          limitation introduces additional complexity. Ex-
+a user requests a "16mm" camera, directly calling
+                                                          tending our framework to directly handle such table
+a Python function like get_value("16mm") would
+                                                          formats represents a key direction for future work.
+return an empty value if the table stores "16 mm"
+with a space, leading to retrieval failure and sub-
+                                                          Acknowledgment
+sequent error propagation. In our method, when
+get_value fails to return a match, the model auto-        This work was supported by NSFC No.62302503,
+matically invokes a fuzzy_matching tool, which            NUDT Youth Independent Innovation Science
+returns potentially matching values and correspond-       Fund Project Grant No.ZK23-15, the Open Re-
+ing row indexes such as "16 mm", helping the              search Fund from State Key Laboratory of
+model better understand the table content and plan        High Performance Computing of China Grant
+the next steps more accurately.                           No.202401-09, and Young Elite Scientists Sponsor-
+                                                          ship Program by CAST No. YESS20240767.
+Method            50–100   100–200    200+    Average
+PYREACT           45.45     55.56     41.67    47.53
+TALON (Ours)       65.2      71.1     66.7     67.70      References
+                                                          Open AI. 2023. Gpt-4 technical report. arXiv preprint
+Table 7: Ablation study on the impact of tool usage for     arXiv:2303.08774.
+TALON on WTQ-L.
+                                                          Si-An Chen, Lesly Miculicich, Julian Martin Eisen-
+                                                             schlos, Zifeng Wang, Zilong Wang, Yanfei Chen,
+5    Conclusion                                              Yasuhisa Fujii, Hsuan-Tien Lin, Chen-Yu Lee, and
+                                                             Tomas Pfister. 2024. Tablerag: Million-token ta-
+In this paper, we propose a multi-agent frame-               ble understanding with language models. Preprint,
+work for Long-TQA, TALON, which improves                     arXiv:2410.04739.
+performance by distributing the table QA process
+                                                          Wenhu Chen. 2023. Large language models are few(1)-
+across three specialized agents, including a plan-          shot table reasoners. Preprint, arXiv:2210.06710.
+ning agent, a tool agent, and a critic agent. We
+develop a specialized toolkit, inspired by human-         Yi Cheng, Wenge Liu, Jian Wang, Chak Tou Leong,
+like table processing, that enables accurate content        Yi Ouyang, Wenjie Li, Xian Wu, and Yefeng Zheng.
+                                                            2024. Cooper: Coordinating specialized agents
+retrieval, structural analysis, and data manipulation       towards a complex dialogue goal. Proceedings
+on tabular data. Furthermore, to comprehensively            of the AAAI Conference on Artificial Intelligence,
+evaluate the performance of our method, we devel-           38(16):17853–17861.
+                                                       27405
+Zhoujun Cheng, Tianbao Xie, Peng Shi, Chengzu                Language Technologies (Volume 1: Long Papers),
+  Li, Rahul Nadkarni, Yushi Hu, Caiming Xiong,               pages 450–482, Mexico City, Mexico. Association
+  Dragomir Radev, Mari Ostendorf, Luke Zettle-               for Computational Linguistics.
+  moyer, Noah A. Smith, and Tao Yu. 2023. Bind-
+  ing language models in symbolic languages. In           Zhiwei Liu, Weiran Yao, Jianguo Zhang, Le Xue,
+  The Eleventh International Conference on Learning         Shelby Heinecke, Rithesh Murthy, Yihao Feng,
+  Representations.                                          Zeyuan Chen, Juan Carlos Niebles, Devansh Arpit,
+                                                            Ran Xu, Phil Mui, Huan Wang, Caiming Xiong,
+Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun,              and Silvio Savarese. 2023. Bolaa: Benchmarking
+  Yichen Qian, Bolin Ding, and Jingren Zhou. 2023.          and orchestrating llm-augmented autonomous agents.
+  Text-to-sql empowered by large language models: A         Preprint, arXiv:2308.05960.
+  benchmark evaluation. Preprint, arXiv:2308.15363.
+                                                          Xinyuan Lu, Liangming Pan, Yubo Ma, Preslav Nakov,
+Yu Gu, Yiheng Shu, Hao Yu, Xiao Liu, Yuxiao Dong, Jie       and Min-Yen Kan. 2024. Tart: An open-source tool-
+  Tang, Jayanth Srinivasa, Hugo Latapie, and Yu Su.         augmented framework for explainable table-based
+  2024. Middleware for llms: Tools are instrumen-           reasoning. Preprint, arXiv:2409.11724.
+  tal for language agents in complex environments.
+  Preprint, arXiv:2402.14672.                             Md Mahadi Hasan Nahid and Davood Rafiei. 2024. Tab-
+                                                           SQLify: Enhancing reasoning capabilities of LLMs
+Md. Ashraful Islam, Mohammed Eunus Ali, and                through table decomposition. In Proceedings of the
+ Md Rizwan Parvez. 2024. Mapcoder: Multi-agent             2024 Conference of the North American Chapter
+ code generation for competitive problem solving.          of the Association for Computational Linguistics:
+ Preprint, arXiv:2405.11403.                               Human Language Technologies (Volume 1: Long
+                                                           Papers), pages 5725–5737, Mexico City, Mexico. As-
+Jinyang Li, Binyuan Hui, Ge Qu, Jiaxi Yang, Binhua Li,
+                                                           sociation for Computational Linguistics.
+   Bowen Li, Bailin Wang, Bowen Qin, Ruiying Geng,
+   Nan Huo, and 1 others. 2024a. Can llm already serve    Zihan Niu, Zheyong Xie, Shaosheng Cao, Chong-
+   as a database interface? a big bench for large-scale     gang Lu, Zheyu Ye, Tong Xu, Zuozhu Liu, Yan
+   database grounded text-to-sqls. Advances in Neural       Gao, Jia Chen, Zhe Xu, and 1 others. 2025. Part:
+   Information Processing Systems, 36.                      Enhancing proactive social chatbots with personal-
+Kenneth Li, Aspen K. Hopkins, David Bau, Fernanda           ized real-time retrieval. In Proceedings of the 48th
+  Viégas, Hanspeter Pfister, and Martin Wattenberg.         International ACM SIGIR Conference on Research
+  2024b. Emergent world representations: Exploring a        and Development in Information Retrieval, pages
+  sequence model trained on a synthetic task. Preprint,     4269–4274.
+  arXiv:2210.13382.                                       Panupong Pasupat and Percy Liang. 2015. Compo-
+Xinyi Li, Sai Wang, Siqi Zeng, Yu Wu, and Yi Yang.          sitional semantic parsing on semi-structured tables.
+  2024c. A survey on llm-based multi-agent sys-             arXiv preprint arXiv:1508.00305.
+  tems: workflow, infrastructure, and challenges.
+                                                          Chen and Qian. 2024. ChatDev: Communicative
+  Vicinagearth, 1(1):9.
+                                                            agents for software development. In Proceedings
+Tian Liang, Zhiwei He, Wenxiang Jiao, Xing Wang,            of the 62nd Annual Meeting of the Association
+  Yan Wang, Rui Wang, Yujiu Yang, Shuming Shi, and          for Computational Linguistics (Volume 1: Long
+  Zhaopeng Tu. 2024. Encouraging divergent thinking         Papers), pages 15174–15186, Bangkok, Thailand.
+  in large language models through multi-agent debate.      Association for Computational Linguistics.
+  Preprint, arXiv:2305.19118.
+                                                          Ge Qu, Jinyang Li, Bowen Li, Bowen Qin, Nan Huo,
+Weizhe Lin, Rexhina Blloshmi, Bill Byrne, Adrià             Chenhao Ma, and Reynold Cheng. 2024. Before
+ de Gispert, and Gonzalo Iglesias. 2023. An inner           generation, align it! a novel and effective strategy
+ table retriever for robust table question answering.       for mitigating hallucinations in text-to-sql generation.
+ In Proceedings of the 61st Annual Meeting of the           Preprint, arXiv:2405.15307.
+ Association for Computational Linguistics (Volume
+ 1: Long Papers), pages 9909–9926.                        Qwen, :, An Yang, Baosong Yang, Beichen Zhang,
+                                                           Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang,              Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan
+  Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi           Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin
+  Deng, Chenyu Zhang, Chong Ruan, and 1 others.            Yang, Jiaxi Yang, Jingren Zhou, and 25 oth-
+  2024a. Deepseek-v3 technical report. arXiv preprint      ers. 2025. Qwen2.5 technical report. Preprint,
+  arXiv:2412.19437.                                        arXiv:2412.15115.
+
+Tianyang Liu, Fei Wang, and Muhao Chen. 2024b.            Yuan Sui, Jiaru Zou, Mengyu Zhou, Xinyi He, Lun Du,
+  Rethinking tabular data understanding with large          Shi Han, and Dongmei Zhang. 2023. Tap4llm: Table
+  language models. In Proceedings of the 2024               provider on sampling, augmenting, and packing semi-
+  Conference of the North American Chapter of the           structured data for large language model reasoning.
+  Association for Computational Linguistics: Human          arXiv preprint arXiv:2312.09039.
+                                                     27406
+Xunzhu and Tang. 2024. CodeAgent: Autonomous                    a multi-agent system. In Findings of the Association
+  communicative agents for code review.          In             for Computational Linguistics: ACL 2025, pages
+  Proceedings of the 2024 Conference on Empirical               6843–6855, Vienna, Austria. Association for Compu-
+  Methods in Natural Language Processing, pages                 tational Linguistics.
+  11279–11313, Miami, Florida, USA. Association for
+  Computational Linguistics.                                Wei Zhou, Mohsen Mesgar, Annemarie Friedrich, and
+Bing Wang, Changyu Ren, Jian Yang, Xinnian Liang, Ji-        Heike Adel. 2025. Efficient multi-agent collabora-
+  aqi Bai, LinZheng Chai, Zhao Yan, Qian-Wen Zhang,          tion with tool use for online planning in complex ta-
+  Di Yin, Xing Sun, and Zhoujun Li. 2025. Mac-sql: A         ble question answering. Preprint, arXiv:2412.20145.
+  multi-agent collaborative framework for text-to-sql.
+  Preprint, arXiv:2312.11242.                               A     Dataset Information
+Qineng Wang, Zihao Wang, Ying Su, Hanghang Tong,
+  and Yangqiu Song. 2024a. Rethinking the bounds of         WTQ-L is sampled from the WikiTableQuestion
+  llm reasoning: Are multi-agent discussions the key?       dataset, covering the portion of the WTQ testset
+  Preprint, arXiv:2402.18272.                               with more than 50 rows. Furthermore, we divide it
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le,           into three subsets: one containing tables with 50-
+  Ed Chi, Sharan Narang, Aakanksha Chowdhery, and           100 rows, another with 100-200 rows, and the last
+  Denny Zhou. 2023. Self-consistency improves chain         with tables containing more than 200 rows. BirdQA
+  of thought reasoning in language models. Preprint,        is sampled from Bird-SQL. Compared to WTQ-
+  arXiv:2203.11171.
+                                                            L, BirdQA contains more rows that exceed the
+Zilong Wang, Hao Zhang, Chun-Liang Li, Julian Martin        context window limit of LLM, presenting a greater
+   Eisenschlos, Vincent Perot, Zifeng Wang, Lesly Mi-       challenge to the model. More detailed information,
+   culicich, Yasuhisa Fujii, Jingbo Shang, Chen-Yu Lee,
+   and Tomas Pfister. 2024b. Chain-of-table: Evolving       including the number of samples and the average
+   tables in the reasoning chain for table understanding.   number of lines, can be found in Table 8.
+   Preprint, arXiv:2401.04398.
+                                                                Dataset   Sample Range   Sample Nums   Average Rows
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten
+                                                                            50-100           198          62.03
+   Bosma, Brian Ichter, Fei Xia, Ed Chi, Quoc Le, and
+                                                                WTQ-L       100-200           90          122.67
+   Denny Zhou. 2023. Chain-of-thought prompting elic-                        200+             53          360.28
+   its reasoning in large language models. Preprint,
+                                                                BirdQA         -             314         44488.52
+   arXiv:2201.11903.
+
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak            Table 8: Sample numbers and average rows for WTQ-L
+  Shafran, Karthik Narasimhan, and Yuan Cao. 2023.          and BirdQA datasets.
+  React: Synergizing reasoning and acting in language
+  models. Preprint, arXiv:2210.03629.
+
+Yunhu Ye, Binyuan Hui, Min Yang, Binhua Li, Fei             B     Tools Information
+  Huang, and Yongbin Li. 2023. Large language mod-
+  els are versatile decomposers: Decompose evidence
+  and questions for table-based reasoning. In Special
+                                                            We designed a comprehensive toolset that supports
+  Interest Group on Information Retrieval.                  content retrieval, structural analysis, and data ma-
+                                                            nipulation. The relevant tools are summarized in
+Shengbin Yue, Siyuan Wang, Wei Chen, Xuan-                  Table 11: the left column presents the tool names
+  jing Huang, and Zhongyu Wei. 2025. Synergis-
+  tic multi-agent framework with trajectory learn-          along with their descriptions, while the right col-
+  ing for knowledge-intensive tasks.      Preprint,         umn outlines the algorithmic logic of each tool. For
+  arXiv:2407.09893.                                         fuzzy matching, we employ the token_set_ratio
+Han Zhang, Yuheng Ma, and Hanfang Yang. 2024. Al-
+                                                            function from the fuzzywuzzy library to measure
+  ter: Augmentation for large-table-based reasoning.        the similarity between query strings and table cell
+  arXiv preprint arXiv:2407.03061.                          contents. A higher score reflects a greater degree of
+                                                            lexical overlap between the compared strings. To
+Yunjia Zhang, Jordan Henkel, Avrilia Floratou, Joyce
+  Cahoon, Shaleen Deep, and Jignesh M. Patel. 2023.         improve efficiency, we incorporate parallel compu-
+  Reactable: Enhancing react for table question answer-     tation, allowing the method to process large-scale
+  ing. Preprint, arXiv:2310.00815.                          tables containing more than 20,000 rows while
+Haoqi Zheng, Dong Wang, Silin Yang, Yunpeng Qi,
+                                                            maintaining response times within a few hundred
+  Ruochun Jin, and Liyang Xu. 2025. Logical DA: En-         milliseconds. Based on empirical analysis, we set
+  hancing data augmentation for logical reasoning via       the fuzzy matching threshold to 70%.
+                                                       27407
+C    Supplementary Experiments                                    Method                                 WTQ
+                                                                  MACT (Zhou et al., 2025)               69.4
+C.1 Supplementary Baseline Evaluation                             RethinkTable (Liu et al., 2024b)       69.6
+To ensure a comprehensive and fair evaluation,                    Chain-of-table (Wang et al., 2024b)    68.3
+                                                                  TALON(Ours)                            69.7
+we include several widely adopted baselines of
+TableQA for an extended comparison on the WTQ-                  Table 10: Performance Comparison on WTQ.
+L dataset using GPT-4o-mini, following the imple-
+mentation details in Section 4.1. Specifically, we
+reproduce:                                                formation. The table and corresponding question
+                                                          are shown below.
+    • RethinkTable (Liu et al., 2024b), which
+      adopts Direct Prompting and Pyagent with            Table with More Than 100 Rows:
+      Mix-Self-Consistency and Normalization;              Common       District   Population     ...      Mayor
+                                                            name                    (2009)
+    • TabSQLify (Nahid and Rafiei, 2024), which
+                                                               Acre      North      46,300        ...      Shimon
+      first identifies relevant sub-tables using Text-                                                      Lancry
+      to-SQL and then applies LLMs for reasoning;              Afula     North      40,500        ...        Avi
+                                                                                                           Elkabetz
+    • Chain of Table (Wang et al., 2024b), which             ...          ...         ...         ...         ...
+                                                           Bat Yam      Tel Aviv    130,000        ...     Shlomo
+      incorporates function calls to iteratively up-                                                       Lahiani
+      date the table and form a tabular reasoning
+      chain;                                              Question: What is the number of cities located in
+                                                          either the Tel-Aviv or Center districts possessing a
+    • MACT (Zhou et al., 2025), which involves a          population less than 65,000?
+      planning agent and a coding agent that collab-         Given a table and a user query, TALON first an-
+      oratively use tools to answer questions.            alyzes the query to identify relevant columns by
+   As shown in Table 9, TALON consistently out-           invoking the get_column_meaning tool. It then
+performs all baseline methods across different table      applies fuzzy_matching to locate the rows and
+sizes, further demonstrating the robustness of our        columns containing the target districts. The results
+approach under varying table scales.                      indicate that both the Common name and District
+                                                          columns include “Tel Aviv”. TALON then com-
+ Method          50-100   100-200    200+    Average      bines this information with the user query to iden-
+ ReThinkTable     62.12     66.67    60.38    63.05       tify the truly relevant column, District, thereby en-
+ MACT             60.61     65.56    58.33    61.56       suring that subsequent computations are performed
+ TablSQLify       63.13     56.67    56.60    60.40       on the correct column and preventing errors in the
+ TALON(Ours)      65.20     71.10    66.70    67.03
+                                                          final answer. Since the question requires numeric
+Table 9: Comparison of TALON with mainstream              computation, TALON examines the population col-
+TableQA methods on WTQ-L.                                 umn and finds that its values are stored as strings. It
+                                                          calls the process_column_format tool to convert
+                                                          this column into integers. Finally, TALON gener-
+C.2 Performance on the full WTQ dataset.                  ates Python code to compute the answer. Figure 6
+We evaluated these methods on the full WTQ                shows the reasoning trace.
+dataset using the Qwen-2.5-72B-Instruct model in
+the table 10. These results demonstrate that our          E      Prompt
+proposed method achieves comparable results, in-          The prompts used in our method are shown in Fig-
+dicating its generalization ability and effectiveness     ures 7 to 11.
+across diverse table reasoning scenarios.
+
+D    Case Study
+We present a concrete case demonstrating how
+TALON leverages multi-agent collaboration to an-
+swer a question based on a large table by dynami-
+cally gathering and processing relevant tabular in-
+                                                       27408
+      Step-by-Step Trace
+         1. Thought: I need to understand the meaning of each column for better information retrieval.
+            Action: get_column_meaning()
+            Observation: Population (2009): Number of inhabitants in the city as of 2009.
+
+         2. Thought: Locate occurrences of “Tel Aviv” and “Center”.
+            Action: fuzzy_match(“Tel Aviv”),
+                    fuzzy_match(“Center”)
+            Observation: The columns below may contain relevant values for ‘Tel Aviv’:
+                         Common name: ‘Tel Aviv’, The index is. . .
+                         District: ‘Tel Aviv’, The index is. . .
+
+         3. Thought: Convert Population (2009) to a numeric format for proper filtering.
+            Action: process_column_format(“Population (2009)”)
+            Observation: The column Population (2009) has been processed. . .
+
+         4. Thought: Write Python code to compute the desired count.
+            Action:
+
+                filtered_cities = df[(df[“District”].isin([“Tel Aviv”, “Center”]))
+                                  & (df[“Population (2009)”] < 65000)]
+                result = len(filtered_cities)
+
+            Observation: The final answer is. . .
+
+
+Figure 6: Step-by-step reasoning trace demonstrating our method’s approach to processing the query “Find cities
+in Tel Aviv and Center districts with population less than 65,000”. The trace shows: (1) understanding column
+semantics, (2) fuzzy value matching, (3) data type processing, and (4) query execution with final result.
+
+
+
+
+                                                             27409
+Tools                             Code
+Get_Value                         Function Get_Value(table, value):
+Description: Search for a spe-       results ← ∅
+cific value.                         foreach column c in table do
+                                          foreach row r in c do
+                                              if r = value then
+                                                   results ← results ∪ {(c.name, r.index)}
+
+                                      return if results = ∅ then (“notf ound”, null, null) else results
+Get_Row                           Function Get_Row(table, row_index):
+Description: Return the row          // Return the row content of the row index
+content of the row index.            return table[row_index]
+Fuzzy_Match                       Function Fuzzy_Match(value, table, k):
+Description: Identify potential      matches ← [ ] foreach column c in table do
+variations of the value.                  foreach cell v in c do
+                                              score ← FuzzyMatch(value, v)
+                                              if score is above threshold then
+                                                   Append (v, c.name, score) to matches
+
+                                      Sort matches by score in descending order
+                                      return top-k entries from matches
+Get_Column_Meaning                Function Get_Column_Meaning(question, table, k):
+Description: Identify the key        columns, meanings ← LLM (question, table)
+column and corresponding             results ← ∅
+meaning based on the question.       foreach column c in columns do
+                                          if c is relevant then
+                                                samples ← Randomly select k values from column c in table
+                                                Add (c, meanings[c], samples) to results
+                                     return results
+Process_Column_Format             Function Process_Column_Format(column, question, thought):
+Description: Process the format      samples ← Randomly select k values from column c in table
+of a specific column based on        need_processing, code ← LLM (question, column, thought)
+the thought and question.            if need_processing then
+                                          Execute(code)
+                                          samples ← Get sample values from column
+                                     return (samples)
+Python_Code                       Function Python_Code(table, trajectory):
+Description: Generate Python         // Generate Python code using LLM
+code for numerical computation       code ← LLM (table, trajectory)
+and logic reasoning.                   return code
+
+        Table 11: Functions and corresponding pseudo-code cross-reference table of the toolset.
+
+
+
+
+                                                   27410
+Given a table schema of a large table, you need to answe the question based on the table.
+The table is a pandas dataframe in Python. The name of the dataframe is `df`. Your task is
+to use tools to answer the question.
+
+Tools:
+- get_column_meaning() […]
+- find_columns_containing_value_fuzzy(value：str) […]
+- find_column_format(column：str) […]
+- get_value(value：str) […]
+- get_row(row_index：str) […]
+- def() […]
+
+Response Format:
+- Strictly follow the given format to respond:
+  - Thought: you should always print about the thinking process about what to do based
+on the previous observation.
+  - Action: Directly output the tool you chose to use.
+  - Observation: the result of the action.
+  - ... (this Thought/Action/Observation can repeat N times)
+  - Final Answer: the final answer to the original input question, only print the answer.
+
+Notes:
+ - Do not use markdown or any other formatting in your responses.
+ - Ensure the last line is only "Final Answer: answer".
+ - Directly output the Final Answer rather than outputting by Python.
+ - Ensure to have a concluding thought that verifies the table, observations and the
+statement before giving the final answer.
+ - You can call a same tool multiple times simultaneously. For example, you can output
+Action: tool1(args1), tool1(args2) at one same time.
+
+Now, given a table , please answer the question: "{query}".
+{table_schema}
+The table is a pandas dataframe in Python. The name of the dataframe is `df`. Your task is
+think step by step, use tools to answer the question based on the table.
+
+Begin!
+
+                       Figure 7: The prompt of the planning agent.
+
+
+
+
+                                          27411
+Given a partial table preview along with a thought, focusing only on information relevant
+to the question and the thought, analyze the table and extract only the most relevant
+information.
+
+Note:
+- the given rows only contain a small portion of the table, not indicate the entire table.
+- Directly output the most relevant columns that might be related to the question and the
+thought, and the column meaning of a column.
+- Directly output the columns and column meaning without any additional text or
+explanations.
+
+Output Format:
+
+Column name:
+{Column Meaning}
+
+Table preview:
+{sample_rows}
+
+Question:
+{question}
+
+Thought:
+{thought}
+
+          Figure 8: The prompt for get_column_meaning tool in the tool agent.
+
+
+
+
+The column type of '{column_name}' is {column_dtype}.
+Here are some example values from the column: {sampled_values}.
+You should determine whether there is a need to process the column using Python code
+for the given purpose.
+Determine whether the given column needs processing using Python based on its content
+and format.
+The column can be processed by df["{column_name}"]
+
+Purpose:
+{thought}
+
+Notes:
+If the column's format needs additional transformation to calculate the result based on the
+purpose, then it needs to be processed and transformed into the correct type.
+
+ - Use df to process the column, and output the code in the format of:
+```python
+# your code here
+```
+ - Only generate code to process the column.
+ - If the column's format is already correct, just return "[[No]]".
+
+        Figure 9: The prompt for process_column_format tool in the tool agent.
+
+
+
+                                           27412
+You have to read the table and the query, and all the thinking process, to identity the root
+cause of the error.
+Analyze the execution trace and error message to:
+
+1. Diagnose the root cause of the failure based on the error message and the
+trajectory.
+2. Validate the code logic against the provided DataFrame (df) based on the
+observations.
+3. Formulate a corrected code.
+
+Critical Constraints:
+- The table is already available as a pandas DataFrame (df).
+- Never sample the table data during analysis.
+
+Output Format:
+You should directly output the revised python code with the format of ```python\n``` to
+avoid such an error,no other additional text.
+
+Here is the thinking process:
+{trajectory}
+
+Here is the error message:
+{error}
+
+                Figure 10: The loop resolution prompt of the critic agent.
+
+
+
+
+As an AI assistant analyzing tabular data, I've noticed you've repeatedly called the same
+data processing tool multiple times.
+Based on previous observations, please:
+
+1. Re-evaluate your current approach
+2. Generate a new 'thought' process that considers:
+       - Efficiency improvements
+       - Avoiding redundant operations including all the history actions
+       - Leveraging previously obtained results from the trajectory
+3. Provide a revised 'action' plan that:
+       - avoid duplicate tool calls
+       - generate a tool or final answer based on the trajectory
+
+Format your response with clear "Thought:" and "Action:" sections, ensuring the solution
+is both technically sound and resource-efficient.
+
+Output Format:
+- Thought: Only print about the thinking process about what to do next .
+- Action: Directly output the tool you chose to use.
+
+Here is the trajectory:
+{trajectory}
+
+Here is the repeated action:
+{action}
+
+                Figure 11: The code correction prompt of the critic agent.
+
+
+                                           27413
+

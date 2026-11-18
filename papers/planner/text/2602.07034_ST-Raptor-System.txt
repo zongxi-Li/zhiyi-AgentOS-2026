@@ -1,0 +1,226 @@
+                                              ST-Raptor: An Agentic System for Semi-Structured Table QA
+                                                       Jinxiu Qu                        Zirui Tang                      Hongzhang Huang                           Boyu Niu
+                                              Shanghai Jiao Tong Univ.          Shanghai Jiao Tong Univ.               Shanghai Jiao Tong Univ.           Shanghai Jiao Tong Univ.
+                                               afuloowa@sjtu.edu.cn            raymondtangzirui@163.com                 haohaizi@sjtu.edu.cn               nby2005@sjtu.edu.cn
+
+                                                       Wei Zhou                      Jiannan Wang                           Yitong Song                         Guoliang Li
+                                              Shanghai Jiao Tong Univ.            Tsinghua University                  Hong Kong Baptist Univ.              Tsinghua University
+                                              weizhoudb@sjtu.edu.cn             jnwang@tsinghua.edu.cn                yitong_song@hkbu.edu.hk           liguoliang@tsinghua.edu.cn
+
+                                                                                      Xuanhe Zhou                              Fan Wu
+                                                                                Shanghai Jiao Tong Univ.              Shanghai Jiao Tong Univ.
+                                                                                zhouxuanhe@sjtu.edu.cn                  fwu@cs.sjtu.edu.cn
+arXiv:2602.07034v1 [cs.AI] 3 Feb 2026
+
+
+
+
+                                        Abstract
+                                        Semi-structured table question answering (QA) is a challenging task
+                                        that requires (1) precise extraction of cell contents and positions and
+                                        (2) accurate recovery of key implicit logical structures, hierarchical
+                                        relationships, and semantic associations encoded in table layouts.
+                                        In practice, such tables are often interpreted manually by human
+                                        experts, which is labor-intensive and time-consuming. However,
+                                        automating this process remains difficult. Existing Text-to-SQL
+                                        methods typically require converting semi-structured tables into
+                                        structured formats, inevitably leading to information loss, while
+                                        approaches like Text-to-Code and multimodal LLM-based QA strug-
+                                        gle with complex layouts and often yield inaccurate answers. To
+                                        address these limitations, we present ST-Raptor, an agentic system
+                                        for semi-structured table QA. ST-Raptor offers an interactive analy-
+                                        sis environment that combines visual editing, tree-based structural           Figure 1: Unique Challenges of Semi-Structured Table QA
+                                        modeling, and agent-driven query resolution to support accurate               – (1) Flattening Nested Tables Causes Semantic Misalignment; (2)
+                                        and user-friendly table understanding. Experimental results on both           Dehierarchizing Multi-Level Headers Obscures Structural Relation-
+                                        benchmark and real-world datasets demonstrate that ST-Raptor                  ships; (3) Fragmenting Merged Cells Breaks Original Semantics.
+                                        outperforms existing methods in both accuracy and usability. The
+                                        code is available at https:// github.com/ weAIDB/ ST-Raptor. And a
+                                        demonstration video can be found on YouTube1 .                                 sequences, ignoring the hierarchical relationships critical for in-
+                                                                                                                       terpreting grouped indicators or aggregated statistics; (3) They
+                                                                                                                       treat irregular merged cells as sparse matrices filled with artificial
+                                        1    INTRODUCTION                                                              NULL values, which breaks the continuity and semantics of logically
+                                        Semi-structured tables are pervasive in real-world applications                connected regions (e.g., merged “Total” rows). Therefore, down-
+                                        (e.g., Word-based financial reports and Excel spreadsheets for med-            stream question answering (QA) tasks are significantly hindered.
+                                        ical records). Although these tables are visually organized in rows            For example, answering the total price question in Figure 1 requires
+                                        and columns, they lack a strict, unified schema. Cells may contain             understanding that the “Total” row aggregates across multiple per-
+                                        heterogeneous or multimodal content (e.g., checkboxes, nested sub-             formance metrics with varying weights, which coarse-grained meth-
+                                        tables, or images), be merged across rows or columns, and be gov-              ods often fail to interpret.
+                                        erned by multi-level headers that encode implicit hierarchies and                 To address these challenges, we present ST-Raptor, a system
+                                        semantic groupings. These characteristics make semi-structured                 designed for robust, interactive QA over complex semi-structured
+                                        tables fundamentally different from relational tables and difficult            tables. At the core of ST-Raptor is the Hierarchical Orthogonal Tree
+                                        to interpret using traditional data processing tools such as SQL and           (HO-Tree), a layout-aware representation that captures structural
+                                        BI, as well as even advanced vision–language models.                           relationships among headers, content cells, and merged regions.
+                                           As shown in Figure 1, existing solutions struggle to handle com-            To construct HO-Trees from raw semi-structured inputs, we adopt
+                                        plex semi-structured tables due to several fundamental limitations:            a hybrid strategy that integrates rule-based matching with multi-
+                                        (1) They flatten nested or hierarchically organized tables, caus-              modal LLM reasoning: (1) We render semi-structured tables into
+                                        ing severe semantic loss and misalignment between headers and                  high-resolution images and prompt a VLM to identify candidate
+                                        content; (2) They decompose multi-level headers into flat token                meta-information keys, which are then aligned to table cells via
+                                                                                                                       embedding-based similarity matching; (2) We conduct table parti-
+                                        1 https:// youtu.be/ 9GDR-94Cau4                                               tioning guided by the detected meta cells; (3) We then recursively
+                                                                                                                  1
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY                                                                                    Jinxiu Qu et al.
+
+
+
+
+                                                          Figure 2: System Overview of ST-Raptor.
+
+construct HO-Trees based on layout principles such as top-level                  gateway between users and underlying LLMs. The Agent leverages
+header identification [2]. Building on the HO-Tree, ST-Raptor de-                context-aware attention to resolve ambiguous references and re-
+fines nine core tree operations that abstract common analytical                  construct complete queries. When processing uploaded images, it
+tasks and enable modular reasoning, offering higher accuracy than                invokes specialized vision-language models (VLMs) for table ex-
+a general “execute-then-reflect” mechanism. Given user queries                   traction. In multimodal and multi-file settings, it performs precise
+over the tables, we automatically decompose them into executable                 table localization, routes queries to appropriate processing modules
+sub-operations, which is guided by a column-type-aware tagging                   (e.g., retrieval or aggregation), and delivers coherent final answers.
+mechanism that distinguishes numerical, categorical, and free-text                  The remainder of this paper is organized as follows. Section 2
+fields. To ensure answer correctness and faithfulness, we further in-            presents the ST-Raptor system architecture and key components,
+corporate a two-stage verification mechanism consisting of forward               followed by the HO-Tree construction and interactive Tree Editor.
+constraint checks and backward consistency validation.                           Section 3 demonstrates representative real-world usage scenarios,
+    Compared with our research paper [2], this demonstration sys-                and Figure 4 reports quantitative evaluation results.
+tem extends ST-Raptor along three key dimensions:
+❶ Interactive and accessible user interface. To lower the usage
+barrier, we developed an intuitive and interactive web-based fron-               2   ST-RAPTOR OVERVIEW
+tend. Users can easily upload spreadsheets, inspect extracted table              As discussed, nested regions, multi-level headers, and merged cells
+structures, perform question-answering tasks through a graphi-                   in semi-structured tables violate the assumptions of traditional
+cal interface. ST-Raptor supports multi-page documents and frag-                 parsers and hinder downstream reasoning. To address these, ST-
+mented table images, covering a broad spectrum of real-world for-                Raptor transforms complex tables into editable, semantically aligned
+mats, including scanned reports and unstructured Excel sheets.                   tree structures for robust and context-aware QA (Figure 2).
+❷ Editable and user-controllable structure modeling. The au-                     Table2Tree. The Table2Tree (A) supports multimodal ingestion
+tomatic generation of HO-Trees may occasionally diverge from                     from raw table files (e.g., .xlsx, .csv, .html, .md) and screen-
+user expectations due to variations like model mistakes, which lim-              shots. Tables are first rendered via a headless browser to generate
+its reliability in practice. To address this, we provide a Tree Editor           high-resolution images for VLMs, which extract candidate meta-
+that enables users to visualize, edit, and optimize generated tree               information cells as JSON-like key-value structures. These are fur-
+structures directly in the frontend. Users can correct misaligned                ther validated using embedding-based similarity metrics to filter
+headers, adjust hierarchical groupings, or annotate semantic links               true header or label cells. Based on table titles and layout semantics,
+using simple drag-and-drop operations. Moreover, the editor sup-                 the module then recursively constructs the layout-aware HO-Tree,
+ports manual construction of HO-Trees from scratch, enabling the                 linking content cells to their semantic headers while preserving
+system to generalize beyond semi-structured table QA.                            hierarchical relationships. When multiple interrelated sheets exist,
+❸ Agent-driven orchestration for multi-turn and multimodal                       ST-Raptor unifies them under a single root for global reasoning
+interactions. Real-world usage often involves multi-turn interac-                Tree Editor. Automatically constructed HO-Trees can suffer from
+tions, where follow-up questions depend on implicit context. We                  noisy predictions or domain-specific inconsistencies. The Tree
+therefore design an Orchestration Agent Module that acts as an AI                Editor (B) enables users to refine the tree structure via an intuitive
+                                                                             2
+ST-Raptor: An Agentic System for Semi-Structured Table QA                                          Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+
+
+
+
+                                                            Figure 3: Snapshot of ST-Raptor.
+
+drag-and-drop web interface. Common operations include node re-                multiple tables to be analyzed in the text box. After clicking upload,
+ordering, type correction, or subtree pruning. Edits are encoded in            the model will begin constructing the HO-Trees. Upon successful
+JSON and recursively parsed to update the backend representation.              generation, a notification stating “HO-Tree generated successfully”
+This interactive layer is particularly useful in industrial settings           will appear in the upper-right corner of the page, and the resulting
+where tables are large and slight changes (e.g., removing one em-              files will be saved.
+ployee’s row) should not trigger costly re-parsing of the entire               (2) Tree Visualization and Editing. Once the HO-Tree is generated,
+table. Users may also construct HO-Trees from scratch for custom               users can view and modify the tree structure through the following
+hierarchical modeling needs.                                                   operations, which help users better understand the structure of the
+Answer Generator. The Answer Generator (C) supports complex,                   HO-Tree and generate more accurate answers: (i) Click a node to
+multi-turn QA by decomposing input questions into sub-operations               expand the child nodes connected to it; click again to collapse the
+aligned with the HO-Tree structure. Using a pipeline approach, the             subtree. (ii) Right-click to view the menu bar to rename, delete, or
+system performs both top-down and bottom-up subtree retrieval,                 create new child nodes. (iii) Hover the mouse over a node to view
+enabling precise execution over deeply nested layouts. To enhance              specific node content in the upper right corner. (iv) Click save to
+reliability, ST-Raptor introduces a dual-phase verification scheme:            synchronize the constructed tree structure to the LLM for question-
+forward verification checks the logic and execution trace of the               answering. If users need to build from scratch, we also support
+sub-operations, while backward verification rephrases the question             related operations; they can create a root node by clicking the plus
+and ensures answer consistency. For instance, given a query like               sign in the middle of the blank editor.
+“What is the average completion rate across all KPI categories?”,              (3) Multi-Turn QA. Users can fill in the questions they need to ask
+ST-Raptor decomposes it into sub-steps (e.g., locate KPI subtree →             in the input box. After submission, the Agent will complete the
+extract completion rates → compute average), thereby reducing                  subject of the question and feed it into the LLM. After the LLM
+hallucination risks.                                                           generates the answer and confidence score, the Agent optimizes
+Orchestration Agent. Finally, real-world usage often involves                  the output into a more understandable form based on the question,
+multi-turn interactions where follow-up queries depend on prior                and counts the answer generation time to display on the frontend
+context (e.g., “this product” or “the table from yesterday”). The              page. The user’s historical questions will be listed in the dialog box.
+Orchestration Agent (D) serves as the controller that tracks                   (4) Reasoning Chain Visualization. For complex multi-hop queries,
+query history, resolves ambiguous references, and routes user queries          on this page, users can view the single-step sub-questions generated
+to the appropriate modules. It is equipped with a dynamic memory               by the decomposition of the original complex question. After the
+loop that supports seamless switching across files, tables, and previ-         question is successfully answered, the page will also display the
+ous turns, thereby enabling fluid and precise user-model interaction.          retrieval path of the HO-Tree. Users can modify the tree structure
+For example, if a user first asks about “Product A” and then asks              based on this retrieval path to make it more conducive to searching.
+“What is the profit of this product?” the agent resolves “this product”        (5) History Session Management. Considering that users have the
+to “Product A” by referring to previous context.                               need to backtrack to historical sessions and ask questions, users
+                                                                               can select the desired session window to switch sessions, and the
+3 DEMONSTRATION                                                                Agent will find the corresponding HO-Tree for question-answering.
+                                                                               (6) System Monitoring. During system operation, the time for the
+3.1 End-to-End Experience                                                      LLM to generate trees and answers may be long. Users can de-
+This section presents the ST-Raptor system interface. As shown in              termine the running status of the system by checking the logs.
+Figure 3, users can submit tables to generate HO-Trees and conduct             Furthermore, since users may be interested in the specific processes
+multi-turn question-answering. The specific steps are as follows:              by which the model generates trees and decomposes questions,
+(1) Uploading Tables. Users need to configure the LLM, VLM, and                we have added detailed log outputs for each process. Users can
+text embedding model on the model configuration page, and upload               understand the overall operation process through this module.
+                                                                           3
+Conference acronym ’XX, June 03–05, 2018, Woodstock, NY                                                                                          Jinxiu Qu et al.
+
+
+
+
+                                  Figure 4: Performance Comparison on the SSTQA and WikiTQ Datasets.
+
+
+3.2     Scenario 1: Interactive Tree Editing for                             Performance Comparison: As shown in Figure 4, ST-Raptor
+        Query Reorientation                                                  achieves the highest accuracy, surpassing the best-performing base-
+                                                                             line by 11.2%. This gain is driven by three key techniques in our
+While ST-Raptor automatically constructs the HO-Tree by leverag-
+                                                                             demo system: (1) The HO-Tree abstraction decouples layout pars-
+ing layout cues and model predictions, the resulting tree structure
+                                                                             ing from logical reasoning and supports intuitive inspection and
+may not always align with user intent due to model uncertainty
+                                                                             correction via our visual Tree Editor, enabling users to reshape the
+or layout ambiguity. For instance, in a sales table from the SSTQA
+                                                                             table structure before QA. (2) The question decomposition module
+benchmark, the system, by default, builds the M-Tree (metadata
+                                                                             transforms complex natural language queries into sub-questions
+information in the HO-Tree) using temporal headers (e.g., “Janu-
+                                                                             aligned with tree operations, boosting the interpretability and relia-
+ary”, “February”) and the B-Tree using product names. However,
+                                                                             bility of model execution. (3) The Agent coordinates model behavior
+when users are more interested in analyzing the monthly trend of
+                                                                             to perform vision-based extraction on table images and to track
+a particular product rather than aggregating data by month, the
+                                                                             context across multi-turn queries, which is essential for handling
+default structure becomes suboptimal. To address this, ST-Raptor
+                                                                             many error-prone scenarios. Compared to LLM-only or agent-based
+provides a Tree Editor that enables users to interactively adjust the
+                                                                             baselines, ST-Raptor avoids semantic collapse and layout loss by
+tree layout. With simple drag-and-drop operations, users can re-
+                                                                             preserving structural hierarchy and enabling human-in-the-loop
+structure the HO-Tree (e.g., promoting product names to the MTree)
+                                                                             refinement, leading to superior results not only on SSTQA but
+to reflect their analytical goals. Empirically, such refinements not
+                                                                             also on WikiTQ-ST. That is, even on simpler structured tables (like
+only improve answer accuracy for downstream queries but also
+                                                                             those in WikiTQ-ST), ST-Raptor maintains an edge due to its hybrid
+enhance system interpretability and responsiveness.
+                                                                             layout-to-logic pipeline and modular, reasoning framework. Instead,
+                                                                             Agent-based baselines like ReAcTable and DocOwl struggle with
+3.3     Scenario 2: Complex Query Execution on                               structural comprehension (e.g., flattening multi-level headers and
+        Real-World Tables                                                    treating each header independently).
+We next evaluate how well ST-Raptor performs on comparatively
+complex semi-structured table question answering tasks.
+                                                                             References
+                                                                             [1] Anwen Hu, Haiyang Xu, Jiabo Ye, and et al. 2024. mPLUG-DocOwl 1.5: Unified
+Settings: For ST-Raptor, we employ Gemini-3.0-preview as the                     Structure Learning for OCR-free Document Understanding. In EMNLP (Findings).
+vision-language model, Gemini-2.0 as the general large language                  Association for Computational Linguistics, 3096–3120.
+model, and text-embedding-v1 as the semantic embedding model.                [2] Zirui Tang, Boyu Niu, Xuanhe Zhou, Boxiu Li, Wei Zhou, Jiannan Wang, Guoliang
+                                                                                 Li, Xinyi Zhang, and Fan Wu. 2025. ST-Raptor: LLM-Powered Semi-Structured
+And we compare with advanced baselines, including OpenSearch-                    Table Question Answering. Proc. ACM Manag. Data 3, 6 (2025), 1–27.
+SQL [3], TableLLaMA [4], TableLLM [5], ReAcTable [6], TATLLM [8],            [3] Xiangjin Xie, Guangwei Xu, Lingyan Zhao, and Ruijie Guo. 2025. OpenSearch-SQL:
+                                                                                 Enhancing Text-to-SQL with Dynamic Few-shot and Consistency Alignment. Proc.
+TableLLaVA [7], mplug-DocOw1.5 [1], and general LLMs like GPT-                   ACM Manag. Data 3, 3 (2025), 194:1–194:24.
+4o and DeepSeekV3.                                                           [4] Tianshu Zhang, Xiang Yue, Yifei Li, and Huan Sun. 2024. TableLlama: Towards
+Data Collection: The 102 tables in SSTQA were meticulously                       Open Large Generalist Models for Tables. In NAACL-HLT. Association for Com-
+                                                                                 putational Linguistics, 6024–6044.
+filtered from over 2,031 real-world tables covering 19 typical real-         [5] Xiaokang Zhang, Sijia Luo, Bohan Zhang, and et al. 2025. TableLLM: Enabling
+world scenarios (such as administrative and financial management).               Tabular Data Manipulation by LLMs in Real Office Usage Scenarios. In ACL.
+These tables feature semi-structured characteristics, including nested       [6] Yunjia Zhang, Jordan Henkel, Avrilia Floratou, Joyce Cahoon, Shaleen Deep, and
+                                                                                 Jignesh M. Patel. 2024. ReAcTable: Enhancing ReAct for Table Question Answering.
+cells, multi-row/column headers, and irregular layouts, thereby                  Proc. VLDB Endow. 17, 8 (2024), 1981–1994.
+ensuring representativeness in terms of both structure and infor-            [7] Mingyu Zheng, Xinwei Feng, Qingyi Si, and et al. 2024. Multimodal Table Under-
+                                                                                 standing. In ACL (1). Association for Computational Linguistics, 9102–9124.
+mation. WikiTQ contains a large number of semi-structured tables             [8] Fengbin Zhu, Ziyang Liu, Fuli Feng, Chao Wang, Moxin Li, and Tat-Seng Chua.
+from Wikipedia, but these tables typically have simple layouts with              2024. TAT-LLM: A Specialized Language Model for Discrete Reasoning over
+merged cells and are converted to structured formats during the                  Financial Tabular and Textual Data. In ICAIF. ACM, 310–318.
+benchmark preprocessing stage. We converted 25% of the above
+tables into images to match practical usage requirements.
+                                                                         4
+
