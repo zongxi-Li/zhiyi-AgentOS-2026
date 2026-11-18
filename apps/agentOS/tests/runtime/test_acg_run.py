@@ -280,8 +280,15 @@ def test_runtime_persists_broker_communication_usage_without_output_body() -> No
         "fields",
         "tokens",
         "channel",
+        "operationId",
+        "readKind",
+        "readPhase",
     }
-    assert broker_events[0].payload["fields"] == ["title"]
+    payload = broker_events[0].payload
+    assert payload["fields"] == ["title"]
+    assert payload["operationId"] == f"commit:{run.run_id}:summarize:0:prefetch:extract"
+    assert payload["readKind"] == "fields"
+    assert payload["readPhase"] == "prefetch"
     trace_payloads = [event.payload for event in result.trace]
     assert all("hidden" not in str(payload) for payload in trace_payloads)
 

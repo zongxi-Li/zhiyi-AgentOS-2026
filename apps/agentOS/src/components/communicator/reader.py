@@ -40,8 +40,9 @@ class CommunicationReader:
 
     def describe_sources(self) -> list[dict]:
         return [self._broker.describe_reference(run_id=self._run_id,
-            consumer_step_id=self._consumer_step_id, output_ref=reference)
-            for reference in self._output_refs.values()]
+            consumer_step_id=self._consumer_step_id, output_ref=reference,
+            producer_step_id=producer)
+            for producer, reference in self._output_refs.items()]
 
     @property
     def operation_store(self):
@@ -87,6 +88,7 @@ class CommunicationReader:
             run_id=self._run_id,
             consumer_step_id=self._consumer_step_id,
             output_ref=output_ref,
+            producer_step_id=producer_step_id,
             requested_fields=fields,
             max_tokens=limit,
             reason=reason,
@@ -114,6 +116,7 @@ class CommunicationReader:
         pack, next_cursor = await self._broker.read_reference_page(
             run_id=self._run_id, consumer_step_id=self._consumer_step_id,
             output_ref=output_ref, requested_fields=fields, cursor=cursor,
+            producer_step_id=producer_step_id,
             page_tokens=page_tokens, reason=reason,
             operation_id=operation_id,
             supplemental_limit=self.model_budget.total_tokens if self.model_budget else None,

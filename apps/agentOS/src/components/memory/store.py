@@ -42,8 +42,9 @@ class MemoryStore:
         """
         return list(self._records.values())
 
-    # TODO: 接入 SQLite/向量数据库适配器，并实现索引、事务和加密配置。
-
+    def values_for_scope(self, scope: str) -> list[MemoryRecord]:
+        """Return this scope's candidates; MemoryService still owns admission."""
+        return [record for record in self._records.values() if record.scope == scope]
 
 class SQLiteMemoryStore:
     """面向审核续跑的 SQLite 记忆仓库。
@@ -72,6 +73,9 @@ class SQLiteMemoryStore:
                 record_json TEXT NOT NULL
             )"""
         )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS execution_memory_scope ON execution_memory(json_extract(record_json, '$.scope'))"
+        )
         self._connection.commit()
 
     def put(self, record: MemoryRecord) -> None:
@@ -99,6 +103,15 @@ class SQLiteMemoryStore:
         """读取全部合同记录，由 MemoryService 继续执行范围、过期与排序控制。"""
         with self._lock:
             rows = self._connection.execute("SELECT record_json FROM execution_memory ORDER BY rowid").fetchall()
+        return [MemoryRecord.model_validate(json.loads(row[0])) for row in rows]
+
+    def values_for_scope(self, scope: str) -> list[MemoryRecord]:
+        """Load only one scope's records through the same authoritative store."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT record_json FROM execution_memory WHERE json_extract(record_json, '$.scope') = ? ORDER BY rowid",
+                (scope,),
+            ).fetchall()
         return [MemoryRecord.model_validate(json.loads(row[0])) for row in rows]
 
     def close(self) -> None:

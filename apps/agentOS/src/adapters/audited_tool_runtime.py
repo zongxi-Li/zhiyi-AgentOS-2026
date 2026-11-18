@@ -25,18 +25,24 @@ class ToolAuthorizationError(PermissionError):
 class AuditedToolRuntime:
     """将 ToolRuntime 包装为授权前置、只记安全元数据的调用面。"""
 
-    def __init__(self, *, delegate: ToolRuntime, allowed_tools: Iterable[str]) -> None:
+    def __init__(self, *, delegate: ToolRuntime, allowed_tools: Iterable[str],
+                 _include_native_tools: bool = True, _allow_unstructured_run: bool = True) -> None:
         self.delegate = delegate
         discover = getattr(delegate, "list_tools", None)
         self.native_tools = frozenset(tool.name for tool in discover() if tool.source == "hands") if callable(discover) else frozenset()
-        self.allowed_tools = frozenset(allowed_tools) | self.native_tools
+        self.allowed_tools = frozenset(allowed_tools) | (self.native_tools if _include_native_tools else frozenset())
+        self._allow_unstructured_run = _allow_unstructured_run
         self.events: list[dict[str, str]] = []
 
-    def scoped(self, allowed_tools: Iterable[str]) -> "AuditedToolRuntime":
-        """隔离调用状态，收缩 legacy scope；Hands 目录保持所有节点一致。"""
+    def scoped(self, allowed_tools: Iterable[str], *, allow_unstructured_run: bool = True) -> "AuditedToolRuntime":
+        """隔离调用状态；原生与 legacy 工具都只能继续收缩。"""
+        allowed = self.allowed_tools.intersection(allowed_tools)
         return AuditedToolRuntime(
             delegate=self.delegate,
-            allowed_tools=self.allowed_tools.intersection(allowed_tools),
+            allowed_tools=allowed,
+            _include_native_tools=False,
+            _allow_unstructured_run=(self._allow_unstructured_run and allow_unstructured_run
+                                     and allowed == self.allowed_tools),
         )
 
     def list_tools(self):
@@ -47,13 +53,16 @@ class AuditedToolRuntime:
         return next((tool for tool in self.list_tools() if tool.name == name), None)
 
     async def run(self, text: str, **kwargs: Any) -> Any:
-        """保留工具运行时的文本入口；具体编排授权仍由 delegate 自身负责。"""
+        """文本编排无法证明具体工具；收缩权限后只能使用命名调用入口。"""
+        if not self._allow_unstructured_run:
+            raise ToolAuthorizationError("native.tool-session")
         return await self.delegate.run(text, **kwargs)
 
     def bind_context(self, context, guard):
         binder = getattr(self.delegate, 'bind_context', None)
         return AuditedToolRuntime(delegate=binder(context,guard) if binder else self.delegate,
-                                  allowed_tools=self.allowed_tools)
+                                  allowed_tools=self.allowed_tools, _include_native_tools=False,
+                                  _allow_unstructured_run=self._allow_unstructured_run)
 
     async def verified_observations(self, context):
         collect = getattr(self.delegate, 'verified_observations', None)

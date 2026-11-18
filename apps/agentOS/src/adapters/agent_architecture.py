@@ -119,7 +119,13 @@ class FrameworkAgent(BaseAgent):
         """只投影当前节点已经获得的任务、解析输入和上下文包。"""
         pack = context.context_pack
         pack_data = getattr(pack, "data", {}) if pack is not None else {}
+        source_data = getattr(pack, "source_data", {}) if pack is not None else {}
         evidence_refs = getattr(pack, "evidence_refs", []) if pack is not None else []
+        delivered_context = {
+            "data": dict(pack_data) if isinstance(pack_data, dict) else {},
+            "sourceData": dict(source_data) if isinstance(source_data, dict) else {},
+            "evidenceRefs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
+        }
         if context.mission_intent_basis is not None:
             from runtime.planner_input_adapter import material_input
             return {
@@ -127,8 +133,7 @@ class FrameworkAgent(BaseAgent):
                 "materials": material_input(context.task.input),
                 "step": {"stepId": context.step.step_id, "goal": context.step.goal,
                          "input": dict(context.step.resolved_input)},
-                "context": {"data": dict(pack_data) if isinstance(pack_data, dict) else {},
-                            "evidenceRefs": list(evidence_refs) if isinstance(evidence_refs, list) else []},
+                "context": delivered_context,
             }
         return {
             "task": {
@@ -140,10 +145,7 @@ class FrameworkAgent(BaseAgent):
                 "stepId": context.step.step_id,
                 "input": dict(context.step.resolved_input),
             },
-            "context": {
-                "data": dict(pack_data) if isinstance(pack_data, dict) else {},
-                "evidenceRefs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
-            },
+            "context": delivered_context,
         }
 
     @staticmethod

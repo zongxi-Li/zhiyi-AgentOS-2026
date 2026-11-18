@@ -20,7 +20,7 @@ WorkflowRuntime
 | `contracts/memory.py` | 跨组件合同：`MemoryType`、`MemoryRecord`、`MemoryQuery`、`MemoryPolicy` 和批量写入合同。记录包含 ID、类型、JSON 内容、scope、重要度、标签和创建/过期时间。 |
 | `models.py` | 记忆组件的投影/事件类型：`WorkingMemory`、混合检索命中及检索事件、结构化提交事件、阶段压缩包 `PhaseCapsule`。 |
 | `service.py` | 唯一的读写 Facade。执行准入、过期与范围过滤、混合排序、Token 预算、步骤记忆引用校验、阶段 capsule 创建和运行期工作记忆构造。 |
-| `store.py` | 存储适配。`MemoryStore` 是进程内字典；`SQLiteMemoryStore` 把合同 JSON 存进独立 SQLite 表并支持重启后恢复。两者提供 `put/get/values`。 |
+| `store.py` | 存储适配。`MemoryStore` 是进程内字典；`SQLiteMemoryStore` 把合同 JSON 存进独立 SQLite 表并支持重启后恢复。两者提供 `put/get/values/values_for_scope`。 |
 | `admission.py` | 按策略允许的 `memory_type` 做写入准入；无策略时允许写入。 |
 | `retrieval.py` | 元数据过滤、BM25 词法评分及可选的 embedding/vector adapter。内置确定性哈希 embedding 和内存向量索引主要用于离线测试。 |
 | `algorithms.py` | 传统 `search` 的确定性重排：重要度降序，ID 升序打破平局。 |
@@ -32,6 +32,7 @@ WorkflowRuntime
 
 1. `ACGNodeRunner` 解析 Blueprint 步骤上的 `memoryPolicy`，确定是否读/写、读写类型、条数、Token 预算及审核要求。策略在执行时被校验并传给记忆服务。
 2. 读取只发生在启用 read 时。`recall_for_step` 强制将 `scope` 设为当前 `run_id`，避免步骤借查询读取其它运行的记忆。
+   查询使用本节点目标、名称、验收标准和来源引用，不以节点 ID 或上游正文代替语义查询。首次投递前，执行器按 commitId 在既有不可变操作 WAL 中冻结记录、召回事件和策略；同次执行恢复时复用原记录，期间新增记忆或过期时间不改变已投递上下文，新 Attempt 则重新召回。历史缺少快照的已准入请求仍由原 requestHash 校验，不补写假定的历史快照。
 3. 写入内容来自通过输出合同校验及字段白名单控制后的结果；节点不会把 Agent 原始响应或完整 `WorkflowRun` 直接灌入记忆。`StructuredMemoryEventBuilder` 还会生成由 run/step/commit 确定的事件 ID，并限制摘要和证据引用长度。
 4. 节点先把 `pendingMemory` 意图放入待提交结果。普通成功结果在执行结果提交后由 `_publish_committed_memory` 发布；需要审核的内容在审核通过后由 Review 流程发布，审核前不会进入正式存储或变成可读引用。策略拒绝写入时返回空结果，不产生有效 `memoryRef`。
 5. `remember_step_output` 使用 `memory:{run_id}:{step_id}` 作为幂等 ID。同一 ID、类型、scope、标签和内容的重试会复用记录；同 ID 内容不同则报错，避免恢复重放覆盖已提交事实。
@@ -45,10 +46,10 @@ WorkflowRuntime
 
 `hybrid_search` 从权威 store 读取记录，依次执行：
 
-1. 按当前 UTC 时间排除过期记录。
+1. 有 scope 时优先通过 store 的 `values_for_scope` 只载入该范围的候选；SQLite 使用同一权威表的 scope 索引，旧注入 store 可继续使用 `values`。按当前 UTC 时间排除过期记录。
 2. 依据 `MemoryQuery` 过滤类型、scope 和标签。步骤召回固定使用当前 run 的 scope。
-3. 对候选内容计算 BM25 词法分数；文本由 JSON 内容生成，tokenizer 支持英文/数字 token 和中文字符/二元组。
-4. 若同时注入 embedding adapter 与 vector index，则查询向量索引，并仅保留元数据过滤后仍允许的 ID。两个排名用常数 `60` 的 Reciprocal Rank Fusion (RRF) 融合，分数相同时按 ID 稳定排序。
+3. 对候选内容计算 BM25 词法分数；文本由 JSON 内容生成，tokenizer 支持英文/数字 token 和中文字符/二元组。只有正相关词法命中或有限正分向量命中进入融合，零相关记录不会仅凭排序位置填满上下文；没有相关命中时返回空列表。
+4. 若同时注入 embedding adapter 与 vector index，则查询向量索引，并仅保留元数据过滤后仍允许的 ID。当前向量接口先取全局 top-K，再过滤 ID；可阻止跨 scope 内容投递，但其他 scope 的高分结果仍可能挤掉本 scope 的语义候选。两个排名用常数 `60` 的 Reciprocal Rank Fusion (RRF) 融合，分数相同时按 ID 稳定排序。
 5. 按候选记录内容估算 Token 成本，跳过放不进预算的完整记录，不截断正文；最多返回 query limit 条。
 6. 返回记录、命中分数和 `MemoryRetrievalEvent`（scope、模式、引用、预算及降级原因），并保存为 `last_retrieval_event` 供执行器审计投影使用。
 
@@ -71,7 +72,7 @@ WorkflowRuntime
 - `WorkflowRuntime` 默认使用 `SQLiteMemoryStore`，数据库路径由 `AGENTOS_EXECUTION_MEMORY_DB` 指定，默认 `data/execution_memory.sqlite3`；运行/部署方负责管理该文件和生命周期。独立创建的 `MemoryService()` 默认使用易失的 `MemoryStore`。
 - SQLite 表以 `memory_id` 为主键保存合同 JSON；`put` 是覆盖写入并逐条提交。store 不执行策略、scope、过期和检索排序，这些必须经 `MemoryService`。
 - 当前 SQLite 适配器没有向量索引、全文索引、加密配置或显式事务批次；`close()` 负责关闭连接。默认进程内 store 与内存向量索引也没有并发锁。多进程/并发一致性需由替换的存储适配器提供。
-- 检索的 scope 是数据隔离过滤，不等同于完整授权系统。新增外部检索器或存储时必须保持 `MemoryService` 为唯一读写入口，并确保在评分前执行准入边界，避免跨 scope 结果进入排名。
+- 检索的 scope 是数据隔离过滤，不等同于完整授权系统。新增外部检索器或存储时必须保持 `MemoryService` 为唯一读写入口，并执行准入过滤；向量适配器若需保证本 scope 的召回完整性，还须提供候选集过滤能力。
 - `compact_record` 只生成元数据摘要；真正的阶段压缩由 capsule 逻辑负责，且保留源引用。记忆系统不会自动推断、合并或遗忘语义记忆。
 
 ## 常用入口

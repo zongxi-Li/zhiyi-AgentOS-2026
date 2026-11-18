@@ -1,4 +1,4 @@
-"""通信器内部的低熵上下文合同。"""
+"""通信器内部的上下文合同。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def estimate_tokens(payload: Any) -> int:
     """以规范文本长度估算稳定的相对 Token 数。
 
     ``None`` 返回零，其余对象优先按排序 JSON 编码，失败时退回 ``str``；结果仅
-    用于预算排序，不能替代模型分词器计费。时间与空间复杂度随序列化大小 O(n)。
+    用于读取预算统计，不能替代模型分词器计费。时间与空间复杂度随序列化大小 O(n)。
     """
     if payload is None:
         return 0
@@ -37,7 +37,7 @@ def input_revision(payload: Any) -> str:
 
 
 class ContextPack(BaseModel):
-    """描述可投递给下游步骤的最小充分、可审计上下文。
+    """描述可投递给下游步骤的按来源保留、可审计上下文。
 
     ``data`` 与 ``source_data`` 只能来自上游字段白名单；合同状态、缺失字段、
     Token 统计和输入版本共同记录装配边界。模型禁止额外字段，调用方负责确保

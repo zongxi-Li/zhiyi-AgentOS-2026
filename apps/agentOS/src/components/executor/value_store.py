@@ -135,6 +135,12 @@ class ExecutionValueStore(Protocol):
     def list_node_commits(self, *, run_id: str) -> tuple[dict[str, Any], ...]:
         """列举当前 run 的引用型节点提交记录，不读取输出或 ContextPack 正文。"""
 
+    def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
+        """Read a run-owned immutable operation value, including admitted inputs."""
+
+    def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
+        """Persist an operation value once; conflicting replay must fail."""
+
     def transition_node_execution(self, record: NodeExecutionRecord) -> NodeExecutionRecord:
         """Persist one monotonic node execution phase transition."""
 
@@ -165,6 +171,21 @@ class InMemoryExecutionValueStore:
     def get_output(self, *, run_id: str, output_ref: str) -> dict[str, Any]:
         """返回独立副本，确保读取方不能通过别名篡改仓库记录。"""
         return self._get(self._outputs, run_id=run_id, reference=output_ref)
+
+    def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
+        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        return (self._get(self._outputs, run_id=run_id, reference=reference)
+                if reference in self._outputs else None)
+
+    def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
+        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        current = self.get_tool_value(run_id=run_id, key=key)
+        if current is not None:
+            if current != payload:
+                raise ValueError("immutable tool operation conflict")
+            return reference
+        self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now(), None)
+        return reference
 
     def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """深拷贝已装配上下文，使 checkpoint 外的正文仍受服务边界保护。"""

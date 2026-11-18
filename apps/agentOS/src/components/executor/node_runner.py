@@ -17,12 +17,15 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from components.communicator import CommunicationBroker, CommunicationReader, CommunicatorService, ReliableMessage
+from components.communicator.manifest import CommunicationManifest, CommunicationRule
+from components.communicator.reliable import next_debate_phase
 from components.communicator.contracts import ContextPack, estimate_tokens, input_revision
 from components.auditor.execution_audit import ExecutionAuditService
 from components.auditor.decision_store import DecisionStore, InMemoryDecisionStore
 from components.memory import MemoryService, StructuredMemoryEventBuilder
 from components.content import ContentManifestStore, ContentWorksetSession
 from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
+from adapters.audited_tool_runtime import AuditedToolRuntime
 from adapters.resource_execution import ResourceExecutionAdapter
 from contracts.communication import validate_contract_payload
 from contracts.artifacts import canonicalize_artifact_identity, final_synthesis_output_schema
@@ -32,12 +35,43 @@ from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowD
 from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryManifest, SkillManifest
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
 from contracts.content import ContentKind
+from contracts.planning import TaskImplementationBinding, TaskPlan
 from service.agents.base import BaseAgent, AgentRunContext
 from contracts.runtime_events import RuntimeEvent, TRANSIENT_RUNTIME_EVENT_TYPES
 from runtime.live_events import runtime_event_broker
 
 from .graph import ACGExecutionState
+from .memory_input import (
+    effective_memory_policy, frozen_memory_policy, memory_retrieval_identity, memory_retrieval_key,
+    memory_retrieval_reference, normalize_memory_policy, validate_memory_retrieval_snapshot,
+)
 from .value_store import ExecutionValueStore, InMemoryExecutionValueStore
+
+
+_WORKSPACE_READ_ONLY_ROLES = frozenset({"workspace_acquisition", "workspace_review", "workspace_discovery"})
+_WORKSPACE_READ_ONLY_TOOLS = frozenset({"fs.read", "fs.list"})
+
+
+def _workspace_read_only_step(run: RuntimeRunRecord, step: WorkflowStep) -> bool:
+    """Use frozen semantic identity, never model text or generic verification."""
+    if step.capability == "information_extraction" and run.execution_state.get("workspaceObservations"):
+        return True
+    if step.logical_role in _WORKSPACE_READ_ONLY_ROLES:
+        return True
+    try:
+        plan = TaskPlan.model_validate(run.execution_state.get("taskPlan"))
+        keys = {binding.plan_node_key for raw in run.execution_state.get("taskBindings", ())
+                if (binding := TaskImplementationBinding.model_validate(raw)).acg_node_id == step.step_id}
+    except (TypeError, ValueError):
+        # Legacy unrelated workflows have no semantic plan/binding snapshot.
+        return False
+    return any(node.key in keys and (
+        node.logical_role in _WORKSPACE_READ_ONLY_ROLES
+        or node.metadata.get("source") in {"workspace_review", "workspace_discovery"}
+        or (isinstance(node.metadata.get("taskType"), str)
+            and node.metadata["taskType"] in _WORKSPACE_READ_ONLY_ROLES)
+        or any(isinstance(constraint.get("workspaceReview"), dict) for constraint in node.constraints)
+    ) for node in plan.nodes)
 
 
 class EntropyBudgetExceededError(ValueError):
@@ -159,6 +193,13 @@ class ACGNodeRunner:
             node_id: tuple(source_ids)
             for node_id, source_ids in (upstream_step_ids or {}).items()
         }
+        if upstream_step_ids is None:
+            # Minimal runners declare their topology through input.from. They
+            # use the same Broker as compiled runs and never scan all outputs.
+            self.upstream_step_ids = {
+                node_id: tuple(step.input.get("from", {}))
+                for node_id, step in self.steps.items()
+            }
         self.execution_audit = execution_audit or ExecutionAuditService()
         # 审计决定必须先于输出、记忆和提交记录落入独立真源。最小运行器使用内存
         # 实现；ExecutionRuntime 会注入可跨进程恢复的 SQLite 实现。
@@ -219,6 +260,7 @@ class ACGNodeRunner:
         选择已声明分支，不会把它写入 ``ACGExecutionState`` 或 checkpoint。
         """
         step = self.steps[step_id]
+        self._ensure_communication_broker(state)
         loop_path = tuple(state.loop_paths.get(step_id, ()))
         commit_id = self._commit_id(
             state.run_id, step_id, step.attempt, loop_path=loop_path,
@@ -284,7 +326,7 @@ class ACGNodeRunner:
             loopPath=loop_path,
         )
         execution_record = self.value_store.transition_node_execution(execution_record)
-        # State 只有摘要/引用。上游完整 slot 值必须由通信服务根据 outputRef 从受控
+        # State 只有摘要/引用。上游完整 slot 值必须由 Broker 根据 outputRef 从受控
         # 仓库读取。entropyBudget 只表示 L1/L2 的规划与协作复杂度，不得在
         # L3 被重新解释为输入/输出 Token 上限或因上游摘要较多而拒绝执行。
         mode = self.communication_modes.get(step_id, "STRICT_CONTRACT")
@@ -292,7 +334,7 @@ class ACGNodeRunner:
         if mode in {"EVENT", "DEBATE"}:
             # EVENT 是纯通知：只把 outputRef 转为证据引用，绝不调用仓库读取其正文。
             # 上游列表由编译后的依赖图注入，避免无关步骤的事件引用被额外暴露。
-            source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
+            source_ids = self.upstream_step_ids.get(step_id, ())
             pending_messages = (
                 self.reliable_communication_store.pending(
                     run_id=state.run_id, consumer_step_id=step_id
@@ -356,7 +398,7 @@ class ACGNodeRunner:
                 evidenceRefs=[f"blackboard:{item}" for item in refs],
                 sourceStepIds=list(self.upstream_step_ids.get(step_id, ())),
             )
-        elif self.communication_broker is not None:
+        else:
             pack = await self._assemble_broker_context(
                 state=state,
                 step_id=step_id,
@@ -366,32 +408,11 @@ class ACGNodeRunner:
             # Broker 是唯一正文读取入口；读取成功后才用已裁剪的 ContextPack 登记
             # 消费与交互血缘。账本仅封存摘要、字段名和引用，恢复会复用 commitId。
             self.communicator.record_context_consumption(pack, operation_id=commit_id)
-        else:
-            pack = self.communicator.assemble_execution_context(
-                run_id=state.run_id,
-                mission_id=self.task.mission_id,
-                step_id=step_id,
-                input_spec=step.input,
-                upstream_refs=state.output_refs,
-                value_store=self.value_store,
-                objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
-                step_goal=step.goal or step.name,
-                token_budget=None,
-                operation_id=commit_id,
-            )
         if pack.contract_status != "valid":
             raise ValueError(f"input contract is incomplete for {step_id}: {', '.join(pack.missing_fields)}")
         input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
         validate_contract_payload(pack.data, input_schema, step_id=step_id, direction="input")
-        memory_policy = self._memory_policy(step.input)
-        explicit_memory_rules = self.memory_manifest.for_step(step_id)
-        if explicit_memory_rules:
-            memory_policy["read"] = bool(
-                self.memory_manifest.for_step(step_id, "read")
-            )
-            memory_policy["write"] = bool(
-                self.memory_manifest.for_step(step_id, "write")
-            )
+        memory_policy = effective_memory_policy(step_id, step.input, self.memory_manifest)
         communication_reader = self._build_communication_reader(
             state=state,
             step_id=step_id,
@@ -403,19 +424,9 @@ class ACGNodeRunner:
             step=step,
             commit_id=commit_id,
         )
-        memories = (
-            self.memory.recall_for_step(
-                run_id=state.run_id,
-                step_id=step_id,
-                query=step.name or step_id,
-                memory_types=memory_policy["readTypes"] or None,
-                limit=memory_policy["limit"],
-                token_budget=memory_policy["tokenBudget"],
-            )
-            if memory_policy["read"]
-            else []
+        memories, retrieval_event = self._frozen_memory_retrieval(
+            step=step, execution=execution_record, policy=memory_policy,
         )
-        retrieval_event = self.memory.last_retrieval_event
         memory_access = {
             "policyId": memory_policy["policyId"],
             "read": memory_policy["read"],
@@ -444,12 +455,21 @@ class ACGNodeRunner:
             "tokensUsed": sum(estimate_tokens(record.content) for record in memories),
             "requireAudit": memory_policy["requireAudit"],
         }
-        # 每个节点复制调用/事件状态，原生能力由 Runtime 统一供给；Planner 的
-        # SkillManifest 与 Agent profile 不再为节点分配 Hands 工具。
+        # Ordinary nodes retain the Runtime's native catalog. Acquisition and
+        # repository review are read-only semantic stages: enforce that scope
+        # before binding context or exposing tools to any Agent implementation.
         step_tool_runtime = self.tool_runtime
-        if self.tool_runtime is not None and hasattr(self.tool_runtime, "scoped"):
-            allowed = set(getattr(self.tool_runtime, "allowed_tools", ()))
-            step_tool_runtime = self.tool_runtime.scoped(allowed)
+        if step_tool_runtime is not None:
+            discover = getattr(step_tool_runtime, "list_tools", None)
+            allowed = set(getattr(step_tool_runtime, "allowed_tools", ()))
+            if callable(discover):
+                allowed.update(tool.name for tool in discover())
+            if not isinstance(step_tool_runtime, AuditedToolRuntime):
+                step_tool_runtime = AuditedToolRuntime(delegate=step_tool_runtime, allowed_tools=allowed)
+            readonly = _workspace_read_only_step(self.run, step)
+            if readonly:
+                allowed.intersection_update(_WORKSPACE_READ_ONLY_TOOLS)
+            step_tool_runtime = step_tool_runtime.scoped(allowed, allow_unstructured_run=not readonly)
         agent_context = AgentRunContext(
             task=self.task,
             run=self.run,
@@ -837,24 +857,15 @@ class ACGNodeRunner:
         session = state.debate_sessions.get(step_id)
         if not isinstance(session, dict):
             return
-        max_rounds = session.get("maxRounds")
-        if type(max_rounds) is not int or max_rounds < 1:
-            raise ValueError("DEBATE session requires explicit positive maxRounds")
-        applied = session.setdefault("appliedCommitIds", [])
+        applied = session.get("appliedCommitIds", [])
         if commit_id in applied:
             return
-        applied.append(commit_id)
         phase = str(session.get("phase") or "propose")
         current_round = int(session.get("round") or 1)
-        if phase == "propose":
-            session["phase"] = "critique"
-        elif phase == "critique":
-            session["phase"] = "vote"
-        elif current_round < max_rounds:
-            session["round"] = current_round + 1
-            session["phase"] = "propose"
-        else:
-            session["phase"] = "complete"
+        next_round, next_phase = next_debate_phase(current_round, phase, session.get("maxRounds"))
+        session["appliedCommitIds"] = [*applied, commit_id]
+        session["round"], session["phase"] = next_round, next_phase
+        if next_phase == "complete":
             session["resultArtifactRef"] = output_ref
 
     def _publish_committed_memory(
@@ -970,82 +981,44 @@ class ACGNodeRunner:
         return result
 
     @staticmethod
-    def _memory_policy(step_input: object) -> dict[str, Any]:
-        """解析已冻结的步骤记忆策略，并拒绝无法审计的错误声明。
+    def _memory_retrieval_query(step: WorkflowStep) -> str:
+        """Recall for this work item, without feeding upstream bodies back in."""
+        fields = (step.goal, step.name, *step.acceptance_criteria, *step.source_refs)
+        parts = dict.fromkeys(value.strip() for value in fields if isinstance(value, str) and value.strip())
+        return "\n".join(parts) or step.step_id
 
-        策略存放在 ``WorkflowStep.input.memoryPolicy``，因为它是 ACG Blueprint
-        元数据同步到本次运行后的私有边界。新格式明确用 ``readTypes`` 表示可读取的
-        类别、用 ``writeType`` 表示输出写入类别，避免一个字段承担相反方向的权限。
-        缺失策略与旧 ``allowedTypes`` 格式仅作兼容输入，解析结果始终是新格式。
+    def _frozen_memory_retrieval(self, *, step: WorkflowStep, execution: NodeExecutionRecord, policy):
+        """Freeze admitted memory in the existing operation WAL before invocation.
+
+        Later same-Run commits, expiry and retrieval improvements cannot change
+        an already admitted model request. A new Attempt owns a new operation.
+        Legacy WAL without this snapshot keeps its exact request-hash proof;
+        do not write a replacement snapshot for an already admitted request.
         """
-        raw = step_input.get("memoryPolicy") if isinstance(step_input, dict) else None
-        if raw is None:
-            raw = {}
-        if not isinstance(raw, dict):
-            raise ValueError("memoryPolicy must be an object")
-        read = raw.get("read", True)
-        write = raw.get("write", True)
-        require_audit = raw.get("requireAudit", False)
-        if not all(isinstance(item, bool) for item in (read, write, require_audit)):
-            raise ValueError("memoryPolicy read, write and requireAudit must be booleans")
-        uses_new_types = "readTypes" in raw or "writeType" in raw
-        if uses_new_types and "allowedTypes" in raw:
-            raise ValueError("memoryPolicy cannot mix allowedTypes with readTypes or writeType")
-        if uses_new_types:
-            read_raw = raw.get("readTypes", [])
-            if not isinstance(read_raw, list):
-                raise ValueError("memoryPolicy.readTypes must be a list")
-            if read and not read_raw:
-                raise ValueError("memoryPolicy.readTypes must not be empty when read is enabled")
-            if write and raw.get("writeType") is None:
-                raise ValueError("memoryPolicy.writeType is required when write is enabled")
-            if not write and raw.get("writeType") is not None:
-                raise ValueError("memoryPolicy.writeType requires write to be enabled")
-            write_raw = raw.get("writeType")
-        else:
-            has_allowed_types = "allowedTypes" in raw
-            read_raw = raw.get("allowedTypes", [])
-            if not isinstance(read_raw, list):
-                raise ValueError("memoryPolicy.allowedTypes must be a list")
-            if has_allowed_types and not read_raw:
-                raise ValueError("memoryPolicy.allowedTypes must not be empty when declared")
-            # 旧策略的写入行为固定为 episodic；保留它，避免历史 Blueprint 改变结果。
-            write_raw = MemoryType.EPISODIC if write else None
-        try:
-            read_types = [
-                item if isinstance(item, MemoryType) else MemoryType(str(item))
-                for item in read_raw
-            ]
-            write_type = (
-                write_raw
-                if isinstance(write_raw, MemoryType)
-                else MemoryType(str(write_raw))
-                if write_raw is not None
-                else None
-            )
-        except ValueError as exc:
-            raise ValueError("memoryPolicy readTypes or writeType contains an unsupported memory type") from exc
-        limit = raw.get("limit", 10)
-        token_budget = raw.get("tokenBudget")
-        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
-            raise ValueError("memoryPolicy.limit must be an integer between 1 and 100")
-        if token_budget is not None and (
-            not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget < 0
-        ):
-            raise ValueError("memoryPolicy.tokenBudget must be a non-negative integer or null")
-        policy_id = raw.get("policyId", "default")
-        if not isinstance(policy_id, str) or not policy_id:
-            raise ValueError("memoryPolicy.policyId must be a non-empty string")
-        return {
-            "policyId": policy_id,
-            "read": read,
-            "write": write,
-            "readTypes": read_types,
-            "writeType": write_type,
-            "limit": limit,
-            "tokenBudget": token_budget,
-            "requireAudit": require_audit,
-        }
+        key = memory_retrieval_key(execution.operation_id)
+        identity = memory_retrieval_identity(execution)
+        frozen_policy = frozen_memory_policy(policy)
+        snapshot = self.value_store.get_tool_value(run_id=execution.run_id, key=key)
+        if snapshot is not None:
+            self.value_store.assert_reference(kind="output", run_id=execution.run_id,
+                step_id=execution.step_id,
+                reference=memory_retrieval_reference(execution.run_id, execution.operation_id))
+        if snapshot is None:
+            admitted = self.value_store.get_tool_value(run_id=execution.run_id,
+                key=execution.operation_id + ":tools:0:model-turn") is not None
+            records = (self.memory.recall_for_step(run_id=execution.run_id, step_id=execution.step_id,
+                query=self._memory_retrieval_query(step), memory_types=policy["readTypes"] or None,
+                limit=policy["limit"], token_budget=policy["tokenBudget"]) if policy["read"] else [])
+            event = self.memory.last_retrieval_event if policy["read"] else None
+            snapshot = {"schemaVersion": 1, "identity": identity, "policy": frozen_policy,
+                "records": [record.model_dump(by_alias=True, mode="json") for record in records],
+                "retrievalEvent": event.model_dump(by_alias=True, mode="json") if event else None}
+            if not admitted:
+                self.value_store.put_tool_value(run_id=execution.run_id, step_id=execution.step_id,
+                                                key=key, payload=snapshot)
+        return validate_memory_retrieval_snapshot(snapshot, execution=execution, policy=policy)
+
+    _memory_policy = staticmethod(normalize_memory_policy)
 
     @staticmethod
     def _write_memory_policy(policy: Mapping[str, Any]) -> MemoryPolicy | None:
@@ -1206,68 +1179,44 @@ class ACGNodeRunner:
         if self._fault_hook is not None:
             self._fault_hook(stage)
 
-    async def _assemble_broker_context(
-        self,
-        *,
-        state: ACGExecutionState,
-        step_id: str,
-        step: WorkflowStep,
-        commit_id: str,
-    ) -> ContextPack:
-        """按编译拓扑经 Broker 读取上游引用，并合并为节点可消费的最小 ContextPack。"""
-        assert self.communication_broker is not None
-        source_ids = self.upstream_step_ids.get(step_id, tuple(state.output_refs))
-        from_map = step.input.get("from") if isinstance(step.input, dict) else None
-        prefetch_map = step.input.get("prefetch") if isinstance(step.input, dict) else None
-        data: dict[str, Any] = {}
-        source_data: dict[str, dict[str, Any]] = {}
-        evidence_refs: list[str] = []
-        delivered = 0
-        available = 0
-        for source_id in source_ids:
-            output_ref = state.output_refs.get(source_id)
-            if output_ref is None:
-                continue
-            declared = from_map.get(source_id, []) if isinstance(from_map, dict) else []
-            requested = (
-                prefetch_map.get(source_id, declared)
-                if isinstance(prefetch_map, dict)
-                else declared
-            )
-            if not isinstance(requested, list):
-                raise ValueError(f"inputSpec prefetch fields for {source_id} must be a list")
-            partial = await self.communication_broker.read_reference(
-                run_id=state.run_id,
-                consumer_step_id=step_id,
-                output_ref=output_ref,
-                requested_fields=[str(field) for field in requested],
-                max_tokens=None,
-                reason=f"ACG step {step_id} requires upstream {source_id}",
-                operation_id=f"{commit_id}:prefetch:{source_id}",
-            )
-            data.update(partial.data)
-            source_data.update(partial.source_data)
-            evidence_refs.extend(item for item in partial.evidence_refs if item not in evidence_refs)
-            delivered += partial.tokens_delivered
-            available += partial.tokens_available
-        # 预算使用是可恢复的数字投影；Broker 在运行期共享同一实例，下一次节点读取
-        # 会继续累加，Runtime 重建时又会从 checkpoint 的这份计数恢复。
-        state.communication_usage = self.communication_broker.usage_snapshot()
-        return ContextPack(
-            runId=state.run_id,
-            stepId=step_id,
-            objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
-            stepGoal=step.goal or step.name,
-            data=data,
-            sourceData=source_data,
-            evidenceRefs=evidence_refs,
-            tokensDelivered=delivered,
-            tokensAvailable=available,
-            savingRatio=(round(max(0.0, 1.0 - delivered / available), 4) if available else 0.0),
-            sourceStepIds=list(source_ids),
-            inputRevision=input_revision(data),
-            attemptId=commit_id,
+    def _ensure_communication_broker(self, state: ACGExecutionState) -> None:
+        """Bind minimal runners to the same reference reader as compiled graphs."""
+        if self.communication_broker is not None:
+            return
+        rules = []
+        for consumer, source_ids in self.upstream_step_ids.items():
+            step = self.steps[consumer]
+            declared = step.input.get("from", {})
+            for producer in source_ids:
+                source = self.steps.get(producer)
+                fields = declared.get(producer)
+                if fields is None:
+                    fields = sorted((source.output_spec.get("properties") or {})) if source else []
+                if not isinstance(fields, list):
+                    raise ValueError("input.from fields must be a list")
+                rules.append(CommunicationRule(
+                    producer_step_id=producer, consumer_step_id=consumer,
+                    allowed_fields=tuple(fields), channel=f"{producer}:{consumer}",
+                ))
+        self.communication_broker = CommunicationBroker(
+            manifest=CommunicationManifest(run_id=state.run_id, rules=tuple(rules)),
+            value_store=self.value_store, usage=state.communication_usage,
         )
+        state.communication_usage = self.communication_broker.usage_snapshot()
+
+    async def _assemble_broker_context(
+        self, *, state: ACGExecutionState, step_id: str, step: WorkflowStep, commit_id: str,
+    ) -> ContextPack:
+        """Delegate acquisition and assembly to the single communication core."""
+        assert self.communication_broker is not None
+        pack = await self.communication_broker.assemble_context(
+            run_id=state.run_id, step_id=step_id, input_spec=step.input,
+            upstream_refs=state.output_refs,
+            objective=(self.mission_intent_basis.objective if self.mission_intent_basis is not None else self.workflow.description),
+            step_goal=step.goal or step.name, operation_id=commit_id, graph_version=state.graph_version,
+        )
+        state.communication_usage = self.communication_broker.usage_snapshot()
+        return pack
 
     def _build_communication_reader(
         self,

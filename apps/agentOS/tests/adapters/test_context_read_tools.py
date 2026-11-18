@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from adapters.agent_tools import AgentToolSession, supports_agent_tools
+from adapters.agent_tools import AgentToolSession, agent_tool_definitions, supports_agent_tools
+from adapters.audited_tool_runtime import AuditedToolRuntime
 from adapters.context_tools import ContextReadTools
 from adapters.model_compatibility import ModelCompatibilityRegistry
 from adapters.model_runtime import RegisteredModelRuntime
@@ -18,6 +19,7 @@ from components.communicator.reader import CommunicationReader
 from components.executor.value_store import SQLiteExecutionValueStore
 from contracts.capability import CapabilityKind, CapabilityManifest
 from contracts.request_budget import SupplementalReadBudget
+from contracts.tools import hands_tools
 
 
 def setup_reader(tmp_path, *, data=None, budget=None, usage=None, store=None):
@@ -36,7 +38,7 @@ def setup_reader(tmp_path, *, data=None, budget=None, usage=None, store=None):
 def context(reader, model=None):
     return SimpleNamespace(communication_reader=reader, tool_runtime=None, model_runtime=model,
         step=SimpleNamespace(input={}, step_id="consumer", name="consumer"),
-        run=SimpleNamespace(run_id="run"), commit_id="commit", attempt_id="attempt")
+        run=SimpleNamespace(run_id="run", input={}, execution_state={}), commit_id="commit", attempt_id="attempt")
 
 
 def test_directory_is_permission_scoped_and_contains_no_body_or_reference(tmp_path):
@@ -45,6 +47,18 @@ def test_directory_is_permission_scoped_and_contains_no_body_or_reference(tmp_pa
     wire = result.model_dump_json()
     assert "never authorized" not in wire and "secret" not in wire and "Sensitive source" not in wire
     assert "outputRef" not in wire and "details" in wire and "estimatedTokens" in wire
+
+
+def test_read_only_workspace_scope_preserves_authorized_context_reading(tmp_path):
+    _, _, reader = setup_reader(tmp_path)
+    bound = context(reader)
+    native = SimpleNamespace(list_tools=hands_tools)
+    bound.tool_runtime = AuditedToolRuntime(delegate=native, allowed_tools=()).scoped({"fs.read", "fs.list"})
+    assert {tool.name for tool in agent_tool_definitions(bound)} == {
+        "fs.read", "fs.list", "context.list_sources", "context.read", "context.read_page"}
+    observed = asyncio.run(ContextReadTools(bound).execute("context.read",
+        {"producerStepId": "producer", "fields": ["title"]}, operation_key="readonly-context"))
+    assert observed.output["data"] == {"title": "brief"}
 
 
 def test_replay_charges_once_after_restoring_checkpoint_and_conflicts_fail_closed(tmp_path):

@@ -58,27 +58,37 @@ def test_lowering_freezes_policy_and_incremental_producer_capability():
     assert initial.input_spec["contextPolicy"]["supplementalReadBudget"] == {
         "version": "supplemental-read.v1", "maxReadTokens": 2048, "pageTokens": 512, "totalTokens": 8192}
     assert initial.input_spec["contextPolicy"]["requestBudget"] == {
-        "version": "request-budget.v1", "totalTokens": 32000, "outputReserveTokens": 8000}
+        "version": "request-budget.v1", "totalTokens": 32000, "outputReserveTokens": 8000,
+        "workingSetMode": "observe", "workingSetTargetTokens": None, "workingSetTriggerTokens": None}
     descriptor.context_policy.prefetch_fields["producer"] = ["large_unrelated"]
     assert initial.input_spec == frozen
 
 
 def test_prefetch_is_enforced_by_context_assembly_without_losing_source_identity():
-    from components.communicator.assembler import ContextAssembler
+    import asyncio
+    from components.communicator import CommunicationBroker, CommunicationManifest, CommunicationRule
+    from components.executor.value_store import InMemoryExecutionValueStore
     upstream = {
         "one": {"analysis": "first", "large_unrelated": "x" * 5000, "constraints": ["keep"]},
         "two": {"analysis": "second", "large_unrelated": "y" * 5000, "constraints": ["also keep"]},
     }
     spec = {"from": {key: list(value) for key, value in upstream.items()},
             "prefetch": {key: ["analysis", "constraints"] for key in upstream}}
-    pack = ContextAssembler().assemble(run_id="run", step_id="consumer", input_spec=spec, upstream_outputs=upstream)
+    store = InMemoryExecutionValueStore()
+    refs = {source: store.put_output(run_id="run", step_id=source, payload=output)
+            for source, output in upstream.items()}
+    broker = CommunicationBroker(value_store=store, manifest=CommunicationManifest(run_id="run", rules=tuple(
+        CommunicationRule(producer_step_id=source, consumer_step_id="consumer",
+                          allowed_fields=tuple(output), channel=f"{source}:consumer")
+        for source, output in upstream.items())))
+    pack = asyncio.run(broker.assemble_context(run_id="run", step_id="consumer", input_spec=spec, upstream_refs=refs))
     assert pack.source_data["one"]["analysis"] == "first"
     assert pack.source_data["two"]["analysis"] == "second"
     assert all("large_unrelated" not in fields for fields in pack.source_data.values())
     assert pack.tokens_delivered < pack.tokens_available
     spec["prefetch"]["one"] = ["not_authorized"]
     with pytest.raises(ValueError, match="subset"):
-        ContextAssembler().assemble(run_id="run", step_id="consumer", input_spec=spec, upstream_outputs=upstream)
+        asyncio.run(broker.assemble_context(run_id="run", step_id="consumer", input_spec=spec, upstream_refs=refs))
 
 
 def test_initial_plan_compiles_prefetch_and_memory_budget_without_mutating_old_package():

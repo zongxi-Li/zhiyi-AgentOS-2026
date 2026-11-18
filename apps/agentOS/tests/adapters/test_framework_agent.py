@@ -15,6 +15,7 @@ from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
 )
+from contracts.mission_semantic import intent_basis_fingerprint
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents.base import AgentProfile, AgentRunContext
 
@@ -43,7 +44,7 @@ class _FrameworkAdapter:
         )
 
 
-def _context() -> AgentRunContext:
+def _context(*, semantic_basis: bool = False) -> AgentRunContext:
     task = RuntimeMissionRecord(
         missionId="mission_000000000001",
         title="framework",
@@ -69,6 +70,21 @@ def _context() -> AgentRunContext:
         agentName="framework-writer",
         resolvedInput={"style": "brief"},
     )
+    if semantic_basis:
+        basis = {
+            "basisSchemaVersion": 1,
+            "missionId": task.mission_id,
+            "sourceType": "SEMANTIC",
+            "sourceRevision": 1,
+            "commitId": "semantic-commit",
+            "objective": "write",
+            "constraints": [],
+            "sourceReferences": [],
+            "sourceStatus": "NOT_APPLICABLE",
+            "fingerprintVersion": 1,
+        }
+        basis["fingerprint"] = intent_basis_fingerprint(basis)
+        run.execution_state["missionIntentBasis"] = basis
     return AgentRunContext(
         task=task,
         run=run,
@@ -116,6 +132,41 @@ def test_framework_agent_remains_a_controlled_acg_node() -> None:
     }
     assert "checkpoint" not in invocation.input
     assert "memoryStore" not in invocation.input
+
+
+@pytest.mark.parametrize("semantic_basis", [False, True])
+def test_framework_agent_delivers_each_source_with_conflicting_fields(semantic_basis: bool) -> None:
+    adapter = _FrameworkAdapter()
+    registry = AgentArchitectureRegistry()
+    registry.register(adapter)
+    agent = FrameworkAgent(
+        profile=AgentProfile(agentName="framework-writer", domain="general"),
+        capability_id="agent.framework.writer",
+        registry=registry,
+    )
+    context = _context(semantic_basis=semantic_basis)
+    first_analysis = "仓库原始证据\n" * 10_000
+    source_data = {
+        "reader-1": {"analysis": first_analysis, "flag": True},
+        "reader-2": {"analysis": {"finding": "different conclusion"}, "flag": 1},
+    }
+    context.context_pack = ContextPack(
+        runId=context.run.run_id,
+        stepId=context.step.step_id,
+        data=source_data["reader-2"],
+        sourceData=source_data,
+        evidenceRefs=["evidence:reader-1", "evidence:reader-2"],
+    )
+
+    asyncio.run(agent.run(context))
+
+    delivered = adapter.invocations[0].input["context"]
+    assert delivered["data"] == source_data["reader-2"]
+    assert delivered["sourceData"] == source_data
+    assert delivered["sourceData"]["reader-1"]["analysis"] == first_analysis
+    assert delivered["sourceData"]["reader-1"]["flag"] is True
+    assert type(delivered["sourceData"]["reader-2"]["flag"]) is int
+    assert delivered["evidenceRefs"] == ["evidence:reader-1", "evidence:reader-2"]
 
 
 def test_framework_agent_propagates_cancellation() -> None:
