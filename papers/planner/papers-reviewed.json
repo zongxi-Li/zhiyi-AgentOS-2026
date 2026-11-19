@@ -22,7 +22,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "EviDARL",
     "category": "multi_table_evidence",
     "score": 8,
@@ -41,7 +41,8 @@
     "download_url": "https://arxiv.org/pdf/2611.22310v1",
     "pages": 15,
     "sha256": "19148fd77d5484b87dc04f8fa9f752a627d70363fb6400839dcae1057aba6244",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2611.15524": {
     "id": "2611.15524v1",
@@ -257,7 +258,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "Data-Readme",
     "category": "table_relationships",
     "score": 8,
@@ -276,7 +277,8 @@
     "download_url": "https://arxiv.org/pdf/2610.25131v1",
     "pages": 14,
     "sha256": "f5e7a51d77df3358e5adb575d0a7145088ec5fb6b105cacc9165ad9495c2f85f",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2610.18157": {
     "id": "2610.18157v1",
@@ -340,7 +342,8 @@
     "download_url": "https://arxiv.org/pdf/2610.07749v1",
     "pages": 21,
     "sha256": "5d84f356e1c12f10c9135cb16f00e21f5e2661da08c22e4cb000df3e306df169",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2610.04687": {
     "id": "2610.04687v2",
@@ -380,7 +383,8 @@
     "download_url": "https://arxiv.org/pdf/2610.04687v2",
     "pages": 41,
     "sha256": "b6ae47ad789ce3fa892dd60b6be15781ffe83c8d34539204e38ea1c493411953",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2610.03525": {
     "id": "2610.03525v1",
@@ -419,7 +423,8 @@
     "download_url": "https://arxiv.org/pdf/2610.03525v1",
     "pages": 13,
     "sha256": "49eff67d1cdff10ec590a333b07e62040b0b5727e6a7165c24b878a0c409e77b",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2609.34157": {
     "id": "2609.34157v1",
@@ -464,7 +469,8 @@
     "download_url": "https://arxiv.org/pdf/2609.34157v1",
     "pages": 37,
     "sha256": "bcf97c1590f456beb7c538e0f4c7f9b8a143ec9d2bf1accbd61871b8eead0031",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2609.11148": {
     "id": "2609.11148v1",
@@ -712,7 +718,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "SkillTGR",
     "category": "experience_memory",
     "score": 8,
@@ -731,7 +737,8 @@
     "download_url": "https://arxiv.org/pdf/2607.22633v2",
     "pages": 14,
     "sha256": "4b5bd4161434d225a2d6c5190887b15fcf2a46556de56babbf8d946eeaab45ab",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2606.11470": {
     "id": "2606.11470v2",
@@ -815,7 +822,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "TabClaw",
     "category": "interactive_planning",
     "score": 8,
@@ -834,7 +841,8 @@
     "download_url": "https://arxiv.org/pdf/2606.10316v1",
     "pages": 5,
     "sha256": "fa5543e98003386fa3cdcd967b24bbd7621d0011433c46462a3486ba7f303081",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2605.30308": {
     "id": "2605.30308v1",
@@ -929,7 +937,8 @@
     "download_url": "https://arxiv.org/pdf/2605.14465v2",
     "pages": 54,
     "sha256": "7b17e2ff39992b793f260b39ccadda9b27b8e6a7ed7dbc95fc1216ee73a13407",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2605.00400": {
     "id": "2605.00400v1",
@@ -1052,7 +1061,8 @@
     "download_url": "https://arxiv.org/pdf/2604.03393v1",
     "pages": 41,
     "sha256": "5c20df86946fe12941214976421f1e098a9d1d0d0ebb9197fad1346e8fa8a96a",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2603.12412": {
     "id": "2603.12412v2",
@@ -1136,7 +1146,8 @@
     "download_url": "https://arxiv.org/pdf/2603.09152v1",
     "pages": 34,
     "sha256": "80e23c4fe3298d42ff6d16ba5ff5309d25709b925a7762b722effec7e2cd799e",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2603.08617": {
     "id": "2603.08617v1",
@@ -1205,7 +1216,8 @@
     "download_url": "https://arxiv.org/pdf/2603.07528v2",
     "pages": 27,
     "sha256": "35d20811462bf983d99c2e29e3a866c91a34ef950d8731094e89b9c4733b07b8",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2604.13041": {
     "id": "2604.13041v1",
@@ -1250,7 +1262,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "QUIETT",
     "category": "canonicalization",
     "score": 8,
@@ -1269,7 +1281,8 @@
     "download_url": "https://arxiv.org/pdf/2602.20017v2",
     "pages": 21,
     "sha256": "0ed6d1e2c423b50c4e63e6fb59493675c85bf86902266969d70c7ae10c70ac36",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2602.14089": {
     "id": "2602.14089v1",
@@ -1309,7 +1322,8 @@
     "download_url": "https://arxiv.org/pdf/2602.14089v1",
     "pages": 14,
     "sha256": "b3eb2b3e46fc43e8a70cfd38f4c9dc49ec788230eec1bd5ef1e634716348cfa1",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2602.13812": {
     "id": "2602.13812v3",
@@ -1378,7 +1392,8 @@
     "download_url": "https://arxiv.org/pdf/2602.13059v1",
     "pages": 17,
     "sha256": "3ea706b6a81313af304c48a39543db1aa7c0581319645bea2d861f3c0795d194",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2602.10081": {
     "id": "2602.10081v3",
@@ -1464,7 +1479,8 @@
     "download_url": "https://arxiv.org/pdf/2602.09642v2",
     "pages": 41,
     "sha256": "f679cddf6c577ef9cca7d0b715f0abca2987dbb19f9e2515a5e346ff36d7607a",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2602.06724": {
     "id": "2602.06724v1",
@@ -1541,7 +1557,8 @@
     "download_url": "https://arxiv.org/pdf/2602.07034v1",
     "pages": 4,
     "sha256": "fd7955b9ba2e86d2cd1d4e31710154f9fca55cb143c255c5f8dc5ea7098450f2",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2601.18260": {
     "id": "2601.18260v3",
@@ -1654,7 +1671,8 @@
     "download_url": "https://arxiv.org/pdf/2601.02304v2",
     "pages": 13,
     "sha256": "7f428753f805d60416b149a87e57100e4a0dbb34e6a839224a6da882da0f90ab",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2611.14697": {
     "id": "2611.14697v1",
@@ -2115,7 +2133,8 @@
     "download_url": "https://arxiv.org/pdf/2609.03395v2",
     "pages": 17,
     "sha256": "2ab5198f0ad49618d5510d86509faf5d57623b1d23646d1e0025a90bb581cd61",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2609.01216": {
     "id": "2609.01216v2",
@@ -2158,7 +2177,8 @@
     "download_url": "https://arxiv.org/pdf/2609.01216v2",
     "pages": 12,
     "sha256": "448582f80be9173c2f22797e85f79730ec8ba006233a353b2d687c5ffab8398d",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2608.30291": {
     "id": "2608.30291v1",
@@ -2242,7 +2262,8 @@
     "download_url": "https://arxiv.org/pdf/2608.24082v1",
     "pages": 21,
     "sha256": "73798ff97d79df9ac392defc8568f9c2c2e1f5bad4b00c87089a39244c43cbac",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2608.17171": {
     "id": "2608.17171v1",
@@ -2523,7 +2544,8 @@
     "download_url": "https://arxiv.org/pdf/2607.17742v2",
     "pages": 50,
     "sha256": "f37000f13a0c56469f1a1a6963a140fd86c6c4639ea1a45fcb9cd7f8ad709dee",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2607.14918": {
     "id": "2607.14918v1",
@@ -2638,7 +2660,8 @@
     "download_url": "https://arxiv.org/pdf/2607.11207v1",
     "pages": 12,
     "sha256": "049d682b5c3ce2940702f3b697840c1b7059105ca79649982630d124dd873a9a",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2607.03049": {
     "id": "2607.03049v1",
@@ -2790,7 +2813,8 @@
     "download_url": "https://arxiv.org/pdf/2606.28916v3",
     "pages": 28,
     "sha256": "bf4307c5dbfe858df1131a95445b494a1f7f89938be3b730134eeac12f716193",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2606.26613": {
     "id": "2606.26613v2",
@@ -2989,7 +3013,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "ST-Raptor",
     "category": "hierarchical_tables",
     "score": 8,
@@ -3008,7 +3032,8 @@
     "download_url": "https://arxiv.org/pdf/2508.18190v3",
     "pages": 16,
     "sha256": "4bc8d331c5fef8677b9a213ababfe8dd2c83deb0311975fecbeb6e43bae44f5c",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2506.13405": {
     "id": "2506.13405v2",
@@ -3057,7 +3082,8 @@
     "download_url": "https://arxiv.org/pdf/2506.13405v2",
     "pages": 33,
     "sha256": "f582b2b8d0995a0f716a91dd0b7352d800ff197da9cc3c7247cf827808402b18",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2506.10380": {
     "id": "2506.10380v2",
@@ -3107,7 +3133,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "TableRAG",
     "category": "long_table_retrieval",
     "score": 8,
@@ -3126,7 +3152,8 @@
     "download_url": "https://arxiv.org/pdf/2410.04739v3",
     "pages": 23,
     "sha256": "63d6d450e9bdf090194290a7e0493c7090576c6b656bf9349f8ca082c1caeee1",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2404.17835": {
     "id": "2404.17835v1",
@@ -3170,7 +3197,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "TabSQLify",
     "category": "decomposition",
     "score": 8,
@@ -3189,7 +3216,8 @@
     "download_url": "https://arxiv.org/pdf/2404.10150v1",
     "pages": 13,
     "sha256": "18907c5afdfb59c42a406ee1c11b0d14dc40c2ee05a2cd6f66d6533884a53e80",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2401.04398": {
     "id": "2401.04398v2",
@@ -3217,7 +3245,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "Chain-of-Table",
     "category": "table_state",
     "score": 8,
@@ -3236,7 +3264,8 @@
     "download_url": "https://arxiv.org/pdf/2401.04398v2",
     "pages": 24,
     "sha256": "b852a161dacdd1eb3ebebc140b8d9f6724aba6512bdabf74ff75f84159d03918",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2310.00815": {
     "id": "2310.00815v1",
@@ -3259,7 +3288,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "ReAcTable",
     "category": "online_planning",
     "score": 8,
@@ -3278,7 +3307,8 @@
     "download_url": "https://arxiv.org/pdf/2310.00815v1",
     "pages": 14,
     "sha256": "289d89bdb22f7bfbe2e57f6c5a81eaf7f44d4d6c1c71ccb61c4b6c714bc3cfee",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2301.13808": {
     "id": "2301.13808v3",
@@ -3301,7 +3331,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "Dater",
     "category": "decomposition",
     "score": 8,
@@ -3320,7 +3350,8 @@
     "download_url": "https://arxiv.org/pdf/2301.13808v3",
     "pages": 16,
     "sha256": "f6c5906c6f777b576ec10e8ae688aa4f86c02d8db7aa69d545c0c982cc2effa0",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2210.02875": {
     "id": "2210.02875v2",
@@ -3349,7 +3380,7 @@
     ],
     "screening_date": "2026-11-18",
     "download_selected": true,
-    "reading_level": "metadata_and_abstract_screening",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "short_name": "Binder",
     "category": "program_execution",
     "score": 8,
@@ -3368,7 +3399,8 @@
     "download_url": "https://arxiv.org/pdf/2210.02875v2",
     "pages": 27,
     "sha256": "8a125d224aeeedadc4a5cb490a2516a4bdf75671c962cb66de2ac21f6d89ae23",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2201.05880": {
     "id": "2201.05880v1",
@@ -4893,7 +4925,8 @@
     "download_url": "https://arxiv.org/pdf/2308.10144v3",
     "pages": 38,
     "sha256": "01e533d81fb4a5f91797c073a9b1929acbaa64da45a592b26563ca7d135024f3",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2603.09151": {
     "id": "2603.09151v2",
@@ -4926,7 +4959,8 @@
     "source": "user_provided",
     "download_status": "user_provided_verified_pdf",
     "sha256": "938ca50fa257402d6cdf806fb20d798755b21bff51a1912521e59c793616a3cb",
-    "pages": 23
+    "pages": 23,
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2210.03629": {
     "id": "2210.03629v3",
@@ -4966,7 +5000,8 @@
     "download_url": "https://arxiv.org/pdf/2210.03629v3",
     "pages": 33,
     "sha256": "f285b0971ae4a790e402fb93966bed3adde2cf0a04977d08b2b40d6ab0cace69",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2402.02716": {
     "id": "2402.02716v1",
@@ -5008,7 +5043,8 @@
     "download_url": "https://arxiv.org/pdf/2402.02716v1",
     "pages": 9,
     "sha256": "42104614ce8121f0a8c2c93742f294aeaf1425ffce7d5f7cfec5e14ebb41864c",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2303.11366": {
     "id": "2303.11366v4",
@@ -5047,7 +5083,8 @@
     "download_url": "https://arxiv.org/pdf/2303.11366v4",
     "pages": 19,
     "sha256": "6059b6f89fea9959bd3dab553fbb97756a3dfb1b15e3cbab2fbf3ab6664333bd",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2506.05813": {
     "id": "2506.05813v2",
@@ -5073,7 +5110,8 @@
     "source": "user_provided",
     "download_status": "user_provided_verified_pdf",
     "sha256": "d2d28a2269756e8f386669fb8ab5dd8645dda32c75ddaaead9cad7c3b701b445",
-    "pages": 27
+    "pages": 27,
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "2502.12110": {
     "id": "2502.12110v11",
@@ -5112,12 +5150,13 @@
     "download_url": "https://arxiv.org/pdf/2502.12110v11",
     "pages": 28,
     "sha256": "fec32b521c4a1f793442bf1aeb26139c583078350d1cd4ab8f4eccc54a0694f0",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "MACT": {
     "id": "MACT",
-    "title": "MACT",
-    "url": "https://aclanthology.org/2025.findings-naacl.52/",
+    "title": "Efficient Multi-Agent Collaboration with Tool Use for Online Planning in Complex Table Question Answering",
+    "url": "https://aclanthology.org/2025.findings-naacl.54/",
     "short_name": "MACT",
     "file": "MACT_Findings-NAACL2025.pdf",
     "source": "user_provided",
@@ -5128,12 +5167,13 @@
     "download_status": "user_provided_verified_pdf",
     "sha256": "34986c5c9da7bb36a5a9be2ad79d155ecd785e92f1ecff2eb33ac2125cba2365",
     "pages": 24,
-    "screening_date": "2026-11-18"
+    "screening_date": "2026-11-18",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "Table-Critic": {
     "id": "Table-Critic",
-    "title": "Table-Critic",
-    "url": "",
+    "title": "Table-Critic: A Multi-Agent Framework for Collaborative Criticism and Refinement in Table Reasoning",
+    "url": "https://aclanthology.org/2025.acl-long.853/",
     "short_name": "Table-Critic",
     "file": "Table-Critic_ACL2025.pdf",
     "source": "user_provided",
@@ -5144,12 +5184,13 @@
     "download_status": "user_provided_verified_pdf",
     "sha256": "7f2cded037db00d0837672a6cc4d17bea566ca84f51c5ff386473ba5f15913cc",
     "pages": 20,
-    "screening_date": "2026-11-18"
+    "screening_date": "2026-11-18",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "TALON": {
     "id": "TALON",
-    "title": "TALON",
-    "url": "",
+    "title": "TALON: A Multi-Agent Framework for Long-Table Exploration and Question Answering",
+    "url": "https://aclanthology.org/2025.emnlp-main.1393/",
     "short_name": "TALON",
     "file": "TALON_EMNLP2025.pdf",
     "source": "user_provided",
@@ -5160,7 +5201,8 @@
     "download_status": "user_provided_verified_pdf",
     "sha256": "c92cacab116db810a7927445a069fa9c143245cb298bea00871b0f41033c3ac1",
     "pages": 17,
-    "screening_date": "2026-11-18"
+    "screening_date": "2026-11-18",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "10.18653/v1/2024.acl-long.692": {
     "id": "10.18653/v1/2024.acl-long.692",
@@ -5177,11 +5219,12 @@
     "download_selected": true,
     "source": "seed_reference_crossref_verified",
     "screening_date": "2026-11-18",
-    "reading_level": "metadata_screening_pending_pdf",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "download_url": "https://aclanthology.org/2024.acl-long.692.pdf",
     "pages": 17,
     "sha256": "7a1b2a75c41bc31feb070ddad980211cb9e17c50b04f06f833a233457efc605e",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   },
   "10.14778/3685800.3685816": {
     "id": "10.14778/3685800.3685816",
@@ -5198,10 +5241,11 @@
     "download_selected": true,
     "source": "seed_reference_crossref_verified",
     "screening_date": "2026-11-18",
-    "reading_level": "metadata_screening_pending_pdf",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
     "download_url": "https://www.vldb.org/pvldb/vol17/p3920-zhu.pdf",
     "pages": 14,
     "sha256": "12bb148a4362cd343ed78191c3129889cd0ce55d2dbed549f6fa28ae51212710",
-    "download_status": "verified_pdf"
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
   }
 }

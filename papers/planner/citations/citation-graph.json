@@ -1,0 +1,71 @@
+{
+  "2506.05813": {
+    "title": "MAPLE: Multi-Agent Adaptive Planning with Long-Term Memory for Table Reasoning",
+    "references": [
+      "2210.02875",
+      "2301.13808",
+      "2310.00815",
+      "2401.04398",
+      "2303.11366",
+      "2502.12110",
+      "Table-Critic"
+    ],
+    "cited_by": [],
+    "evidence": "Candidate name mention in seed full text; automated alias match, not independently verified citation edges.",
+    "forward_citation_status": "not_completed; public Semantic Scholar lookup unavailable/rate-limited"
+  },
+  "MACT": {
+    "title": "Efficient Multi-Agent Collaboration with Tool Use for Online Planning in Complex Table Question Answering",
+    "references": [
+      "2210.02875",
+      "2301.13808",
+      "2310.00815",
+      "2401.04398",
+      "2303.11366",
+      "10.18653/v1/2024.acl-long.692"
+    ],
+    "cited_by": [],
+    "evidence": "Candidate name mention in seed full text; automated alias match, not independently verified citation edges.",
+    "forward_citation_status": "not_completed; public Semantic Scholar lookup unavailable/rate-limited"
+  },
+  "Table-Critic": {
+    "title": "Table-Critic: A Multi-Agent Framework for Collaborative Criticism and Refinement in Table Reasoning",
+    "references": [
+      "2210.02875",
+      "2301.13808",
+      "2401.04398",
+      "2410.04739",
+      "10.18653/v1/2024.acl-long.692"
+    ],
+    "cited_by": [],
+    "evidence": "Candidate name mention in seed full text; automated alias match, not independently verified citation edges.",
+    "forward_citation_status": "not_completed; public Semantic Scholar lookup unavailable/rate-limited"
+  },
+  "TALON": {
+    "title": "TALON: A Multi-Agent Framework for Long-Table Exploration and Question Answering",
+    "references": [
+      "2210.02875",
+      "2301.13808",
+      "2310.00815",
+      "2401.04398",
+      "2410.04739"
+    ],
+    "cited_by": [],
+    "evidence": "Candidate name mention in seed full text; automated alias match, not independently verified citation edges.",
+    "forward_citation_status": "not_completed; public Semantic Scholar lookup unavailable/rate-limited"
+  },
+  "2603.09151": {
+    "title": "Deep Tabular Research via Continual Experience-Driven Execution",
+    "references": [
+      "2401.04398",
+      "2308.10144",
+      "2506.13405",
+      "2508.18190",
+      "10.18653/v1/2024.acl-long.692",
+      "10.14778/3685800.3685816"
+    ],
+    "cited_by": [],
+    "evidence": "Candidate name mention in seed full text; automated alias match, not independently verified citation edges.",
+    "forward_citation_status": "not_completed; public Semantic Scholar lookup unavailable/rate-limited"
+  }
+}

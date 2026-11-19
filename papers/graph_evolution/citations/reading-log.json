@@ -1,0 +1,53 @@
+{
+  "date": "2026-11-18",
+  "method_excerpt_pages": {
+    "2402.16823": [
+      3,
+      4
+    ],
+    "2408.08435": [
+      3
+    ],
+    "2410.10762": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "2507.19457": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "2611.16378": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "2606.27492": [
+      3,
+      4
+    ],
+    "2608.10504": [
+      3,
+      4,
+      6
+    ],
+    "2506.07398": [
+      3,
+      4
+    ],
+    "2501.13956": [
+      3,
+      4
+    ]
+  },
+  "page_convention": "One-based PDF pages; excerpts may be partial and include related work or configuration.",
+  "other_selected_materials": "Title and abstract screening; downloaded full texts are not all method-reviewed.",
+  "models_or_external_code_executed": false,
+  "public_repository_implementation_review": "not_performed",
+  "citation_traversal": "Named-method and thematic discovery; no complete forward/backward citation network.",
+  "visual_check": "../graph_evolution/text/methods-contact-sheet.png; AFlow p5, GEPA p5, PASE p3, SEPM p4"
+}

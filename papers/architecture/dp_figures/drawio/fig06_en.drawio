@@ -1,0 +1,86 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-11-19T00:00:00.000Z" agent="Kinlin research architecture authoring" version="29.0.0" type="device" compressed="false">
+  <diagram id="fig06-en" name="Protocol observability and enforcement">
+    <mxGraphModel dx="1440" dy="940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="940" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig06_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="940" />
+        </mxCell>
+        <mxCell id="fig06_title" value="Protocol observability and enforcement" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig06_private" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="110" width="400" height="590" />
+        </mxCell>
+        <mxCell id="fig06_private-heading" value="Private local state" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#3D6F9C;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="58" y="122" width="364" height="40" />
+        </mxCell>
+        <mxCell id="fig06_enforce" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="510" y="110" width="420" height="590" />
+        </mxCell>
+        <mxCell id="fig06_enforce-heading" value="Protocol enforcement" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#267C78;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="528" y="122" width="384" height="40" />
+        </mxCell>
+        <mxCell id="fig06_observed" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1000" y="110" width="400" height="590" />
+        </mxCell>
+        <mxCell id="fig06_observed-heading" value="Remote observation" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#78838D;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1018" y="122" width="364" height="40" />
+        </mxCell>
+        <mxCell id="fig06_act" value="Activation values&#10;private-input dependent" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="205" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_random" value="Clip + randomize&#10;complete vector" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="205" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_tensor" value="Randomized tensor Y" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="205" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_length" value="True length / mask&#10;private position data" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="375" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_public" value="Public shape / padding&#10;allowlisted metadata" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="375" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_meta" value="Declared public metadata" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="375" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_behavior" value="Stop / error / timing&#10;private-state dependent" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="545" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_schedule" value="Approved schedule / rules&#10;otherwise revise scope" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="545" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_trace" value="Observable interaction trace" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="545" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_e_ab" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_act" target="fig06_random">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_bc" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_random" target="fig06_tensor">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_de" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_length" target="fig06_public">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_eg" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_public" target="fig06_meta">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_hj" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_behavior" target="fig06_schedule">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_jk" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_schedule" target="fig06_trace">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_reject" value="Unapproved raw fields or behavior: block remote release&#10;no raw-text fallback; no guarantee for an unanalyzed channel" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="125" y="755" width="1190" height="85" />
+        </mxCell>
+        <mxCell id="fig06_scope" value="Scope must state public identity / participation and any excluded timing or side channels explicitly." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="870" width="1310" height="45" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

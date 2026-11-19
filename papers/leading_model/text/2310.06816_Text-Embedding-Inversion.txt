@@ -1,0 +1,797 @@
+                                                          Text Embeddings Reveal (Almost) As Much As Text
+
+                                                 John X. Morris, Volodymyr Kuleshov, Vitaly Shmatikov, Alexander M. Rush
+                                                                      Department of Computer Science
+                                                                            Cornell University
+
+
+
+
+                                                               Abstract                              impossible to invert exactly. Furthermore, when
+                                                                                                     querying a neural network through the internet, we
+                                             How much private information do text em-                may not have access to the model weights or gradi-
+                                             beddings reveal about the original text? We
+                                                                                                     ents at all.
+                                             investigate the problem of embedding inver-
+arXiv:2310.06816v1 [cs.CL] 10 Oct 2023
+
+
+
+
+                                             sion, reconstructing the full text represented             Still, given input-output pairs from a network,
+                                             in dense text embeddings. We frame the prob-            it is often possible to approximate the network’s
+                                             lem as controlled generation: generating text           inverse. Work on inversion in computer vision
+                                             that, when reembedded, is close to a fixed point        (Mahendran and Vedaldi, 2014; Dosovitskiy and
+                                             in latent space. We find that although a naïve          Brox, 2016) has shown that it is possible to learn
+                                             model conditioned on the embedding performs             to recover the input image (with some loss) given
+                                             poorly, a multi-step method that iteratively cor-
+                                             rects and re-embeds text is able to recover 92%
+                                                                                                     the logits of the final layer. Preliminary work has
+                                             of 32-token text inputs exactly. We train our           explored this question for text (Song and Raghu-
+                                             model to decode text embeddings from two                nathan, 2020), but only been able to recover an
+                                             state-of-the-art embedding models, and also             approximate bag of words given embeddings from
+                                             show that our model can recover important per-          shallow networks.
+                                             sonal information (full names) from a dataset              In this work, we target full reconstruction of in-
+                                             of clinical notes. 1
+                                                                                                     put text from its embedding. If text is recoverable,
+                                                                                                     there is a threat to privacy: a malicious user with ac-
+                                         1   Introduction
+                                                                                                     cess to a vector database, and text-embedding pairs
+                                         Systems that utilize large language models (LLMs)           from the model used to produce the data, could
+                                         often store auxiliary data in a vector database of          learn a function that reproduces text from embed-
+                                         dense embeddings (Borgeaud et al., 2022; Yao                dings.
+                                         et al., 2023). Users of these systems infuse knowl-            We frame this problem of recovering textual em-
+                                         edge into LLMs by inserting retrieved documents             beddings as a controlled generation problem, where
+                                         into the language model’s prompt. Practition-               we seek to generate text such that the text is as close
+                                         ers are turning to hosted vector database services          as possible to a given embedding. Our method,
+                                         to execute embedding search efficiently at scale            Vec2Text, uses the difference between a hypothesis
+                                         (Pinecone; Qdrant; Vdaas; Weaviate; LangChain).             embedding and a ground-truth embedding to make
+                                         In these databases, the data owner only sends em-           discrete updates to the text hypothesis.
+                                         beddings of text data (Le and Mikolov, 2014; Kiros             When we embed web documents using a state-of-
+                                         et al., 2015) to the third party service, and never         the-art black-box encoder, our method can recover
+                                         the text itself. The database server returns a search       32-token inputs with a near-perfect BLEU score of
+                                         result as the index of the matching document on             97.3, and can recover 92% of the examples exactly.
+                                         the client side.                                            We then evaluate on embeddings generated from
+                                            Vector databases are increasingly popular, but           a variety of common retrieval corpuses from the
+                                         privacy threats within them have not been compre-           BEIR benchmark. Even though these texts were
+                                         hensively explored. Can the third party service             not seen during training, our method is able to per-
+                                         to reproduce the initial text, given its embedding?         fectly recover the inputs for a number of datapoints
+                                         Neural networks are in general non-trivial or even          across a variety of domains. We evaluate on em-
+                                             1
+                                               Our    code     is     available    on      Github:   beddings of clinical notes from MIMIC and are
+                                         github.com/jxmorris12/vec2text.                             able to recover 89% of full names from embedded
+                                                                                                            Φ
+                                                                                                                Target embedding
+                x0                                               Mage (foaled April 18, 2020) is an
+                                                               American Thoroughbred racehorse who
+                                                                   won the 2023 Kentucky Derby.
+
+
+
+
+                                                                                 Correction
+
+
+                                                                    Kentucky Derby , which was won by Mage
+                                                                      (April 20 , 20 1 0), who is an American
+                                                                         Thoroughbred horse and mare .
+
+
+
+
+Figure 1: Overview of our method, Vec2Text. Given access to a target embedding e (blue) and query access to an
+embedding model ϕ (blue model), the system aims to iteratively generate (yellow model) hypotheses ê (pink) to
+reach the target. Example input is a taken from a recent Wikipedia article (June 2023). Vec2Text perfectly recovers
+this text from its embedding after 4 rounds of correction.
+
+
+notes. These results imply that text embeddings            Assumptions of our threat model. In a practical
+present the same threats to privacy as the text from       sense, we consider the scenario where an attacker
+which they are computed, and embeddings should             wants to invert a single embedding produced from
+be treated with the same precautions as raw data.          a black-box embedder ϕ. We assume that the at-
+                                                           tacker has access to ϕ: given hypothesis text x̂, the
+2   Overview: Embedding Inversion                          attacker can query the model for ϕ(x̂) and compute
+                                                           cos(ϕ(x̂), e). When this term is 1 exactly, the at-
+Text embedding models learn to map text se-                tacker can be sure that x̂ was the original text, i.e.
+quences to embedding vectors. Embedding vec-               collisions are rare and can be ignored.
+tors are useful because they encode some notion
+of semantic similarity: inputs that are similar in         3      Method: Vec2Text
+meaning should have embeddings that are close in           3.1      Base Model: Learning to Invert ϕ
+vector space (Mikolov et al., 2013). Embeddings
+are commonly used for many tasks such as search,           Enumerating all possible sequences to compute
+clustering, and classification (Aggarwal and Zhai,         Equation (1) is computationally infeasible. One
+2012; Neelakantan et al., 2022; Muennighoff et al.,        way to avoid this computational constraint is by
+2023).                                                     learning a distribution of texts given embeddings.
+                                                           Given a dataset of texts D = {x1 , . . .}, we learn to
+   Given a text sequence of tokens x ∈ Vn , a text
+                                                           invert encoder ϕ by learning a distribution of texts
+encoder ϕ : Vn → Rd maps x to a fixed-length
+                                                           given embeddings, p(x | e; θ), by learning θ via
+embedding vector e ∈ Rd .
+                                                           maximum likelihood:
+   Now consider the problem of inverting textual
+embeddings: given some unknown encoder ϕ, we                            θ = arg max Ex∼D [p(x | ϕ(x); θ̂)]
+seek to recover the text x given its embedding                                               θ̂
+e = ϕ(x). Text embedding models are typically
+trained to encourage similarity between related in-        We drop the θ hereon for simplicity of notation.
+puts (Karpukhin et al., 2020). Thus, we can write          In practice, this process involves training a condi-
+the problem as recovering text that has a maxi-            tional language model to reconstruct unknown text
+mally similar embedding to the ground-truth. We            x given its embedding e = ϕ(x). We can view this
+can formalize the search for text x̂ with embedding        learning problem as amortizing the combinatorial
+e under encoder ϕ as optimization:                         optimization (Equation (1)) into the weights of a
+                                                           neural network. Directly learning to generate sat-
+                                                           isfactory text in this manner is well-known in the
+             x̂ = arg max cos(ϕ(x), e)              (1)    literature to be a difficult problem.
+                        x
+3.2   Controlling Generation for Inversion                          which requires a sequence of embeddings as input
+To improve upon this model, we propose Vec2Text                     with some dimension denc not necessarily equal
+shown in Figure 1. This approach takes inspira-                     to the dimension d of ϕ’s embeddings. Similar to
+tion from methods for Controlled Generation, the                    Mokady et al. (2021), we use small MLP to project
+task of generating text that satisfies a known con-                 a single embedding vector to a larger size, and
+dition (Hu et al., 2018; John et al., 2018; Yang                    reshape to give it a sequence length as input to the
+and Klein, 2021). This task is similar to inversion                 encoder. For embedding e ∈ Rd :
+in that there is a observable function ϕ that deter-
+mines the level of control. However, it differs in                            EmbToSeq(e) = W2 σ(W1 e)
+that approaches to controlled generation (Dathathri
+et al., 2020; Li et al., 2022) generally require differ-            where W1 ∈ Rd×d and W2 ∈ R(sdenc )×d for some
+entiating through ϕ to improve the score of some                    nonlinear activation function σ and predetermined
+intermediate representation. Textual inversion dif-                 encoder “length” s. We use a separate MLP to
+fers in that we can only make queries to ϕ, and                     project three vectors: the ground-truth embedding
+cannot compute its gradients.                                       e, the hypothesis embedding ê(t) , and the differ-
+                                                                    ence between these vectors e − ê. Given the word
+Model. The method guesses an initial hypoth-                        embeddings of the hypothesis x(t) are {w1 ...wn },
+esis and iteratively refines this hypothesis by re-                 the input (length 3s + n) to the encoder is as fol-
+embedding and correcting the hypothesis to bring                    lows:
+its embedding closer to e. Note that this model re-
+quires computing a new embedding ê(t) = ϕ(x(t) )
+                                                                         concat(EmbToSeq(e),
+in order to generate each new correction x(t+1) .
+We define our model recursively by marginalizing                                EmbToSeq(ê(t) ),
+over intermediate hypotheses:                                                   EmbToSeq(e − ê(t) ), (w1 ...wn ))
+
+                   X                                                We feed the concatenated input to the encoder and
+p(x(t+1) | e) =           p(x(t) | e)p(x(t+1) | e, x(t) , ê(t) )
+                                                                    train the full encoder-decoder model using standard
+                   x(t)
+                                                                    language modeling loss.
+           (t)
+          ê     = ϕ(x(t) )
+                                                                    Inference. In practice we cannot tractably sum
+with a base case of the simple learned inversion:                   out intermediate generations x(t) , so we approxi-
+                                                                    mate this summation via beam search. We perform
+         p(x(0) | e) = p(x(0) | e, ∅, ϕ(∅))                         inference from our model greedily at the token level
+Here, x(0) represents the initial hypothesis gener-                 but implement beam search at the sequence-level
+ation, x(1) the correction of x(0) , and so on. We                  x(t) . At each step of correction, we consider some
+train this model by first generating hypotheses x(0)                number b of possible corrections as the next step.
+from the model in Section 3.1, computing ê(0) , and                For each possible correction, we decode the top
+then training a model on this generated data.                       b possible continuations, and then take the top b
+   This method relates to other recent work gener-                  unique continuations out of b · b potential contin-
+ating text through iterative editing (Lee et al., 2018;             uations by measuring their distance in embedding
+Ghazvininejad et al., 2019). Especially relevant                    space to the ground-truth embedding e.
+is Welleck et al. (2022), which proposes to train
+a text-to-text ‘self-correction’ module to improve                  4   Experimental Setup
+language model generations with feedback.
+                                                                    Embeddings. Vec2Text is trained to invert two
+Parameterization. The backbone of our model,                        state-of-the-art embedding models: GTR-base (Ni
+p(x(t+1) | e, x(t) , ê(t) ), is parameterized as a stan-           et al., 2021), a T5-based pre-trained transformer
+dard encoder-decoder transformer (Vaswani et al.,                   for text retrieval, and text-embeddings-ada-002
+2017; Raffel et al., 2020) conditioned on the previ-                available via the OpenAI API. Both model fami-
+ous output.                                                         lies are among the highest-performing embedders
+  One challenge is the need to input conditioning                   on the MTEB text embeddings benchmark (Muen-
+embeddings e and ê(t) into a transformer encoder,                  nighoff et al., 2023).
+                    method                                       tokens    pred tokens    bleu   tf1   exact    cos
+                    Bag-of-words (Song and Raghunathan, 2020)    32        32              0.3   51     0.0    0.70
+                    GPT-2 Decoder (Li et al., 2023)              32        32              1.0   47     0.0    0.76
+Natural Questions
+
+
+                    Base [0 steps]                               32        32             31.9   67     0.0    0.91
+                      (+ beam search)                            32        32             34.5   67     1.0    0.92
+      GTR
+
+
+
+
+                      (+ nucleus)                                32        32             25.3   60     0.0    0.88
+                    Vec2Text [1 step]                            32        32             50.7   80     0.0    0.96
+                      [20 steps]                                 32        32             83.9   96    40.2    0.99
+                      [50 steps]                                 32        32             85.4   97    40.6    0.99
+                      [50 steps + sbeam]                         32        32             97.3   99    92.0    0.99
+                    Base [0 steps]                               31.8      31.8           26.2   61     0.0    0.94
+MSMARCO
+
+
+
+
+                    Vec2Text [1 step]                            31.8      31.9           44.1   77     5.2    0.96
+ OpenAI
+
+
+
+
+                      [20 steps]                                 31.8      31.9           61.9   87    15.0    0.98
+                      [50 steps]                                 31.8      31.9           62.3   87    14.8    0.98
+                      [50 steps + sbeam]                         31.8      31.8           83.4   96    60.9    0.99
+                    Base [0 steps]                               80.9      84.2           17.0   54      0.6   0.95
+MSMARCO
+
+
+
+
+                    Vec2Text [1 step]                            80.9      81.6           29.9   68      1.4   0.97
+ OpenAI
+
+
+
+
+                      [20 steps]                                 80.9      79.7           43.1   78      3.2   0.99
+                      [50 steps]                                 80.9      80.5           44.4   78      3.4   0.99
+                      [50 steps + sbeam]                         80.9      80.6           55.0   84      8.0   0.99
+
+Table 1: Reconstruction score on in-domain datasets. Top section of results come from models trained to reconstruct
+32 tokens of text from Wikpedia, embedded using GTR-base. Remaining results come from models trained to
+reconstruct up to 32 or 128 tokens from MSMARCO, embedded using OpenAI text-embeddings-ada-002.
+
+
+Datasets. We train our GTR model on 5M pas-                     Metrics. We use two types of metrics to measure
+sages from Wikipedia articles selected from the                 the progress and the accuracy of reconstructed text.
+Natural Questions corpus (Kwiatkowski et al.,                   First we consider our main goal of text reconstruc-
+2019) truncated to 32 tokens. We train our two                  tion. To measure this we use word-match metrics
+OpenAI models (Bajaj et al., 2018), both on ver-                including: BLEU score (Papineni et al., 2002), a
+sions of the MSMARCO corpus with maximum 32                     measure of n-gram similarities between the true
+or 128 tokens per example 2 . For evaluation, we                and reconstructed text; Token F1, the multi-class
+consider the evaluation datasets from Natural Ques-             F1 score between the set of predicted tokens and
+tions and MSMarco, as well as two out-of-domain                 the set of true tokens; Exact-match, the percent-
+settings: the MIMIC-III database of clinical notes              age of reconstructed outputs that perfectly match
+(Johnson et al., 2016) in addition to the variety               the ground-truth. We also report the similarity on
+of datasets available from the BEIR benchmark                   the internal inversion metric in terms of recovering
+(Thakur et al., 2021).                                          the vector embedding in latent space. We use co-
+                                                                sine similarity between the true embedding and the
+Baseline. As a baseline, we train the base model                embedding of reconstructed text according to ϕ.
+p(x(0) | e) to recover text with no correction steps.
+We also evaluate the bag of words model from
+                                                                Models and Inference. We initialize our models
+Song and Raghunathan (2020). To balance for the
+                                                                from the T5-base checkpoint (Raffel et al., 2020).
+increased number of queries allotted to the cor-
+                                                                Including the projection head, each model has ap-
+rection models, we also consider taking the top-N
+                                                                proximately 235M parameters. We set the projec-
+predictions made from the unconditional model via
+                                                                tion sequence length s = 16 for all experiments,
+beam search and nucleus sampling (p = 0.9) and
+                                                                as preliminary experiments show diminishing re-
+reranking via cosine similarity.
+                                                                turns by increasing this number further. We per-
+   2
+     By 2023 pricing of $0.0001 per 1000 tokens, embedding      form inference on all models using greedy token-
+5 million documents of 70 tokens each costs $35.                level decoding. When running multiple steps of
+ dataset            tokens     method   bleu   token F1     2 ∗ 10−4 with warmup and linear decay. We train
+                                 Base   36.2       73.8     models for 100 epochs. We use batch size of 128
+ quora              15.7
+                             Vec2Text   95.5       98.6     and train all models on 4 NVIDIA A6000 GPUs.
+                                 Base   13.2       49.5     Under these conditions, training our slowest model
+ signal1m           23.7
+                             Vec2Text   80.7       92.5     takes about two days.
+                                 Base   15.5       54.1
+ msmarco            72.1
+                             Vec2Text   59.6       86.1     5     Results
+                                 Base   12.8       49.3
+ climate-fever      73.4
+                             Vec2Text   44.9       82.6     5.1    Reconstruction: In-Domain
+                                 Base   12.6       49.2     Table 1 contains in-domain results. Our method
+ fever              73.4
+                             Vec2Text   45.1       82.7     outperforms the baselines on all metrics. More
+                                 Base   15.4       50.3     rounds is monotonically helpful, although we see
+ dbpedia-entity     91.3
+                             Vec2Text   48.0       77.9     diminishing returns – we are able to recover 77%
+ nq                 94.7
+                                 Base   11.0       47.1     of BLEU score in just 5 rounds of correction, al-
+                             Vec2Text   32.7       72.7     though running for 50 rounds indeed achieves a
+                                 Base   15.4       50.1     higher reconstruction performance. We find that
+ hotpotqa           94.8
+                             Vec2Text   46.6       78.7     running sequence-level beam search (sbeam) over
+                                 Base    6.6       44.1     the iterative reconstruction is particularly helpful
+ fiqa               103.8
+                             Vec2Text   21.5       63.6
+                                                            for finding exact matches of reconstructions, in-
+                                 Base    6.6       41.5     creasing the exact match score by 2 to 6 times
+ webis-touche2020   105.2
+                             Vec2Text   19.6       69.7
+                                                            across the three settings. In a relative sense, the
+                                 Base    7.1       41.5
+ cqadupstack        106.4                                   model has more trouble exactly recovering longer
+                             Vec2Text   23.3       64.3
+                                                            texts, but still is able to get many of the words.
+                                 Base    6.8       44.1
+ arguana            113.5
+                             Vec2Text   23.4       66.3
+                                                            5.2    Reconstruction: Out-of-Domain
+                                 Base    5.9       38.5
+ scidocs            125.3                                   We evaluate our model on 15 datasets from the
+                             Vec2Text   17.7       57.6
+                                                            BEIR benchmark and display results in Table 2.
+                                 Base    5.6       36.3
+ trec-covid         125.4                                   Quora, the shortest dataset in BEIR, is the easiest
+                             Vec2Text   19.3       58.6
+                                 Base    4.9       34.4
+                                                            to reconstruct, and our model is able to exactly re-
+ robust04           127.3                                   cover 66% of examples. Our model adapts well
+                             Vec2Text   15.5       54.5
+                                 Base    5.3       35.7     to different-length inputs, generally producing re-
+ bioasq             127.4
+                             Vec2Text   22.8       59.5     constructions with average length error of fewer
+                                 Base    4.9       35.2     than 3 tokens. In general, reconstruction accuracy
+ scifact            127.4
+                             Vec2Text   16.6       56.6     inversely correlates with example length (discussed
+                                 Base    6.2       39.6     more in Section 7). On all datasets, we are able to
+ nfcorpus           127.7
+                             Vec2Text   25.8       64.8     recover sequences with Token F1 of at least 41 and
+                                 Base    4.9       34.8     cosine similarity to the true embedding of at least
+ trec-news          128.0
+                             Vec2Text   14.5       51.5     0.95.
+
+Table 2: Out-of-domain reconstruction performance           5.3    Case study: MIMIC
+measured on datasets from the BEIR benchmark. We
+sort datasets in order of average length in order to em-    As a specific threat domain, we consider MIMIC-
+phasize the effect of sequence length on task difficulty.   III clinical notes (Johnson et al., 2016). Because
+                                                            the original release of MIMIC is completely deiden-
+                                                            tified, we instead use the “pseudo re-identified” ver-
+sequence-level beam search, we only take a new              sion from Lehman et al. (2021) where fake names
+generation if it is closer than the previous step in        have been inserted in the place of the deidentified
+cosine similarity to the ground-truth embedding.            ones.
+  We use unconditional models to seed the initial               Each note is truncated to 32 tokens and the notes
+hypothesis for our iterative models. We examine             are filtered so that they each contain at least one
+the effect of using a different initial hypothesis in       name. We measure the typical statistics of our
+Section 7.                                                  method as well as three new ones: the percentage
+  We use the Adam optimizer and learning rate of            of first names, last names, and complete names
+      method          first      last         full     bleu     tf1   exact    cos                                  0.30                               Retrieval      80
+
+
+
+
+                                                                                         Retrieval (Mean NDCG@10)
+                                                                                                                                                       Reconstruction
+
+
+
+
+                                                                                                                                                                           Reconstruction (BLEU)
+      Base            40.0       27.8         10.8     4.9    33.1      0.     0.78                                 0.25
+      Vec2Text        94.2       95.3         89.2    55.6    80.8    26.0     0.98                                                                                   60
+                                                                                                                    0.20
+                                        MIMIC-III Entity reconstruction rate                                        0.15                                               40
+             Clinical event
+     Nonbiological location                                                                                         0.10
+                                                                                                                                                                       20
+    Therapeutic procedure                                                                                           0.05
+                 Lab value                                                                                          0.00                                               0
+       Biological structure                                                                                                10 3   10 2          10 1             100
+            Sign symptom                                                                                                            Noise Level ( )
+          Disease disorder
+                Medication                                                            Figure 2: Retrieval performance and reconstruction ac-
+     Diagnostic procedure                                                             curacy across varying levels of noise injection.
+      Detailed description
+                           0.0          0.2          0.4      0.6      0.8      1.0
+
+
+Table 3: Performance of our method on reconstructing                                  Gaussian noise directly to each embedding with
+GTR-embedded clinical notes from MIMIC III (Johnson                                   the goal of effectively defending against inver-
+et al., 2016).                                                                        sion attacks while preserving utility in the nearest-
+                                                                                      neightbor retrieval setting. We analyze the trade-off
+                                                                                      between retrieval performance and reconstruction
+that are recovered. Results are shown in Table 3.                                     accuracy under varying levels of noise.
+Vec2Text is able to recover 94% of first names,
+                                                                                         Formally, we define a new embedding model as:
+95% of last names, and 89% of full names (first,
+last format) while recovering 26% of the docu-
+ments exactly.                                                                                                      ϕnoisy (x) = ϕ(x) + λ · ϵ, ϵ ∼ N (0, 1)
+   For the recovered clinical notes from Section 5.3,
+we extract entities from each true and recovered                                      where λ is a hyperparameter controlling the amount
+note using a clinical entity extractor (Raza et al.,                                  of noise injected.
+2022). We plot the recovery percentage in 3 (bot-                                        We simulate this scenario with ϕ as GTR-base
+tom) with the average entity recovery shown as                                        using our self-corrective model with 10 steps of
+a dashed line. Our model is most accurate at re-                                      correction, given the noisy embedder ϕnoisy . To
+constructing entities of the type “Clinical Event”,                                   measure retrieval performance, we take the mean
+which include generic medical words like ‘arrived’,                                   NDCG@10 (a metric of retrieval performance;
+‘progress’, and ‘transferred’. Our model is least                                     higher is better) across 15 different retrieval tasks
+accurate in the “Detailed Description” category,                                      from the BEIR benchmark, evaluated across vary-
+which includes specific medical terminology like                                      ing levels of noise.
+‘posterior’ and ‘hypoxic’, as well as multi-word                                         We graph the average retrieval performance in
+events like ‘invasive ventilation - stop 4:00 pm’.                                    Figure 2 (see A.2 for complete tables of results).
+   Although we are able to recover 26% of 32-                                         At a noise level of λ = 10−1 , we see retrieval per-
+token notes exactly, the notes that were not exactly                                  formance is preserved, while BLEU score drops
+recovered are semantically close to the original.                                     by 10%. At a noise level of 0.01, retrieval perfor-
+Our model generally matches the syntax of notes,                                      mance is barely degraded (2%) while reconstruc-
+even when some entities are slightly garbled; for                                     tion performance plummets to 13% of the original
+example, given the following sentence from a doc-                                     BLEU. Adding any additional noise severely im-
+tor’s note “Rhona Arntson npn/- # resp: infant re-                                    pacts both retrieval performance and reconstruction
+mains orally intubated on imv / r fi” our model                                       accuracy. These results indicate that adding a small
+predicts “Rhona Arpson nrft:# infant remains intu-                                    amount of Gaussian noise may be a straightforward
+bated orally on resp. imv. m/n fi”.                                                   way to defend against naive inversion attacks, al-
+                                                                                      though it is possible that training with noise could
+6       Defending against inversion attacks
+                                                                                      in theory help Vec2Text recover more accurately
+Is it easy for users of text embedding models pro-                                    from ϕnoisy . Note that low reconstruction BLEU
+tect their embeddings from inversion attacks? We                                      score is not necessarily indicative that coarser infer-
+consider a basic defense scenario as a sanity check.                                  ences, such as clinical area or treatment regimen,
+To implement our defense, the user addes a level of                                   cannot be made from embeddings.
+                                                                      30000
+           80                                                         25000
+
+           60                                                         20000
+    BLEU
+
+
+
+
+                                                              Count
+                                                                      15000
+           40
+                                                                      10000
+           20       Feedback
+                    No feedback                                        5000
+           0
+                0         20            40                                0
+                                                                          0.70      0.75    0.80    0.85    0.90    0.95   1.00
+                        Iteration (t)                                         Cosine distance from hypothesis to true embedding
+
+                                                          Figure 4: Distribution of cos(e, ϕ(x(0) )) over training
+Figure 3: Recovery performance across multiple rounds
+                                                          data. The mean training output from the GTR base
+of self-correction comparing models with access to ϕ vs
+                                                          model has a cosine similarity of 0.924 with the true
+text-only (32 tokens per sequence).
+                                                          embedding.
+
+7   Analysis                                              few generated samples with high cosine similarity
+How much does the model rely on feedback from             but low BLEU score. This implies that better fol-
+ϕ? Figure 3 shows an ablation study of the im-            lowing embedding geometry will further improves
+portance of feedback, i.e. performing corrections         systems. Theoretically some embeddings might
+with and without embedding the most recent hy-            be impossible to recover. Prior work (Song et al.,
+pothesis. The model trained with feedback (i.e. ad-       2020; Morris, 2020) has shown that two different
+ditional conditioning on ϕ(x(t) ) is able to make a       sequences can ‘collide’ in text embedding space,
+more accurate first correction and gets better BLEU       having similar embeddings even without any word
+score with more rounds. The model trained with            overlap. However, our experiments found no ev-
+no feedback can still edit the text but does not          idence that collisions are a problem; they either
+receive more information about the geometry of            do not exist or our model learns during training to
+the embedding space, and quickly plateaus. The            avoid outputting them. Improved systems should
+most startling comparison is in terms of the number       be able to recover longer text.
+of exact matches: after 50 rounds of greedy self-         Does having a strong base model matter? We
+correction, our model with feedback gets 52.0%            ablate the impact of initialization by evaluating our
+of examples correct (after only 1.5% initially);          32-token Wikipedia model at different initializa-
+the model trained without feedback only perfectly         tions of x(0) , as shown in Section 7. After running
+matches 4.2% of examples after 50 rounds.                 for 20 steps of correction, our model is able to re-
+   During training, the model only learns to cor-         cover from an unhelpful initialization, even when
+rect a single hypothesis to the ground-truth sample.      the initialization is a random sequence of tokens.
+Given new text at test time, our model is able to         This suggests that the model is able to ignore bad
+correct the same text multiple times, “pushing” the       hypotheses and focus on the true embedding when
+text from 0.9 embedding similarity to 1.0. We plot        the hypothesis is not helpful.
+the closeness of the first hypothesis to the ground-
+truth in the training data for the length-32 model        8      Related work
+in Figure 4. We see that during training the model
+                                                          Inverting deep embeddings. The task of invert-
+learns to correct hypotheses across a wide range
+                                                          ing textual embeddings is closely related to re-
+of closenesses, implying that corrections should
+                                                          search on inverting deep visual representations in
+not go ‘out-of-distribution’ as they approach the
+                                                          computer vision (Mahendran and Vedaldi, 2014;
+ground-truth.
+                                                          Dosovitskiy and Brox, 2016; Teterwak et al., 2021;
+How informative are embeddings for textual re-            Bordes et al., 2021), which show that a high amount
+covery? We graph BLEU score vs. cosine simi-              of visual detail remains in the logit vector of an im-
+larity from a selection of of reconstructed text in-      age classifier, and attempt to reconstruct input im-
+puts in Figure 5. We observe a strong correlation         ages from this vector. There is also a line of work
+between the two metrics. Notably, there are very          reverse-engineering the content of certain text em-
+     Input                Nabo Gass (25 August, 1954 in Ebingen, Germany) is a German painter and glass artist.
+     Round 1 (0.85):      Nabo Gass (11 August 1974 in Erlangen, Germany) is an artist.                             ✗
+     Round 2 (0.99):      Nabo Gass (b. 18 August 1954 in Egeland, Germany) is a German painter and glass artist.   ✗
+     Round 3 (0.99):      Nabo Gass (25 August 1954 in Ebingen, Germany) is a German painter and glass artist.      ✗
+     Round 4 (1.00):      Nabo Gass (25 August, 1954 in Ebingen, Germany) is a German painter and glass artist.     ✓
+
+Table 4: Example of our corrective model working in multiple rounds. Left column shows the correction number,
+from Round 1 (initial hypothesis) to Round 4 (correct guess). The number in parenthesis is the cosine similarity
+between the guess’s embedding and the embedding of the ground-truth sequence (first row).
+
+
+ Initialization                         token f1   cos    exact   et al., 2020) shows that faces can be reconstructed
+ Random tokens                          0.95       0.99   50.0    from their deep embeddings. Similar questions
+ "the " * 32                            0.95       0.99   49.8    have been asked about text data: Lehman et al.
+ "there’s no reverse on a motorcycle,
+ as my friend found out quite                                     (2021) attempt to recover sensitive information
+ dramatically the other day"            0.96       0.99   52.0    such as names from representations obtained from
+ Base model p(x(0) | e)                 0.96       0.99   51.6    a model pre-trained on clinical notes, but fail to
+                                                                  recover exact text. Kim et al. (2022) propose a
+Table 5: Ablation: Reconstruction score on Wikipedia              privacy-preserving similarity mechanism for text
+data (32 tokens) given various initializations. Our self-         embeddings and consider a shallow bag-of-words
+correction model is able to faithfully recover the original       inversion model. Abdalla et al. (2020) analyze
+text with greater than 80 BLEU score, even with a poor
+                                                                  the privacy leaks in training word embeddings on
+initialization. Models run for 20 steps of correction.
+                                                                  medical data and are able to recover full names in
+                                                                  the training data from learned word embeddings.
+          100                                                     Dziedzic et al. (2023) note that stealing sentence en-
+                                                                  coders by distilling through API queries works well
+           80                                                     and is difficult for API providers to prevent. Song
+           60                                                     and Raghunathan (2020) considered the problem
+   BLEU
+
+
+
+
+                                                                  of recovering text sequences from embeddings, but
+           40                                                     only attempted to recover bags of words from the
+           20                                                     embeddings of a shallow encoder model. Li et al.
+                                                                  (2023) investigate the privacy leakage of embed-
+             0.85         0.90          0.95         1.00         dings by training a decoder with a text embedding
+                       Cosine similarity                          as the first embedding fed to the decoder. Com-
+                                                                  pared to these works, we consider the significantly
+Figure 5: Cosine similarity vs BLEU score on 1000                 more involved problem of developing a method to
+reconstructed embeddings from Natural Questions text.             recover the full ordered text sequence from more
+                                                                  realistic state-of-the-art text retrieval models.
+beddings: Ram et al. (2023) analyze the contents
+of text embeddings by projecting embeddings into                  Gradient leakage. There are parallels between
+the model’s vocabulary space to produce a distri-                 the use of vector databases to store embeddings
+bution of relevant tokens. Adolphs et al. (2022)                  and the practice of federated learning, where users
+train a single-step query decoder to predict the text             share gradients with one another in order to jointly
+of queries from their embeddings and use the de-                  train a model. Our work on analyzing the pri-
+coder to produce more data to train a new retrieval               vacy leakage of text embeddings is analogous to
+model. We focus directly on text reconstruction                   research on gradient leakage, which has shown that
+and its implications for privacy, and propose an                  certain input data can be reverse-engineered from
+iterative method that works for paragraph-length                  the model’s gradients during training (Melis et al.,
+documents, not just sentence-length queries.                      2018; Zhu et al., 2019; Zhao et al., 2020; Geiping
+                                                                  et al., 2020). Zhu et al. (2019) even shows that they
+Privacy leakage from embeddings. Research                         can recover text inputs of a masked language model
+has raised the question of information leakage from               by backpropagating to the input layer to match the
+dense embeddings. In vision, Vec2Face (Duong                      gradient. However, such techniques do not apply
+to textual inversion: the gradient of the model is         more sophisticated search algorithms on top of our
+relatively high-resolution; we consider the more           corrective module.
+difficult problem of recovering the full input text
+                                                           Scalability to long text. Our method is shown to
+given only a single dense embedding vector.
+                                                           recover most sequences exactly up to 32 tokens and
+Text autoencoders. Past research has explored              some information up to 128 tokens, but we have not
+natural language processing learning models that           investigated the limits of inversion beyond embed-
+map vectors to sentences (Bowman et al., 2016).            dings of this length. Popular embedding models
+These include some retrieval models that are               support embedding text content on the order of
+trained with a shallow decoder to reconstruct the          thousands of tokens, and embedding longer texts
+text or bag-of-words from the encoder-outputted            is common practice (Thakur et al., 2021). Future
+embedding (Xiao et al., 2022; Shen et al., 2023;           work might explore the potential and difficulties of
+Wang et al., 2023). Unlike these, we invert embed-         inverting embeddings of these longer texts.
+dings from a frozen, pre-trained encoder.                  Access to embedding model. Our threat model
+                                                           assumes that an adversary has black-box access
+9    Conclusion                                            to the model used to generate the embeddings in
+We propose Vec2Text, a multi-step method that              the compromised database. In the real world, this
+iteratively corrects and re-embeds text based on           is realistic because practitioners so often rely on
+a fixed point in latent space. Our approach can            the same few large models. However, Vec2Text
+recover 92% of 32-token text inputs from their em-         requires making a query to the black-box embed-
+beddings exactly, demonstrating that text embed-           ding model for each step of refinement. Future
+dings reveal much of the original text. The model          work might explore training an imitation embed-
+also demonstrates the ability to extract critical clini-   ding model which could be queried at inference
+cal information from clinical notes, highlighting its      time to save queries to the true embedder.
+implications for data privacy in sensitive domains
+like medicine.
+                                                           References
+   Our findings indicate a sort of equivalence be-
+tween embeddings and raw data, in that both leak           Mohamed Abdalla, Moustafa Abdalla, Graeme Hirst,
+                                                            and Frank Rudzicz. 2020. Exploring the privacy-
+similar amounts of sensitive information. This              preserving properties of word embeddings: Al-
+equivalence puts a heavy burden on anonymization            gorithmic validation study. J Med Internet Res,
+requirements for dense embeddings: embeddings               22(7):e18055.
+should be treated as highly sensitive private data
+                                                           Leonard Adolphs, Michelle Chen Huebscher, Christian
+and protected, technically and perhaps legally, in           Buck, Sertan Girgin, Olivier Bachem, Massimiliano
+the same way as one would protect raw text.                  Ciaramita, and Thomas Hofmann. 2022. Decoding a
+                                                             neural retriever’s latent space for query suggestion.
+10    Limitations                                          Charu C. Aggarwal and ChengXiang Zhai. 2012. A
+                                                             Survey of Text Clustering Algorithms, pages 77–128.
+Adaptive attacks and defenses. We consider the               Springer US, Boston, MA.
+setting where an adversary applies noise to newly
+generated embeddings, but the reconstruction mod-          Payal Bajaj, Daniel Campos, Nick Craswell, Li Deng,
+ules were trained from un-noised embeddings. Fu-             Jianfeng Gao, Xiaodong Liu, Rangan Majumder, An-
+                                                             drew McNamara, Bhaskar Mitra, Tri Nguyen, Mir
+ture work might consider reconstruction attacks or           Rosenberg, Xia Song, Alina Stoica, Saurabh Tiwary,
+defenses that are adaptive to the type of attack or          and Tong Wang. 2018. Ms marco: A human gener-
+defense being used.                                          ated machine reading comprehension dataset.
+
+Search thoroughness. Our search is limited; in             Florian Bordes, Randall Balestriero, and Pascal Vincent.
+                                                              2021. High fidelity visualization of what your self-
+this work we do not test beyond searching for 50              supervised representation knows about. Trans. Mach.
+rounds or with a sequence beam width higher than              Learn. Res., 2022.
+8. However, Vec2Text gets monotonically better
+                                                           Sebastian Borgeaud, Arthur Mensch, Jordan Hoffmann,
+with more searching. Future work could find even             Trevor Cai, Eliza Rutherford, Katie Millican, George
+more exact matches by searching for more rounds              van den Driessche, Jean-Baptiste Lespiau, Bogdan
+with a higher beam width, or by implementing                 Damoc, Aidan Clark, Diego de Las Casas, Aurelia
+  Guy, Jacob Menick, Roman Ring, Tom Hennigan,               Abu Dhabi, United Arab Emirates (Hybrid). Associa-
+  Saffron Huang, Loren Maggiore, Chris Jones, Albin          tion for Computational Linguistics.
+  Cassirer, Andy Brock, Michela Paganini, Geoffrey
+  Irving, Oriol Vinyals, Simon Osindero, Karen Si-         Ryan Kiros, Yukun Zhu, Ruslan Salakhutdinov,
+  monyan, Jack W. Rae, Erich Elsen, and Laurent Sifre.       Richard S. Zemel, Antonio Torralba, Raquel Urta-
+  2022. Improving language models by retrieving from         sun, and Sanja Fidler. 2015. Skip-thought vectors.
+  trillions of tokens.
+                                                           Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-
+Samuel R. Bowman, Luke Vilnis, Oriol Vinyals, An-            field, Michael Collins, Ankur Parikh, Chris Alberti,
+  drew M. Dai, Rafal Jozefowicz, and Samy Bengio.            Danielle Epstein, Illia Polosukhin, Jacob Devlin, Ken-
+  2016. Generating sentences from a continuous space.        ton Lee, Kristina Toutanova, Llion Jones, Matthew
+                                                             Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob
+Sumanth Dathathri, Andrea Madotto, Janice Lan, Jane          Uszkoreit, Quoc Le, and Slav Petrov. 2019. Natu-
+  Hung, Eric Frank, Piero Molino, Jason Yosinski, and        ral questions: A benchmark for question answering
+  Rosanne Liu. 2020. Plug and play language models:          research. Transactions of the Association for Compu-
+  A simple approach to controlled text generation. In        tational Linguistics, 7:452–466.
+  International Conference on Learning Representa-
+  tions.                                                   LangChain. 2023. Hwchase17/langchain: building ap-
+                                                             plications with llms through composability.
+Alexey Dosovitskiy and Thomas Brox. 2016. Inverting
+  visual representations with convolutional networks.      Quoc V. Le and Tomas Mikolov. 2014. Distributed
+                                                             representations of sentences and documents.
+Chi Nhan Duong, Thanh-Dat Truong, Kha Gia Quach,
+  Hung Bui, Kaushik Roy, and Khoa Luu. 2020.               Jason Lee, Elman Mansimov, and Kyunghyun Cho.
+  Vec2face: Unveil human faces from their blackbox            2018. Deterministic non-autoregressive neural se-
+  features in face recognition.                               quence modeling by iterative refinement.
+
+Adam Dziedzic, Franziska Boenisch, Mingjian Jiang,         Eric Lehman, Sarthak Jain, Karl Pichotta, Yoav Gold-
+  Haonan Duan, and Nicolas Papernot. 2023. Sentence          berg, and Byron C. Wallace. 2021. Does bert pre-
+  embedding encoders are easy to steal but hard to           trained on clinical notes reveal sensitive data?
+  defend. In ICLR 2023 Workshop on Pitfalls of limited     Haoran Li, Mingshi Xu, and Yangqiu Song. 2023. Sen-
+  data and computation for Trustworthy ML.                   tence embedding leaks more information than you
+Jonas Geiping, Hartmut Bauermeister, Hannah Dröge,           expect: Generative embedding inversion attack to
+  and Michael Moeller. 2020. Inverting gradients –           recover the whole sentence.
+  how easy is it to break privacy in federated learning?   Xiang Lisa Li, John Thickstun, Ishaan Gulrajani, Percy
+Marjan Ghazvininejad, Omer Levy, Yinhan Liu, and             Liang, and Tatsunori B. Hashimoto. 2022. Diffusion-
+ Luke Zettlemoyer. 2019. Mask-predict: Parallel de-          lm improves controllable text generation.
+ coding of conditional masked language models.             Aravindh Mahendran and Andrea Vedaldi. 2014. Un-
+                                                             derstanding deep image representations by inverting
+Zhiting Hu, Zichao Yang, Xiaodan Liang, Ruslan
+                                                             them. 2015 IEEE Conference on Computer Vision
+  Salakhutdinov, and Eric P. Xing. 2018. Toward con-
+                                                             and Pattern Recognition (CVPR), pages 5188–5196.
+  trolled generation of text.
+                                                           Luca Melis, Congzheng Song, Emiliano De Cristofaro,
+Vineet John, Lili Mou, Hareesh Bahuleyan, and Olga
+                                                             and Vitaly Shmatikov. 2018. Exploiting unintended
+  Vechtomova. 2018. Disentangled representation
+                                                             feature leakage in collaborative learning.
+  learning for non-parallel text style transfer.
+                                                           Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey
+Alistair E.W. Johnson, Tom J. Pollard, Lu Shen, Li-
+                                                             Dean. 2013. Efficient estimation of word representa-
+  wei H. Lehman, Mengling Feng, Mohammad Ghas-
+                                                             tions in vector space.
+  semi, Benjamin Moody, Peter Szolovits, Leo An-
+  thony Celi, and Roger G. Mark. 2016. Mimic-iii,          Ron Mokady, Amir Hertz, and Amit H. Bermano. 2021.
+  a freely accessible critical care database. Scientific     Clipcap: Clip prefix for image captioning.
+  Data, 3(1):160035.
+                                                           John X. Morris. 2020. Second-order nlp adversarial
+Vladimir Karpukhin, Barlas Oğuz, Sewon Min, Patrick         examples.
+  Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and
+  Wen tau Yih. 2020. Dense passage retrieval for open-     Niklas Muennighoff, Nouamane Tazi, Loïc Magne, and
+  domain question answering.                                 Nils Reimers. 2023. Mteb: Massive text embedding
+                                                             benchmark.
+Donggyu Kim, Garam Lee, and Sungwoo Oh. 2022.
+  Toward privacy-preserving text embedding similarity      Arvind Neelakantan, Tao Xu, Raul Puri, Alec Rad-
+  with homomorphic encryption. In Proceedings of the         ford, Jesse Michael Han, Jerry Tworek, Qiming
+  Fourth Workshop on Financial Technology and Nat-           Yuan, Nikolas Tezak, Jong Wook Kim, Chris Hallacy,
+  ural Language Processing (FinNLP), pages 25–36,            Johannes Heidecke, Pranav Shyam, Boris Power,
+  Tyna Eloundou Nekoul, Girish Sastry, Gretchen             Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob
+  Krueger, David Schnurr, Felipe Petroski Such, Kenny         Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
+  Hsu, Madeleine Thompson, Tabarak Khan, Toki                 Kaiser, and Illia Polosukhin. 2017. Attention is all
+  Sherbakov, Joanne Jang, Peter Welinder, and Lilian          you need.
+  Weng. 2022. Text and code embeddings by con-
+  trastive pre-training.                                    Vdaas. 2023. Vdaas/vald: Vald. a highly scalable dis-
+                                                              tributed vector search engine.
+Jianmo Ni, Chen Qu, Jing Lu, Zhuyun Dai, Gus-
+   tavo Hernández Ábrego, Ji Ma, Vincent Y. Zhao,           Liang Wang, Nan Yang, Xiaolong Huang, Binxing Jiao,
+   Yi Luan, Keith B. Hall, Ming-Wei Chang, and Yinfei          Linjun Yang, Daxin Jiang, Rangan Majumder, and
+   Yang. 2021. Large dual encoders are generalizable           Furu Wei. 2023. Simlm: Pre-training with represen-
+   retrievers.                                                 tation bottleneck for dense passage retrieval.
+
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-         Weaviate. 2023. Weaviate - vector database.
+  Jing Zhu. 2002. Bleu: a method for automatic evalu-
+  ation of machine translation. In Proceedings of the       Sean Welleck, Ximing Lu, Peter West, Faeze Brah-
+  40th Annual Meeting of the Association for Compu-           man, Tianxiao Shen, Daniel Khashabi, and Yejin
+  tational Linguistics, pages 311–318, Philadelphia,          Choi. 2022. Generating sequences by learning to
+  Pennsylvania, USA. Association for Computational            self-correct.
+  Linguistics.
+                                                            Shitao Xiao, Zheng Liu, Yingxia Shao, and Zhao Cao.
+                                                              2022. Retromae: Pre-training retrieval-oriented lan-
+Pinecone. 2023. Pinecone.
+                                                              guage models via masked auto-encoder.
+Qdrant. 2023. Qdrant - vector database.                     Kevin Yang and Dan Klein. 2021. FUDGE: Controlled
+                                                              text generation with future discriminators. In Pro-
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine           ceedings of the 2021 Conference of the North Amer-
+  Lee, Sharan Narang, Michael Matena, Yanqi Zhou,             ican Chapter of the Association for Computational
+  Wei Li, and Peter J. Liu. 2020. Exploring the limits        Linguistics: Human Language Technologies. Associ-
+  of transfer learning with a unified text-to-text trans-     ation for Computational Linguistics.
+  former.
+                                                            Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+Ori Ram, Liat Bezalel, Adi Zicher, Yonatan Belinkov,          Shafran, Karthik Narasimhan, and Yuan Cao. 2023.
+  Jonathan Berant, and Amir Globerson. 2023. What             React: Synergizing reasoning and acting in language
+  are you token about? dense retrieval as distributions       models.
+  over the vocabulary.
+                                                            Bo Zhao, Konda Reddy Mopuri, and Hakan Bilen. 2020.
+Shaina Raza, Deepak John Reji, Femi Shajan, and               idlg: Improved deep leakage from gradients.
+  Syed Raza Bashir. 2022. Large-scale application
+  of named entity recognition to biomedicine and epi-       Ligeng Zhu, Zhijian Liu, and Song Han. 2019. Deep
+  demiology. PLOS Digital Health, 1(12):e0000152.             leakage from gradients.
+
+Tao Shen, Xiubo Geng, Chongyang Tao, Can Xu, Xiao-          A       Appendix
+  long Huang, Binxing Jiao, Linjun Yang, and Daxin
+  Jiang. 2023. Lexmae: Lexicon-bottlenecked pretrain-       A.1      Additional analysis
+  ing for large-scale retrieval.
+                                                            How does word frequency affect model correct-
+Congzheng Song and Ananth Raghunathan. 2020. Infor-         ness? fig. 6 shows the number of correct predic-
+  mation leakage in embedding models. Proceedings           tions (orange) and incorrect predictions (blue) for
+  of the 2020 ACM SIGSAC Conference on Computer
+  and Communications Security.                              ground-truth words, plotted across word frequency
+                                                            in the training data. Our model generally predicts
+Congzheng Song, Alexander M. Rush, and Vitaly               words better that are more frequent in the training
+  Shmatikov. 2020. Adversarial semantic collisions.         data, although it is still able to predict correctly a
+                                                            number of words that were not seen during train-
+Piotr Teterwak, Chiyuan Zhang, Dilip Krishnan, and
+  Michael C. Mozer. 2021. Understanding invariance          ing3 . Peaks between 104 and 105 come from the
+  via feedforward inversion of discriminatively trained     characters (, −, and ), which appear frequently in
+  classifiers.                                              the training data, but are still often guessed incor-
+                                                            rectly in the reconstructions.
+Nandan Thakur, Nils Reimers, Andreas Rücklé, Ab-
+  hishek Srivastava, and Iryna Gurevych. 2021. Beir:            3
+                                                                 We hypothesize this is because all test tokens were present
+  A heterogenous benchmark for zero-shot evaluation         in the training data, and the model is able to reconstruct unseen
+  of information retrieval models.                          words from seen tokens.
+                                       Correctness vs word frequency in training on ArXiv
+                                        False negative
+                          8000          True positive
+  Total guessed in eval
+
+
+
+                          6000
+
+
+                          4000
+
+
+                          2000
+
+
+                            0
+                                 100       101      102     103        104       105   106   107
+                                                      Frequency in training data
+
+Figure 6: Correctness on evaluation samples from ArXiv
+data.
+
+
+A.2                         Full defense results
+Results on each dataset from BEIR under vary-
+ing levels of Gaussian noise are shown in Ap-
+pendix A.2. The model is GTR-base. Note that
+the inputs are limited to 32tokens, far shorter than
+the average length for some corpuses, which is why
+baseline (λ = 0) NDCG@10 numbers are lower
+than typically reported. We included the full results
+(visualized in Figure 2) as Appendix A.2.
+λ       arguana   bioasq   climate-fever   dbpedia-entity    fiqa   msmarco     nfcorpus     nq    quora   robust04   scidocs   scifact   signal1m   trec-covid   trec-news   webis-touche2020
+0        0.328    0.115           0.136            0.306    0.208       0.647     0.239    0.306   0.879     0.205     0.095    0.247        0.261       0.376       0.245               0.233
+0.001    0.329    0.115           0.135            0.307    0.208       0.647     0.239    0.306   0.879     0.204     0.096    0.246        0.261       0.381       0.246               0.233
+0.01     0.324    0.113           0.132            0.301    0.205       0.633     0.234    0.298   0.875     0.192     0.092    0.235        0.259       0.378       0.234               0.225
+0.1      0.005    0.000           0.000            0.000    0.000       0.000     0.017    0.000   0.003     0.000     0.002    0.006        0.001       0.005       0.001               0.000
+1.0      0.001    0.000           0.000            0.000    0.000       0.000     0.008    0.000   0.000     0.000     0.000    0.001        0.000       0.000       0.000               0.000
+
+
+
+             Table 6: BEIR performance (NDCG@10) for GTR-base at varying levels of noise (32 tokens).
+
+
+
+
+                                                                    λ             NDCG@10                     BLEU
+                                                                    0.000                     0.302          80.372
+                                                                    0.001                     0.302          72.347
+                                                                    0.010                     0.296          10.334
+                                                                    0.100                     0.002           0.148
+                                                                    1.000                     0.001           0.080
+
+              Table 7: Retrieval performance and reconstruction performance across varying noise levels λ.
+

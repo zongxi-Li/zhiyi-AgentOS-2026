@@ -1,0 +1,1125 @@
+                                         IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                1
+
+
+
+
+                                               At Equal Inference Cost, Multi-Agent Structure
+                                                   Does Not Beat a Single Frozen Agent
+                                                    David Dylan, Aoife Brennan, Cian Murphy, Niamh O’Sullivan, Conor Kelly, and Saoirse Walsh
+
+
+
+
+                                            Abstract—Multi-agent pipelines of large language models, in             holds the number of environment rollouts fixed grants the team
+                                         which a planner, an executor, and a critic collaborate, routinely          that additional compute at no cost, so an apparent advantage
+                                         report gains over a single agent and have become a dominant de-            under such a protocol cannot be attributed to the multi-agent
+                                         sign pattern for complex task completion. These gains are almost
+                                         always obtained at greater inference, since a team issues several          structure rather than to the budget the structure spends. This
+arXiv:2609.04217v1 [cs.MA] 25 Jun 2026
+
+
+
+
+                                         model calls per environment step where a single agent issues               paper therefore poses the controlled question: holding the
+                                         one. Existing automated methods search over roles, topologies,             total number of language-model calls fixed—iso-call—does
+                                         and prompts but compare the resulting structure to a single agent          evolving a multi-agent team beat evolving a single agent, and
+                                         at equal environment rollouts, which grants the team its extra             if so, where does the value reside?
+                                         compute and leaves unresolved whether the structure itself is
+                                         what pays. We instead fix the total number of language-model                  We study this in the regime where the comparison is
+                                         calls and ask whether evolving a multi-agent team beats evolving           cleanest and the cost is most visible: a single frozen backbone.
+                                         a single agent under that budget. We introduce MA-E VOLVE,                 The agents are not fine-tuned; the only optimized object
+                                         which represents a Planner→Executor→Critic team as an evolv-               is the multi-agent configuration—the natural-language role
+                                         able genome of three role prompts and optimizes it by per-role             prompts—searched at the system level by reflective evo-
+                                         coordinate ascent over a single frozen 7B backbone. The frozen
+                                         shared backbone isolates the contribution of structure from any            lution [5]. Freezing the backbone serves two purposes. It
+                                         capability gap between roles, and the call-metered budget keeps            decouples capability, fixed in the weights, from coordination,
+                                         the comparison controlled. On ALFW ORLD (n=134), evolving                  the object we evolve, so that any measured gain is attributable
+                                         the single executor significantly improves over an unevolved               to the structure and its prompts rather than to a stronger
+                                         agent (+0.097, McNemar p=0.021), whereas the full team attains             model placed in one role. It also makes the iso-call accounting
+                                         the highest mean but is not statistically separable from the
+                                         single agent (0.769 vs. 0.754, ∆=+0.015, p=0.80) at 1.8× the               exact and the cost of structure explicit: every role’s call is
+                                         evaluation calls. A per-role leave-one-in decomposition attributes         metered, and a team that makes N calls per step must either
+                                         the realized value entirely to the executor: under the iso-call            explore 1/N as much under a fixed search budget or pay N ×
+                                         budget the planner and critic prompts evolve to empty, fire with           the evaluation cost at deployment. This is the same frozen-
+                                         low influence on the chosen action (planner 0.14, critic 0.41),            backbone, evolutionary-search setting in which prior work has
+                                         and do not change the executor’s decision. Granted 2−3× free
+                                         compute the team only matches the single agent, and on dense               localized the value of a single agent’s text harness; we lift that
+                                         W EB S HOP evolution is null and the team trends worse. On a               question one level up, from the components within one agent
+                                         frozen backbone at equal inference cost, multi-agent structure             to the roles across a team.
+                                         adds cost without a corresponding benefit.                                    We instantiate the team, named MA-E VOLVE, as a
+                                            Index Terms—Coordinate ascent, evolutionary computation,                Planner→Executor→Critic pipeline (Figure 2). The planner
+                                         large language models, LLM agents, multi-agent systems, prompt             emits a sub-goal every J steps, the executor is the standard
+                                         optimization, reflective evolution, reward hacking.                        reason-and-act action proposer [6], and the critic injects a
+                                                                                                                    one-line correction on a stall in the manner of verbal self-
+                                                               I. I NTRODUCTION                                     correction [7]. The three role prompts (pplan , pexec , pcrit ) form
+                                                RCHESTRATING several language-model agents—a                        an evolvable genome, optimized by per-role coordinate ascent:
+                                         O      planner that decomposes the task, an executor that
+                                         acts, and a critic that corrects—rather than prompting a
+                                                                                                                    one role’s prompt is reflectively mutated at a time with
+                                                                                                                    the others held fixed, reusing the same evolution engine as
+                                         single model has become a dominant design pattern, and                     the single-agent baseline. Crucially, the engine’s budget cap
+                                         it reliably improves factuality, reasoning, and complex task               counts language-model calls rather than rollouts, so the single-
+                                         completion [1], [2], [3], [4]. The rationale is intuitive: distinct        agent and team arms are compared at an identical total call
+                                         roles divide labor, debate surfaces errors, and a critic catches           budget. Every arm is metered by three budgets—search calls,
+                                         mistakes a single forward pass would commit. Almost every                  evaluation calls per task, and tokens—and the cost multiplier
+                                         reported multi-agent gain, however, is obtained at greater                 is reported in the same table as the success rate, so that the
+                                         inference. A three-role pipeline issues two or three model                 team is priced rather than read for accuracy in isolation.
+                                         calls per environment step where a single agent issues one,                   The empirical result is deflationary. On ALFW ORLD [8],
+                                         and therefore consumes two to three times the language-                    single-agent evolution of the executor prompt significantly
+                                         model calls to complete the same task. A comparison that                   improves over an unevolved agent (+0.097, McNemar 20–7,
+                                                                                                                    p=0.021). The full team attains the highest mean (0.769), but
+                                            D. Dylan, A. Brennan and C. Kelly are with Trinity College Dublin;
+                                         C. Murphy and S. Walsh are with University College Dublin; N. O’Sullivan   its margin over the single agent is only ∆=+0.015 (McNemar
+                                         is with Dublin City University, Dublin, Ireland.                           9–7, p=0.80), which is not statistically separable, while it
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                                                                                                          2
+
+
+
+
+                                      Multi-agent structure adds COST, not a significant benefit: team ≈ single (ns) at 1.8 × calls
+
+                                                 ALFWorld (n=134, binary)                                                                                             WebShop (n=80, dense)
+                                1.0                      +0.112 *                                                                                      0.40                                                    16
+                                                                                                                                                                      evolution null (single ≈ stock);
+                                              +0.097 *                                                                                                                   team −0.060 (ns, p = 0.12)
+                                                                                0.769               40                                                 0.35            trends WORSE at higher cost             14
+                                                           0.754
+                                0.8                                                                                                                           0.242            0.245
+                                      0.657                                                                                                            0.30                                                    12
+                                                                                         32.2
+        ALFWorld success rate
+
+
+
+
+                                                                                                                                 WebShop dense score
+                                                                                                    30                                                                                           0.185
+                                                                                                                                                       0.25                                                    10
+
+
+
+
+                                                                                                         eval calls / task
+
+
+
+
+                                                                                                                                                                                                                    eval calls / task
+                                0.6
+
+                                                                                                                                                       0.20                                              7.6   8
+                                              18.7                  18.0                            20
+                                0.4
+                                                                                                                                                       0.15                                                    6
+                                                                                                                                                                      5.0              5.1
+                                              team ≈ single: Δ = +0.015, p = 0.80 (ns)
+                                                       at 1.8 × the eval calls
+                                                                                                                                                       0.10                                                    4
+                                0.2                                                                 10
+
+                                                                                                                                                       0.05                                                    2
+
+
+                                0.0                                                                 0                                                  0.00                                                    0
+                                         Stock                single                team                                                                        Stock             single            team
+
+
+                                                                success / dense score (left axis)                            eval calls / task -- cost (right axis)
+
+
+Fig. 1. The team does not pay for itself. Held-out performance and cost under the iso-call budget. Left (ALFW ORLD, n=134, binary): single-agent (executor)
+evolution significantly helps ( +0.097 over Stock, p=0.021 ), but the Planner→Executor→Critic team (0.769) is not statistically separable from the single
+agent (0.754; ∆=+0.015, McNemar p=0.80, ns) while spending 1.8× the evaluation calls/task (32.2 vs. 18.0, hatched, right axis). Right (W EB S HOP,
+n=80, dense): evolution is null (single 0.245 ≈ Stock 0.242) and the team trends worse (0.185, ∆=−0.060 vs. single, p=0.12) at higher cost. Across both
+benchmarks the added structure buys cost, not a significant benefit.
+
+
+
+spends 1.8× the evaluation calls (32.2 vs. 18.0 per task). A                                              planner and critic add cost without a corresponding gain.
+per-role leave-one-in decomposition then localizes all realized
+value to the Executor: under the iso-call budget the team                                                 Contributions. The contributions of this paper are summa-
+genome evolves only pexec into a concrete control prompt,                                                 rized as follows.
+while pplan and pcrit evolve to empty. The default planner                                                                   • An iso-call invariant for multi-agent evaluation. We
+and critic still fire (planner 537 times, critic 163 times across                                                              argue for and operationalize total language-model calls,
+the test set) but exert low influence on the chosen action                                                                     rather than environment rollouts, as the controlled budget
+(planner 0.14, critic 0.41) and never change the executor’s                                                                    for a single-versus-multi-agent comparison (Section III),
+decision (critic restate-rate 0.00); they add cost without benefit.                                                            and report all three budget meters (search calls, evalu-
+Even granted a free 2 − 3× compute—the env-rollouts best                                                                       ation calls per task, tokens) for every arm so that the
+case for the team—the team only matches the single agent                                                                       comparison can be re-read under any cost definition.
+(0.739=0.739). On dense W EB S HOP [9] evolution is null                                                                     • MA-E VOLVE , iso-call evolution of a frozen-backbone
+(single 0.245 ≈ Stock 0.242, p=0.96) and the team trends                                                                       team. We present a Planner→Executor→Critic genome
+worse (0.185, ∆=−0.060 vs. single, p=0.12) at higher cost.                                                                     and a per-role coordinate-ascent optimizer with a call-
+The finding is consistent across both benchmarks: multi-agent                                                                  metered budget cap (Section IV), reusing a single-agent
+structure incurs cost without a significant benefit.                                                                           reflective-evolution engine unchanged so that the only
+   The mechanism is two-fold. A frozen 7B has no role-                                                                         new ingredients are the multi-agent rollout and the iso-
+differentiation headroom: the steering roles cannot evolve a                                                                   call mechanism.
+function distinct from the executor’s, so co-adapting roles                                                                  • Evidence that structure does not pay, with value
+over one shared backbone drive toward redundancy and the                                                                       localized to the executor. We show the team is not
+planner and critic prompts collapse to empty. In addition,                                                                     statistically separable from a single evolved agent at
+the structure’s 1.8 − 2.5× call overhead starves the iso-call                                                                  iso-call (p=0.80) yet costs 1.8×, and a per-role leave-
+evolution budget, the same budget-starvation effect that af-                                                                   one-in decomposition localizes all realized value to the
+flicts component-split single-agent evolution, now amplified                                                                   executor: the team’s gain over the unevolved baseline
+one level up at the multi-agent level. The diagnosis is the                                                                    (+0.112, p=0.018) coincides with the executor’s gain
+multi-agent analog of structure that is additive rather than                                                                   (single +0.097) and not the structure’s (Sections VI
+synergistic: on a frozen backbone at equal inference cost, the                                                                 and VII).
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                    3
+
+
+
+  •  An instrumented collapse-and-starvation mechanism.            the orchestration is almost always hand-designed [21], [22],
+     We measure role-influence rates and inter-role prompt         [23], [24]—precisely the gap the evolution literature attacks.
+     content and show that the planner and critic prompts          A planner→executor→critic team is, structurally, a multi-call
+     evolved to empty and fired without effect; we report both     generalization of the existing ReAct rollout, which is what
+     budget regimes (iso-call controlled and env-rollouts team-    makes the iso-call comparison to a single ReAct agent exact.
+     best-case) and a consistent W EB S HOP null (Sections VII
+     and VIII).                                                    B. Multi-Agent and System Evolution
+Roadmap. Section II surveys multi-agent frameworks, multi-            Automated multi-agent design has converged on a sin-
+agent/system evolution, population/co-evolution, multi-agent       gle abstraction—the agentic system as an optimizable graph
+RL, and benchmarks/Goodhart. Section III formalizes the            of language-model calls (nodes are agents/roles, edges are
+iso-call invariant. Section IV presents MA-E VOLVE with an         communication)—pioneered by GPTSwarm and the dynamic-
+architecture diagram and an algorithm. Section V details the       network line [25], [26] and made fully general by ADAS,
+setup; Section VI reports the three-meter table; Section VII is    which searches directly in code space [27]. The field then
+the localization and collapse analysis. Section VIII discusses     split. One branch searches structure and workflows: AFlow
+the mechanism and limitations, and Section IX concludes.           runs Monte-Carlo tree search over code-represented work-
+                                                                   flows [28]; AgentSquare searches a modular design space [29];
+                     II. R ELATED W ORK                            AutoAgents, EvoAgent, and EvoMAC generate or evolve
+   We organize the literature into five themes: (a) multi-         teams with textual or evolutionary operators [30], [31], [32];
+agent LLM frameworks, the design space we evolve; (b)              and symbolic learning treats the agent pipeline as a differ-
+multi-agent/system evolution and automated design, the direct      entiable program [33]. A second branch performs continu-
+precedents and foils; (c) population, co-evolution, and quality-   ous prompt or feedback optimization of a fixed structure:
+diversity, the toolbox for the diversity-versus-collapse ques-     MIPROv2 optimizes multi-stage program instructions [34],
+tion; (d) multi-agent reinforcement learning, the frozen-versus-   TextGrad and Trace backpropagate textual feedback [35], [36],
+trained contrast; and (e) benchmarks and Goodhart/over-            and ScoreFlow uses score-based preference optimization [37].
+optimization. Throughout, we mark the differentiator of this       The 2025 frontier optimizes a distribution over architectures
+work: prior systems search agentic structure, often with a         under explicit cost–performance trade-offs: MaAS learns an
+larger model or an unbounded budget in the loop, and report        agentic supernet [38], MASS jointly searches prompts and
+that searched structure beats hand-design; we run the con-         topologies [39], and query-level routers select architectures
+trolled, iso-call, frozen-7B head-to-head—single-agent evolu-      per input [40], [41], [42]; surveys map the self-evolving-
+tion versus multi-agent evolution holding total language-model     agent landscape [43]. Our per-genome optimizer is reflective
+calls fixed—to isolate whether the structure itself pays, and to   prompt evolution, which has been shown to rival reinforcement
+decompose where.                                                   learning at far lower sample cost [5]; we point it at the team
+                                                                   genome and budget it by language-model calls. We differ from
+A. Multi-Agent LLM Frameworks                                      all of the above in the controlled variable. These systems
+                                                                   search structure (and sometimes prompts), frequently with a
+   Orchestrating multiple language-model instances rather than
+                                                                   stronger model or an unbounded budget in the loop, and report
+scaling one model reliably improves complex task comple-
+                                                                   that searched structure beats hand-design. None runs the iso-
+tion, and it defines the design space (roles, topology, pro-
+                                                                   call, frozen-backbone head-to-head that holds total language-
+tocol) this paper proposes to evolve rather than hand-craft.
+                                                                   model calls fixed and asks whether the multi-agent structure
+Two paradigms recur. Role-specialized collaboration assigns
+                                                                   itself—not the extra search or a bigger in-loop model—is what
+agents distinct personas and structured workflows: AutoGen
+                                                                   pays, nor decomposes the marginal value of each role. That
+frames applications as multi-agent conversations [1]; CAMEL
+                                                                   single-variable comparison and its per-role localization, on the
+pairs role-playing agents [10]; MetaGPT and ChatDev en-
+                                                                   same shared rollout a single agent uses, is our contribution;
+code software-team standard operating procedures [2], [11];
+                                                                   an evolution-as-operator view of tool-use policy optimization
+AgentVerse studies emergent collaboration [12]; Solo Per-
+                                                                   is developed in a companion line ([44]).
+formance Prompting and DERA realize multi-persona self-
+collaboration within a single model [13], [14]. Debate and
+consensus have agents independently propose then critique or       C. Population, Co-Evolution, and Quality-Diversity
+vote: multi-agent debate improves factuality and reasoning [3],       Classical evolutionary computation supplies the machin-
+[15], while ChatEval, ReConcile, Exchange-of-Thought, and          ery the language-model line inherits and the vocabulary
+Mixture-of-Agents aggregate diverse jurors or layers [16],         for the diversity-versus-collapse question. Cooperative co-
+[17], [18], [4]. The line is conceptually rooted in the society-   evolution decomposes a problem into co-adapting sub-
+of-mind view that intelligence emerges from interacting simple     populations [45]—the precise frame for a team of roles that
+agents [19] and is built atop the single-agent primitives our      co-adapt—while competitive co-evolution shows adversarial
+team generalizes: reason-and-act (ReAct) [6] for the execu-        pressure can drive open-ended improvement or collapse into
+tor and verbal self-correction (Reflexion) [7] for the critic;     mediocre cycling [46], [47]. Quality-diversity reframes search
+generative agents extend the paradigm to open-ended simu-          as illuminating a behavioral space: novelty search abandons
+lacra [20]. Surveys catalog the rapid growth and note that         the objective [48], MAP-Elites maps elites across a feature
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                          4
+
+
+
+grid [49], and the QD program formalizes the trade-off [50]—          A rising fitness can thus reflect metric-gaming, sycophan-
+the direct tools for asking whether a population of diverse           tic agreement among co-adapting agents [89], or diversity
+agents helps or homogenizes. NEAT co-evolves topology and             collapse rather than capability, and broad alignment surveys
+content [51], CMA-ES and population-based training adapt              situate these failure modes [90]. We treat the evolution fitness
+strategy and hyperparameters [52], [53]. The recent language-         as an adversarially-pressured proxy: we report held-out (not
+model-as-operator line keeps these population dynamics but            training) performance, instrument role-influence and inter-role
+replaces hand-coded variation with a frozen model: Evolution          content for collapse, and read the team’s highest mean against
+through Large Models and Language-Model-Crossover treat               a significance test rather than as a leaderboard number; the
+the model as the mutation operator [54], [55], EvoPrompt              taxonomy of such proxy-objective failures in LLM agents is
+evolves prompts [56], and FunSearch, Evolution-of-Heuristics,         surveyed in a companion work ([91]). The deflationary reading
+Eureka, and AlphaEvolve evolve programs, heuristics, and              we reach is that, here, the structure does not even reach the
+rewards under an evaluator-in-the-loop [57], [58], [59], [60].        proxy ceiling: its added roles are inert, and our finding is an
+Our per-role reflection step is exactly such a frozen-model           honest null on synergy rather than a story of reward hacking.
+variation operator; we use this toolbox to ask whether evolved
+role diversity is load-bearing or collapses to clones, and find
+the latter on a frozen 7B.                                            F. Distinction from Concurrent Single-Locus and Co-
+                                                                      Evolution Studies
+D. Multi-Agent Reinforcement Learning                                    Our setting is deliberately distinct from two adjacent ques-
+                                                                      tions. A line of work localizes value within a single agent’s
+   The contrasting axis updates weights. Classical multi-agent
+                                                                      text harness—which slot (role, strategy, format, or reflection-
+RL trains centralized critics and value factorizations from
+                                                                      control) carries the gain—and finds the reflection/control slot
+scratch [61], [62], [63], [64], [65], large-scale self-play reaches
+                                                                      load-bearing; we lift that credit-assignment instrument from
+grandmaster and professional play [66], [67], and emergent-
+                                                                      intra-agent slots to inter-agent roles, asking whether a team’s
+communication work learns a protocol by training commu-
+                                                                      value lives in a particular role and whether it survives the
+nication channels with gradients [68], [69]—the closest con-
+                                                                      N × call cost a team incurs. A second line co-evolves two
+trast to our evolved natural-language protocol over a frozen
+                                                                      ownership-disjoint loci of a single agent (a text harness and a
+model. A recent line applies policy-gradient fine-tuning to the
+                                                                      learned skill/playbook state) that share one preamble and one
+language-model parameters themselves so collaborating agents
+                                                                      model call per step, and finds they combine additively, not
+co-adapt weights [70], [71], [72], [73], [74], [75]. In all of
+                                                                      synergistically. This paper instead evolves a system of distinct
+these the policy is the parameters: improving coordination
+                                                                      agents whose separate calls compose into each environment
+requires backpropagating reward into the model—expensive,
+                                                                      action—making the iso-budget question, which is free when
+risky for the backbone’s general capability, and impossible on
+                                                                      both loci share one call, the central controlled variable: we
+an inference-only server. Surveys and the standard textbook
+                                                                      hold total language-model calls fixed rather than environment
+anchor the frozen-versus-trained boundary [76], [77]. Our
+                                                                      rollouts. The unit of evolution here is the inter-agent config-
+setting differs ontologically: the backbone is held frozen and
+                                                                      uration, not a second locus of one agent; coordinate-ascent
+the only optimized object is the multi-agent configuration,
+                                                                      over roles is to a team what coordinate-ascent over slots is to
+searched at inference time over discrete natural-language struc-
+                                                                      a harness, one level up. We make these distinctions in prose
+ture. Weight-updating multi-agent RL pays its adaptation cost
+                                                                      and do not cite the unpublished companion manuscripts.
+in gradient steps over parameters; frozen-backbone multi-agent
+evolution pays it in search over inference-time structure—and
+our result is precisely that, on a frozen 7B at iso-call, that                        III. P ROBLEM F ORMULATION
+search does not find structure worth its inference cost.
+                                                                         We formalize the single-versus-multi-agent comparison and
+                                                                      define the iso-call invariant that controls it. Table I summarizes
+E. Benchmarks and Goodhart                                            the notation.
+   We evaluate on interactive benchmarks with executable              Agents over a frozen backbone. A single language model gθ
+rewards. ALFW ORLD [8] aligns text and embodied environ-              is held frozen: no role updates its weights. A role is the pair
+ments with a sparse binary reward; W EB S HOP [9] grades              of gθ and a natural-language role prompt pρ ; calling the role
+attribute-matched web shopping with a dense [0, 1] score; τ -         means prompting gθ with pρ together with the role’s inputs. A
+bench supplies a tool-agent-user testbed [78]. A newer line           single agent is one role—the executor—whose prompt is the
+builds explicitly multi-agent benchmarks and social-deduction         only evolvable string, recovering the standard reason-and-act
+testbeds where coordination, competition, and deception are           loop [6] with an evolvable preamble. A multi-agent team is a
+the point [79], [80], [81], [82], [83], [84]. Because an evolved      set of roles R wired by a fixed topology so that their separate
+system is optimized against a metric, the evaluation is adver-        calls compose into one environment action per step. The object
+sarial: Goodhart’s law warns that a measure under optimization        we evolve is the genome G = {pρ }ρ∈R ; the backbone θ never
+ceases to be a good measure [85], and the over-optimization           moves. The policy ΠG induced by G produces, for each task
+literature quantifies how a proxy reward predictably diverges         τ , a trajectory whose per-step action is the composition of
+from the true objective under pressure, formalizes reward             the roles’ calls, and the environment returns   P the reward r(τ ).
+hacking, and documents specification gaming [86], [87], [88].         Held-out performance is S(ΠG ; T ) = |T1 | τ ∈T r(ΠG , τ ).
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                            5
+
+
+
+                                TABLE I                                  calls-per-task multiplier sits in the same table (Section VI) so
+                 N OTATION USED THROUGHOUT THE PAPER .                   the reader prices the structure.
+                                                                         The localization question. Beyond the aggregate single-vs-
+    Symbol            Meaning
+                                                                         team comparison, we ask where any team value lives. For a
+    gθ                Frozen LLM backbone (parameters θ, shared by all   role ρ, a leave-one-in (LOI) arm evolves only pρ (freezing the
+                      roles)
+                                                                         other roles to their defaults) under the same iso-call budget;
+    τ                 A task; ot , at its observation/action at step t
+    r(τ )             Environment reward: binary success or graded
+                                                                         its gain over the unevolved Stock agent measures that role’s
+                      [0, 1]                                             standalone marginal value. Comparing the LOI arms to one
+    R                 Set of roles, e.g. {plan, exec, crit}              another and to the full team localizes the realized value to a
+    pρ                Role prompt for role ρ ∈ R (an evolvable string)   role, exactly as a within-harness slot decomposition localizes
+    G                 Genome: the bundle of role prompts {pρ }ρ∈R        value to a slot—lifted here to the inter-agent level.
+    ΠG                Multi-agent policy induced by genome G on gθ
+    Ncalls (Π, τ )    Number of LLM calls Π makes to complete τ
+    S(Π; T )          Mean held-out performance of Π on task set T                        IV. M ETHOD : MA-E VOLVE
+    B                 Iso-call budget: total LLM calls allowed during      MA-E VOLVE            has       three      pieces:       a
+                      evolution
+                                                                         Planner→Executor→Critic team genome (Section IV-A),
+    Ttr , Tva , Tte   Train / val / test task splits (disjoint)
+                                                                         a per-role coordinate-ascent optimizer that reuses a single-
+                                                                         agent reflective-evolution engine unchanged (Section IV-B),
+                                                                         and the CallMeter mechanism that enforces the iso-call
+The call-cost of structure. The fact that makes the compari-             budget (Section IV-C). Figure 2 diagrams the pipeline and
+son subtle is that a team makes more LLM calls per step than             Algorithm 1 states the optimizer.
+a single agent. If the team composes N role-calls into each
+action (here N =3: plan, exec, crit), then for a task taking L
+environment steps,                                                       A. The Team Genome
+                                                                            The team is a fixed-topology pipeline of three roles around
+ Ncalls (Πteam , τ ) ≈ N ·L ≫ Ncalls (Πsingle , τ ) ≈ L, (1)             the existing reason-and-act rollout, so that the comparison to
+                                                                         a single ReAct agent is a clean one-variable test (the number
+up to role cadences (a planner called every J steps and a
+                                                                         of composed calls), not a change of environment or loop.
+critic called only on a stall make N an effective average below
+                                                                            • Planner (pplan ). Called once at the start and every J
+the worst case). A comparison that holds environment rollouts
+fixed—the same number of tasks times steps—therefore grants                    steps thereafter, it reads the task and current observation
+the team roughly N × the LLM compute for free, and any                         and emits a short sub-goal. Its output is prepended to the
+apparent advantage is confounded with that extra inference.                    Executor’s preamble until the next planning step.
+                                                                            • Executor (pexec ). The standard ReAct action pro-
+The iso-call invariant. We make the controlled budget the
+total number of LLM calls. Concretely, we run single-agent                     poser [6]: at each step it reads the running trajectory plus
+evolution     first and record the total calls it consumes, B =                the current Planner sub-goal and the last Critic note, and
+P
+     N       (·)  over its entire search; we then budget every team            emits the single environment action. This is the one role
+   t   calls
+arm to terminate when its cumulative LLM calls reach the                       a single agent also has; its prompt generalizes the single
+same B:                                                                        agent’s evolvable preamble.
+                                                                            • Critic (pcrit ). Called on a stall (a repeated or null-effect
+                                       P
+                                          t Ncalls (·) ≤ B.
+               evolve G subject to                               (2)           observation), it inspects the last action and observation
+                                                                               and emits a one-line correction in the manner of verbal
+Under Equation (2) a team that makes N calls per step gets                     self-correction [7], injected into the Executor’s preamble
+1/N as many environment rollouts during search as the single                   for the next step.
+agent did. A team win under the iso-call budget would mean
+                                                                         The genome is G = (pplan , pexec , pcrit ), three ownership-
+the structure pays even after paying for its extra calls—the
+                                                                         disjoint evolvable strings; the protocol cadences J (plan) and
+genuinely interesting claim. Because reflection (mutation) calls
+                                                                         the stall trigger (crit) are fixed hyperparameters. The rollout
+are identical per arm, they cancel in the comparison. We
+                                                                         wrapper composes the three role-calls into the one action
+also report, as the team’s generous best case, the env-rollouts
+                                                                         the environment consumes, then hands the resulting trajectory
+regime that holds rollouts (not calls) fixed and hands the team
+                                                                         back through the same rollout interface a single agent uses—
+its free N × compute; if the team ties or loses even there, the
+                                                                         so the executor’s information flow genuinely depends on the
+conclusion is robust to the budget definition.
+                                                                         planner’s and critic’s outputs (the roles interact within one
+Three budget meters. To make the comparison re-readable                  trajectory; this is not an ensemble of independent agents).
+under any cost definition, we meter every arm with three
+quantities drawn from the shared backbone client: (i) search
+calls, the LLM calls consumed during evolution (the quantity             B. Per-Role Coordinate-Ascent
+Equation (2) caps); (ii) evaluation calls per task, the deploy-             The optimizer is reflective prompt evolution [5], reused un-
+ment cost of the frozen policy at test time, Ncalls (ΠG , τ ) av-        changed as the per-role engine; MA-E VOLVE’s only additions
+eraged over Tte ; and (iii) tokens, prompt plus completion. The          are the multi-agent rollout and the iso-call cap. Evolution
+headline is held-out success at iso-search-calls; the evaluation-        proceeds by coordinate-ascent over the three roles: we cycle
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                                                          6
+
+
+
+
+    ISO-CALL BUDGET INVARIANT : total LLM calls held fixed vs a single agent =⇒ the team spends 𝑁× calls per env step, so it explores 1/𝑁 as much / runs 𝑁× the eval cost
+
+
+
+
+                                 ONE FROZEN agent: Qwen2.5-7B-Instruct           ∗            observation 𝑜𝑡+1 (next step)
+
+
+
+                                                      Planner
+                                                 role-prompt 𝑝plan
+                                               sub-goal every 𝐽 steps
+
+
+                                                                                            Executor preamble (per step)                            Environment
+                          𝑁 =3 LLM                   Executor                                                                     action 𝑎𝑡
+                           calls per                                                        + Planner sub-goal (every 𝐽 )
+                                                 role-prompt 𝑝exec                                                                                ALFWorld / WebShop
+                           env step             emits the env action
+                                                                                            + Critic correction (on stall)
+                                                                                            ⇒ ONE ReAct action                                   step: action → obs, reward
+
+
+                                                       Critic
+                                                 role-prompt 𝑝crit
+                                                 correction on stall
+
+                                   no weight updates; same weights for all 3 roles
+                                                                                                                                                        measured (ALFWorld 𝑛=134)
+                                                                                                                                                        single 0.754 (1 prompt)
+                  COORDINATE-ASCENT evolution : improve 𝑝plan , then 𝑝exec , then 𝑝crit (reuse GEPA per role; one role at a time, others frozen-in-context)
+                                                                                                                                                        team 0.769 ( 𝑁 =3, 1.8× cost)
+                                        under the iso-call cap above → each role gets only 𝐵/𝑁 of the search budget                                     Δ=+0.015, 𝑝=0.80 (ns)
+
+
+
+Fig. 2. MA-E VOLVE architecture. One frozen backbone gθ serves all three roles (no weight updates). Per environment step the Planner (pplan , called
+every J steps) emits a sub-goal, the Critic (pcrit , called on a stall) emits a one-line correction, and the Executor (pexec ) composes both into its preamble
+and emits the single environment action—so the team spends N =3 LLM calls per step where a single agent spends one. The genome (pplan , pexec , pcrit )
+is optimized by coordinate-ascent, one role at a time with the others frozen-in-context, reusing the single-agent reflective evolution engine; under the iso-call
+cap (top) each role receives only B/N of the search budget. The measured outcome (ALFW ORLD, n=134): the team (0.769) is not separable from the
+single agent (0.754; ∆=+0.015, p=0.80) at 1.8× the cost.
+
+
+
+through roles, and to improve a role ρ we hold the other two                                                 Algorithm 1 MA-E VOLVE: iso-call per-role coordinate-ascent
+role prompts fixed and run reflective evolution on pρ alone,                                                 Require: frozen backbone gθ ; roles R=(plan, exec, crit);
+scoring candidate genomes by the team’s held-out performance                                                     splits Ttr , Tva ; reflective engine E VOLVE; call meter
+and keeping a child only if it does not decrease validation                                                      C ALLS(·)
+performance. Reflection presents the joint trajectory and asks                                                1: // Anchor: single-agent search sets the iso-call budget
+for a revised pρ that would have steered the team better,                                                        B
+so credit is assigned at the role level (which role’s prompt                                                  2: p0exec ← E VOLVE (exec only; cap on rollouts);     B ←
+to mutate, given the shared trajectory). The single iso-call                                                     C ALLS(this search)
+budget B is split across the roles (here B/N per role), exactly                                               3: initialize genome G ← (pplan =∅, pexec =∅, pcrit =∅)
+mirroring how a within-harness slot search splits one budget                                                  4: per-role budget b ← B/|R|
+across slots. The frozen best genome is then applied to the                                                   5: // Coordinate-ascent over roles under the iso-call cap
+held-out tasks. A per-role leave-one-in (LOI) arm is the same                                                 6: for role ρ in R (cycled) do
+procedure restricted to a single role: it evolves only pρ and                                                 7:    hold {pρ′ }ρ′ ̸=ρ fixed
+leaves the others at their defaults, which is the localization                                                8:    pρ               ←              E VOLVE pρ          |
+microscope of Section VII.                                                                                          G;     roll_fn=T EAM ROLLOUT(G);        cap C ALLS≤b
+
+                                                                                                               9:   accept pρ into G iff it does not decrease S(ΠG ; Tva )
+                                                                                                              10: end for
+C. CallMeter: Enforcing the Iso-Call Budget                                                                   11: return frozen genome G⋆ (applied once per held-out task)
+
+   The backbone client meters cumulative LLM calls, prompt                                                    12: // TeamRollout(G): per step, compose N role-calls of gθ
+tokens, and completion tokens. The single-agent arm runs first;
+its total search calls define B (Equation (2)). For every team                                                13:    sub-goal ← gθ (pplan , ·) every J steps; note ←
+arm the evolution engine’s budget cap counts LLM calls rather                                                     gθ (pcrit , ·) on stall
+than environment rollouts: the wrapper snapshots the call                                                     14:    action ← gθ (pexec , traj + sub-goal + note)
+counter before and after each rollout batch and terminates the
+search once the cumulative count reaches B. Because the team
+makes N calls per step, this caps the team at 1/N the rollouts
+                                                                                                                                              V. E XPERIMENTAL S ETUP
+the single agent used—the structure pays for its extra calls out
+of its own search budget. The same three meters are read at                                                  Benchmarks. We evaluate on two interactive agent bench-
+test time to report evaluation calls per task and tokens. The                                                marks with executable rewards, the same substrate used to
+env-rollouts best-case regime is produced by instead capping                                                 study single-agent evolution. ALFW ORLD [8] is the primary:
+on rollouts (granting the team its free N × compute) and                                                     a text-embodied household suite with a strict binary success
+is reported alongside, labeled as the team’s generous upper                                                  reward; we evaluate on its n=134 held-out test tasks with
+bound.                                                                                                       a step cap of 30. W EB S HOP [9] is the secondary: grounded
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                      7
+
+
+
+web shopping with a dense [0, 1] attribute-match score; we          the structure spends so that no result can be read in isolation
+evaluate on n=80 held-out sessions with a step cap of 15.           from its price. Figure 1 visualizes it alongside W EB S HOP. We
+The dense secondary is included deliberately to resolve small       read it through finding-titled observations.
+effects the coarse binary ALFW ORLD reward may hide, and to         Finding 1: Single-agent evolution works; the executor
+test whether any multi-agent effect depends on reward density.      prompt is real. Evolving the single executor preamble lifts
+Frozen backbone. A single frozen Qwen2.5-7B model [92]              held-out success from Stock’s 0.657 to 0.754—a +0.097 gain
+serves every role of every arm, at greedy decoding (tempera-        that is significant (McNemar 20–7, p=0.021). The evolved
+ture 0) for deterministic, reproducible trajectories. Using one     prompt is concrete, not an opaque tuned string: it instructs the
+frozen 7B for all roles is the deliberate stress test: it removes   agent to open a closed receptacle before taking an object, to
+any capability gap between roles and isolates the effect of the     take before placing, to use the environment’s exact action tem-
+multi-agent structure and its prompts rather than a stronger        plates, and to confirm for cool/heat/use sub-tasks (Section A).
+model in some role. The identical backbone, decoding, and           This is the value the rest of the paper will trace.
+rollout path are shared by Stock, single, team, and every LOI       Finding 2: The team attains the highest mean—but not a
+arm (the fairness invariant).                                       significant one over the single agent—at 1.8× the cost. The
+Cells. The run-list is the localization microscope. (i) Stock:      full Planner→Executor→Critic team reaches 0.769, the high-
+a single ReAct agent with an empty preamble—the un-                 est mean in Table II, and beats Stock significantly (+0.112,
+evolved, evaluation-only floor. (ii) single: single-agent evolu-    p=0.018). But the comparison that isolates the structure is
+tion, the flat reflective search of the executor preamble; its      team versus single, and there the margin is ∆=+0.015 with
+total search calls set the iso-call budget B. (iii) team: the       McNemar 9–7, p=0.80 (Table III)—not statistically separable.
+full evolved Planner→Executor→Critic genome at iso-call B.          Meanwhile the team spends 32.2 evaluation calls per task
+(iv) LOI:plan / LOI:exec / LOI:crit: per-role leave-one-in arms,    against the single agent’s 18.0, a 1.79× cost multiplier (and
+each evolving only its named role at iso-call B. The budget         1.8× the tokens). The team’s gain over Stock is thus the
+is a rollout pool of 120 per role; the env-rollouts best-case       executor’s gain (single already buys +0.097); the planner and
+regime caps on rollouts instead of calls.                           critic add +0.015 for +79% cost. We state this precisely: the
+Splits and protocol. Tasks are partitioned into disjoint            team is the numerically best system but is not separable from
+train/validation/test sets (development tasks for search, the       a single evolved agent, and it is priced in the same row.
+134/80 held-out tasks for the reported test), with a fixed          Finding 3: WebShop is consistent—evolution null, team
+seed; no test task appears in evolution. Evolution selects on       worse. On dense W EB S HOP (Figure 1, right) single-agent
+validation performance; all reported numbers are on the held-       evolution does not move the score (0.245 vs. Stock 0.242,
+out test split.                                                     paired-bootstrap p=0.96), and the team trends worse (0.185,
+Statistics. Following the single-greedy convention of               ∆=−0.060 vs. single, p=0.12) while again costing more calls
+the frozen-backbone evolution line, we run one greedy               per task. The direction is the same as ALFW ORLD: the added
+(temperature-0) evaluation per cell and quantify uncertainty        structure does not pay, and on the dense benchmark it mildly
+by a task-as-unit nonparametric bootstrap over the held-out         hurts. (The multi-agent pipeline’s absolute W EB S HOP level
+tasks (104 resamples) for 95% confidence intervals, rather          is lower than a specialized single-agent W EB S HOP agent’s
+than multi-seed replication. Every cross-cell comparison            would be, because all cells share one pipeline and rollout; the
+carries a paired test: McNemar’s exact test on per-task             internal team-vs-single comparison is fair because every cell
+success for the binary ALFW ORLD label, and a paired                shares that pipeline, and it is the internal comparison—not the
+bootstrap on the dense score for W EB S HOP. We mark                absolute level—that the paper claims; see Section C.)
+significance as *** p<0.001, ** p<0.01, * p<0.05, and ns            Finding 4: The cost is real and uniform across arms. The
+otherwise, and we label directional-but-not-significant gaps        Cost column makes the structural overhead legible: every arm
+ns explicitly rather than implying they are wins.                   that adds a steering role (team, LOI:plan, LOI:crit) costs more
+Budget meters. For every arm we report the three meters of          evaluation calls per task than the single executor, in proportion
+Section III: search calls (evolution cost), evaluation calls per    to how often the extra roles fire—LOI:exec, which adds no
+task (deployment cost), and tokens, all read from the shared        steering role, is the cheapest cell (16.7 calls/task, 0.93×) and
+backbone client’s usage counters.                                   still reaches 0.731. A reader pricing accuracy-per-call would
+Collapse instrumentation. As an analysis-only probe we              rank the single executor first, not the team.
+measure, on the test trajectories, each steering role’s influence   Finding 5: The gain is in the hard families, and the team
+rate—the fraction of times the role fires in which it actually      tracks the single agent everywhere. Table IV and Figure 3
+changes the Executor’s chosen action—and the Critic’s restate-      break the ALFW ORLD headline down by the six canonical
+rate—the fraction of critic calls that merely restate without       task families. The pattern reinforces the aggregate. Evolution’s
+altering content. We also record whether each role’s evolved        value is realized almost entirely on the two hardest families—
+prompt is non-empty. These quantify whether the planner/critic      examine-in-light (Stock 0.111, lifted to 0.444 by single and
+roles do anything, independent of the success metric.               0.500 by the team) and heat&place (0.652 → 0.826)—whereas
+                                                                    on the four easier families every arm already sits near ceiling
+                        VI. R ESULTS                                and there is little room to move. Crucially, the team and the
+  Table II is the paper’s central object: the three-meter table     single agent move together: on no family does the team beat
+on ALFW ORLD test, pairing held-out success with the cost           the single agent by more than a single task, and on two families
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                                                                                             8
+
+
+
+                                                               TABLE II
+  T HREE - METER RESULTS ON ALFW ORLD TEST (n=134, BINARY SUCCESS ), ISO - CALL BUDGET. E VERY ARM REPORTS HELD - OUT success (+95%
+ TASK - BOOTSTRAP CI), THE TWO EVOLUTION / DEPLOYMENT call METERS , MEAN tokens/task, AND MEAN ENV-steps. ∆ AND THE M C N EMAR TEST ARE
+  VERSUS S TOCK . B OLD MARKS THE TRUE BEST PER COLUMN even though it is a baseline or the executor-only arm; THE TEAM ’ S HIGHER MEAN IS not
+STATISTICALLY SEPARABLE FROM THE SINGLE AGENT ( SEE TABLE III). NS : p≥0.05. T HE C OST COLUMN (×) IS EVALUATION CALLS / TASK RELATIVE TO
+                        THE SINGLE AGENT, SO THE READER PRICES THE STRUCTURE IN THE SAME ROW AS ITS ACCURACY.
+
+
+                                                                                                        Success ↑                      Search        Eval calls   Cost   Tokens     Env          ∆ vs. Stock
+                                       Cell                                                             [95% CI]                        calls          / task     (×)     / task   steps         (McNemar)
+
+                                       Stock (unevolved)                                    0.657 [0.57, 0.74]                             0           18.7       1.04   5.6k      18.7               —
+                                       single (evolve pexec )                               0.754 [0.68, 0.83]                             B           18.0       1.00   5.4k      18.0    +0.097, 20–7, p=0.021 *
+                                       team (P→E→C)                                         0.769 [0.69, 0.84]                             B           32.2       1.79   9.7k      18.2    +0.112, 25–10, p=0.018 *
+
+                                       LOI:plan (evolve pplan )                              0.724 [0.65, 0.80]                            B           29.8       1.66    9.0k     18.4    +0.067,       p=0.15 ns
+                                       LOI:exec (evolve pexec )                              0.731 [0.66, 0.81]                            B           16.7       0.93    5.0k     16.7    +0.075,       p=0.10 ns
+                                       LOI:crit (evolve pcrit )                              0.754 [0.68, 0.83]                            B           22.3       1.24    6.7k     18.1    +0.097, 23–10, p=0.037 *
+
+
+
+                             TABLE III                                                                                                                     do the extra roles fail to pay? This section answers with
+T HE HEADLINE CROSS - CELL COMPARISONS ON ALFW ORLD TEST. T HE                                                                                             the per-role localization (Figure 4), the both-budget-regimes
+  TEAM ’ S GAIN OVER S TOCK IS REAL BUT IS THE executor’s GAIN : THE
+STRUCTURE ( PLANNER+ CRITIC ) ADDS +0.015 OVER THE SINGLE AGENT,                                                                                           comparison, and the collapse instrumentation (Figure 5).
+                     WHICH IS not SIGNIFICANT.
+
+
+                            Comparison                             ∆                      McNemar                                   verdict                A. The Value Localizes to the Executor
+                            single vs. Stock                   +0.097               20–7, p=0.021   * significant                                             Figure 4 plots each arm’s gain over Stock with its paired
+                            team vs. Stock                     +0.112               25–10, p=0.018 * significant                                           bootstrap interval. The pattern is sharp. The single agent
+                            team vs. single                    +0.015                9–7, p=0.80   ns (structure)                                          (evolve one prompt) and the full team are the only two
+                            LOI:crit vs. Stock                 +0.097               23–10, p=0.037 * significant
+                                                                                                                                                           arms whose gain is significant, and they are essentially equal
+                            LOI:plan vs. Stock                 +0.067                   p=0.15           ns
+                                                                                                                                                           (+0.097 vs. +0.112, overlapping intervals); their difference—
+                                                                                                                                                           the structure’s contribution—is the +0.015, p=0.80 headline.
+                                              Per-task-type breakdown (ALFWorld, n=134): the gain is in the HARD types;
+                                                        the team never separates from the single agent on any type
+                                                                                                                                                           Among the per-role leave-one-in arms, evolving only the
+                                    n=18                n=17                 n=23                    n=31                 n=24             n=21            Executor (LOI:exec, +0.075) or only the Critic (LOI:crit,
+                         1.00
+                                                           hardest family: +0.33 from evolution                                                            +0.097, p=0.037) recovers most of the gain, while evolv-
+                                                                                                                                                           ing only the Planner (LOI:plan, +0.067, p=0.15) does not
+ ALFWorld success rate
+
+
+
+
+                         0.75
+                                                                                                                                                           separate from Stock. The deflationary reading is that single-
+                         0.50                                                                                                                              executor evolution already approximately equals the full team:
+                                                                                                                                                           the value lives in the Executor, and the Planner and Critic
+                         0.25                                                                                                                              add no separable success. (LOI:crit reaches significance versus
+                                                                                                                                                           Stock because the critic arm still benefits from the shared
+                         0.00
+                                  examine              two-obj           heat&place               clean&place          pick&place       cool&place         executor default; it does not beat the single executor.)
+                                   in light            &place
+
+
+                                                                        Stock              single               team
+
+                                                                                                                                                           B. Both Budget Regimes Agree
+Fig. 3. Per-task-type breakdown on ALFW ORLD (n=134), the six
+canonical families ordered hardest→easiest by Stock. The evolved gain                                                                                         The headline holds the controlled invariant—total LLM
+concentrates on the hard families (examine-in-light, two-obj, heat&place); on                                                                              calls—fixed (Equation (2)). One might object that the team
+the easy families all arms are near ceiling. The team (green) tracks the single                                                                            is handicapped by getting 1/N the rollouts during search. We
+agent (blue) on every family—it never separates—so the structure buys no
+per-type value, the family-level echo of the aggregate team≈single tie.                                                                                    therefore also report the team’s generous best case: the env-
+                                                                                                                                                           rollouts regime that holds rollouts fixed and grants the team
+                                                                                                                                                           its free 2 − 3× compute. Even there, the evolved team only
+(pick&place, clean&place) the single agent or the executor-                                                                                                ties the single agent (0.739=0.739): the extra compute does
+only arm is the per-family best. The structure thus adds no                                                                                                not convert into a separable advantage. Reporting both regimes
+per-type value; the family-level view shows the same tie the                                                                                               makes the conclusion robust to the budget definition—the team
+aggregate McNemar test reports, ruling out a hidden subgroup                                                                                               fails to pay under the controlled budget and fails to win even
+on which the planner and critic would have paid.                                                                                                           under the budget that most favors it. (For transparency, the env-
+                                                                                                                                                           rollouts per-role LOI cells were not completed: the planner’s
+                    VII. A NALYSIS : L OCALIZATION , B OTH R EGIMES , AND                                                                                  env-rollouts path hit a KeyError on the sub-goal key, so
+                                         C OLLAPSE                                                                                                         the env-rollouts regime is reported as the team-row best case
+  If the team is not separable from a single agent, two                                                                                                    only, while the controlled iso-call regime carries the full LOI
+questions follow: where does the realized value live, and why                                                                                              decomposition of Table II.)
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                                                                                                                                                                                                                9
+
+
+
+                                                                TABLE IV
+ P ER - TASK - TYPE SUCCESS ON ALFW ORLD TEST (n=134), BY THE SIX CANONICAL TASK FAMILIES ( ORDERED HARDEST→EASIEST BY THE S TOCK
+RATE ), FOR THE THREE HEADLINE ARMS PLUS THE EXECUTOR - ONLY LEAVE - ONE - IN CELL . E ACH CELL IS THE SUCCESS RATE WITHIN THAT FAMILY (nρ
+TASKS ). T HE COLUMN MEANS REPRODUCE THE AGGREGATES OF TABLE II EXACTLY (0.657/0.754/0.769/0.731). T HE REALIZED GAIN OF EVOLUTION
+ CONCENTRATES IN THE HARDEST FAMILIES (examine-in-light: 0.111 → 0.444; heat&place: 0.652 → 0.826), WHILE ON THE EASY FAMILIES EVERY ARM
+  IS ALREADY NEAR - CEILING . B OLD MARKS THE BEST PER FAMILY; THE TEAM never EXCEEDS THE SINGLE AGENT BY MORE THAN ONE TASK ON ANY
+                                            FAMILY, SO THE STRUCTURE ADDS NO PER - TYPE VALUE .
+
+
+                                                 Task family                         nρ          Stock            single (evolve pexec )                                                      team (P→E→C)                              LOI:exec
+
+                                                 examine-in-light                    18          0.111                   0.444                                                                          0.500                            0.222
+                                                 two-obj & place                     17          0.471                   0.353                                                                          0.471                            0.471
+                                                 heat & place                        23          0.652                   0.826                                                                          0.826                            0.826
+                                                 clean & place                       31          0.806                   0.839                                                                          0.839                            0.871
+                                                 pick & place                        24          0.833                   1.000                                                                          0.917                            0.917
+                                                 cool & place                        21          0.857                   0.857                                                                          0.905                            0.857
+
+                                                 All (n=134)                        134          0.657                   0.754                                                                          0.769                            0.731
+
+
+
+                                        Where does the value live? In the EXECUTOR.                                                                                               The steering roles neither evolve distinct content nor change outcomes — structure is overhead
+                               single-executor evolution ≈ full team; Planner / Critic add none
+                                                                                                                                                                                       (a) Steering roles are decorative                                                               (b) Cost without benefit
+                                                                                                                                                                           only the Executor prompt evolves; Plan/Crit froze empty                                         team = highest cost, no higher success than single
+                                                                                                                                                                                                critic restate-rate = 0.00
+        single agent                                                              +0.097 (*, p=0.02)                                                                                       (the Critic never  changes content)
+                                                                                                                                                                                                       emits action
+  (evolve 1 prompt)                                                                                                                                                                                     (by design)                                                0.800
+                                                                                                                                                                           1.0
+
+
+
+
+                                                                                                                              (fraction of fires that change the action)
+                                                                                                                                                                                                                                                                   0.775
+                                                                                                                                                                                                                                                                                                                                   team
+          full team                                                                    +0.112 (*, p=0.02)                                                                                                                                                                                                             single's success
+
+
+
+
+                                                                                                                                                                                                                                           ALFWorld success rate
+                                                                                                                                                                           0.8                                                                                                                      LOI:crit
+  (Plan+Exec+Crit)                                                                                                                       role-influence rate                                                                                                       0.750             single
+
+                                                                                                                                                                                                                                                                                 LOI:exec
+                                                                                                                                                                           0.6                                                                                     0.725                      +14 calls, no extra success    LOI:plan
+
+  LOI: Planner only                                                        +0.067 (ns, p=0.15)
+                                                                                                                                                                                                                                 0.41                              0.700
+                                                                                                                                                                           0.4
+                                                                                                                                                                                                                                                                   0.675
+ LOI: Executor only                                                            +0.075 (ns, p=0.10)
+                                                                                                                                                                                                                                                                                       Stock
+                                                                                                                                                                           0.2      0.14                                                                           0.650
+                        the headline:
+                        team − single = +0.015                                                                                                                                                                                                                     0.625
+    LOI: Critic only    (ns, p = 0.80)                                              +0.097 (*, p=0.04)                                                                     0.0
+                                                                                                                                                                                    Planner            Executor               Critic                                       15          20                25                 30           35
+                                                                                                                                                                                   (p_plan)            (p_exec)              (p_crit)
+                                                                                                                                                                                   FROZE                evolved              FROZE                                                       eval calls / task (cost)
+                                                                                                                                                                                   EMPTY              (420 chars)            EMPTY
+                       −0.05      0.00        0.05       0.10           0.15         0.20        0.25        0.30
+                                         Δ success vs Stock (paired, 95% bootstrap CI)
+                                                                                                                            Fig. 5. The steering roles are overhead. (a) Only the Executor prompt
+                                     * significant (McNemar p < 0.05)            ns: 95% CI touches / crosses 0             evolves (non-empty, ∼420 chars); the Planner and Critic prompts froze empty
+                                                        ALFWorld held-out, n=134                                            and fire at low influence on the chosen action (planner 0.14, critic 0.41;
+                                                                                                                            critic restate-rate 0.00). (b) Cost without benefit: the team sits at the highest
+                                                                                                                            evaluation cost (+14 calls/task over the single agent) with no higher success
+Fig. 4. Where does the value live? In the Executor. Per-arm gain over                                                       than the single agent. The steering roles neither evolve distinct content nor
+Stock on ALFW ORLD test (paired, 95% bootstrap CI). Single-agent evolution                                                  change outcomes—structure is overhead.
+(+0.097, *) and the full team (+0.112, *) are equal within noise; the
+structure’s marginal contribution is team−single = +0.015 (p=0.80, ns).
+Among leave-one-in arms only the Executor- and Critic-bearing arms separate
+from Stock; the Planner-only arm does not (+0.067, p=0.15).
+                                                                                                                            163 times across the test set, but their influence rate—the
+                                                                                                                            fraction of fires that change the Executor’s chosen action—
+C. Why the Roles Do Not Pay: Collapse and Starvation                                                                        is low: 0.14 for the planner and 0.41 for the critic, with a
+   Figure 5 instruments the mechanism. Two facts explain the                                                                critic restate-rate of 0.00 (the critic never rewrites the action’s
+inert roles.                                                                                                                content). The roles are decorative: they consume the extra calls
+Role collapse: the steering roles never evolve distinct content.                                                            that drive the cost column of Table II (Figure 5b shows the
+Under the iso-call budget the team genome evolved only the                                                                  team at the highest cost and no higher success than the single
+Executor prompt (∼420 characters of concrete control text);                                                                 agent) without changing outcomes. Cost without benefit, made
+the Planner and Critic prompts froze empty across every clean                                                               of two parts: roles that cannot evolve a distinct function, and
+run (Figure 5a). Coordinate-ascent accepted no non-trivial                                                                  roles that fire without steering.
+planner or critic content because none improved validation                                                                  Budget starvation, amplified. The two facts compound under
+performance: on a frozen 7B, a planner or critic cannot artic-                                                              the iso-call cap. Because the structure spends 1.8−2.5× the
+ulate a function the executor does not already perform, so the                                                              calls per step, the per-role search budget is B/N , and the
+roles co-adapt toward redundancy rather than specialization.                                                                coarse binary fitness rarely accepts a steering-role mutation
+This is role-differentiation collapse—not an optimizer failure                                                              within that slice—so the steering roles are starved of the search
+but a property of the substrate, a 7B with no headroom for a                                                                needed to find any distinct content, and freeze empty. This
+second distinct role beyond the actor.                                                                                      is the budget-starvation pathology of component-split single-
+Decorative firing: the default roles fire but barely steer. Even                                                            agent evolution, re-appearing one level up at the multi-agent
+running their defaults, the planner fires 537 times and the critic                                                          level and amplified by the larger call overhead a team incurs.
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                    10
+
+
+
+                      VIII. D ISCUSSION                             table are the discipline that prevents that mistake.
+
+Structure does not pay its own inference freight. The
+                                                                                          IX. C ONCLUSION
+through-line of our results is that, on a frozen 7B at iso-call,
+adding a planner and a critic to an evolved executor buys              We asked whether evolving a multi-agent team of frozen
+cost, not a separable benefit. The team is the numerically best     agents pays for itself, holding the controlled budget at to-
+system, and we do not hide that—but “best mean” is the wrong        tal language-model calls rather than environment rollouts,
+headline when the margin over a single agent is p=0.80 and          and where any value lives. We presented MA-E VOLVE,
+the price is 1.8× the calls. The honest description is that the     a Planner→Executor→Critic genome optimized by per-role
+team attains the highest mean but is not statistically separable    coordinate-ascent with a call-metered budget cap, reusing a
+from the single agent and costs 1.8×; the realized value is the     single-agent reflective evolution engine unchanged. Our cen-
+Executor’s, localized by the per-role decomposition, with the       tral finding is deliberately honest and deflationary: structure
+planner and critic adding +0.015 for +79% cost. This is the         does not pay for itself. On ALFW ORLD single-agent evolution
+multi-agent analog of “structure is additive, not synergistic”:     significantly helps (+0.097, p=0.021), but the team—though
+here, the added roles do not even add—they contribute cost          it attains the highest mean (0.769)—is not statistically separa-
+without synergy.                                                    ble from the single agent (∆=+0.015, p=0.80) while costing
+Why a frozen 7B has no role-differentiation headroom. The           1.8× the evaluation calls; a per-role decomposition localizes
+mechanism is not that evolution failed but that the substrate       all realized value to the Executor, with the planner and critic
+offers nothing to specialize. A planner or critic earns its         freezing empty and firing decoratively (influence 0.14 and
+keep only if it can articulate a function the executor does         0.41, restate-rate 0.00). Even granted free 2 − 3× compute
+not already perform; on a frozen 7B shared by all roles,            the team only ties the single agent, and on dense W EB S HOP
+the executor’s own prompt can absorb that function (open            evolution is null and the team trends worse. The mechanism
+before take, confirm before place), so coordinate-ascent finds      is a frozen backbone’s lack of role-differentiation headroom
+no validation-improving content for the steering roles and they     compounded by the structure’s call overhead starving the iso-
+freeze empty. Co-adapting roles under one backbone therefore        call evolution budget—the multi-agent analog of “additive,
+drive toward redundancy, exactly the collapse-toward-clones         not synergistic,” here cost without synergy. We release the
+dynamic that the quality-diversity literature warns of when         iso-call protocol, the three-meter accounting, and the per-
+diversity is not actively maintained [48], [49], [47]. The role-    role localization microscope as tools for pricing multi-agent
+influence and inter-role-content instruments are the diagnostic:    structure honestly.
+they show the roles are inert, independent of the success           Limitations. (i) Single frozen 7B. All results use one frozen
+metric.                                                             Qwen2.5-7B backbone shared by all roles; role-differentiation
+When might structure pay? Our result is a boundary, not             headroom may grow with scale, and the role-influence/inter-
+a verdict on multi-agent systems in general. Three levers           role-content meters are the instrument we provide to test
+could change it, and our instruments are designed to test           that—we do not claim the conclusion transfers to larger
+them. (i) Scale: a larger or stronger backbone may have the         or heterogeneous backbones. (ii) One topology. We study a
+headroom for a planner/critic to express a distinct function; the   fixed Planner→Executor→Critic pipeline; debate/ensemble or
+role-influence and inter-role-content meters are precisely the      query-adaptive topologies are out of scope. (iii) One opti-
+instrument to detect emerging differentiation, and we predict       mizer. Coordinate-ascent over roles is one search scheme;
+the team-minus-single margin tracks it. (ii) Budget: the iso-call   whole-genome or joint prompt–topology search may behave
+cap starves the per-role search; granting the team genuinely        differently, though the budget-starvation argument suggests
+more total calls (not the env-rollouts loophole) could let          splitting any fixed budget across more roles only worsens it.
+the steering roles evolve content, at a cost a deployer must        (iv) Two benchmarks. We evaluate ALFW ORLD and W EB -
+weigh against simply giving the single agent the same calls.        S HOP; broader validation is open. (v) Single-greedy task-as-
+(iii) Heterogeneity: distinct backbones per role, or a genuinely    unit bootstrap. We run one greedy evaluation per cell and
+decision-heavy task where a critic catches errors a single pass     bootstrap over tasks rather than replicating seeds, following
+commits, may create the complementarity a homogeneous               the frozen-evolution convention; multi-seed replication would
+frozen team lacks. We did not find these conditions on              tighten the variance estimate. (vi) The env-rollouts LOI gap.
+ALFW ORLD/W EB S HOP with one frozen 7B; we make the                The env-rollouts best-case regime is reported as the team
+conditions explicit so the boundary is actionable.                  row only, because its per-role LOI cells were not completed
+                                                                    (a planner-path KeyError); the controlled iso-call regime
+Relation to the cost-aware multi-agent frontier. Recent
+                                                                    carries the full decomposition.
+automated multi-agent design explicitly optimizes a cost–
+performance trade-off, learning distributions over architectures
+rather than one best system [38], [39]. Our result is com-                                 A PPENDIX A
+plementary and cautionary: on a frozen small backbone, the                      T HE E VOLVED E XECUTOR P ROMPT
+cost axis dominates—the cheapest informative cell (single              Under the iso-call budget the team genome evolved only the
+executor) is also the accuracy-per-call winner, and a search        Executor prompt pexec (the Planner and Critic prompts froze
+that ignores the call meter would mistake the team’s higher         empty). The frozen evolved executor control text applied at
+mean for a win. The iso-call invariant and the three-meter          test time is, verbatim (lightly truncated):
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                      11
+
+
+
+                               TABLE V                                                                TABLE VI
+S EARCH - SIDE BUDGET METERS ON ALFW ORLD ( THE QUANTITIES THE          ROLE - BEHAVIOR / COLLAPSE INSTRUMENTATION ON ALFW ORLD TEST
+  ISO - CALL CAP OF E QUATION (2) CONTROLS ; DEPLOYMENT- SIDE EVAL        ( ANALYSIS - ONLY; THE SUCCESS METRIC IS UNTOUCHED ). Fires IS HOW
+CALLS ARE IN TABLE II). E VERY EVOLVED ARM CONSUMES ≈ B SEARCH             OFTEN A STEERING ROLE IS INVOKED ; Chg. HOW OFTEN ITS INJECTED
+CALLS ( EQUAL SEARCH COMPUTE ), BUT AT N =3 CALLS / STEP THE TEAM        TEXT CHANGES THE E XECUTOR ’ S CHOSEN ACTION ; Infl. = C HG ./F IRES
+     AND PLANNER / CRITIC ARMS BUY FAR FEWER rollouts THAN THE          IS THE INFLUENCE RATE ; Restate IS THE FRACTION OF CRITIC CALLS THAT
+ ONE - CALL SINGLE /LOI: EXEC ARMS — THE 1/N ROLLOUT STARVATION          MERELY RESTATE . T HE STEERING ROLES FIRE HUNDREDS OF TIMES YET
+      THAT FREEZES THE STEERING ROLES . R EFLECT = REFLECTIVE             STEER RARELY ( PLANNER 0.14, CRITIC 0.41), WITH THE CRITIC NEVER
+  ( MUTATION ) CALLS ; S EARCH TOK . = PROMPT+COMPLETION TOKENS                       REWRITING CONTENT— COST WITHOUT EFFECT.
+                    CONSUMED DURING EVOLUTION .
+
+                                                                                                Planner               Critic
+     Cell                       Search    Search    Reflect   Search
+                                 calls   rollouts    calls     tok.         Cell              Fires   Infl.   Fires   Infl.    Restate   Steers?
+
+     Stock (unevolved)             0        0          0        0           Stock              0       —       0       —         —       no roles
+     single (evolve pexec )      2448      132         8      17.6k         single             0       —       0       —         —       no roles
+     team (P→E→C)                2673       64         3       7.1k         team (P→E→C)      537     0.14    163     0.41      0.00      barely
+
+     LOI:plan (evolve pplan )    2462       76         4       9.7k         LOI:plan          555     0.16     0       —         —        barely
+     LOI:exec (evolve pexec )    2607      132         8      19.9k         LOI:exec           0       —       0       —         —       no roles
+     LOI:crit (evolve pcrit )    2505       98         6      14.6k         LOI:crit           0       —      213     0.39      0.02      barely
+
+
+
+
+     - Always check if a receptacle is closed and open it if
+                                                                        (a repeated or null-effect observation). These cadences make
+     necessary before taking an object. - Take objects before           the effective calls-per-step an average below the worst-case
+     placing them somewhere. - Ensure to use the exact templates:       N =3, which is why the measured cost multiplier is 1.8× (not
+     go to <recep>, open <recep>, take <obj> from
+     <recep>, put <obj> in/on <recep>, cool <obj>
+                                                                        3×) on ALFW ORLD.
+     with <recep>,         heat <obj> with <recep>,              use    Cells. Stock is the unevolved single ReAct agent.
+     <obj>. - For cool/heat/use sub-tasks, confirm the object is held   single evolves pexec only (flat search). team evolves
+     and the appliance is the correct one before acting.
+                                                                        (pplan , pexec , pcrit ) by      per-role      coordinate-ascent.
+This is concrete, environment-grounded control—the same                 LOI:plan/exec/crit each evolve a single named role at
+flavor of value single-agent evolution finds—and it is the              iso-call B. All cells share the frozen Qwen2.5-7B backbone,
+entirety of what the team genome learned; no distinct planner           greedy decoding, the rollout path, and the held-out splits.
+or critic content was accepted.                                         Collapse meters. Role-influence rate and critic restate-rate are
+                                                                        computed by replaying the test trajectories and comparing the
+                        A PPENDIX B                                     Executor’s chosen action with and without each steering role’s
+       P ER -C ELL D ETAILS AND H YPERPARAMETERS                        injected text; non-empty-prompt status is read from the frozen
+Evolution. Reflective prompt evolution (reused unchanged [5])           genome. Table VI tabulates the raw instrumentation behind
+with a stochastic Pareto-frontier parent selection, a train-            the “decorative roles” claim of Section VII-C. In the full team
+minibatch keep-better gate (improvement-or-equal on a coarse            the planner fires 537 times but changes the executor’s chosen
+binary fitness), and acceptance re-scored on the full validation        action only 75 times (influence 0.14), and the critic fires 163
+split. The single-agent arm runs first and its total search calls       times changing it 66 times (influence 0.41) with a restate-rate
+define the iso-call budget B (rollout pool 120); each team/LOI          of 0.00—it never rewrites the action’s content. The counts
+arm caps its cumulative LLM calls at B, so the per-role search          are mirrored in the LOI cells (LOI:plan plan-influence 0.16,
+budget is B/N with N =3. Backbone calls are deterministic               LOI:crit crit-influence 0.39), so the low influence is a property
+(temperature 0).                                                        of the roles on this substrate, not of a particular arm. These
+   Table V reports the search-side budget meters that the               are exactly the calls that inflate the cost column of Table II
+iso-call cap controls (the deployment-side eval calls live in           without moving success.
+Table II). Two facts confirm the cap held and expose the star-
+vation mechanism of Section VII-C. First, every evolved arm                                      A PPENDIX C
+consumed essentially the same search-call budget (2448−2673                                  T HE W EB S HOP N OTE
+calls ≈ B), so the arms are compared at genuinely equal search             On dense W EB S HOP (step cap 15), Stock scores 0.242,
+compute. Second, that equal call budget bought the team far             single 0.245 (paired-bootstrap p=0.96 vs. Stock), and the team
+fewer environment rollouts than the single agent (64 vs. 132)           0.185 (∆=−0.060 vs. single, p=0.12). Two honesty points.
+because the team spends N calls per step: the structure pays            First, the multi-agent pipeline’s absolute W EB S HOP level is
+for its extra calls out of its own search budget, exactly the           lower than a specialized single-agent W EB S HOP reason-and-
+1/N rollout-starvation Equation (2) predicts. The executor-             act agent’s would be, because all cells here run through one
+only LOI arm, which makes one call per step, recovers the               shared pipeline and rollout rather than a W EB S HOP-tuned
+full 132 rollouts—it is not starved, which is why it is the only        loop; the absolute number is therefore not comparable to be-
+single-role arm to approach the single agent.                           spoke W EB S HOP leaderboards. Second, this does not threaten
+Protocol cadences. The Planner is called at the first step              the claim, which is the internal team-vs-single comparison:
+and every J steps thereafter; the Critic is called on a stall           every cell shares the same pipeline, so the comparison is fair,
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                            12
+
+
+
+                            TABLE VII                                           [5] L. A. Agrawal, S. Tan, D. Soylu, N. Ziems, R. Khare, K. Opsahl-Ong,
+ W EB S HOP TEST (n=80, DENSE [0, 1] SCORE ), ISO - CALL BUDGET, THE                A. Singhvi, H. Shandilya, M. J. Ryan, M. Jiang et al., “GEPA: Reflective
+     DENSE - SECONDARY ANALOG OF TABLE II. Score IS THE MEAN                        prompt evolution can outperform reinforcement learning,” arXiv preprint
+ATTRIBUTE - MATCH REWARD ; Eval calls/task AND Cost (×, RELATIVE TO                 arXiv:2507.19457, 2025.
+THE SINGLE AGENT ) METER DEPLOYMENT; ∆ IS VERSUS S TOCK ( PAIRED                [6] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao,
+ BOOTSTRAP ). B OLD MARKS THE BEST CELL — A baseline-adjacent ARM ,                 “ReAct: Synergizing reasoning and acting in language models,” in
+      NOT THE TEAM : EVOLUTION IS NULL AND THE TEAM IS THE                          International Conference on Learning Representations (ICLR), 2023.
+          LOWEST- SCORING , HIGHEST- COST HEADLINE CELL .                       [7] N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and
+                                                                                    S. Yao, “Reflexion: Language agents with verbal reinforcement learn-
+                                                                                    ing,” in Advances in Neural Information Processing Systems (NeurIPS),
+Cell                       Score ↑   Eval calls   Cost    Env    ∆ vs. Stock        2023.
+                           (dense)     / task     (×)    steps                  [8] M. Shridhar, X. Yuan, M.-A. Côté, Y. Bisk, A. Trischler, and
+                                                                                    M. Hausknecht, “ALFWorld: Aligning text and embodied environments
+Stock (unevolved)          0.242        5.0       0.98   5.0        —               for interactive learning,” in International Conference on Learning Rep-
+single (evolve pexec )     0.245        5.1       1.00   5.1     +0.003 ns          resentations (ICLR), 2021, arXiv:2010.03768.
+team (P→E→C)               0.185        7.6       1.49   4.2     −0.057 ns      [9] S. Yao, H. Chen, J. Yang, and K. Narasimhan, “WebShop: Towards
+                                                                                    scalable real-world web interaction with grounded language agents,” in
+LOI:plan (evolve pplan )   0.172        5.9       1.16   4.2     −0.070 ns          Advances in Neural Information Processing Systems (NeurIPS), 2022,
+LOI:exec (evolve pexec )   0.233        5.1       0.99   5.1     −0.010 ns          arXiv:2207.01206.
+                                                                               [10] G. Li, H. A. A. K. Hammoud, H. Itani, D. Khizbullin, and B. Ghanem,
+LOI:crit (evolve pcrit )   0.267        6.3       1.23   4.8     +0.025 ns
+                                                                                    “CAMEL: Communicative agents for “mind” exploration of large lan-
+                                                                                    guage model society,” in Advances in Neural Information Processing
+                                                                                    Systems (NeurIPS), 2023, arXiv:2303.17760.
+                                                                               [11] C. Qian, W. Liu, H. Liu, N. Chen, Y. Dang, J. Li, C. Yang, W. Chen,
+and it lands the same way as ALFW ORLD—evolution is null                            Y. Su, X. Cong, J. Xu, D. Li, Z. Liu, and M. Sun, “ChatDev: Commu-
+and the team does not pay (and mildly hurts) at higher cost.                        nicative agents for software development,” in Annual Meeting of the As-
+The dense secondary thus corroborates the binary primary.                           sociation for Computational Linguistics (ACL), 2024, arXiv:2307.07924.
+                                                                               [12] W. Chen, Y. Su, J. Zuo, C. Yang, C. Yuan, C.-M. Chan, H. Yu, Y. Lu,
+   Table VII reports the full six-cell W EB S HOP run-list, mir-                    Y.-H. Hung, C. Qian, Y. Qin, X. Cong, R. Xie, Z. Liu, M. Sun,
+roring the ALFW ORLD table of Table II so the secondary                             and J. Zhou, “AgentVerse: Facilitating multi-agent collaboration and
+                                                                                    exploring emergent behaviors,” in International Conference on Learning
+can be read at the same grain. The internal comparison lands                        Representations (ICLR), 2024, arXiv:2308.10848.
+exactly as on ALFW ORLD: single-agent evolution does not                       [13] Z. Wang, S. Mao, W. Wu, T. Ge, F. Wei, and H. Ji, “Unleashing
+separate from Stock (0.245 vs. 0.242, p=0.96), the executor-                        the emergent cognitive synergy in large language models: A task-
+                                                                                    solving agent through multi-persona self-collaboration,” in Conference
+only arm is likewise null (0.233), and the full team is the worst                   of the North American Chapter of the Association for Computational
+headline cell (0.185) while spending the most evaluation calls                      Linguistics (NAACL), 2024, arXiv:2307.05300.
+(7.6 vs. the single agent’s 5.1). The only arm that edges above                [14] V. Nair, E. Schumacher, G. Tso, and A. Kannan, “DERA: Enhanc-
+                                                                                    ing large language model completions with dialog-enabled resolving
+Stock is LOI:crit (0.267), and it does so only because it inherits                  agents,” in Clinical NLP Workshop at NAACL, 2024, arXiv:2303.17071.
+the shared executor default while adding a critic; it does not                 [15] T. Liang, Z. He, W. Jiao, X. Wang, Y. Wang, R. Wang, Y. Yang, S. Shi,
+separate from the single agent and still costs more calls. As on                    and Z. Tu, “Encouraging divergent thinking in large language models
+                                                                                    through multi-agent debate,” in Conference on Empirical Methods in
+ALFW ORLD, no cell that adds a steering role buys a benefit                         Natural Language Processing (EMNLP), 2024, arXiv:2305.19118.
+commensurate with its cost.                                                    [16] C.-M. Chan, W. Chen, Y. Su, J. Yu, W. Xue, S. Zhang, J. Fu, and
+Reproducibility. All trajectories are deterministic given the                       Z. Liu, “ChatEval: Towards better LLM-based evaluators through multi-
+                                                                                    agent debate,” in International Conference on Learning Representations
+frozen backbone, the frozen genome, and the fixed splits                            (ICLR), 2024, arXiv:2308.07201.
+(single greedy decoding). The three-meter table, the McNemar                   [17] J. C.-Y. Chen, S. Saha, and M. Bansal, “ReConcile: Round-table
+and paired-bootstrap tests, the bootstrap CIs, the per-role lo-                     conference improves reasoning via consensus among diverse LLMs,” in
+                                                                                    Annual Meeting of the Association for Computational Linguistics (ACL),
+calization, and the role-influence/collapse meters are computed                     2024, arXiv:2309.13007.
+from the persisted per-task outcomes and trajectories on the                   [18] Z. Yin, Q. Sun, C. Chang, Q. Guo, J. Dai, X. Huang, and
+held-out test splits.                                                               X. Qiu, “Exchange-of-thought: Enhancing large language model capa-
+                                                                                    bilities through cross-model communication,” in Conference on Em-
+                                                                                    pirical Methods in Natural Language Processing (EMNLP), 2023,
+                                                                                    arXiv:2312.01823.
+                             R EFERENCES                                       [19] M. Minsky, The Society of Mind. Simon & Schuster, 1986.
+                                                                               [20] J. S. Park, J. C. O’Brien, C. J. Cai, M. R. Morris, P. Liang, and M. S.
+ [1] Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang,          Bernstein, “Generative agents: Interactive simulacra of human behavior,”
+     S. Zhang, J. Liu, A. H. Awadallah, R. W. White, D. Burger, and                 in ACM Symposium on User Interface Software and Technology (UIST),
+     C. Wang, “AutoGen: Enabling next-gen LLM applications via multi-               2023.
+     agent conversation framework,” in Conference on Language Modeling         [21] T. Guo, X. Chen, Y. Wang, R. Chang, S. Pei, N. V. Chawla, O. Wiest,
+     (COLM), 2024, arXiv:2308.08155.                                                and X. Zhang, “Large language model based multi-agents: A survey of
+ [2] S. Hong, M. Zhuge, J. Chen, X. Zheng, Y. Cheng, C. Zhang, J. Wang,             progress and challenges,” in International Joint Conference on Artificial
+     Z. Wang, S. K. S. Yau, Z. Lin, L. Zhou, C. Ran, L. Xiao, C. Wu,                Intelligence (IJCAI), 2024, arXiv:2402.01680.
+     and J. Schmidhuber, “MetaGPT: Meta programming for a multi-agent          [22] S. Han, Q. Zhang, Y. Yao, W. Jin, Z. Xu, and C. He, “LLM
+     collaborative framework,” in International Conference on Learning              multi-agent systems: Challenges and open problems,” arXiv preprint
+     Representations (ICLR), 2024, arXiv:2308.00352.                                arXiv:2402.03578, 2024.
+ [3] Y. Du, S. Li, A. Torralba, J. B. Tenenbaum, and I. Mordatch, “Improving   [23] K.-T. Tran, D. Dao, M.-D. Nguyen, Q.-V. Pham, B. O’Sullivan, and
+     factuality and reasoning in language models through multiagent de-             H. D. Nguyen, “Multi-agent collaboration mechanisms: A survey of
+     bate,” in International Conference on Machine Learning (ICML), 2024,           LLMs,” arXiv preprint arXiv:2501.06322, 2025.
+     arXiv:2305.14325.                                                         [24] H. Su, J. Luo, C. Liu, X. Yang, Y. Zhang, Y. Dong, and J. Zhu, “A survey
+ [4] J. Wang, J. Wang, B. Athiwaratkun, C. Zhang, and J. Zou,                       on autonomy-induced security risks in large model-based agents,” arXiv
+     “Mixture-of-agents enhances large language model capabilities,” in             preprint arXiv:2506.23844, 2025.
+     International Conference on Learning Representations (ICLR), 2025,        [25] M. Zhuge, W. Wang, L. Kirsch, F. Faccio, D. Khizbullin, and
+     arXiv:2406.04692.                                                              J. Schmidhuber, “GPTSwarm: Language agents as optimizable graphs,”
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                             13
+
+
+
+     in International Conference on Machine Learning (ICML), 2024,               [47] C. D. Rosin and R. K. Belew, “New methods for competitive coevolu-
+     arXiv:2402.16823.                                                                tion,” Evolutionary Computation, vol. 5, no. 1, pp. 1–29, 1997.
+[26] Z. Liu, Y. Zhang, P. Li, Y. Liu, and D. Yang, “A dynamic LLM-powered        [48] J. Lehman and K. O. Stanley, “Abandoning objectives: Evolution through
+     agent network for task-oriented agent collaboration,” in Conference on           the search for novelty alone,” Evolutionary Computation, vol. 19, no. 2,
+     Language Modeling (COLM), 2024, arXiv:2310.02170.                                pp. 189–223, 2011.
+[27] S. Hu, C. Lu, and J. Clune, “Automated design of agentic systems,”          [49] J.-B. Mouret and J. Clune, “Illuminating search spaces by mapping
+     in International Conference on Learning Representations (ICLR), 2025,            elites,” arXiv preprint arXiv:1504.04909, 2015.
+     arXiv:2408.08435.                                                           [50] J. K. Pugh, L. B. Soros, and K. O. Stanley, “Quality diversity: A new
+[28] J. Zhang, J. Xiang, Z. Yu, F. Teng, X.-H. Chen, J. Chen, M. Zhuge,               frontier for evolutionary computation,” Frontiers in Robotics and AI,
+     X. Cheng, S. Hong, J. Wang, B. Zheng, B. Liu, Y. Luo, and                        vol. 3, p. 40, 2016.
+     C. Wu, “AFlow: Automating agentic workflow generation,” in In-              [51] K. O. Stanley and R. Miikkulainen, “Evolving neural networks through
+     ternational Conference on Learning Representations (ICLR), 2025,                 augmenting topologies,” Evolutionary Computation, vol. 10, no. 2, pp.
+     arXiv:2410.10762.                                                                99–127, 2002.
+[29] Y. Shang, Y. Li, K. Zhao, L. Ma, J. Liu, F. Xu, and Y. Li,                  [52] N. Hansen and A. Ostermeier, “Completely derandomized self-
+     “AgentSquare: Automatic LLM agent search in modular design space,”               adaptation in evolution strategies,” Evolutionary Computation, vol. 9,
+     in International Conference on Learning Representations (ICLR), 2025,            no. 2, pp. 159–195, 2001.
+     arXiv:2410.06153.                                                           [53] M. Jaderberg, V. Dalibard, S. Osindero, W. M. Czarnecki, J. Donahue,
+[30] G. Chen, S. Dong, Y. Shu, G. Zhang, J. Sesay, B. F. Karlsson, J. Fu, and         A. Razavi, O. Vinyals, T. Green, I. Dunning, K. Simonyan, C. Fernando,
+     Y. Shi, “AutoAgents: A framework for automatic agent generation,” in             and K. Kavukcuoglu, “Population based training of neural networks,”
+     International Joint Conference on Artificial Intelligence (IJCAI), 2024,         arXiv preprint arXiv:1711.09846, 2017.
+     arXiv:2309.17288.                                                           [54] J. Lehman, J. Gordon, S. Jain, K. Ndousse, C. Yeh, and K. O. Stanley,
+[31] S. Yuan, K. Song, J. Chen, X. Tan, D. Li, and D. Yang, “EvoAgent:                “Evolution through large models,” arXiv preprint arXiv:2206.08896,
+     Towards automatic multi-agent generation via evolutionary algorithms,”           2022.
+     in Conference of the North American Chapter of the Association for          [55] E. Meyerson, M. J. Nelson, H. Bradley, A. Gaier, A. Moradi, A. K.
+     Computational Linguistics (NAACL), 2025, arXiv:2406.14228.                       Hoover, and J. Lehman, “Language model crossover: Variation through
+[32] Y. Hu, Y. Cai, Y. Du, X. Zhu, X. Liu, Z. Yu, Y. Hou, S. Tang, and                few-shot prompting,” ACM Transactions on Evolutionary Learning and
+     S. Chen, “Self-evolving multi-agent collaboration networks for software          Optimization, 2024, arXiv:2302.12170.
+     development,” in International Conference on Learning Representations       [56] Q. Guo, R. Wang, J. Guo, B. Li, K. Song, X. Tan, G. Liu, J. Bian, and
+     (ICLR), 2025, arXiv:2410.16946.                                                  Y. Yang, “Connecting large language models with evolutionary algo-
+[33] W. Zhou, Y. Ou, S. Ding, L. Li, J. Wu, T. Wang, J. Chen, S. Wang,                rithms yields powerful prompt optimizers,” in International Conference
+     X. Xu, N. Zhang, H. Chen, and Y. E. Jiang, “Symbolic learning enables            on Learning Representations (ICLR), 2024, arXiv:2309.08532.
+     self-evolving agents,” arXiv preprint arXiv:2406.18532, 2024.
+                                                                                 [57] B. Romera-Paredes, M. Barekatain, A. Novikov, M. Balog, M. P. Kumar,
+[34] K. Opsahl-Ong, M. J. Ryan, J. Purtell, D. Broman, C. Potts, M. Zaharia,
+                                                                                      E. Dupont, F. J. R. Ruiz, J. S. Ellenberg, P. Wang, O. Fawzi, P. Kohli,
+     and O. Khattab, “Optimizing instructions and demonstrations for multi-
+                                                                                      and A. Fawzi, “Mathematical discoveries from program search with large
+     stage language model programs,” in Conference on Empirical Methods
+                                                                                      language models,” Nature, vol. 625, pp. 468–475, 2024.
+     in Natural Language Processing (EMNLP), 2024, arXiv:2406.11695.
+                                                                                 [58] F. Liu, X. Tong, M. Yuan, X. Lin, F. Luo, Z. Wang, Z. Lu, and Q. Zhang,
+[35] M. Yuksekgonul, F. Bianchi, J. Boen, S. Liu, Z. Huang, C. Guestrin, and
+                                                                                      “Evolution of heuristics: Towards efficient automatic algorithm design
+     J. Zou, “TextGrad: Automatic “differentiation” via text,” arXiv preprint
+                                                                                      using large language model,” in International Conference on Machine
+     arXiv:2406.07496, 2024.
+                                                                                      Learning (ICML), 2024, arXiv:2401.02051.
+[36] C.-A. Cheng, A. Nie, and A. Swaminathan, “Trace is the next Au-
+     toDiff: Generative optimization with rich feedback, execution traces,       [59] Y. J. Ma, W. Liang, G. Wang, D.-A. Huang, O. Bastani, D. Jayaraman,
+     and LLMs,” in Advances in Neural Information Processing Systems                  Y. Zhu, L. Fan, and A. Anandkumar, “Eureka: Human-level reward
+     (NeurIPS), 2024, arXiv:2406.16218.                                               design via coding large language models,” in International Conference
+[37] Y. Wang, L. Yang, G. Li, M. Wang, and B. Aragam, “ScoreFlow: Mas-                on Learning Representations (ICLR), 2024, arXiv:2310.12931.
+     tering LLM agent workflows via score-based preference optimization,”        [60] A. Novikov, N. Vũ, M. Eisenberger, E. Dupont, P.-S. Huang, A. Z.
+     arXiv preprint arXiv:2502.04306, 2025.                                           Wagner, S. Shirobokov, B. Kozlovskii, F. J. R. Ruiz, A. Mehrabian,
+[38] G. Zhang, L. Niu, J. Fang, K. Wang, L. Bai, and X. Wang, “Multi-agent            M. P. Kumar, A. See, S. Chaudhuri, G. Holland, A. Davies, S. Nowozin,
+     architecture search via agentic supernet,” in International Conference on        P. Kohli, and M. Balog, “AlphaEvolve: A coding agent for scientific and
+     Machine Learning (ICML), 2025, arXiv:2502.04180.                                 algorithmic discovery,” arXiv preprint arXiv:2506.13131, 2025.
+[39] H. Zhou, X. Wan, R. Sun, H. Palangi, S. Iqbal, I. Vulić, A. Korhonen,      [61] R. Lowe, Y. Wu, A. Tamar, J. Harb, P. Abbeel, and I. Mordatch, “Multi-
+     and S. Ö. Arık, “Multi-agent design: Optimizing agents with better               agent actor-critic for mixed cooperative-competitive environments,” in
+     prompts and topologies,” arXiv preprint arXiv:2502.02533, 2025.                  Advances in Neural Information Processing Systems (NeurIPS), 2017,
+[40] G. Zhang, Y. Yue, X. Sun, G. Wan, M. Yu, J. Fang, K. Wang, T. Chen,              arXiv:1706.02275.
+     and D. Cheng, “G-Designer: Architecting multi-agent communication           [62] T. Rashid, M. Samvelyan, C. Schroeder de Witt, G. Farquhar, J. Foerster,
+     topologies via graph neural networks,” arXiv preprint arXiv:2410.11782,          and S. Whiteson, “QMIX: Monotonic value function factorisation for
+     2024.                                                                            deep multi-agent reinforcement learning,” in International Conference
+[41] Y. Yue, G. Zhang, B. Liu, G. Wan, K. Wang, D. Cheng, and Y. Qi,                  on Machine Learning (ICML), 2018, arXiv:1803.11485.
+     “MasRouter: Learning to route LLMs for multi-agent systems,” in             [63] J. Foerster, G. Farquhar, T. Afouras, N. Nardelli, and S. Whiteson,
+     Annual Meeting of the Association for Computational Linguistics (ACL),           “Counterfactual multi-agent policy gradients,” in AAAI Conference on
+     2025, arXiv:2502.11133.                                                          Artificial Intelligence, 2018, arXiv:1705.08926.
+[42] H. Gao, Y. Liu, Y. He, L. Dou, C. Du, Z. Deng, B. Hooi, M. Lin, and         [64] C. Yu, A. Velu, E. Vinitsky, J. Gao, Y. Wang, A. Bayen, and Y. Wu, “The
+     T. Pang, “FlowReasoner: Reinforcing query-level meta-agents,” arXiv              surprising effectiveness of PPO in cooperative, multi-agent games,” in
+     preprint arXiv:2504.15257, 2025.                                                 Advances in Neural Information Processing Systems (NeurIPS) Datasets
+[43] J. Fang, Y. Peng, X. Zhang, Y. Wang, Z. Yi, Y. Zhang, H. Wang,                   and Benchmarks, 2022, arXiv:2103.01955.
+     Z. Mao, Z. Li, and H. Yang, “A comprehensive survey of self-evolving        [65] M. Tan, “Multi-agent reinforcement learning: Independent vs. coopera-
+     AI agents: A new paradigm bridging foundation models and lifelong                tive agents,” in International Conference on Machine Learning (ICML),
+     agentic systems,” arXiv preprint arXiv:2508.07407, 2025.                         1993.
+[44] S. Yang, S. C. Han, X. Ma, Y. Li, M. R. Ghasemi Madani, and E. Hovy,        [66] O. Vinyals, I. Babuschkin, W. M. Czarnecki, M. Mathieu, A. Dudzik,
+     “EvoTool: Self-evolving tool-use policy optimization in LLM agents via           J. Chung, D. H. Choi, R. Powell, T. Ewalds, P. Georgiev et al.,
+     blame-aware mutation and diversity-aware selection,” 2026, aCL 2026.             “Grandmaster level in StarCraft II using multi-agent reinforcement
+[45] M. A. Potter and K. A. De Jong, “A cooperative coevolutionary approach           learning,” Nature, vol. 575, pp. 350–354, 2019.
+     to function optimization,” in Parallel Problem Solving from Nature          [67] C. Berner, G. Brockman, B. Chan, V. Cheung, P. D˛ebiak, C. Dennison,
+     (PPSN III), ser. Lecture Notes in Computer Science, vol. 866. Springer,          D. Farhi, Q. Fischer, S. Hashme, C. Hesse et al., “Dota 2 with large
+     1994, pp. 249–257.                                                               scale deep reinforcement learning,” arXiv preprint arXiv:1912.06680,
+[46] W. D. Hillis, “Co-evolving parasites improve simulated evolution as an           2019.
+     optimization procedure,” Physica D: Nonlinear Phenomena, vol. 42, no.       [68] J. N. Foerster, Y. M. Assael, N. de Freitas, and S. Whiteson, “Learning
+     1–3, pp. 228–234, 1990.                                                          to communicate with deep multi-agent reinforcement learning,” in
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE                                                                                            14
+
+
+
+     Advances in Neural Information Processing Systems (NeurIPS), 2016,          [90] J. Ji, T. Qiu, B. Chen, B. Zhang, H. Lou, K. Wang, Y. Duan, Z. He,
+     arXiv:1605.06676.                                                                J. Zhou, Z. Zhang et al., “AI alignment: A comprehensive survey,” arXiv
+[69] A. Lazaridou, A. Peysakhovich, and M. Baroni, “Multi-agent coopera-              preprint arXiv:2310.19852, 2023.
+     tion and the emergence of (natural) language,” in International Confer-     [91] S. Yang, S. C. Han, S. Wang, Y. Li, Y. Ding, and E. Hovy, “Toward
+     ence on Learning Representations (ICLR), 2017, arXiv:1612.07182.                 understanding misalignment in LLM agents: A survey of taxonomy,
+[70] J. Liao, M. Wen, J. Wang, and W. Zhang, “MARFT: Multi-agent                      causes, mitigation, and evaluation,” 2026, aCL ARR 2026. [Online].
+     reinforcement fine-tuning,” arXiv preprint arXiv:2504.16129, 2025.               Available: https://openreview.net/forum?id=zzTEGP2BYa
+[71] C. Park, S. Han, X. Guo, A. Ozdaglar, K. Zhang, and J.-K. Kim,              [92] A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu,
+     “MAPoRL: Multi-agent post-co-training for collaborative large language           F. Huang, H. Wei et al., “Qwen2.5 technical report,” arXiv preprint
+     models with reinforcement learning,” in Annual Meeting of the Associ-            arXiv:2412.15115, 2025.
+     ation for Computational Linguistics (ACL), 2025, arXiv:2502.18439.
+[72] S. Liu, Z. Chen, J. Liang, Y. Lyu, and C. Amato, “LLM col-
+     laboration with multi-agent reinforcement learning,” arXiv preprint
+     arXiv:2508.04652, 2025.
+[73] S. R. Motwani, C. Smith, R. J. Das, M. Rybchuk, P. H. S. Torr,
+     I. Laptev, F. Pizzati, R. Clark, and C. Schroeder de Witt, “MALT:
+     Improving reasoning with multi-agent LLM training,” arXiv preprint
+     arXiv:2412.01928, 2024.
+[74] Z. Wan, Y. Li, Y. Song, H. Wang, L. Yang, M. Schmidt, J. Wang,
+     W. Zhang, S. Hu, and Y. Wen, “ReMA: Learning to meta-think for
+     LLMs with multi-agent reinforcement learning,” in Advances in Neural
+     Information Processing Systems (NeurIPS), 2025, arXiv:2503.09501.
+[75] R. Wang, H. Yu, W. Zhang, Z. Qi, M. Sap, G. Neubig, Y. Bisk, and
+     H. Zhu, “SOTOPIA-π: Interactive learning of socially intelligent lan-
+     guage agents,” in Annual Meeting of the Association for Computational
+     Linguistics (ACL), 2024, arXiv:2403.08715.
+[76] S. Gronauer and K. Diepold, “Multi-agent deep reinforcement learning:
+     a survey,” Artificial Intelligence Review, vol. 55, no. 2, pp. 895–943,
+     2022.
+[77] S. V. Albrecht, F. Christianos, and L. Schäfer, Multi-Agent Reinforcement
+     Learning: Foundations and Modern Approaches. MIT Press, 2024.
+[78] S. Yao, N. Shinn, P. Razavi, and K. Narasimhan, “τ -bench: A benchmark
+     for tool-agent-user interaction in real-world domains,” arXiv preprint
+     arXiv:2406.12045, 2024.
+[79] W. Wang, D. Zhang, T. Feng, B. Wang, and J. Tang, “BattleAgent-
+     Bench: A benchmark for evaluating cooperation and competition ca-
+     pabilities of language models in multi-agent systems,” arXiv preprint
+     arXiv:2408.15971, 2024.
+[80] K. Zhu, H. Du, Z. Hong, X. Yang, S. Guo, Z. Wang, Z. Wang,
+     C. Qian, X. Tang, H. Ji, and J. You, “MultiAgentBench: Evaluating
+     the collaboration and competition of LLM agents,” in Annual Meet-
+     ing of the Association for Computational Linguistics (ACL), 2025,
+     arXiv:2503.01935.
+[81] S. Agashe, Y. Fan, A. Reyna, and X. E. Wang, “LLM-coordination:
+     Evaluating and analyzing multi-agent coordination abilities in large
+     language models,” in Findings of the Association for Computational
+     Linguistics: NAACL, 2025, arXiv:2310.03903.
+[82] Y. Xu, S. Wang, P. Li, F. Luo, X. Wang, W. Liu, and Y. Liu, “Exploring
+     large language models for communication games: An empirical study
+     on werewolf,” arXiv preprint arXiv:2309.04658, 2023.
+[83] S. Wang, C. Liu, Z. Zheng, S. Qi, S. Chen, Q. Yang, A. Zhao,
+     C. Wang, S. Song, and G. Huang, “Avalon’s game of thoughts: Bat-
+     tle against deception through recursive contemplation,” arXiv preprint
+     arXiv:2310.01320, 2023.
+[84] Meta Fundamental AI Research Diplomacy Team (FAIR), A. Bakhtin,
+     N. Brown, E. Dinan, G. Farina, C. Flaherty, D. Fried, A. Goff, J. Gray,
+     H. Hu et al., “Human-level play in the game of Diplomacy by combining
+     language models with strategic reasoning,” Science, vol. 378, no. 6624,
+     pp. 1067–1074, 2022.
+[85] D. Manheim and S. Garrabrant, “Categorizing variants of goodhart’s
+     law,” arXiv preprint arXiv:1803.04585, 2018.
+[86] L. Gao, J. Schulman, and J. Hilton, “Scaling laws for reward model
+     overoptimization,” in International Conference on Machine Learning
+     (ICML), 2023, arXiv:2210.10760.
+[87] J. Skalse, N. H. R. Howe, D. Krasheninnikov, and D. Krueger, “Defining
+     and characterizing reward hacking,” in Advances in Neural Information
+     Processing Systems (NeurIPS), 2022, arXiv:2209.13085.
+[88] V. Krakovna, J. Uesato, V. Mikulik, M. Rahtz, T. Everitt, R. Kumar,
+     Z. Kenton, J. Leike, and S. Legg, “Specification gaming: the flip side of
+     AI ingenuity,” DeepMind Blog, 2020, https://deepmind.google/discover/
+     blog/specification-gaming-the-flip-side-of-ai-ingenuity/.
+[89] E. Perez, S. Ringer, K. Lukošiūtė, K. Nguyen, E. Chen, S. Heiner,
+     C. Pettit, C. Olsson, S. Kundu, S. Kadavath et al., “Discovering language
+     model behaviors with model-written evaluations,” in Findings of the As-
+     sociation for Computational Linguistics: ACL, 2023, arXiv:2212.09251.
+

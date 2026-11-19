@@ -1,0 +1,1377 @@
+                                                  Improving the Gaussian Mechanism for Differential Privacy:
+                                                        Analytical Calibration and Optimal Denoising∗
+                                                                             Borja Balle†1 and Yu-Xiang Wang2
+                                                                                  1
+                                                                                   Amazon Research, Cambridge, UK
+                                                                              2
+                                                                                  Amazon Web Services, Palo Alto, USA
+arXiv:1805.06530v2 [cs.LG] 7 Jun 2018
+
+
+
+
+                                                                                              Abstract
+                                                      The Gaussian mechanism is an essential building block used in multitude of differentially
+                                                  private data analysis algorithms. In this paper we revisit the Gaussian mechanism and show that
+                                                  the original analysis has several important limitations. Our analysis reveals that the variance
+                                                  formula for the original mechanism is far from tight in the high privacy regime (ε → 0) and
+                                                  it cannot be extended to the low privacy regime (ε → ∞). We address these limitations by
+                                                  developing an optimal Gaussian mechanism whose variance is calibrated directly using the
+                                                  Gaussian cumulative density function instead of a tail bound approximation. We also propose
+                                                  to equip the Gaussian mechanism with a post-processing step based on adaptive estimation
+                                                  techniques by leveraging that the distribution of the perturbation is known. Our experiments
+                                                  show that analytical calibration removes at least a third of the variance of the noise compared to
+                                                  the classical Gaussian mechanism, and that denoising dramatically improves the accuracy of the
+                                                  Gaussian mechanism in the high-dimensional regime.
+
+
+                                        1        Introduction
+                                        Output perturbation is a cornerstone of mechanism design in differential privacy (DP). Well-known
+                                        mechanisms in this class are the Laplace and Gaussian mechanisms Dwork et al. [2006], Dwork and
+                                        Roth [2014]. More complex mechanisms are often obtained by composing multiple applications of
+                                        these basic output perturbation mechanisms. For example, the Laplace mechanism is the basic
+                                        building block of the sparse vector mechanism Dwork et al. [2009], and the Gaussian mechanism is
+                                        the building block of private empirical risk minimization algorithms based on stochastic gradient
+                                        descent Bassily et al. [2014]. Analysing the privacy of such complex mechanisms turns out to be
+                                        a delicate and error-prone task Lyu et al. [2017]. In particular, obtaining tight privacy analyses
+                                        leading to optimal utility is one of the main challenges in the design of advanced DP mechanisms.
+                                        An alternative to tight a-priori analyses is to equip complex mechanisms with algorithmic noise
+                                        calibration and accounting methods. These methods use numerical computations to, e.g. calibrate
+                                        perturbations and compute cumulative privacy losses at run time, without relying on hand-crafted
+                                        worst-case bounds. For example, recent works have proposed methods to account for the privacy
+                                        loss under compositions occurring in complex mechanisms Rogers et al. [2016], Abadi et al. [2016].
+                                            ∗
+                                                To appear at the 35th International Conference on Machine Learning (ICML), 2018
+                                            †
+                                                Corresponding e-mail: pigem@amazon.co.uk
+
+
+                                                                                                  1
+    In this work we revisit the Gaussian mechanism and develop two ideas to improve the utility
+of output perturbation DP mechanisms based on Gaussian noise. The first improvement is an
+algorithmic noise calibration strategy that uses numerical evaluations of the Gaussian cumulative
+density function (CDF) to obtain the optimal variance to achieve DP using Gaussian perturbation.
+The analysis and the resulting algorithm are provided in Section 3. In order to motivate the need
+for a numerical approach to calibrate the noise of a DP Gaussian perturbation mechanism, we
+start with an analysis of the main limitations of the classical Gaussian mechanism in Section 2. A
+numerical evaluation provided in Section 5.1 showcases the advantages of our optimal calibration
+procedure.
+    The second improvement equips the Gaussian perturbation mechanism with a post-processing
+step which denoises the output using adaptive estimation techniques from the statistics literature.
+Since DP is preserved by post-processing and the distribution of the perturbation added to the
+desired outcome is known, this allows a mechanism to achieve the desired privacy guarantee while
+increasing the accuracy of the released value. The relevant denoising estimators and their utility
+guarantees are discussed in Section 4. Results presented in this section are not new: they are the
+product of a century’s worth of research in statistical estimation. Our contribution is to compile
+relevant results scattered throughout the literature in a single place and showcase their practical
+impact in synthetic (Section 5.2) and real (Section 5.3) datasets, thus providing useful pointers and
+guidelines for practitioners.
+
+
+2    Limitations of the Classical Gaussian Mechanism
+Let X be an input space equipped with a symmetric neighbouring relation x ≃ x0 . Let ε ≥ 0 and
+δ ∈ [0, 1] be two privacy parameters. A Y-valued randomized algorithm M : X → Y is (ε, δ)-DP
+Dwork et al. [2006] if for every pair of neighbouring inputs x ≃ x0 and every possible (measurable)
+output set E ⊆ Y the following inequality holds:
+
+                               P[M (x) ∈ E] ≤ eε P[M (x0 ) ∈ E] + δ .                            (1)
+
+The definition of DP captures the intuition that a computation on private data will not reveal
+sensitive information about individuals in a dataset if removing or replacing an individual in the
+dataset has a negligible effect in the output distribution.
+    In this paper we focus on the family of so-called output perturbation DP mechanisms. An
+output perturbation mechanism M for a deterministic vector-valued computation f : X → Rd is
+obtained by computing the function f on the input data x and then adding random noise sampled
+from a random variable Z to the output. The amount of noise required to ensure the mechanism
+M (x) = f (x) + Z satisfies a given privacy guarantee typically depends on how sensitive the function
+f is to changes in the input and the specific distribution chosen for Z. The Gaussian mechanism
+gives a way to calibrate a zero mean isotropic Gaussian perturbation Z ∼ N (0, σ 2 I) to the global
+L2 sensitivity ∆ = supx≃x0 kf (x) − f (x0 )k of f as follows.
+Theorem 1 (Classical Gaussian
+                     p        Mechanism). For any ε, δ ∈ (0, 1), the Gaussian output perturbation
+mechanism with σ = ∆ 2 log(1.25/δ)/ε is (ε, δ)-DP.
+    A natural question one can ask about this result is whether this value of σ provides the minimal
+amount of noise required to obtain (ε, δ)-DP with Gaussian perturbations. Another natural question
+is what happens in the case ε ≥ 1. This section addresses both these questions. First we show
+
+                                                 2
+that the value of σ given in Theorem 1 is suboptimal in the high privacy regime ε → 0. Then we
+show that this problem is in fact inherent to the usual proof strategy used to analyze the Gaussian
+mechanism. We conclude the section by showing that for large values of ε the standard deviation of
+                                                                        √
+a Gaussian perturbation that provides (ε, δ)-DP must scale like Ω(1/ ε). This implies that the
+scaling Θ(1/ε) provided by the classical Gaussian mechanism in the range ε ∈ (0, 1) cannot be
+extended beyond any bounded interval.
+
+2.1      Limitations in the High Privacy Regime
+To illustrate the sub-optimality of the classical Gaussian mechanism in the regime ε → 0 we start by
+showing it is possible to achieve (0, δ)-DP using Gaussian perturbations. This clearly falls outside
+the capabilities of the classical Gaussian mechanism, since the standard deviation σ = Θ(1/ε)
+provided by Theorem 1 grows to infinity as ε → 0.
+Theorem 2. A Gaussian output perturbation mechanism with σ = ∆/2δ is (0, δ)-DP1 .
+     Previous analyses of the Gaussian mechanism are based on a simple sufficient condition for DP
+in terms of the privacy loss random variable Dwork and Roth [2014]. The next section explains why
+the usual analysis of the Gaussian mechanism cannot yield tight bounds for the regime ε → 0. This
+shows that our example is not a corner case, but a fundamental limitation of trying to establish
+(ε, δ)-DP through said sufficient condition.
+
+2.2      Limitations of Privacy Loss Analyses
+Given a vector-valued mechanism M let pM (x) (y) denote the density of the random variable
+Y = M (x). The privacy loss function of M on a pair of neighbouring inputs x ≃ x0 is defined as
+                                                    pM (x) (y)
+                                                                
+                                `M,x,x0 (y) = log                  .
+                                                    pM (x0 ) (y)
+The privacy loss random variable LM,x,x0 = `M,x,x0 (Y ) is the transformation of the output random
+variable Y = M (x) by the function `M,x,x0 . For the particular case of a Gaussian mechanism
+M (x) = f (x) + Z with Z ∼ N (0, σ 2 I) it is well-known that the privacy loss random variable is also
+Gaussian Dwork and Rothblum [2016].
+Lemma 3. The privacy loss LM,x,x0 of a Gaussian output perturbation mechanism follows a
+distribution N (η, 2η) with η = D2 /2σ 2 , where D = kf (x) − f (x0 )k.
+   The privacy analysis of the classical Gaussian mechanism relies on the following sufficient
+condition: a mechanism M is (ε, δ)-DP if the privacy loss LM,x,x0 satisfies
+                                          ∀x ≃ x0 : P[LM,x,x0 ≥ ε] ≤ δ .                           (2)
+Since Lemma 3 shows the privacy loss LM,x,x0 of the Gaussian mechanism is a Gaussian random
+variable with mean kf (x) − f (x0 )k2 /2σ 2 , we have P[LM,x,x0 > 0] ≥ 1/2 for any pair of datasets
+with f (x) 6= f (x0 ). This observation shows that in general it is not possible to use this sufficient
+condition for (ε, δ)-DP to prove that the Gaussian mechanism achieves (0, δ)-DP for any δ < 1/2.
+In other words, the sufficient condition is not necessary in the regime ε → 0. We conclude that an
+alternative analysis is required in order to improve the dependence on ε in the Gaussian mechanism.
+  1
+      Proofs for all results given in the paper are presented in Appendix A.
+
+
+                                                           3
+2.3   Limitations in the Low Privacy Regime
+The last question we address in this section is whether the order of magnitude σ = Θ(1/ε) given by
+Theorem 1 for ε ≤ 1 can be extended to privacy parameters of the form ε > 1. We show this is not
+the case by providing the following lower bound.
+Theorem
+     √  4. Let f : X → Rd have global L2 sensitivity ∆. Suppose ε > 0 and 0 < δ < 1/2    √−
+ −3ε                                                        2
+e / 4πε. If the mechanism M (x) = f (x) + Z with Z ∼ N (0, σ I) is (ε, δ)-DP, then σ ≥ ∆/ 2ε.
+    Note that as ε → ∞ the upper bound on δ in Theorem 4 converges to 1/2. Thus, as ε increases
+                                                  √
+the range of δ’s requiring noise of the order Ω(1/ ε) increases to include all parameters of practical
+interest. This shows that the rate σ = Θ(1/ε) provided by the classical Gaussian mechanism cannot
+be extended beyond the interval ε ∈ (0, 1). Note this provides an interesting contrast with the
+Laplace mechanism, which can achieve ε-DP with standard deviation Θ(1/ε) in the low privacy
+regime.
+
+
+3     The Analytic Gaussian Mechanism
+The limitations of the classical Gaussian mechanism described in the previous section suggest
+there is room for improvement in the calibration of the variance of a Gaussian perturbation to
+the corresponding global L2 sensitivity. Here we present a method for optimal noise calibration
+for Gaussian perturbations that we call analytic Gaussian mechanism. To do so we must address
+the two sources of slack in the classical analysis: the sufficient condition (2) used to reduce the
+analysis to finding an upper bound for P[N (η, 2η) > ε], and the use of a Gaussian tail approximation
+to obtain such upper bound. We address the first source of slack by showing that the sufficient
+condition in terms of the privacy loss random variable comes from a relaxation of a necessary and
+sufficient condition involving two privacy loss random variables. When specialized to the Gaussian
+mechanism, this condition involves probabilities about Gaussian random variables, which instead
+of approximating by a tail bound we represent explicitly in terms of the CDF of the standard
+univariate Gaussian distribution:
+                                                           Z t
+                                                      1            2
+                            Φ(t) = P[N (0, 1) ≤ t] = √         e−y /2 dy .
+                                                       2π −∞
+Using this point of view, we introduce a calibration strategy for Gaussian perturbations that requires
+solving a simple optimization problem involving Φ(t). We discuss how to solve this optimization at
+the end of this section.
+    The first step in our analysis is to provide a necessary and sufficient condition for differential
+privacy in terms of privacy loss random variables. This is captured by the following result.
+Theorem 5. A mechanism M : X → Y is (ε, δ)-DP if and only if the following holds for every
+x ≃ x0 :
+
+                              P[LM,x,x0 ≥ ε] − eε P[LM,x0 ,x ≤ −ε] ≤ δ .                          (3)
+
+    Note that Theorem 5 immediately implies the sufficient condition given in (2) through the
+inequality
+
+                       P[LM,x,x0 ≥ ε] − eε P[LM,x0 ,x ≤ −ε] ≤ P[LM,x,x0 ≥ ε] .
+
+
+                                                  4
+Now we can use Lemma 3 to specialize (3) for a Gaussian output perturbation mechanism. The
+relevant computations are packaged in the following result, where we express the probabilities in (3)
+in terms of the Gaussian CDF Φ.
+
+Lemma 6. Suppose M (x) = f (x) + Z is a Gaussian output perturbation mechanism with Z ∼
+N (0, σ 2 I). For any x ≃ x0 let D = kf (x) − f (x0 )k. Then the following hold for any ε ≥ 0:
+                                                                 
+                                                          D    εσ
+                                   P[LM,x,x0 ≥ ε] = Φ        −       ,                         (4)
+                                                          2σ   D
+                                                                   
+                                                            D    εσ
+                                 P[LM,x0 ,x ≤ −ε] = Φ −       −        .                       (5)
+                                                           2σ    D
+
+     This result specializes the left hand side of (3) in terms of the distance D = kf (x) − f (x0 )k
+between the output means on a pair of neighbouring datasets. To complete the derivation of our
+analytic Gaussian mechanism we need to ensure that (3) is satisfied for every pair x ≃ x0 . The next
+lemma shows that this reduces to plugging the global L2 sensitivity ∆ in the place of D in (4) and
+(5).
+
+Lemma 7. For any ε ≥ 0, the function h : R≥0 → R defined as follows is monotonically increasing:
+
+                           h(η) = P[N (η, 2η) ≥ ε] − eε P[N (η, 2η) ≤ −ε] .
+
+   Now we are ready to state our main result, whose proof follows directly from Theorem 5,
+Lemma 7, and equations (4) and (5).
+
+Theorem 8 (Analytic Gaussian Mechanism). Let f : X → Rd be a function with global L2 sensitivity
+∆. For any ε ≥ 0 and δ ∈ [0, 1], the Gaussian output perturbation mechanism M (x) = f (x) + Z
+with Z ∼ N (0, σ 2 I) is (ε, δ)-DP if and only if
+                                                           
+                                    ∆    εσ       ε   ∆    εσ
+                                Φ      −      −e Φ −     −      ≤δ .                         (6)
+                                    2σ   ∆            2σ   ∆
+
+    This result shows that in order to obtain an (ε, δ)-DP Gaussian output perturbation mechanism
+for a function f with global L2 sensitivity ∆ it is enough to find a noise variance σ 2 satisfying (6).
+One could now use upper and lower bounds for the tail of the Gaussian CDF to derive an analytic
+expression for a parameter σ satisfying this constraint. However, this again leads to a suboptimal
+result due to the slack in these tail bounds in the non-asymptotic regime. Instead, we propose to
+                      √ algorithm by leveraging the fact that the Gaussian CDF can be written
+find σ using a numerical
+as Φ(t) = (1 + erf(t/ 2))/2, where erf is the standard error function. Efficient implementations
+of this function to very high accuracies are provided by most statistical and numerical software
+packages. However, this strategy requires some care in order to avoid numerical stability issues
+around the point where the expression ∆/2σ − εσ/∆ in (6) changes sign. Thus, we further massage
+the left hand side (6) we obtain the implementation of the analytic Gaussian mechanism given in
+Algorithm 1. The correctness of this implementation is provided by the following result.
+
+Theorem 9. Let f be a function with global L2 sensitivity ∆. For any ε > 0 and δ ∈ (0, 1), the
+mechanism described in Algorithm 1 is (ε, δ)-DP.
+
+
+
+                                                  5
+  Algorithm 1: Analytic Gaussian Mechanism
+    Public Inputs: f , ∆, ε, δ
+    Private Inputs: x
+                             √
+    Let δ0 = Φ(0) − eε Φ(− 2ε)
+    if δ ≥ δ0 then
+                            √           p
+        Define Bε+ (v) = Φ( εv) − eε Φ(− ε(v + 2))
+        Compute v ∗ = sup{v ∈ R≥0 : Bε+ (v) ≤ δ}
+                p               p
+        Let α = 1 + v ∗ /2 − v ∗ /2
+    else
+                               √
+        Define Bε− (u) = Φ(− εu) − eε Φ(− ε(u + 2))
+                                          p
+
+        Compute u∗ = inf{u ∈ R≥0 : Bε− (u) ≤ δ}
+                p               p
+        Let α = 1 + u∗ /2 + u∗ /2
+                 √
+    Let σ = α∆/ 2ε
+    Return f (x) + N (0, σ 2 I)
+
+
+    Given a numerical oracle for computing Φ(t) based on the error function it is relatively straight-
+forward to implement a solver for finding the values v ∗ and u∗ needed in Algorithm 1. For example,
+using the fact that Bε+ (v) is monotonically increasing we see that computing v ∗ is a root finding
+problem for which one can use Newton’s method since the derivative of Φ(t) can be computed in
+closed form using Leibniz’s rule. In practice we find that a simple scheme based on binary search
+initiated from an interval obtained by finding the smallest k ∈ N such that Bε+ (2k ) > δ provides a
+very efficient and robust way to find v ∗ up to arbitrary accuracies (the same applies to u∗ ).
+
+
+4     Optimal Denoising
+ Can we improve the performance of analytical Gaussian mechanism even further? The answer is
+“yes” and “no”. We can’t because Algorithm 1 is already the exact calibration of the Gaussian noise
+ level to the given privacy budget. But if we consider the problem of designing the best differentially
+ private procedure M (x) that approximates f (x), then there could still be room for improvement.
+     In this section, we consider a specific class of mechanisms that denoise the output of a Gaussian
+ mechanism. Let ŷ ∼ N (f (x), σ 2 I), we are interested in designing a post-processing function g
+ such that ỹ = g(ŷ) is closer to f (x) than ŷ. This class of mechanisms are of particular interest for
+ differential privacy because (1) since differential privacy is preserved by post-processing, releasing a
+ function ỹ = g(ŷ) of a differentially private output is again differentially private; (2) since information
+ about f and the distribution of the noise are publicly known, this information can be leveraged to
+ design denoising functions.
+     This is a statistical estimation problem, where f (x) is the underlying parameter and ŷ is the
+ data. Since in this case we are adding the noise ourselves, it is possible to use the classical statistical
+ theory on Gaussian models as is because the Gaussian assumption is now true by construction. This
+ is however an unusual estimation problem where all we observe is a single data point. Since ŷ is the
+ maximum likelihood estimator, if there is no additional information about f (x), we cannot hope
+ to improve the estimation error uniformly over all f (x) ∈ Rd . But there is still something we can
+ do when we consider either of the following assumptions: (A.1) x is drawn from some underlying
+
+
+                                                      6
+distribution, thus inducing some distribution on f (x); or, (A.2) kf (x)kp ≤ B for some p, B > 0,
+where k · kp is the Lp -norm (or pseudo-norm when p < 1).
+
+Optimal Bayesian denoising. Assumption A.1 translates the problem of optimal denoising
+into a Bayesian estimation problem, where the underlying parameter f (x) has a prior distribution,
+and the task is to find an estimator that attains the Bayes risk — the minimum of the average
+estimation error integrated over a prior π, defined as
+
+                            R(π) = min E E[kg(ŷ) − f (x)k2 |f (x)] .
+                                                                  
+                                           g:Rd →Rd
+
+For square loss, the Bayes estimator is simply the posterior mean estimator, as the following theorem
+shows:
+Theorem 10. Let x ∼ π and assume the induced distribution of f (x) is square integrable. Then
+the Bayes estimator ỹBayes is given by
+
+                         ỹBayes = argmin E kg(ŷ) − f (x)k2 = E[f (x)|ŷ] .
+                                                           
+                                         g:Rd →Rd
+
+     The proof can be found in any standard statistics textbook [see, e.g., Lehmann and Casella, 2006].
+One may ask what the corresponding MSE is and how much it improves over the version without
+post-processing. The answer depends on the prior and the amount of noise added for differential
+privacy. When f (x) ∼ N (0, w2 I), the posterior mean estimator can be written analytically into
+ỹBayes = (w2 /(w2 +σ 2 ))ŷ, and the corresponding Bayes risk is E[kỹBayes −f (x)k2 ] = dw2 σ 2 /(σ 2 +w2 ).
+In other word, we get a factor of w2 /(w2 + σ 2 ) improvement over simply using ŷ.
+     In general, there is no analytical form for the posterior mean, but if we can evaluate the density
+of f (x) or sample from the distribution of x, then we can obtain an arbitrarily good approximation
+of ỹBayes using Markov Chain Monte Carlo techniques.
+
+Optimal frequentist denoising. Assumption A.2 spells out a minimax estimation problem,
+where the underlying parameter f (x) is assumed to be within a set S ⊂ Rd . In particular, we are
+interested in finding ỹminimax that attains the minimax risk
+
+                               R(S) = min max E kg(ŷ) − f (x)k2 ,
+                                                                 
+                                            g:Rd →Rd f (x)∈S
+
+on Lp balls S = B(p, B) = {y ∈ Rd | kykp ≤ B} of radius B.
+   A complete characterization of this minimax risk (up to a constant) is given by Birgé and
+Massart [2001, Proposition 5], who show that in the non-trivial region2 of the signal to noise ratio
+B/σ, the ball S = B(p, B) satisfies
+                                                      p 1−p/2 !
+                                                        dσ
+                          R(S) = Θ B p σ 2−p 1 + log                                             (7)
+                                                         Bp
+
+for 0 < p < 2 and when p ≥ 2, Donoho et al. [1990] show that
+                                                   B 2σ2
+                                                            
+                                  R(S) = Θ                     .
+                                                σ 2 + B 2 /d
+  2          √
+      When    log d ≤ B/σ ≤ cp d1/p for a constant cp that depends only on p.
+
+
+                                                          7
+    Deriving exact minimax estimators is challenging and most analyses assume certain asymptotic
+regimes (see the case for p = 2 by Bickel et al. [1981]). Nonetheless, some techniques have been
+shown to match R(B(p, B)) up to a small constant factor in the finite sample regime [see, e.g.,
+Donoho et al., 1990, Donoho and Johnstone, 1994]. This means that we can often improve the
+square error from dσ 2 to R(B(p, B)) when we have the additional information that f (x) is in some
+Lp ball. This could be especially helpful in the   p high-dimensional case for p < 2. For instance if
+p = 1 and B = σ, then we obtain a risk σB 1 + log(dσ/B), which improves exponentially in d
+over the dσ 2 risk of ŷ. More practically, if f (x) is a sparse histogram with s non-zero elements, then
+taking p → 0 will result in an error bound on the order of sσ 2 (1 + log(d)), which is linear in the
+sparsity s rather than the dimension d.
+
+Adaptive estimation. What if we do not know the prior parameter w2 , or a right choice of B
+and p? Can we still come up with estimators that take advantage of these structures? It turns
+out that this is the problem of designing adaptive estimators which sits at the heart of statistical
+research. An adaptive estimator in our case, is one that does not need to know w2 or a pair of B
+and p, yet behave nearly as well as Bayes estimator that knows w2 or the minimax estimator that
+knows B and p for each parameter regime.
+    We first give an example of an adaptive Bayes estimator that does not require us to specify a
+prior, yet can perform almost as well as the optimal Bayes estimator for all isotropic Gaussian prior
+simultaneously.
+Theorem 11 (James-Stein estimator and its adaptivity). When d ≥ 3, substituting w2 in ỹBayes
+with its maximum likelihood estimate under
+                               f (x) ∼ N (0, w2 I) , ŷ|f (x) ∼ N (f (x), σ 2 I)
+produces the James-Stein estimator
+                                                    (d − 2)σ 2
+                                                              
+                                         ỹJS = 1 −              ŷ.
+                                                       kŷk2
+Moreover, it has an MSE
+                                                                       (d − 2)2 σ 2
+                                                                                         
+                                             2              2
+                                                
+                         E kỹJS − f (x)k            = dσ           1−                        .
+                                                                          d2   w2 + σ 2
+    The James-Stein estimator has the property that it always improves the MLE ŷ when d ≥ 3
+[Stein, 1956] and it always achieves a risk that is within a d2 /(d − 2)2 multiplicative factor of the
+Bayes risk of ỹBayes for any w2 .
+    We now move on to describe a method that is adaptive√ to B and p in minimax estimation. Quite
+remarkably, Donoho [1995] shows that choosing λ = σ 2 log d in the soft-thresholding estimator
+                                      ỹTH = sign(ŷ) max{0, |ŷ| − λ}                               (8)
+yields a nearly optimal estimator for every Lp ball.
+Theorem 12 (The adaptivity of soft-thresholding, Theorem 4.2√of [Donoho, 1995]). Let S = B(p, B)
+for some p, B > 0. The soft-thresholding estimator with λ = σ 2 log d obeys that
+                     sup E kỹTH − f (x)k2 ≤ (2 log d + 1)(σ 2 + 2.22R(S)) .
+                                           
+                     f (x)∈S
+
+
+                                                                8
+    The result implies that the soft-thresholding estimator is nearly optimal for all balls up to a
+multiplicative factor of 4.44 log(d).
+    Thanks to the fact that we know the parameter σ exactly, both ỹJS and ỹTH are now completely
+free of tuning parameters. Yet, they can achieve remarkable adaptivity that covers a large class
+of model assumptions and function classes. A relatively small price to pay for such adaptivity is
+that we might lose a constant (or a log(d)) factor. Whether such adaptivity is worth will vary on a
+case-by-case basis.
+    Take the problem of private releasing a histogram of n items in d bins. Theorem 12 and Equation
+(7) with p ≤ 1 imply that the soft-thresholding estimator obeys
+                                                                         
+                          E kỹTH − f (x)k2 = Õ min{sσ 2 , n1/k σ 2−1/k } .
+                                           
+
+
+where s denotes the number of nonzero elements in f (x) and k is the largest power-law exponent
+greater than 1 such that order statistics f (x)(d−i+1) ≤ ni−k for all i = 1, ..., d and Õ hides logarithmic
+factors in d, dσ/n. The fact that s ≤ d implies that the soft-thresholding estimator improves over
+the naive private release for all d, n, s and the n1/k factor suggests that we can take advantage
+of an unknown power law distribution even if the histogram is not really sparse. This makes our
+technique effective in the many data mining problems where power law distributions occur naturally
+[Faloutsos et al., 1999].
+
+Related work. Denoising as a post-processing step in the context of differentially privacy is
+not a new idea. Notably, Barak et al. [2007], Hay et al. [2009] show that a post-processing step
+enforcing consistency of contingency table releases and graph degree sequences leads to more accurate
+estimations. Williams and McSherry [2010] sets up the general statistical (Bayesian) inference
+problem of DP releases by integrating auxiliary information (a prior). Karwa et al. [2016] exploits
+knowledge of the noise distribution use to achieve DP in the inference procedure of a network
+model and shows that it helps to preserve asymptotic efficiency. Nikolov et al. [2013] demonstrates
+that projecting linear regression solutions to a known `1 -ball improves the estimation error from
+O(poly(d)) to O(polylog(d)) when the underlying ground truth is sparse. Bernstein et al. [2017]
+uses Expectation–Maximization to denoise the parameters of a class of graphical models starting
+from noisy empirical moments obtained using the Laplace mechanism.
+    In all the above references there is some prior knowledge (constraint sets, sparsity or Bayesian
+prior) that is exploited to improve the utility of DP releases. To the best of our knowledge, we are
+the first to consider “adaptive estimation” and demonstrate how classical techniques can be helpful
+even without such prior knowledge. These estimators are not new; they have been known in the
+statistics literature for decades. Our purpose is to compile facts that are relevant to the practice of
+DP and initiate a systematic study of how these ideas affect the utility of DP mechanisms, which
+we complement with the experimental evaluation presented in the next section.
+
+
+5    Numerical Experiments
+This section provides an experimental evaluation of the improvements in utility provided by optimal
+calibration and adaptive denoising. First we numerically compare the variance of the analytic
+Gaussian mechanism and the classical mechanism for a variety of privacy parameters. Then we
+evaluate the contributions of denoising and analytic calibration against a series of baselines for the
+
+
+                                                     9
+                                       cGM (δ = 10−2)                              0.7        δ = 10−3                                         cGM                                                aGM-JS (ε = 1.0)
+           10
+                                       cGM (δ = 10−4)                                         δ = 10−4                                         aGM                                           40   aGM-TH (ε = 1.0)
+                                                                                   0.6                                                   250
+                                       cGM (δ = 10−8)                                         δ = 10−5                                         aGM-JS                                             aGM-JS (ε = 0.1)
+            8                          aGM (δ = 10−2)                                         δ = 10−6                                         aGM-TH                                             aGM-TH (ε = 0.1)
+                                                                                   0.5                                                   200
+                                                                                              δ = 10−7                                         Laplace                                       30
+
+
+
+
+                                                                     /σclassical
+                                       aGM (δ = 10−4)
+                                                                                              δ = 10−8
+
+
+
+
+                                                                                                                                                                                  L2 Error
+log10(σ)
+
+
+
+
+                                                  −8
+
+
+
+
+                                                                                                                              L2 Error
+            6                          aGM (δ = 10 )                               0.4
+
+
+
+
+                                                                       2
+                                                                                                                                         150
+
+
+
+
+                                                           σanalytic
+                                                                                   0.3                                                                                                       20
+            4                                                                                                                            100
+
+
+
+
+                                                            2
+                                                                                   0.2
+                                                                                                                                                                                             10
+            2                                                                      0.1                                                    50
+
+
+            0                                                                      0.0                                                     0                                                  0
+                −10   −8   −6     −4       −2          0                                 −6         −4              −2   0                     20        40       60   80   100                    500        1000   1500   2000
+                            log10(ε)                                                                     log10(ε)                                             d                                                 d
+
+
+Figure 1: Two leftmost plots: Experiments comparing the classical Gaussian mechanism (cGM) and
+the analytic Gaussian mechanism (aGM), in terms of their absolute standard deviations as ε → 0,
+and in terms of the gain in variance as a function of ε. Two rightmost plots: Mean estimation
+experiments showing L2 error between the private mean estimate and the non-private empirical
+mean as a function of the dimension d.
+
+
+
+task of private mean estimation using synthetic data. We also evaluate several denoising strategies
+on the task of releasing heat maps based on the New York City taxi dataset under differential
+privacy. Further experiments are presented in Appendix B, including an evaluation of denoising
+strategies for the task of private histogram release.
+
+5.1                   Analytic Gaussian Mechanism
+We implemented Algorithm 1 in Python3 and ran experiments to compare the variance of the
+perturbation obtained with the analytic Gaussian mechanism versus the variance required by the
+classical Gaussian mechanism. In all our experiments the values of v ∗ and u∗ were solved up to an
+accuracy of 10−12 using binary search and the implementation of the erf function provided by SciPy
+Jones et al. [2001].
+    The results are presented in the two leftmost panels in Figure 1. The plots show that as ε → 0
+the optimally calibrated perturbation outperforms the classical mechanism by several orders of
+magnitude. Furthermore, we see that even for values of ε close to 1 our mechanism reduces the
+variance by a factor of 1.4 or more, with higher improvements for larger values of δ.
+
+5.2                   Denoising for Mean Estimation
+Our next experiment evaluates the utility of denoising combined with the analytical Gaussian
+mechanism for the task of private mean estimation. The input to the mechanism is a dataset
+                                                  d
+                   n ) containing n vectors xi ∈ R and the underlying deterministic functionality is
+x = (x1 , . . . , xP
+                      n
+f (x) = (1/n) i=1 xi . This relatively simple task is a classic example from the family of linear
+queries which are frequently considered in the differential privacy literature. We compare the
+accuracy of several mechanisms M for releasing a private version of f (x) in terms of the Euclidean
+distance kM (x) − f (x)k2 . In particular, we test the analytical Gaussian mechanism with either
+James-Stein denoising cf. Theorem 11 (aGM-JS) or optimal thresholding denoising cf. Theorem 12
+(aGM-TH), as well as several baselines including: the classical Gaussian mechanism (cGM), the
+            3
+                See https://github.com/BorjaBalle/analytic-gaussian-mechanism.
+
+
+
+                                                                                                                             10
+analytical Gaussian mechanism without denoising (aGM), and the Laplace mechanism (Lap) using
+the same ε parameter as the Gaussian mechanisms.
+    To provide a thorough comparison we explore of the different parameters of the problem on the
+final utility. The key parameters of the problem are the dimension d and the DP parameters ε and δ.
+The dimension affects the utility through the bounds provided in Theorem 11 and Theorem 12. The
+DP parameters affect the utility through the variance σ 2 of the mechanism, which is also affected by
+the sample size n via the global sensitivity. Thus, we can characterize the effect of σ 2 by keeping n
+fixed and changing the DP parameters. In our experiments we consider a fixed sample size n = 500
+and privacy parameter δ = 10−4 while trying several values for ε.
+    The other parameter that affects the utility is the “size” of f (x), controlled either through
+the variance w2 or the norm ball S. Since the denoising estimators we use are adaptive to these
+parameters and do not need to know them in advance, we sample the dataset x repeatedly to obtain
+a diversity of values for f (x). Each dataset x is sampled as follows: first sample a center x0 ∼ N (0, I)
+and then build x = (x1 , . . . , xn ) with xi = x0 +ξi , where each ξi is i.i.d. with independent coordinates
+sampled uniformly from the interval [−1/2, 1/2]. Thus, in each            √ dataset the points xi all lie in
+an L∞ -ball of radius 1, leading to a global L2 sensitivity ∆2 = d/n and a global L1 sensitivity
+∆1 = d/n. These are used to calibrate the Gaussian and Laplace perturbations, respectively.
+    The results are presented in two rightmost panels of Figure 1. Each point in every plot is the
+result of averaging the error over 100 repetitions with different datasets. The first plot uses ε = 0.01
+and shows how denoised methods improve the accuracy over all the other methods, sometimes
+by orders of magnitude. The second plot shows that for this problem the James-Stein estimator
+provides better accuracy in the high-dimensional setting.
+
+5.3    New York City Taxi Heat Maps
+In this section, we apply our method to New York City taxi data. The dataset is a collection of
+time-stamped pick-ups and drop-offs of taxi drivers and we are interested in sharing a density map
+of such pick-ups and drop-offs in Manhattan at a specific time of a specific day under differential
+privacy.
+    This is a problem of significant practical interest. Ever since the NYC Taxi & Limousine
+Commission released this dataset, there has been multiple independent reports concerning the security
+and privacy risks this dataset poses for taxi drivers and their passengers [see, e.g., Pandurangan,
+Douriez et al., 2016]. The techniques presented in this paper allow us to provably prevent individuals
+(on both the per-trip level and per-cab level) in the dataset from being identified, while remarkably,
+permitting the release of rich information about the data with fine-grained spatial and temporal
+resolution.
+    Specifically, we apply the analytical Gaussian mechanism to release the number of picks-ups and
+drop-offs at every traffic junction in Manhattan. There are a total of 3,784 such traffic junctions and
+they are connected by 7,070 sections of roads. We will treat them as nodes and edges on a graph.
+In the post-processing phase, we apply graph smoothing techniques to reveal the underlying signal
+despite the noise due to aGM. Specifically, we compare the JS-estimator and the soft-thresholding
+estimator we described in Section 4, as well as the same soft-thresholding estimator applied to the
+coefficients of a graph wavelet transform due to Sharpnack et al. [2013]. The basis transformation is
+important because the data might be sparser in the transformed domain. For reference, we also
+include the state-of-the-art graph smoothing techniques called graph trend filtering [Wang et al.,
+2016], which has one additional tuning parameter but has been shown to perform significantly better
+
+                                                     11
+                         Time = 0:00                                            Time = 0:00                                             Time = 0:00                                            Time = 0:00
+
+
+
+
+40.86                                                    40.86                                                   40.86                                                  40.86
+
+
+
+
+40.84                                                    40.84                                                   40.84                                                  40.84
+
+
+
+
+40.82                                                    40.82                                                   40.82                                                  40.82
+
+
+
+
+ 40.8                                                     40.8                                                    40.8                                                   40.8
+
+
+
+
+40.78                                                    40.78                                                   40.78                                                  40.78
+
+
+
+
+40.76                                                    40.76                                                   40.76                                                  40.76
+
+
+
+
+40.74                                                    40.74                                                   40.74                                                  40.74
+
+
+
+
+40.72                                                    40.72                                                   40.72                                                  40.72
+
+
+
+
+        -74     -73.98        -73.96   -73.94   -73.92           -74   -73.98        -73.96   -73.94   -73.92            -74   -73.98        -73.96   -73.94   -73.92           -74   -73.98        -73.96   -73.94   -73.92
+
+
+
+              Ground truth                                        Raw aGM                                                  Wavelets                                             Trend filtering
+                                                                 RMSE = 40.29                                            RMSE = 12.28                                           RMSE = 10.07
+
+Figure 2: Illustration of the denoising in differentially private release of NYC taxi density during 00:00
+- 01:00 am Sept 24, 2014. From left to right, the figures represent the true data, the output of the
+analytical Gaussian mechanism, the reconstructed signal from soft-thresholded wavelet coefficients
+with spanning-tree wavelet transform [Sharpnack et al., 2013], and the results of trend filtering
+on graphs [Wang et al., 2016]. We observe that adding appropriate post-processing significantly
+reduces the estimation error and also makes the underlying structures visible.
+
+
+than wavelet smoothing in practice.
+    Our experiments provide cab-level differential privacy by assuming that every driver does a
+maximum of 5 trips within an hour so that we have a global L2 -sensitivity of ∆ = 5. This is a
+conservative but reasonable estimate and can be enforced by preprocessing the data. Data within
+each hour is gathered and distributed to each traffic junction using a kernel density estimator;
+further details are documented in Doraiswamy et al. [2014].
+    We present some qualitative comparisons in Figure 2, where we visualize the privately released
+heat map with and without post-processing. Relatively speaking, trend filtering performs better
+than wavelet smoothing, but both approaches significantly improves the RMSE over the DP release
+without post-processing. The results in Appendix B provide quantitative results by comparing
+the mean square error of cGM, aGM as well as the aforementioned denoising techniques for data
+corresponding to different time intervals.
+
+
+6       Conclusion and Discussion
+In this paper, we embark on a journey of pushing the utility limit of Gaussian mechanism for
+(ε, δ)-differential privacy. We propose a novel method to obtain the optimal calibration of Gaussian
+perturbations required to attain a given DP guarantee. We also review decades of research in
+statistical estimation theory and show that combining these techniques with differential privacy one
+obtains powerful adaptivity that denoises differentially private outputs nearly optimally without
+additional hyperparameters. On synthetic data and on the New York City Taxi dataset we illustrate
+a significant gain in estimation error and fine-grained spatial-temporal resolution.
+
+
+                                                                                                                12
+    There are a number of theoretical problems of interest for future work. First, on the problem
+of differentially private estimation. Our post-processing approach effectively restricts our choice
+of algorithms to the composition of privacy release and post-processing. While we now know that
+we are optimal in both components, it is unclear whether we lose anything relative to the best
+differentially private algorithms. Secondly, the analytical calibration proposed in this paper is
+optimal for achieving (ε, δ)-DP with Gaussian noise. But when building complex mechanisms we
+are stuck in the dilemma of choosing between (a) using the aGM with the advanced composition
+[Kairouz et al., 2015]; or, (b) using Rényi DP [Mironov, 2017] or zCDP [Bun and Steinke, 2016]
+for tighter composition and calculate the (ε, δ) from moment bounds. While (a) is tighter in the
+calculation the privacy parameters of each intermediate value, (b) is tighter in the composition but
+cannot take advantage of aGM. It would be interesting if we could get the best of both worlds.
+
+
+Acknowledgments
+We thank Doraiswamy et al. [2014] for sharing their preprocessed NYC taxi dataset, the anonymous
+reviewers for helpful comments that led to improvements of the paper and Stephen E. Fienberg for
+discussions that inspired the authors to think about optimal post-processing.
+
+
+References
+Martı́n Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar, and
+ Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC
+ Conference on Computer and Communications Security, pages 308–318. ACM, 2016.
+Boaz Barak, Kamalika Chaudhuri, Cynthia Dwork, Satyen Kale, Frank McSherry, and Kunal
+ Talwar. Privacy, accuracy, and consistency too: a holistic solution to contingency table release.
+  In Proceedings of the twenty-sixth ACM SIGMOD-SIGACT-SIGART symposium on Principles of
+ database systems, pages 273–282. ACM, 2007.
+Raef Bassily, Adam Smith, and Abhradeep Thakurta. Private empirical risk minimization: Efficient
+  algorithms and tight error bounds. In Foundations of Computer Science (FOCS), 2014 IEEE
+ 55th Annual Symposium on, pages 464–473. IEEE, 2014.
+Garrett Bernstein, Ryan McKenna, Tao Sun, Daniel Sheldon, Michael Hay, and Gerome Miklau.
+ Differentially private learning of undirected graphical models using collective graphical models.
+ In International Conference on Machine Learning (ICML), 2017.
+PJ Bickel et al. Minimax estimation of the mean of a normal distribution when the parameter space
+  is restricted. The Annals of Statistics, 9(6):1301–1309, 1981.
+Lucien Birgé and Pascal Massart. Gaussian model selection. Journal of the European Mathematical
+  Society, 3(3):203–268, 2001.
+Mark Bun and Thomas Steinke. Concentrated differential privacy: Simplifications, extensions, and
+ lower bounds. In Theory of Cryptography Conference, pages 635–658. Springer, 2016.
+David L Donoho. De-noising by soft-thresholding. IEEE transactions on information theory, 41(3):
+  613–627, 1995.
+
+                                                13
+David L Donoho and Iain M Johnstone. Minimax risk over p-balls for p-error. Probability Theory
+ and Related Fields, 99(2):277–303, 1994.
+
+David L Donoho, Richard C Liu, and Brenda MacGibbon. Minimax risk over hyperrectangles, and
+  implications. The Annals of Statistics, pages 1416–1437, 1990.
+
+Harish Doraiswamy, Nivan Ferreira, Theodoros Damoulas, Juliana Freire, and Cláudio T Silva.
+ Using topological analysis to support event-guided exploration in urban data. IEEE transactions
+ on visualization and computer graphics, 20(12):2634–2643, 2014.
+
+Marie Douriez, Harish Doraiswamy, Juliana Freire, and Cláudio T Silva. Anonymizing nyc taxi data:
+ Does it matter? In Data Science and Advanced Analytics (DSAA), 2016 IEEE International
+ Conference on, pages 140–148. IEEE, 2016.
+
+Cynthia Dwork and Aaron Roth. The algorithmic foundations of differential privacy. Foundations
+ and Trends in Theoretical Computer Science, 9(3-4):211–407, 2014.
+
+Cynthia Dwork and Guy N Rothblum.             Concentrated differential privacy.      arXiv preprint
+ arXiv:1603.01887, 2016.
+
+Cynthia Dwork, Frank McSherry, Kobbi Nissim, and Adam Smith. Calibrating noise to sensitivity
+  in private data analysis. In Theory of cryptography, pages 265–284. Springer, 2006.
+
+Cynthia Dwork, Moni Naor, Omer Reingold, Guy N Rothblum, and Salil Vadhan. On the complexity
+  of differentially private data release: efficient algorithms and hardness results. In Proceedings of
+ the forty-first annual ACM symposium on Theory of computing, pages 381–390. ACM, 2009.
+
+Michalis Faloutsos, Petros Faloutsos, and Christos Faloutsos. On power-law relationships of the
+ internet topology. In ACM SIGCOMM computer communication review, volume 29, pages 251–262.
+ ACM, 1999.
+
+Robert D Gordon. Values of mills’ ratio of area to bounding ordinate and of the normal probability
+  integral for large values of the argument. The Annals of Mathematical Statistics, 12(3):364–366,
+ 1941.
+
+Michael Hay, Chao Li, Gerome Miklau, and David Jensen. Accurate estimation of the degree
+ distribution of private networks. In Data Mining, 2009. ICDM’09. Ninth IEEE International
+ Conference on, pages 169–178. IEEE, 2009.
+
+Eric Jones, Travis Oliphant, Pearu Peterson, et al. SciPy: Open source scientific tools for Python,
+  2001. URL http://www.scipy.org/.
+
+Peter Kairouz, Sewoong Oh, and Pramod Viswanath. The composition theorem for differential
+  privacy. In International Conference on Machine Learning (ICML), 2015.
+
+Vishesh Karwa, Aleksandra Slavković, et al. Inference using noisy degrees: Differentially private
+  β-model and synthetic graphs. The Annals of Statistics, 44(1):87–112, 2016.
+
+Erich L Lehmann and George Casella. Theory of point estimation. Springer Science & Business
+  Media, 2006.
+
+
+                                                 14
+Min Lyu, Dong Su, and Ninghui Li. Understanding the sparse vector technique for differential
+ privacy. Proceedings of the VLDB Endowment, 10(6):637–648, 2017.
+
+Ilya Mironov. Renyi differential privacy. In Computer Security Foundations Symposium (CSF),
+   2017 IEEE 30th, pages 263–275. IEEE, 2017.
+
+Aleksandar Nikolov, Kunal Talwar, and Li Zhang. The geometry of differential privacy: the sparse
+  and approximate cases. In Proceedings of the forty-fifth annual ACM symposium on Theory of
+  computing, pages 351–360. ACM, 2013.
+
+Vijay Pandurangan.        On taxi and rainbows.                      https://tech.vijayp.ca/
+  of-taxis-and-rainbows-f6bc289679a1. Accessed: 2014-06-21.
+
+Ryan M Rogers, Aaron Roth, Jonathan Ullman, and Salil Vadhan. Privacy odometers and filters:
+  Pay-as-you-go composition. In Advances in Neural Information Processing Systems, pages 1921–
+ 1929, 2016.
+
+James Sharpnack, Aarti Singh, and Akshay Krishnamurthy. Detecting activations over graphs using
+  spanning tree wavelet bases. In Artificial Intelligence and Statistics, pages 536–544, 2013.
+
+Charles Stein. Inadmissibility of the usual estimator for the mean of a multivariate normal
+ distribution. In Proceedings of the Third Berkeley symposium on mathematical statistics and
+ probability, volume 1, pages 197–206, 1956.
+
+Matus Telgarsky. Dirichlet draws are sparse with high probability. CoRR, abs/1301.4917, 2013.
+
+Yu-Xiang Wang, James Sharpnack, Alexander J. Smola, and Ryan J. Tibshirani. Trend filtering on
+  graphs. Journal of Machine Learning Research, 17(105):1–41, 2016.
+
+Oliver Williams and Frank McSherry. Probabilistic inference and differential privacy. In Advances
+  in Neural Information Processing Systems, pages 2451–2459, 2010.
+
+
+
+
+                                               15
+A     Proofs
+In this appendix we present supporting proofs for all the results mentioned in the main text.
+
+A.1    Proofs from Section 2
+Proof of Theorem 2. An simple way to see that (0, δ)-DP is achievable with Gaussian noise is to
+recall that (0, δ)-DP is equivalent to a bound of δ on the total variation (TV) distance between the
+output distributions of M (x) and M (x0 ) for any neighbouring pair x ≃ x0 . If M (x) is an output
+perturbation mechanism for f (x) with noise Z ∼ N (0, σ 2 I), then using Pinsker’s inequality we have
+                                            r
+                                       0      KL(M (x)|M (x0 ))
+                       TV(M (x), M (x )) ≤
+                                            r          2
+                                              KL(N (f (x), σ 2 I)|N (f (x0 ), σ 2 I))
+                                          =
+                                                                2
+                                            kf (x) − f (x0 )k    ∆
+                                          =                   ≤     .
+                                                   2σ           2σ
+Thus, we see that a Gaussian perturbation with standard deviation σ = ∆/2δ is enough to achieve
+(0, δ)-DP.
+
+Proof of√Theorem 4. Note that the proof of Theorem 9 shows that a Gaussian      √ perturbation with
+σ = ∆/ 2ε yields a (ε, δ0 (ε))-DP mechanism, where δ0 (ε) = Φ(0) − eε Φ(− 2ε). Thus, it is not
+possible to attain (ε, δ)-DP with δ < δ0 (ε) without increasing the variance of the perturbation.
+    The result follows by showing that the upper bound for δ proposed
+                                                                  √          in Theorem 4 is a lower
+                                                                            e−3ε
+bound for δ0 (ε). Since Φ(0) = 1/2, all we need to show is eε Φ(− 2ε) < √     4πε
+                                                                                  .
+          c
+    Let Φ (t) = P[N (0, 1) ≥ t] = 1 − Φ(t) be the complementary √of the standard Gaussian CDF. The
+                                                                        2
+Mill’s ratio for the Gaussian distribution is the quantity r(t) = 2πet /2 Φc (t). Bounding the Mill’s
+ratio is a standard approach to approximate the tail of the Gaussian distribution. A well-known
+bound for the Mill’s ratio is Gordon’s inequality r(t) < 1/t Gordon [1941]. By using the symmetry
+Φ(−t) = Φc (t) we obtain :
+                               √             √      e−3ε √     e−3ε
+                         eε Φ(− 2ε) = eε Φc ( 2ε) = √ r( 2ε) < √     .
+                                                      2π         4πε
+
+
+Proof of Lemma 3. Recall that the density of the Gaussian output perturbation      √ mechanism M (x) =
+f (x) + Z with Z ∼ N (0, σ 2 I) is given by pM (x) (y) = exp(−ky − f (x)k2 /2σ 2 )/ 2πσ 2 . Plugging this
+expression into the definition of the privacy loss function and performing a quick computation we
+get
+
+                                  ky − f (x0 )k2 − ky − f (x)k2
+                     `M,x,x0 (y) =
+                                               2σ 2
+                                  kf (x) − f (x0 )k2 hy − f (x), f (x) − f (x0 )i
+                                =                   +                             .
+                                         2σ 2                    σ2
+
+
+
+                                                   16
+To compute the privacy loss random variable LM,x,x0 we need to plug Y = f (x) + Z with Z ∼
+N (0, σ 2 I) in the above inner product. By observing that hZ, f (x) − f (x0 )i ∼ N (0, σ 2 kf (x) − f (x0 )k2 )
+we obtain the distribution of the privacy loss random variable is given by
+                                         kf (x) − f (x0 )k2 kf (x) − f (x0 )k2
+                                                                              
+                           LM,x,x0 ∼ N                     ,                     .
+                                                2σ 2               σ2
+Therefore, the privacy loss of the Gaussian mechanism has the form N (η, 2η) for η = D2 /2σ 2 .
+
+A.2     Proofs from Section 3
+Proof of Theorem 5. Given a pair of neighbouring datasets x ≃ x0 let p = pM (x) and p0 = pM (x0 ) be
+the densities of the output random variables Y = M (x) and Y 0 = M (x0 ). Note that given an event
+E ⊆ Y one can rewrite (1) as follows:
+                                     Z
+                                        (p(y) − eε p0 (y)) ≤ δ .                                 (9)
+                                           E
+
+Defining the event E∗ = {y : p(y) ≥ eε p0 (y)} and its complementary Ē∗ = Y \ E∗ , we can partition
+E into the sets E+ = E ∩ E∗ and E− = E ∩ Ē∗ . Therefore, by the definition of E∗ we have
+                          Z                        Z
+                              (p(y) − eε p0 (y)) =     (p(y) − eε p0 (y))
+                            E                       E
+                                                    Z+
+                                                  +     (p(y) − eε p0 (y))
+                                                     E−
+                                                   Z
+                                                 ≤     (p(y) − eε p0 (y))
+                                                    E
+                                                   Z +
+                                                 ≤    (p(y) − eε p0 (y)) .
+                                                           E∗
+
+Because (9) has to hold for any event E and the upper bound above holds for any event, we conclude
+that M is (ε, δ)-DP if and only if
+                                      Z
+                                          (p(y) − eε p0 (y)) ≤ δ                              (10)
+                                            E∗
+
+holds for any x ≃ x0 .  To complete the proof we need to show that (10) is equivalent to (3).
+Expanding the definition of LM,x,x0 we get:
+                                P[LM,x,x0 ≥ ε] = P[log(p(Y )/p0 (Y )) ≥ ε]
+                                                 = P[p(Y ) ≥ eε p0 (Y )]
+                                                   Z
+                                                 =    1[p(y) ≥ eε p0 (y)]p(y)
+                                                   ZY
+
+                                                 =     p(y) .
+                                                     E∗
+
+A similar argument with LM,x0 ,x also shows:
+                                                                Z
+                                       P[LM,x0 ,x ≤ −ε] =            p0 (y) .
+                                                                E∗
+
+
+                                                      17
+Putting the last two equations together we obtain see that the left hand side of (3) equals the left
+hand side of (10).
+
+Proof of Lemma 6. Note that Lemma 3 shows that the privacy loss random variables LM,x,x0 and
+LM,x0 x both follow the same distribution N (η, 2η) with η = D2 /2σ 2 . This allows us to write the
+left hand side of (4) in terms of the Gaussian CDF Φ as follows:
+
+                              P[LM,x,x0 ≥ ε] = P[N (η, 2η) ≥ ε]
+                                                                      
+                                                              −η + ε
+                                             = P N (0, 1) ≥ √
+                                                                  2η
+                                                                   
+                                                              η−ε
+                                             = P N (0, 1) ≤ √
+                                                                2η
+                                                 r            
+                                                     η      ε
+                                             =Φ         −√
+                                                     2      2η
+                                                           
+                                                   D     εσ
+                                             =Φ        −        ,
+                                                   2σ    D
+                                        √
+where we used N (η, 2η) = η + N (0, 1)/ 2η and the symmetry P[N (0, 1) ≥ t] = P[N (0, 1) ≤ −t] of
+the distribution of the Gaussian distribution around its mean. A similar argument applied to the
+left hand side of (5) yields:
+                                                                 
+                                                        D     εσ
+                               P[LM,x0 ,x ≤ −ε] = Φ −      −          .
+                                                        2σ     D
+
+
+
+Proof of Lemma 7. We prove the result by using Leibniz’s rule for differentiation under the integral
+sign to show that the function of interest has non-negative derivatives. First note that from the
+derivation of (4) we have
+                                                    Z a(η)
+                                                  1           2
+                    P[N (η, 2η) ≥ ε] = Φ(a(η)) = √         e−y /2 dy ,
+                                                  2π −∞
+            p        √
+where a(η) = η/2 − ε/ 2η. Now we can use Leibniz’s rule to write
+                              Z a(η)
+                          d               2                 2
+                                       e−y /2 dy = e−a(η) /2 a0 (η)
+                         dη    −∞
+                                                                             !
+                                                      −a(η)2 /2    1  ε
+                                                 =e               √ +p           .
+                                                                   8η 8η 3
+
+Similarly, for the second term in the function we have P[N (η, 2η) ≤ −ε] = Φ(b(η)) where b(η) =
+  p          √
+− η/2 − ε/ 2η. Using Leibniz’s rule again we get
+                            Z b(η)                                       !
+                         d           −y 2 /2        −b(η)2 /2   1   ε
+                                   e         dy = e           −√ + p       .
+                        dη −∞                                   8η  8η 3
+
+
+                                                       18
+Therefore, we see that the derivative of h satisfies:
+                                       1  −a(η)2 /2              2
+                                                                      
+                            h0 (η) = √      e          + eε e−b(η) /2
+                                     4 πη
+                                        ε           2               2
+                                                                        
+                                    + p        e−a(η) /2 − eε e−b(η) /2
+                                      4 πη 3
+                                       1  −a(η)2 /2              2
+                                                                      
+                                   = √      e          + eε e−b(η) /2 ≥ 0 ,
+                                     4 πη
+
+where we used that a(η)2 + 2ε = b(η)2 .
+
+Proof of Theorem 9. Recall that the derivations in Section 3 establish that in order to calibrate a
+Gaussian perturbation to achieve (ε, δ)-DP all that is required is find the smallest σ such that
+                                                            
+                                ∆     εσ       ε      ∆     εσ
+                           Φ       −       −e Φ −        −       ≤δ .                           (11)
+                                2σ     ∆              2σ    ∆
+
+To establish the correctness of the analytic Gaussian mechanism
+                                                          √     we begin by observing that the
+                                                       √ 2ε, while the argument for the second
+argument in the first term of (11) changes sign at σ = ∆/
+terms is always negative. Thus, we substitute σ = α∆/ 2ε in the expression above and obtain:
+                                r                   r          
+                                    ε 1              ε      ε 1
+                     Bε (α) = Φ           −α      −e Φ −         +α       .
+                                    2 α                     2 α
+
+To solve the optimization inf{α > 0 : Bε (α) ≤ δ} using numerical evaluations of Φ it is convenient
+to consider the cases α ≥ 1 and α < 1 separately. In the case α ≥ 1 we define u = (α − 1/α)2 /2
+and substitute the corresponding α in Bε to obtain
+                                           √
+                            Bε− (u) = Φ(− εu) − eε Φ(− ε(u + 2)) .
+                                                         p
+
+
+Similarly, by taking v = (1/α − α)2 /2 in the case α < 1 we obtain
+                                          √             p
+                              Bε+ (v) = Φ( εv) − eε Φ(− ε(v + 2)) .
+
+Note that, as expected, these definitions satisfy limv→∞ Bε+ (v) = 1 and limu→∞ Bε− (u) = 0, since
+the limits correspond to limα→0 B(α) = 1 and limα→∞ B(α) = 0, respectively. Furthermore, we
+have
+                                                          √
+                         Bε+ (0) = Bε− (0) = Φ(0) − eε Φ(− 2ε) = δ0 (ε) ,
+                                                                                      √
+which corresponds to the privacy guarantee (ε, δ0 (ε))-DP obtained by taking σ = ∆/ 2ε; i.e. α = 1.
+   These observations motivate the mechanism described in Algorithm 1. In particular, for δ ≥ δ0 (ε)
+we can achieve (ε, δ)-DP with α < 1, and the smallest α < 1 such that Bε (α) ≤ δ corresponds to
+the largest v ≥ 0 such that Bε+ (v) ≤ δ. Similarly, for δ < δ0 (ε) we require α ≥ 1, and the smallest
+α ≥ 1 such that Bε (α) ≤ δ corresponds to the smallest u ≥ 0 such that Bε− (u) ≤ δ.
+
+
+
+
+                                                  19
+A.3     Proofs from Section 4
+The proofs in this section are well-known and not part of the contribution of the current paper. We
+include these proofs because they are short and revealing and we hope to be self-contained as much
+as possible.
+
+Proof of Theorem 10. Let P be the distribution of f (x) induced by x ∼ π. Let θ ∈ Rd , define its
+posterior error                       Z
+                                   r(θ|ŷ) =      kθ − f (x)k2 dP (f (x)|ŷ).
+
+Take the gradient with respect to θ on both sides and apply Fubini’s theorem
+                                           Z
+                            ∂           ∂
+                              r(θ|ŷ) =      kθ − f (x)k2 dP (f (x)|ŷ)
+                           ∂θ           ∂θ
+                                  Z
+                          =2θ − 2 f (x)dP (f (x)|ŷ) = 2(θ − E[f (x)|ŷ]).
+
+Assign the gradient to 0 we get that the minimizer is E[f (x)|ŷ].
+   Now, assume ỹBayes is suboptimal, there exists ỹ ∗ 6= ỹBayes such that
+
+                       E kf (x) − ỹBayes k2 > E kf (x) − ỹ ∗ k2
+                                                                 
+
+                        = E[r(ỹ ∗ |ŷ)] ≥ E[r(ỹBayes )] = E kf (x) − ỹBayes k2 .
+                                                                                
+
+
+which is a contradiction.
+                                         2
+Proof of Theorem 11. Note that wkŷk
+                                 2 +σ 2 follows a χ
+                                                    2 distribution with degree of freedom d. The
+
+likelihood function                                                2
+                                              kŷk2 d/2−1 − 2(wkŷk
+                           p(kŷk2 |w2 ) ∝ ( 2       )     e    2 +σ 2 )
+                                                                         .
+                                             w + σ2
+The gradient w.r.t. w2 of the log-likelihood, we get
+
+                                             d/2 − 1     kyk2
+                                        −            +              .
+                                             w2 + σ 2 2(w2 + σ 2 )2
+                                                                                2
+Assigning it to 0, we get the maximum likelihood estimate w2 = kyk             2
+                                                                        k−2 − σ . Substituting it into
+            2   2   2
+ỹBayes = (w /(w +σ ))ŷ produces ỹJS as stated and the calculation of its MSE is straightforward.
+
+
+B     Additional Experiments
+Here we present additional experimental results. Figure 3 provides more plots for the setups explored
+in Sections 5.1 and 5.2. The next two sections present further experiments on a sparse histogram
+denoising task and on the New York City taxi dataset.
+
+
+
+
+                                                       20
+                                                                                                                                               cGM                                                               cGM
+                                                        0.7                                                                                                                                               25     aGM
+                                                                                                                                        2.5    aGM
+                                                                                                                                               aGM-JS                                                            aGM-JS
+                                                        0.6
+                                                                                                                                               aGM-TH                                                            aGM-TH
+                                                                                                                                        2.0                                                               20
+                                                        0.5                                                                                    Laplace                                                           Laplace
+
+
+
+
+                                          /σclassical
+
+
+
+
+                                                                                                                                                                                               L2 Error
+                                                                                                                             L2 Error
+                                            2
+                                                        0.4                                                                             1.5                                                               15
+
+
+                                σanalytic
+                                                        0.3
+                                 2
+                                                                                                                                        1.0                                                               10
+                                                        0.2          ε = 10−0
+                                                                     ε = 10−1                                                           0.5                                                                5
+                                                        0.1
+                                                                     ε = 10−2
+                                                                     ε = 10−3
+                                                        0.0                                                                             0.0                                                                0
+                                                              −10        −8         −6                   −4   −2        0                      20        40               60   80    100                        20         40               60   80         100
+                                                                                    log10(δ)                                                                      d                                                                d
+
+
+Figure 3: Left plot: Comparing the classical Gaussian mechanism (cGM) and the analytic Gaussian
+mechanism (aGM) in terms of gain in variance as a function of δ. Two rightmost plots: Mean
+estimation experiments showing L2 error between the private mean estimate and the non-private
+empirical mean as a function of the dimension d with ε = 1 and ε = 0.1. Dataset size is fixed to
+n = 500 and privacy parameter is set to δ = 10−4 .
+
+
+           1.0                                                                                      10                                                                   100
+                 cGM                                                                                          cGM                                                               cGM                                                               aGM-JS (ε = 1.0)
+                                                                                                                                                                                                                                           3.5
+                 aGM                                                                                          aGM                                                               aGM                                                               aGM-TH (ε = 1.0)
+                 aGM-JS                                                                              8        aGM-JS                                                            aGM-JS                                                            aGM-JS (ε = 0.1)
+           0.8                                                                                                                                                            80                                                               3.0
+                 aGM-TH                                                                                       aGM-TH                                                            aGM-TH                                                            aGM-TH (ε = 0.1)
+                 Laplace                                                                                      Laplace                                                           Laplace
+                                                                                                     6                                                                                                                                     2.5
+           0.6                                                                                                                                                            60
+                                                                                         L1 Error
+L1 Error
+
+
+
+
+                                                                                                                                                                                                                                L1 Error
+                                                                                                                                                              L1 Error
+
+
+
+                                                                                                                                                                                                                                           2.0
+           0.4                                                                                       4                                                                    40
+                                                                                                                                                                                                                                           1.5
+
+           0.2                                                                                       2                                                                    20                                                               1.0
+
+
+                                                                                                                                                                           0                                                               0.5
+           0.0                                                                                       0
+                 20        40                           60          80        100                             20        40               60   80    100                         20        40               60   80     100                            500         1000   1500   2000
+                                          d                                                                                     d                                                                  d                                                                d
+
+
+Figure 4: Histogram release experiments showing L1 error between the private histogram and the
+non-private empirical histogram as a function of the dimension d. Dataset size is fixed to n = 500
+and privacy parameter is set to δ = 10−4 . The first three panels correspond to ε = 1, 0.1, 0.01 (left
+to right). The rightmost panel displays the two denoised mechanisms (aGM-JS and aGM-TH) in
+the high-dimensional case.
+
+
+
+B.1               Denoising for Histogram Release
+We evaluate the accuracy of our new Gaussian perturbation mechanisms on a second task involving
+private histogram release. In this problem the dataset x = (x1 , . . . , xn ) contains elements xi ∈ [d]
+from a finite set with
+                   Pn d. The deterministic functionality is the empirical histogram
+                                                                                  √       y = f (x) ∈ Rd
+where yj = (1/n) i=1 I[xi = j]. In this case the global L2 sensitivity ∆2 = 2/n and a global L1
+sensitivity ∆1 = 2/n (with respect to replacing one individual in a dataset by another arbitrary
+individual).
+    For this task, each dataset is sampled from a multinomial distribution with parameters sampled
+from a symmetric Dirichlet with α = 1/d. The parameters are resampled for each individual
+experiment. The choice of α guarantees that the resulting histograms are highly sparse Telgarsky
+[2013]. Our setup follows the same structure as the one for the experiments from previous section.
+The results are presented in Figure 4. We observe that in this problem the Laplace mechanism
+is better than the classical Gaussian mechanism, and in the setting ε = 1 it is even better than
+
+
+                                                                                                                                                         21
+                                             Time = 0:00                                                                          Time = 0:00                                                                          Time = 0:00                                                                          Time = 0:00
+
+
+
+
+40.86                                                                                  40.86                                                                                40.86                                                                                40.86
+
+
+
+
+40.84                                                                                  40.84                                                                                40.84                                                                                40.84
+
+
+
+
+40.82                                                                                  40.82                                                                                40.82                                                                                40.82
+
+
+
+
+   40.8                                                                                   40.8                                                                                 40.8                                                                                 40.8
+
+
+
+
+40.78                                                                                  40.78                                                                                40.78                                                                                40.78
+
+
+
+
+40.76                                                                                  40.76                                                                                40.76                                                                                40.76
+
+
+
+
+40.74                                                                                  40.74                                                                                40.74                                                                                40.74
+
+
+
+
+40.72                                                                                  40.72                                                                                40.72                                                                                40.72
+
+
+
+
+                          -74     -73.98          -73.96    -73.94   -73.92                                      -74   -73.98          -73.96    -73.94   -73.92                                      -74   -73.98          -73.96    -73.94   -73.92                                      -74   -73.98          -73.96    -73.94   -73.92
+
+
+
+                                Ground truth                                                                      Raw aGM                                                                               Wavelet                                                                              Trend filtering
+                                                                                                                 RMSE = 40.29                                                                         RMSE = 10.22                                                                           RMSE = 9.46
+
+Figure 5: Illustration of the denoising in differentially private release of NYC taxi density during
+12:00 - 13:00 pm Sept 24, 2014. Comparing to the figure in the midnight of Figure 2, the figures
+look structurally different. More activities center around the midtown and upper west sides.
+
+
+
+
+                      7                                                                                      7                                                                                    7                                                                                    7
+                 10                                                                                     10                                                                                   10                                                                                   10
+                                                           cGM                                                                                  cGM                                                                                  cGM                                                                                  cGM
+                                                           aGM                                                                                  aGM                                                                                  aGM                                                                                  aGM
+                      6                                    aGM-TH                                            6                                  aGM-TH                                            6                                  aGM-TH                                            6                                  aGM-TH
+                 10                                        aGM-JS
+                                                                                                        10                                      aGM-JS
+                                                                                                                                                                                             10                                      aGM-JS
+                                                                                                                                                                                                                                                                                  10                                      aGM-JS
+                                                           aGM-TH-wavelets                                                                      aGM-TH-wavelets                                                                      aGM-TH-wavelets                                                                      aGM-TH-wavelets
+                      5                                                                                      5                                                                                    5                                                                                    5
+                 10                                                                                     10                                                                                   10                                                                                   10
+Estimation MSE
+
+
+
+
+                                                                                       Estimation MSE
+
+
+
+
+                                                                                                                                                                            Estimation MSE
+
+
+
+
+                                                                                                                                                                                                                                                                 Estimation MSE
+
+
+
+
+                      4                                                                                      4                                                                                    4                                                                                    4
+                 10                                                                                     10                                                                                   10                                                                                   10
+
+                      3                                                                                      3                                                                                    3                                                                                    3
+                 10                                                                                     10                                                                                   10                                                                                   10
+
+                      2                                                                                      2                                                                                    2                                                                                    2
+                 10                                                                                     10                                                                                   10                                                                                   10
+
+                      1                                                                                      1                                                                                    1                                                                                    1
+                 10                                                                                     10                                                                                   10                                                                                   10
+
+                      0                                                                                      0                                                                                    0                                                                                    0
+                 10 -2                  -1                      0                  1
+                                                                                                        10 -2                -1                      0                  1
+                                                                                                                                                                                             10 -2                -1                      0                  1
+                                                                                                                                                                                                                                                                                  10 -2                -1                      0                  1
+                   10              10                      10                 10                          10            10                      10                 10                          10            10                      10                 10                          10            10                      10                 10
+                                                    0                                                                                    0                                                                                    0                                                                                    0
+
+
+                                  8:00 am                                                                              12:00 am                                                                             16:00 am                                                                             20:00 am
+
+Figure 6: Experiments for releasing NYC taxi heat maps. The plots compare the MSE of the
+reeased heat map as a function of the privacy loss parameter ε. We take ∆ = 5 and δ = 10−6 for all
+experiments. The wavelet basis√is generated using Sharpnack et al. [2013] and the soft-thresholding’s
+hyperparameter is chosen as σ 2 log d.
+
+
+
+
+                                                                                                                                                                    22
+the analytic Gaussian mechanism, with and without denoising. However, as we decrease ε the
+utility of the analytic Gaussian mechanism becomes better than that of the Laplace mechanism,
+and denoising provides a significant advantage over mechanisms without denoising. Finally, we note
+that due to the sparsity of the underlying datapoint, denoising via soft thresholding provides better
+utility in this case than denoising via shrinking.
+
+B.2    New York City Taxi Heat Maps
+Here we present a second qualitative experiment with the New York City taxi dataset. The difference
+with the previous experiment is that we use data for a different time of the same day, leading to a
+different structure in the activities around the city; see Figure 2. This illustrates that the selected
+denoising methods are adaptive to the structure of the underlying data.
+    Furthermore, Figure 6 presents quantitative results where we compare the mean square error
+(MSE) of cGM, aGM as well as the aforementioned denoising techniques. As we can see, on the real
+datasets, aGM always improves over cGM by a constant factor and denoising techniques are able to
+leverage bias-variance trade-off and improve the recovery in MSE further. The benefits of denoising
+range from orders of magnitude (in the case when ε is tiny) to a small constant factor (when ε is
+moderate). In the low-privacy regime (e.g., ε > 5), soft-thresholding performs a little worse than
+not using it at all. This is the expected cost of adaptivity and it does appear in its error bound.
+
+
+
+
+                                                  23
+

@@ -1,0 +1,1771 @@
+{
+  "2611.22310": {
+    "id": "2611.22310v1",
+    "title": "EviDARL: Evidence-Centric Dual-Agent Reasoning via Alternating Reinforcement Learning for Multi-Table Question Answering",
+    "abstract": "Despite advances in LLM-based table reasoning, most studies focus on single-table settings. Multi-table QA requires multi-hop reasoning over complex table relationships and evidence dispersed across long contexts, often without verifiable intermediate traces. To address these challenges, we introduce EviDA, an evidence-centric dual-agent framework comprising an Evidence Construction Agent and a Reasoning and Answering Agent. The Evidence Construction Agent generates and executes table-manipulation programs over complete tables to produce question-specific evidence and verifiable intermediate traces, simplifying subsequent reasoning. The Reasoning and Answering Agent then performs multi-hop reasoning over this evidence to derive final answers. We further introduce EviDARL, which combines agent-specific fine-grained rewards with parameter-efficient alternating reinforcement learning to improve collaboration between the agents. By optimizing each agent in turn while holding the other fixed, EviDARL enables bidirectional adaptation between evidence construction and answer reasoning. Experiments on MMQA and TQA-Bench demonstrate that EviDARL substantially outperforms competitive open-model and multi-table reasoning baselines under constrained model and training budgets.",
+    "published": "2026-11-17T07:07:41Z",
+    "updated": "2026-11-17T07:07:41Z",
+    "authors": [
+      "Dunhan Li",
+      "Leilei Gan",
+      "Lirong Gao",
+      "Wenyan Fan",
+      "Yongwei Wang",
+      "Sheng Guo",
+      "Fei Wu"
+    ],
+    "url": "https://arxiv.org/abs/2611.22310v1",
+    "pdf": "https://arxiv.org/pdf/2611.22310v1",
+    "discovery_queries": [
+      "recent_table_agents",
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "EviDARL",
+    "category": "multi_table_evidence",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: multi_table_evidence; transferable to the five seed papers.",
+    "file": "2611.22310_EviDARL.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2611.22310v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2611.22310v1",
+    "pages": 15,
+    "sha256": "19148fd77d5484b87dc04f8fa9f752a627d70363fb6400839dcae1057aba6244",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2610.25131": {
+    "id": "2610.25131v1",
+    "title": "Data.Readme: Documenting Table Relationships for Diverse Data Tasks",
+    "abstract": "Large language models (LLMs) can perform diverse data tasks when given a small set of relevant tables. However, for complex tasks requiring multiple tables over large data lakes, identifying relevant tables for the task becomes a prerequisite, but remains challenging. This is because there are often many tables in a data lake with similar table and schema names, and limited additional semantic context, thereby forcing agents to spend substantial time exploring tables at online query time, greatly affecting models' ability to perform tasks accurately, while increasing cost/latency substantially. We present Data.Readme, a novel table documentation approach that uses lightweight offline processing to infer and index rich \\emph{table-to-table relationships}, including confusable, joinable, and union-able tables. We further develop a suite of agentic tools for LLMs to work with the index, to help agents retrieve relevant tables and perform tasks much more efficiently and effectively. Finally, we study how to optimize our index construction with a budget constraint. On data lakes containing up to 12K tables, Data.Readme improves task accuracy by as much as 40 percentage points across a range of data discovery, data analysis, and data science tasks, outperforming diverse baselines, including powerful coding agents with unlimited time and monetary budgets. We also show that equipping existing methods (such as coding agents) with Data.Readme can not only lead to consistent quality gains, but also significantly reduce their latency by up to 6x, demonstrating the potential of Data.Readme.",
+    "published": "2026-10-18T09:29:43Z",
+    "updated": "2026-10-18T09:29:43Z",
+    "authors": [
+      "Jiaming Liang",
+      "Yeye He",
+      "Haoyu Dong",
+      "Zachary Ives",
+      "Surajit Chaudhuri"
+    ],
+    "url": "https://arxiv.org/abs/2610.25131v1",
+    "pdf": "https://arxiv.org/pdf/2610.25131v1",
+    "discovery_queries": [
+      "recent_table_agents",
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "Data-Readme",
+    "category": "table_relationships",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: table_relationships; transferable to the five seed papers.",
+    "file": "2610.25131_Data-Readme.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2610.25131v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2610.25131v1",
+    "pages": 14,
+    "sha256": "f5e7a51d77df3358e5adb575d0a7145088ec5fb6b105cacc9165ad9495c2f85f",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2610.07749": {
+    "id": "2610.07749v1",
+    "title": "Cost-Effective Numerical QA over Semi-Structured Table: Structuring, Resolution, Planning",
+    "abstract": "Semi-structured tables encode rich semantic information through diverse layout elements, such as hierarchical row and column headers. Answering numerical questions over such data is challenging because it requires a joint effort of accurate structural understanding of tables, question uncertainty resolution, and complex query intents interpretation. Existing methods are rarely effective in handling the above multifaceted challenges in a holistic manner; moreover, they rely on LLMs without considering financial implications. We propose SemiBonsai, a cost-effective, LLM-powered framework featuring: (1) a Multiway Layered Table Structurer that converts a table into a multiway layered tree organized by structural elements; (2) a Context-Aware Uncertainty Resolver that grounds underspecified phrases to context-coherent structural elements; (3) a Plan-Guided Reasoner that decomposes complex query intents into a query plan for reasoning; (4) a Budget-Aware Bandit Router that learns per-instance LLM utilities and optimizes LLM selection under fixed monetary constraints. Experiments on three benchmarks show that SemiBonsai improves both QA effectiveness and cost-effectiveness. Notably, the Table Structurer improves answer accuracy by 46% over alternative tree construction methods, and Router achieves a 5% average relative gain in answer accuracy compared with existing routing methods across budgets.",
+    "published": "2026-10-06T04:47:38Z",
+    "updated": "2026-10-06T04:47:38Z",
+    "authors": [
+      "Feng Luo",
+      "Hui Luo",
+      "Zhifeng Bao",
+      "J. Shane Culpepper",
+      "Xiaoli Wang",
+      "Shazia Sadiq"
+    ],
+    "url": "https://arxiv.org/abs/2610.07749v1",
+    "pdf": "https://arxiv.org/pdf/2610.07749v1",
+    "discovery_queries": [
+      "recent_table_agents",
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "Cost-Effective-Numerical-QA",
+    "category": "numerical_planning",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: numerical_planning; transferable to the five seed papers.",
+    "file": "2610.07749_Cost-Effective-Numerical-QA.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2610.07749v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2610.07749v1",
+    "pages": 21,
+    "sha256": "5d84f356e1c12f10c9135cb16f00e21f5e2661da08c22e4cb000df3e306df169",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2610.04687": {
+    "id": "2610.04687v2",
+    "title": "Understanding Errors in LLM-Based Question Answering over Imperfect Tables",
+    "abstract": "Answering questions over imperfect tables requires handling errors that can affect the answer. We investigate two challenges for large language models (LLMs): whether error discovery depends on where errors appear in a table, and whether providing their locations is sufficient for accurate question answering (QA). Using human-reviewed instances from RADAR-T, we conduct controlled studies across three LLMs by varying row order and comparing original, error-marked, and repaired tables. First, reordering rows changes error discovery even when the table contents and gold answer remain unchanged. During direct inspection, LLMs are more likely to discover all rows containing relevant errors when these rows appear later in the table or are grouped more closely together. Second, providing verified error locations alone is insufficient for accurate QA: with code execution, accuracy on repaired tables exceeds that on error-marked tables by 39.0-59.1 percentage points across the three LLMs. As a practical application of these findings, we combine error discovery across shuffled table views with explicit guidance for verifying and handling the reported errors in a simple workflow, Geometry-Balanced Discovery and Intervention (GBDI). On RADAR-T, GBDI improves QA accuracy by 3.8-18.5 percentage points over a code-agent baseline across five LLMs (paired 95% confidence intervals exclude zero for four), at the cost of additional inference. These results highlight the importance of both reliable error discovery and effective error handling in QA over imperfect tables. Code is available at https://github.com/645-t/GBDI-ICLR-2027.",
+    "published": "2026-10-03T18:03:41Z",
+    "updated": "2026-10-06T03:12:30Z",
+    "authors": [
+      "Baowen Zhang",
+      "Wei Fan",
+      "Ruman Wang",
+      "Hangting Ye"
+    ],
+    "url": "https://arxiv.org/abs/2610.04687v2",
+    "pdf": "https://arxiv.org/pdf/2610.04687v2",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "GBDI-Imperfect-Tables",
+    "category": "error_repair",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: error_repair; transferable to the five seed papers.",
+    "file": "2610.04687_GBDI-Imperfect-Tables.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2610.04687v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2610.04687v2",
+    "pages": 41,
+    "sha256": "b6ae47ad789ce3fa892dd60b6be15781ffe83c8d34539204e38ea1c493411953",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2610.03525": {
+    "id": "2610.03525v1",
+    "title": "Structured Composition of Verifiable Atomic Insights for Table-to-Report Generation",
+    "abstract": "Table-to-report generation refers to the task of automatically generating article-level analyt- ical reports from relational tables and is an essential capability for automated data science and decision support. Its central challenge lies in systematically discovering verifiable com- posite insights across tables, attributes, and analytical perspectives, and organizing them into coherent, complete, and traceable evidence chains. Existing methods primarily rely on sequential, reactive data agents or direct Large Language Model(LLM) generation. They suffer from exploration bias: early local observations constrain subsequent actions, causing models to focus prematurely on local analyzes and miss cross-table or cross-dimensional evidence. We propose ComInsight, which reformulates insight discovery as the composition of atomic evidences. We first define an atomic insight as the smallest executable analytical unit conforming to a predefined analysis pattern and enumerate all valid atomic insights from database schema and content. These atoms are then organized into a multi-relational insight graph, where nodes represent verified data facts and edges encode logical, temporal, or hierarchical relations. Finally, a set of composition operators systematically fuses atomic nodes into higher-order composite conclusions. Every composite output is accompanied by executable SQL and fine-grained provenance, ensuring full verifiability. Across three benchmarks InsightBench, DDR-Bench, and T2R-Bench, ComInsight consistently outperforms strong baselines in factual correctness, novelty, and structural completeness. We believe ComInsight offers a reliable, efficient, and explainable path toward table-to-report generation.",
+    "published": "2026-10-02T16:14:18Z",
+    "updated": "2026-10-02T16:14:18Z",
+    "authors": [
+      "Teng Lin",
+      "Xinyu Liu",
+      "Nan Tang"
+    ],
+    "url": "https://arxiv.org/abs/2610.03525v1",
+    "pdf": "https://arxiv.org/pdf/2610.03525v1",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "ComInsight",
+    "category": "evidence_reports",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: evidence_reports; transferable to the five seed papers.",
+    "file": "2610.03525_ComInsight.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2610.03525v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2610.03525v1",
+    "pages": 13,
+    "sha256": "49eff67d1cdff10ec590a333b07e62040b0b5727e6a7165c24b878a0c409e77b",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2609.34157": {
+    "id": "2609.34157v1",
+    "title": "TableSeek: Structure-Preserving Agentic Evidence Seeking over Heterogeneous Table Corpora",
+    "abstract": "Open-domain table retrieval seeks tables that contain sufficient evidence for answering a question or verifying a claim. Yet semantic relevance is often misleading: topically similar tables may lack the required facts, while answer-bearing evidence is often confined to a few cells whose meaning depends on surrounding schema and table context. Heterogeneous schemas, value formats, and serializations further weaken one-shot matching. We present TableSeek, a structure-preserving agentic search framework for heterogeneous table corpora. Instead of ranking tables once, an LLM agent iteratively follows sparse clues, inspects schema-preserving previews, identifies schema- and value-level mismatches, and refines its investigation. TableSeek uses cells and schemas as evidence anchors while retaining complete tables as evidence units, enabling fine-grained localization without losing the context required for interpretation and answerability checking. Without relying on retriever training or a precomputed semantic index, TableSeek produces transparent evidence-seeking trajectories and achieves competitive end-to-end performance against strong retrieval-and-reranking pipelines on heterogeneous table benchmarks. These results suggest that active, structure-preserving evidence seeking is a promising paradigm for open-domain table retrieval.",
+    "published": "2026-09-28T02:36:25Z",
+    "updated": "2026-09-28T02:36:25Z",
+    "authors": [
+      "Jiaming Tian",
+      "Liyao Li",
+      "Wentao Ye",
+      "Haobo Wang",
+      "Lihua Yu",
+      "Zujie Ren",
+      "Gang Chen",
+      "Junbo Zhao"
+    ],
+    "url": "https://arxiv.org/abs/2609.34157v1",
+    "pdf": "https://arxiv.org/pdf/2609.34157v1",
+    "discovery_queries": [
+      "recent_table_agents",
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TableSeek",
+    "category": "evidence_retrieval",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: evidence_retrieval; transferable to the five seed papers.",
+    "file": "2609.34157_TableSeek.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2609.34157v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2609.34157v1",
+    "pages": 37,
+    "sha256": "bcf97c1590f456beb7c538e0f4c7f9b8a143ec9d2bf1accbd61871b8eead0031",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2607.22633": {
+    "id": "2607.22633v2",
+    "title": "Evolving from Lessons: Skill-Augmented Table Graph Reasoning for Operation-wise Table Question Answering",
+    "abstract": "Table Question Answering (TableQA) aims to reason over tables to answer user queries. Existing research treats all questions uniformly and evaluates solely through overall accuracy, obscuring a critical reality that LLMs excel at simple lookups yet struggle with complex operations like aggregation and arithmetic. To reveal this disparity, we introduce a novel \\emph{Operation-wise TableQA} task with a fine-grained question taxonomy and release two datasets named WikiTQ-ow and TabFact-ow for evaluation. As for modeling bottlenecks, existing methods flatten tables into linearized texts, disrupting inherent structures and inducing the ``lost-in-the-middle'' issue, which poses a primary barrier to complex cross-row reasoning. Moreover, they typically reason from scratch, neglecting reusable patterns shared across similar operations. To address these limitations, we propose a Skill-augmented Table Graph Reasoning (SkillTGR) framework for self-evolving structured reasoning. Specifically, SkillTGR represents tables as attributed graphs with explicit row-column-cell structures, where LLMs plan and execute dynamic chains to retrieve evidence subgraphs for graph traversal reasoning. Based on this, SkillTGR builds a hierarchical SkillBank to distill reason trajectories into abstract skills under cognitive heuristics, then hybrid retrieves both successful and failed skills for contrastive augmented table graph reasoning, thereby enabling the continual self-evolution. Extensive experiments demonstrate that SkillTGR achieves superior performance with an average of 5.91\\% overall and 5.06\\% operation-wise improvement, also reducing 19.76\\% token consumption and 27.64\\% inference latency. Our codes and data will be released upon publication.",
+    "published": "2026-06-20T06:36:00Z",
+    "updated": "2026-09-14T12:34:14Z",
+    "authors": [
+      "Guixin Su",
+      "Qiankun Pi",
+      "Mayi Xu",
+      "Wenli Li",
+      "Ming Zhong",
+      "Yuanyuan Zhu",
+      "Jiawei Jiang",
+      "Tieyun Qian"
+    ],
+    "url": "https://arxiv.org/abs/2607.22633v2",
+    "pdf": "https://arxiv.org/pdf/2607.22633v2",
+    "discovery_queries": [
+      "recent_table_agents",
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "SkillTGR",
+    "category": "experience_memory",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: experience_memory; transferable to the five seed papers.",
+    "file": "2607.22633_SkillTGR.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2607.22633v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2607.22633v2",
+    "pages": 14,
+    "sha256": "4b5bd4161434d225a2d6c5190887b15fcf2a46556de56babbf8d946eeaab45ab",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2606.10316": {
+    "id": "2606.10316v1",
+    "title": "TabClaw: An Interactive and Self-Evolving Agent for Spreadsheet Manipulation and Table Reasoning",
+    "abstract": "Spreadsheets and tables are widely used representations for structured data analysis, but effective analysis still requires substantial manual effort and domain expertise. Recent large language model (LLM) agents can automate parts of this process, but they often provide limited transparency into intermediate decisions, rely on implicit assumptions, struggle with multi-table comparison, and repeat similar workflows without adapting to a user's preferences. This paper presents TabClaw, an open-source interactive AI agent for spreadsheet manipulation and table reasoning. Users upload CSV or Excel files and issue natural-language requests; TabClaw clarifies ambiguous intent, exposes an editable execution plan, streams a ReAct-style tool-using analysis loop, dispatches specialist agents for parallel multi-table reasoning, and synthesizes findings with explicit consensus and uncertainty markers. Beyond one-off analysis, TabClaw records completed workflows, extracts persistent user memory, distills reusable skills from repeated tool-use patterns, supports package-style skill import, and upgrades skills from negative feedback. Experiments on spreadsheet manipulation and table reasoning benchmarks show that TabClaw improves executable task completion and reasoning performance while preserving an inspectable user workflow. This paper shows how TabClaw turns spreadsheets and tables into inspectable analytical workflows while gradually personalizing itself to recurring data-analysis tasks. Our code is available.",
+    "published": "2026-06-09T02:11:16Z",
+    "updated": "2026-06-09T02:11:16Z",
+    "authors": [
+      "Mingyue Cheng",
+      "Shuo Yu",
+      "Daoyu Wang",
+      "Qingchuan Li",
+      "Xiaoyu Tao",
+      "Qingyang Mao",
+      "Yitong Zhou",
+      "Qi Liu"
+    ],
+    "url": "https://arxiv.org/abs/2606.10316v1",
+    "pdf": "https://arxiv.org/pdf/2606.10316v1",
+    "discovery_queries": [
+      "recent_table_agents",
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "TabClaw",
+    "category": "interactive_planning",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: interactive_planning; transferable to the five seed papers.",
+    "file": "2606.10316_TabClaw.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2606.10316v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2606.10316v1",
+    "pages": 5,
+    "sha256": "fa5543e98003386fa3cdcd967b24bbd7621d0011433c46462a3486ba7f303081",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2605.14465": {
+    "id": "2605.14465v2",
+    "title": "From Table to Cell: Attention for Better Reasoning with TABALIGN",
+    "abstract": "Multi-step LLM reasoning over structured tables fails because planning and execution share no explicit cell-grounding contract. Existing methods constrain the planner to a left-to-right factorization at odds with table permutation invariance, and score intermediate states by generated content alone, overlooking cell grounding. We conduct a pilot study showing that diffusion language models (DLMs) produce more human-aligned and permutation-stable cell attention on tables than autoregressive models, with a 40.2% median reduction in attention-AUROC variability under row reordering. Motivated by this, we propose TABALIGN, a planned table reasoning framework that operationalizes the contract. TABALIGN pairs a masked DLM planner, whose bidirectional denoising emits plan steps as binary cell masks, with TABATTN, a lightweight verifier trained on 1,600 human-verified attention standards to score each step by its attention overlap with the plan-designated mask. Across eight benchmarks covering table question answering and fact verification, TABALIGN improves average accuracy by 15.76 percentage points over the strongest open-source baseline at comparable 8B-class scale, with a matched-backbone ablation attributing 2.87 percentage points of this gain to the DLM planner over an AR planner on a fixed reasoner. Cleaner DLM plans also accelerate downstream reasoning execution by 44.64%.",
+    "published": "2026-05-14T07:00:26Z",
+    "updated": "2026-10-03T21:15:00Z",
+    "authors": [
+      "Tung Sum Thomas Kwok",
+      "Zeyong Zhang",
+      "Xinyu Wang",
+      "Chunhe Wang",
+      "Xiaofeng Lin",
+      "Hanwei Wu",
+      "Lei Ding",
+      "Guang Cheng",
+      "Zhijiang Guo"
+    ],
+    "url": "https://arxiv.org/abs/2605.14465v2",
+    "pdf": "https://arxiv.org/pdf/2605.14465v2",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TABALIGN",
+    "category": "cell_grounding",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: cell_grounding; transferable to the five seed papers.",
+    "file": "2605.14465_TABALIGN.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2605.14465v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2605.14465v2",
+    "pages": 54,
+    "sha256": "7b17e2ff39992b793f260b39ccadda9b27b8e6a7ed7dbc95fc1216ee73a13407",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2604.03393": {
+    "id": "2604.03393v1",
+    "title": "TABQAWORLD: Optimizing Multimodal Reasoning for Multi-Turn Table Question Answering",
+    "abstract": "Multimodal reasoning has emerged as a powerful framework for enhancing reasoning capabilities of reasoning models. While multi-turn table reasoning methods have improved reasoning accuracy through tool use and reward modeling, they rely on fixed text serialization for table state readouts. This introduces representation errors in table encoding that significantly accumulate over multiple turns. Such accumulation is alleviated by tabular grounding methods in the expense of inference compute and cost, rendering real world deployment impractical. To address this, we introduce TABQAWORLD, a table reasoning framework that jointly optimizes tabular action through representation and estimation. For representation, TABQAWORLD employs an action-conditioned multimodal selection policy, which dynamically switches between visual and textual representations to maximize table state readout reliability. For estimation, TABQAWORLD optimizes stepwise reasoning trajectory through table metadata including dimension, data types and key values, safely planning trajectory and compressing low-complexity actions to reduce conversation turns and latency. Designed as a training-free framework, empirical evaluations show that TABQAWORLD achieves state-of-the-art performance with 4.87% accuracy improvements over baselines, with 5.42% accuracy gain and 33.35% inference latency reduction over static settings, establishing a new standard for reliable and efficient table reasoning.",
+    "published": "2026-04-03T18:52:11Z",
+    "updated": "2026-04-03T18:52:11Z",
+    "authors": [
+      "Tung Sum Thomas Kwok",
+      "Xinyu Wang",
+      "Xiaofeng Lin",
+      "Peng Lu",
+      "Chunhe Wang",
+      "Changlun Li",
+      "Hanwei Wu",
+      "Nan Tang",
+      "Elisa Kreiss",
+      "Guang Cheng"
+    ],
+    "url": "https://arxiv.org/abs/2604.03393v1",
+    "pdf": "https://arxiv.org/pdf/2604.03393v1",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TABQAWORLD",
+    "category": "multimodal_reasoning",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: multimodal_reasoning; transferable to the five seed papers.",
+    "file": "2604.03393_TABQAWORLD.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2604.03393v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2604.03393v1",
+    "pages": 41,
+    "sha256": "5c20df86946fe12941214976421f1e098a9d1d0d0ebb9197fad1346e8fa8a96a",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2603.09152": {
+    "id": "2603.09152v1",
+    "title": "DataFactory: Collaborative Multi-Agent Framework for Advanced Table Question Answering",
+    "abstract": "Table Question Answering (TableQA) enables natural language interaction with structured tabular data. However, existing large language model (LLM) approaches face critical limitations: context length constraints that restrict data handling capabilities, hallucination issues that compromise answer reliability, and single-agent architectures that struggle with complex reasoning scenarios involving semantic relationships and multi-hop logic. This paper introduces DataFactory, a multi-agent framework that addresses these limitations through specialized team coordination and automated knowledge transformation. The framework comprises a Data Leader employing the ReAct paradigm for reasoning orchestration, together with dedicated Database and Knowledge Graph teams, enabling the systematic decomposition of complex queries into structured and relational reasoning tasks. We formalize automated data-to-knowledge graph transformation via the mapping function T:D x S x R -> G, and implement natural language-based consultation that - unlike fixed workflow multi-agent systems - enables flexible inter-agent deliberation and adaptive planning to improve coordination robustness. We also apply context engineering strategies that integrate historical patterns and domain knowledge to reduce hallucinations and improve query accuracy. Across TabFact, WikiTableQuestions, and FeTaQA, using eight LLMs from five providers, results show consistent gains. Our approach improves accuracy by 20.2% (TabFact) and 23.9% (WikiTQ) over baselines, with significant effects (Cohen's d > 1). Team coordination also outperforms single-team variants (+5.5% TabFact, +14.4% WikiTQ, +17.1% FeTaQA ROUGE-2). The framework offers design guidelines for multi-agent collaboration and a practical platform for enterprise data analysis through integrated structured querying and graph-based knowledge representation.",
+    "published": "2026-03-10T03:44:52Z",
+    "updated": "2026-03-10T03:44:52Z",
+    "authors": [
+      "Tong Wang",
+      "Chi Jin",
+      "Yongkang Chen",
+      "Huan Deng",
+      "Xiaohui Kuang",
+      "Gang Zhao"
+    ],
+    "url": "https://arxiv.org/abs/2603.09152v1",
+    "pdf": "https://arxiv.org/pdf/2603.09152v1",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "DataFactory",
+    "category": "multi_agent",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: multi_agent; transferable to the five seed papers.",
+    "file": "2603.09152_DataFactory.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2603.09152v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2603.09152v1",
+    "pages": 34,
+    "sha256": "80e23c4fe3298d42ff6d16ba5ff5309d25709b925a7762b722effec7e2cd799e",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2603.07528": {
+    "id": "2603.07528v2",
+    "title": "TableMind++: An Uncertainty-Aware Programmatic Agent for Tool-Augmented Table Reasoning",
+    "abstract": "Table reasoning requires models to jointly perform semantic understanding and precise numerical operations. Most existing methods rely on a single-turn reasoning paradigm over tables which suffers from context overflow and weak numerical sensitivity. To address these limitations, we previously proposed TableMind as a tuning-based autonomous programmatic agent that simulates human-like interaction within a lightweight large language model (LLM). TableMind internalizes planning, action, and reflection through a two-stage training strategy involving supervised fine-tuning (SFT) on filtered high-quality data and reinforcement learning (RL) via a multi-perspective reward and the Rank-Aware Policy Optimization (RAPO) algorithm. While TableMind establishes a solid foundation for programmatic agents, the inherent stochasticity of LLMs remains a critical challenge that leads to hallucinations. In this paper, we extend this foundation to TableMind++ by introducing a novel uncertainty-aware inference framework to mitigate hallucinations. Specifically, we propose memory-guided plan pruning to retrieve historical trajectories for validating and filtering out logically flawed plans to address epistemic uncertainty. To ensure execution precision, we introduce confidence-based action refinement which monitors token-level probabilities to detect and self-correct syntactic noise for aleatoric uncertainty mitigation. Finally, we employ dual-weighted trajectory aggregation to synthesize a robust consensus from multiple reasoning paths. Extensive experiments on diverse benchmarks demonstrate that TableMind++ consistently outperforms previous baselines and proprietary models to validate the effectiveness of integrating autonomous training with uncertainty quantification. Our code is available.",
+    "published": "2026-03-08T08:31:33Z",
+    "updated": "2026-03-10T02:57:21Z",
+    "authors": [
+      "Mingyue Cheng",
+      "Shuo Yu",
+      "Chuang Jiang",
+      "Xiaoyu Tao",
+      "Qingyang Mao",
+      "Jie Ouyang",
+      "Qi Liu",
+      "Enhong Chen"
+    ],
+    "url": "https://arxiv.org/abs/2603.07528v2",
+    "pdf": "https://arxiv.org/pdf/2603.07528v2",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TableMind-Plus-Plus",
+    "category": "trained_agent",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: trained_agent; transferable to the five seed papers.",
+    "file": "2603.07528_TableMind-Plus-Plus.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2603.07528v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2603.07528v2",
+    "pages": 27,
+    "sha256": "35d20811462bf983d99c2e29e3a866c91a34ef950d8731094e89b9c4733b07b8",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2602.20017": {
+    "id": "2602.20017v2",
+    "title": "QUIETT: Query-Independent Table Transformation for Robust Reasoning",
+    "abstract": "Real-world tables often contain schema inconsistencies, heterogeneous value formats, and implicit relational structures that degrade table reasoning and question answering. Existing approaches address these issues at query time, repeating normalization and restructuring for every new question and producing representations that do not generalize to unseen queries. We introduce QuIeTT, a transform-first, query-later framework that converts each raw table into a single SQL-ready canonical representation before any evaluation query is observed, under three constraints: no evaluation query access, information preservation, and single-table reuse. QuIeTT operates through a three-stage pipeline: issue probing, where synthetic queries surface structural deficiencies such as ambiguous schemas and heterogeneous formats; plan generation; and structured execution. Experiments on four benchmarks across five model families show consistent improvements over strong baselines in both direct prompting and agentic reasoning paradigms, with particularly strong gains on a manually annotated challenge set of structurally diverse unseen questions.",
+    "published": "2026-02-23T16:23:49Z",
+    "updated": "2026-08-13T07:34:15Z",
+    "authors": [
+      "Gaurav Najpande",
+      "Tampu Ravi Kumar",
+      "Manan Roy Choudhury",
+      "Neha Valeti",
+      "Yanjie Fu",
+      "Vivek Gupta"
+    ],
+    "url": "https://arxiv.org/abs/2602.20017v2",
+    "pdf": "https://arxiv.org/pdf/2602.20017v2",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "QUIETT",
+    "category": "canonicalization",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: canonicalization; transferable to the five seed papers.",
+    "file": "2602.20017_QUIETT.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2602.20017v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2602.20017v2",
+    "pages": 21,
+    "sha256": "0ed6d1e2c423b50c4e63e6fb59493675c85bf86902266969d70c7ae10c70ac36",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2602.14089": {
+    "id": "2602.14089v1",
+    "title": "TabTracer: Monte Carlo Tree Search for Complex Table Reasoning with Large Language Models",
+    "abstract": "Large language models (LLMs) have emerged as powerful tools for natural language table reasoning, where there are two main categories of methods. Prompt-based approaches rely on language-only inference or one-pass program generation without step-level verification. Agent-based approaches use tools in a closed loop, but verification is often local and backtracking is limited, allowing errors to propagate and increasing cost. Moreover, they rely on chain- or beam-style trajectories that are typically combinatorially redundant, leading to high token costs. In this paper, we propose TabTracer, an agentic framework that coordinates multi-step tool calls over intermediate table states, with explicit state tracking for verification and rollback. First, it enforces step-level verification with typed operations and lightweight numeric and format checks to provide reliable rewards and suppress hallucinations. Second, execution-feedback Monte Carlo Tree Search maintains a search tree of candidate table states and uses backpropagated reflection scores to guide UCB1 selection and rollback via versioned snapshots. Third, it reduces redundancy with budget-aware pruning, deduplication, and state hashing with a monotonicity gate to cut token cost. Comprehensive evaluation on TabFact, WikiTQ, and CRT datasets shows that TabTracer outperforms state-of-the-art baselines by up to 6.7% in accuracy while reducing token consumption by 59--84%.",
+    "published": "2026-02-15T10:39:43Z",
+    "updated": "2026-02-15T10:39:43Z",
+    "authors": [
+      "Zhizhao Luo",
+      "Zhaojing Luo",
+      "Meihui Zhang",
+      "Rui Mao"
+    ],
+    "url": "https://arxiv.org/abs/2602.14089v1",
+    "pdf": "https://arxiv.org/pdf/2602.14089v1",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TabTracer",
+    "category": "search_planning",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: search_planning; transferable to the five seed papers.",
+    "file": "2602.14089_TabTracer.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2602.14089v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2602.14089v1",
+    "pages": 14,
+    "sha256": "b3eb2b3e46fc43e8a70cfd38f4c9dc49ec788230eec1bd5ef1e634716348cfa1",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2602.13059": {
+    "id": "2602.13059v1",
+    "title": "TraceBack: Multi-Agent Decomposition for Fine-Grained Table Attribution",
+    "abstract": "Question answering (QA) over structured tables requires not only accurate answers but also transparency about which cells support them. Existing table QA systems rarely provide fine-grained attribution, so even correct answers often lack verifiable grounding, limiting trust in high-stakes settings. We address this with TraceBack, a modular multi-agent framework for scalable, cell-level attribution in single-table QA. TraceBack prunes tables to relevant rows and columns, decomposes questions into semantically coherent sub-questions, and aligns each answer span with its supporting cells, capturing both explicit and implicit evidence used in intermediate reasoning steps. To enable systematic evaluation, we release CITEBench, a benchmark with phrase-to-cell annotations drawn from ToTTo, FetaQA, and AITQA. We further propose FairScore, a reference-less metric that compares atomic facts derived from predicted cells and answers to estimate attribution precision and recall without human cell labels. Experiments show that TraceBack substantially outperforms strong baselines across datasets and granularities, while FairScore closely tracks human judgments and preserves relative method rankings, supporting interpretable and scalable evaluation of table-based QA.",
+    "published": "2026-02-13T16:13:36Z",
+    "updated": "2026-02-13T16:13:36Z",
+    "authors": [
+      "Tejas Anvekar",
+      "Junha Park",
+      "Rajat Jha",
+      "Devanshu Gupta",
+      "Poojah Ganesan",
+      "Puneeth Mathur",
+      "Vivek Gupta"
+    ],
+    "url": "https://arxiv.org/abs/2602.13059v1",
+    "pdf": "https://arxiv.org/pdf/2602.13059v1",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TraceBack",
+    "category": "cell_attribution",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: cell_attribution; transferable to the five seed papers.",
+    "file": "2602.13059_TraceBack.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2602.13059v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2602.13059v1",
+    "pages": 17,
+    "sha256": "3ea706b6a81313af304c48a39543db1aa7c0581319645bea2d861f3c0795d194",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2602.09642": {
+    "id": "2602.09642v2",
+    "title": "MATA: Multi-Agent Framework for Reliable and Flexible Table Question Answering",
+    "abstract": "Recent advances in Large Language Models (LLMs) have significantly improved table understanding tasks such as Table Question Answering (TableQA), yet challenges remain in ensuring reliability, scalability, and efficiency, especially in resource-constrained or privacy-sensitive environments. In this paper, we introduce MATA, a multi-agent TableQA framework that leverages multiple complementary reasoning paths and a set of tools built with small language models. MATA generates candidate answers through diverse reasoning styles for a given table and question, then refines or selects the optimal answer with the help of these tools. Furthermore, it incorporates an algorithm designed to minimize expensive LLM agent calls, enhancing overall efficiency. MATA maintains strong performance with small, open-source models and adapts easily across various LLM types. Extensive experiments on two benchmarks of varying difficulty with ten different LLMs demonstrate that MATA achieves state-of-the-art accuracy and highly efficient reasoning while avoiding excessive LLM inference. Our results highlight that careful orchestration of multiple reasoning pathways yields scalable and reliable TableQA. The code is available at https://github.com/AIDASLab/MATA.",
+    "published": "2026-02-10T10:43:02Z",
+    "updated": "2026-04-21T04:25:42Z",
+    "authors": [
+      "Sieun Hyeon",
+      "Jusang Oh",
+      "Sunghwan Steve Cho",
+      "Jaeyoung Do"
+    ],
+    "url": "https://arxiv.org/abs/2602.09642v2",
+    "pdf": "https://arxiv.org/pdf/2602.09642v2",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "MATA",
+    "category": "multi_agent",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: multi_agent; transferable to the five seed papers.",
+    "file": "2602.09642_MATA.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2602.09642v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2602.09642v2",
+    "pages": 41,
+    "sha256": "f679cddf6c577ef9cca7d0b715f0abca2987dbb19f9e2515a5e346ff36d7607a",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2602.07034": {
+    "id": "2602.07034v1",
+    "title": "ST-Raptor: An Agentic System for Semi-Structured Table QA",
+    "abstract": "Semi-structured table question answering (QA) is a challenging task that requires (1) precise extraction of cell contents and positions and (2) accurate recovery of key implicit logical structures, hierarchical relationships, and semantic associations encoded in table layouts. In practice, such tables are often interpreted manually by human experts, which is labor-intensive and time-consuming. However, automating this process remains difficult. Existing Text-to-SQL methods typically require converting semi-structured tables into structured formats, inevitably leading to information loss, while approaches like Text-to-Code and multimodal LLM-based QA struggle with complex layouts and often yield inaccurate answers. To address these limitations, we present ST-Raptor, an agentic system for semi-structured table QA. ST-Raptor offers an interactive analysis environment that combines visual editing, tree-based structural modeling, and agent-driven query resolution to support accurate and user-friendly table understanding. Experimental results on both benchmark and real-world datasets demonstrate that ST-Raptor outperforms existing methods in both accuracy and usability. The code is available at https://github.com/weAIDB/ST-Raptor, and a demonstration video is available at https://youtu.be/9GDR-94Cau4.",
+    "published": "2026-02-03T09:06:21Z",
+    "updated": "2026-02-03T09:06:21Z",
+    "authors": [
+      "Jinxiu Qu",
+      "Zirui Tang",
+      "Hongzhang Huang",
+      "Boyu Niu",
+      "Wei Zhou",
+      "Jiannan Wang",
+      "Yitong Song",
+      "Guoliang Li",
+      "Xuanhe Zhou",
+      "Fan Wu"
+    ],
+    "url": "https://arxiv.org/abs/2602.07034v1",
+    "pdf": "https://arxiv.org/pdf/2602.07034v1",
+    "discovery_queries": [
+      "recent_table_agents",
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "ST-Raptor-System",
+    "category": "hierarchical_tables",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: hierarchical_tables; transferable to the five seed papers.",
+    "file": "2602.07034_ST-Raptor-System.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2602.07034v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2602.07034v1",
+    "pages": 4,
+    "sha256": "fd7955b9ba2e86d2cd1d4e31710154f9fca55cb143c255c5f8dc5ea7098450f2",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2601.02304": {
+    "id": "2601.02304v2",
+    "title": "Octopus: Agentic Multi-Table Discovery over Tabular Data Lakes",
+    "abstract": "Tabular data discovery aims to identify the tables relevant to a natural-language question from a large collection of heterogeneous data. Existing systems typically assume that a question is answered by a single table and rely on retrieval pipelines constructed through substantial offline preprocessing. These assumptions become restrictive when relevant information is distributed across multiple tables. In this paper, we present Octopus, a lightweight agentic framework for multi-table data discovery. Octopus follows a thin-harness design that combines lightweight offline semantic guidance with adaptive access to raw tabular data. At query time, an LLM agent dynamically orchestrates semantic column search, structured tabular operations, and general-purpose execution to locate and verify relevant tables based on intermediate observations. We further introduce a benchmark that explicitly evaluates multi-table data discovery, covering both settings where multiple tables independently answer a question and settings where multiple tables must be joined. Experimental results across four independent-discovery datasets and two join-based datasets show that Octopus achieves the highest macro-F1 on all six datasets. It also substantially reduces offline preprocessing overhead relative to Pneuma and online latency and API cost relative to Claude Code. When coupled with the same NL2SQL agent, Octopus yields substantially higher downstream question-answering F1 than Claude Code, showing that improved table discovery provides more complete evidence for downstream analytics. Code is available at https://github.com/wenzhilics/octopus.",
+    "published": "2026-01-05T17:43:49Z",
+    "updated": "2026-10-28T21:00:31Z",
+    "authors": [
+      "Wen-Zhi Li",
+      "Sainyam Galhotra"
+    ],
+    "url": "https://arxiv.org/abs/2601.02304v2",
+    "pdf": "https://arxiv.org/pdf/2601.02304v2",
+    "discovery_queries": [
+      "recent_table_agents"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "Octopus",
+    "category": "multi_table_discovery",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: multi_table_discovery; transferable to the five seed papers.",
+    "file": "2601.02304_Octopus.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2601.02304v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2601.02304v2",
+    "pages": 13,
+    "sha256": "7f428753f805d60416b149a87e57100e4a0dbb34e6a839224a6da882da0f90ab",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2609.03395": {
+    "id": "2609.03395v2",
+    "title": "TabScope: Question-Adaptive Scope Selection for Table Question Answering",
+    "abstract": "Large Language Models (LLMs) have shown strong performance on table question answering, yet their accuracy often degrades as table size increases. We find that this degradation is not uniform across question types. Localization-sensitive questions are particularly affected by irrelevant table content, while questions requiring broader evidence may still benefit from full-table reasoning. Based on this observation, we propose a question-adaptive framework that dynamically selects between localized and full-table reasoning. The framework constructs question-specific sub-tables through operation-aware table decomposition and uses the predicted question type to determine the appropriate reasoning mode. We further introduce silver reference sub-tables for evaluating evidence selection and construct SLQA, a benchmark based on real-world long tables. Experiments on WikiTQ and SLQA show that localization is particularly effective for lookup and local reasoning questions, while adaptive selection between localized and full-table reasoning achieves the best overall performance. These results highlight that long-table QA requires deciding not only how to localize, but also when to localize. Our code and datasets will be made available upon publication of the paper.",
+    "published": "2026-09-03T05:51:23Z",
+    "updated": "2026-09-18T07:35:38Z",
+    "authors": [
+      "Yuxiang Wang",
+      "Junhao Gan",
+      "Jianzhong Qi"
+    ],
+    "url": "https://arxiv.org/abs/2609.03395v2",
+    "pdf": "https://arxiv.org/pdf/2609.03395v2",
+    "discovery_queries": [
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "TabScope",
+    "category": "adaptive_scope",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: adaptive_scope; transferable to the five seed papers.",
+    "file": "2609.03395_TabScope.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2609.03395v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2609.03395v2",
+    "pages": 17,
+    "sha256": "2ab5198f0ad49618d5510d86509faf5d57623b1d23646d1e0025a90bb581cd61",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2609.01216": {
+    "id": "2609.01216v2",
+    "title": "H2Table: Hierarchical Hypergraph-Enhanced Large Language Models for Complex Table Reasoning",
+    "abstract": "Tables are ubiquitous across diverse domains, yet reasoning over them remains a significant challenge for modern large language models (LLMs). Current approaches typically linearize tables into sequences, inherently overlooking their intrinsic two-dimensional and hierarchical structure. To address this, we propose H2Table (Hierarchical Hypergraph-Enhanced Table Reasoning), a novel framework that represents complex tables as hierarchical nested hypergraphs. To process this representation, we design a tailored hypergraph encoder to facilitate message passing between hyperedges (headers) and nodes (cells), thereby perceiving the semantic entailment relationships between them within complex tables. Furthermore, we introduce a set of learnable query vectors acting as a lightweight bridge to extract representative structural embeddings from the encoder into the LLM. Experimental results demonstrate that our approach effectively handles complex table question answering tasks with hierarchical nested headers. Notably, on the HiTab dataset, H2Table achieves an average improvement of 22.88% over state-of-the-art baselines on highly complex tables with a nesting depth of four. Our code is available at: https://github.com/lila120/h2table.",
+    "published": "2026-09-01T13:19:42Z",
+    "updated": "2026-10-09T14:10:37Z",
+    "authors": [
+      "Jia Ling",
+      "Yangfan Wang",
+      "Chen Tang",
+      "Haoming Tan",
+      "Yang Yang",
+      "Yi Guan",
+      "Jingchi Jiang"
+    ],
+    "url": "https://arxiv.org/abs/2609.01216v2",
+    "pdf": "https://arxiv.org/pdf/2609.01216v2",
+    "discovery_queries": [
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "H2Table",
+    "category": "hierarchical_tables",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: hierarchical_tables; transferable to the five seed papers.",
+    "file": "2609.01216_H2Table.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2609.01216v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2609.01216v2",
+    "pages": 12,
+    "sha256": "448582f80be9173c2f22797e85f79730ec8ba006233a353b2d687c5ffab8398d",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2608.24082": {
+    "id": "2608.24082v1",
+    "title": "PARTAB: Partition-Aware Reasoning with Structured Evidence for Scalable Table Understanding",
+    "abstract": "Large Language Models (LLMs) have shown strong capabilities in table reasoning, but their effectiveness degrades as tables grow in size and complexity due to irrelevant context and difficulty localizing the evidence required for reasoning. Existing approaches typically reason over either the full table or a single reduced view, which can still obscure important row-column relationships. We introducePARTAB (Partition-Aware Reasoning overTables), a framework that constructs a structured evidence interface between the LLM and the table. PARTAB represents query-relevant evidence as semantically coherent, row-linked table regions and performs hierarchical selection over column groups and row-level partitions before composing the selected evidence for answer generation. We evaluate PARTAB on multiple table reasoning benchmarks, covering question answering, fact verification, and numerical reasoning. PARTAB consistently improves over full-table prompting and several recent table reasoning methods, achieving strong performance on WikiTableQuestions and TabFact while remaining competitive on numerical reasoning. Additional analyses show that semantic partitioning and targeted evidence selection improve evidence localization, substantially reduce the reasoning context, and provide larger benefits on complex tables. These results demonstrate the value of structured, partition aware evidence construction for scalable table reasoning.",
+    "published": "2026-08-25T05:26:23Z",
+    "updated": "2026-08-25T05:26:23Z",
+    "authors": [
+      "Md Mahadi Hasan Nahid",
+      "Davood Rafiei"
+    ],
+    "url": "https://arxiv.org/abs/2608.24082v1",
+    "pdf": "https://arxiv.org/pdf/2608.24082v1",
+    "discovery_queries": [
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "PARTAB",
+    "category": "structured_evidence",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: structured_evidence; transferable to the five seed papers.",
+    "file": "2608.24082_PARTAB.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2608.24082v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2608.24082v1",
+    "pages": 21,
+    "sha256": "73798ff97d79df9ac392defc8568f9c2c2e1f5bad4b00c87089a39244c43cbac",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2607.17742": {
+    "id": "2607.17742v2",
+    "title": "Semantically Similar, Yet Not Answerable: Diagnosing the Semantic-Answerability Gap in Table RAG",
+    "abstract": "In retrieval-augmented generation (RAG), semantic relevance asks whether a source matches a query in meaning, while answerability asks whether it contains sufficient information to answer the query. A Semantic-Answerability Gap (SAG) may arise in retrieval when a retriever can reach semantically relevant sources yet fail to identify those that are uniquely answerable. We uncover this gap using tables as a controlled setting, where shared schemas and entities provide strong semantic signals while localized content and row-column bindings distinguish answerable from non-answerable sources. Using TCR-Bench, a controlled sibling-table benchmark, we find that dense retrievers achieve only 18.2% top-1 target retrieval, reducing QA F1 from 0.755 with the oracle table to 0.330 with retrieved top-5 tables. Controlled diagnostics show that retrievers favor semantic volume over sufficiency, respond weakly to row-column binding disruptions, and struggle to distinguish Targets from Siblings. Explicit answerability assessment substantially improves target identification, while fine-tuning shows that answerability is learnable but difficult to transfer without compromising broad semantic retrieval.",
+    "published": "2026-07-20T09:36:10Z",
+    "updated": "2026-09-28T02:12:00Z",
+    "authors": [
+      "Jiaming Tian",
+      "Liyao Li",
+      "Wentao Ye",
+      "Haobo Wang",
+      "Peng Lu",
+      "Lihua Yu",
+      "Zujie Ren",
+      "Gang Chen",
+      "Junbo Zhao"
+    ],
+    "url": "https://arxiv.org/abs/2607.17742v2",
+    "pdf": "https://arxiv.org/pdf/2607.17742v2",
+    "discovery_queries": [
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "Semantic-Answerability-Gap",
+    "category": "evidence_retrieval",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: evidence_retrieval; transferable to the five seed papers.",
+    "file": "2607.17742_Semantic-Answerability-Gap.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2607.17742v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2607.17742v2",
+    "pages": 50,
+    "sha256": "f37000f13a0c56469f1a1a6963a140fd86c6c4639ea1a45fcb9cd7f8ad709dee",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2607.11207": {
+    "id": "2607.11207v1",
+    "title": "ProgramTab: Boosting Table Reasoning of LLMs via Programmatic Paradigm",
+    "abstract": "Table-based reasoning with large language models (LLMs), which requires reasoning based on natural language questions and structured tabular data, has gained widespread attention. However, a series of issues still constrain the application of this task. The previous approaches suffered from significant performance degradation when faced with large tables due to the difficulty of long text modeling and the limitation of input length for LLMs. The text-to-SQL approach is used to efficiently extract key information from tables and generate smaller sub-tables. However, tabular data, especially web tables, often lack the necessary structure and consistency, making them unsuitable for performing mathematical logic operations using SQL queries. We propose the ProgramTab framework, which guides LLMs employing in-context learning to perform tabular data preprocessing with Python code, as well as the momentous contents extraction with row and column extraction and SQL generation. The experiment results on table reasoning datasets demonstrate that the ProgramTab framework effectively deals with table-based reasoning tasks and outperforms all LLM-based baselines.",
+    "published": "2026-07-13T07:58:57Z",
+    "updated": "2026-07-13T07:58:57Z",
+    "authors": [
+      "Pei Guo",
+      "Enjie Liu",
+      "Yunzhi Tan",
+      "Mochi Gao",
+      "Jianxin Zhang",
+      "Ruichao Zhong",
+      "Juntao Li",
+      "Bo Hu",
+      "Zang Li"
+    ],
+    "url": "https://arxiv.org/abs/2607.11207v1",
+    "pdf": "https://arxiv.org/pdf/2607.11207v1",
+    "discovery_queries": [
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "ProgramTab",
+    "category": "program_execution",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: program_execution; transferable to the five seed papers.",
+    "file": "2607.11207_ProgramTab.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2607.11207v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2607.11207v1",
+    "pages": 12,
+    "sha256": "049d682b5c3ce2940702f3b697840c1b7059105ca79649982630d124dd873a9a",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2606.28916": {
+    "id": "2606.28916v3",
+    "title": "Latent Bridges for Multi-Table Question Answering",
+    "abstract": "We introduce GRAB, a constructor-encoder-bridge pipeline for table question answering. Our method lifts relational data into an heterogeneous graph, encodes it via message passing, and transfers the signals to an LLM through a small set of query-conditioned latent tokens. This provides the LLM with a compact, task-relevant structural representation together with the flattened text. Crucially, the LLM remains strictly frozen to preserve its general reasoning capabilities; we train only the lightweight graph encoder and latent bridge (91M parameters), allowing the entire pipeline to be trained efficiently. Our pipeline significantly improves performance on relational Question Answering, with the largest gains in demanding multi-table settings, offering an efficient, principled way to connect relational deep learning with LLMs.",
+    "published": "2026-06-27T13:48:20Z",
+    "updated": "2026-10-22T15:52:50Z",
+    "authors": [
+      "Simone Varriale",
+      "Tamara Cucumides",
+      "Floris Geerts",
+      "Paolo Papotti"
+    ],
+    "url": "https://arxiv.org/abs/2606.28916v3",
+    "pdf": "https://arxiv.org/pdf/2606.28916v3",
+    "discovery_queries": [
+      "table_reasoning"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "GRAB-Latent-Bridges",
+    "category": "multi_table_graph",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: multi_table_graph; transferable to the five seed papers.",
+    "file": "2606.28916_GRAB-Latent-Bridges.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2606.28916v3"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2606.28916v3",
+    "pages": 28,
+    "sha256": "bf4307c5dbfe858df1131a95445b494a1f7f89938be3b730134eeac12f716193",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2508.18190": {
+    "id": "2508.18190v3",
+    "title": "ST-Raptor: LLM-Powered Semi-Structured Table Question Answering",
+    "abstract": "Semi-structured tables, widely used in real-world applications (e.g., financial reports, medical records, transactional orders), often involve flexible and complex layouts (e.g., hierarchical headers and merged cells). These tables generally rely on human analysts to interpret table layouts and answer relevant natural language questions, which is costly and inefficient. To automate the procedure, existing methods face significant challenges. First, methods like NL2SQL require converting semi-structured tables into structured ones, which often causes substantial information loss. Second, methods like NL2Code and multi-modal LLM QA struggle to understand the complex layouts of semi-structured tables and cannot accurately answer corresponding questions. To this end, we propose ST-Raptor, a tree-based framework for semi-structured table question answering using large language models. First, we introduce the Hierarchical Orthogonal Tree (HO-Tree), a structural model that captures complex semi-structured table layouts, along with an effective algorithm for constructing the tree. Second, we define a set of basic tree operations to guide LLMs in executing common QA tasks. Given a user question, ST-Raptor decomposes it into simpler sub-questions, generates corresponding tree operation pipelines, and conducts operation-table alignment for accurate pipeline execution. Third, we incorporate a two-stage verification mechanism: forward validation checks the correctness of execution steps, while backward validation evaluates answer reliability by reconstructing queries from predicted answers. To benchmark the performance, we present SSTQA, a dataset of 764 questions over 102 real-world semi-structured tables. Experiments show that ST-Raptor outperforms nine baselines by up to 20% in answer accuracy. The code is available at https://github.com/weAIDB/ST-Raptor.",
+    "published": "2025-08-25T16:48:51Z",
+    "updated": "2025-09-02T02:30:46Z",
+    "authors": [
+      "Zirui Tang",
+      "Boyu Niu",
+      "Xuanhe Zhou",
+      "Boxiu Li",
+      "Wei Zhou",
+      "Jiannan Wang",
+      "Guoliang Li",
+      "Xinyi Zhang",
+      "Fan Wu"
+    ],
+    "url": "https://arxiv.org/abs/2508.18190v3",
+    "pdf": "https://arxiv.org/pdf/2508.18190v3",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "ST-Raptor",
+    "category": "hierarchical_tables",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: hierarchical_tables; transferable to the five seed papers.",
+    "file": "2508.18190_ST-Raptor.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2508.18190v3"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2508.18190v3",
+    "pages": 16,
+    "sha256": "4bc8d331c5fef8677b9a213ababfe8dd2c83deb0311975fecbeb6e43bae44f5c",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2506.13405": {
+    "id": "2506.13405v2",
+    "title": "RealHiTBench: A Comprehensive Realistic Hierarchical Table Benchmark for Evaluating LLM-Based Table Analysis",
+    "abstract": "With the rapid advancement of Large Language Models (LLMs), there is an increasing need for challenging benchmarks to evaluate their capabilities in handling complex tabular data. However, existing benchmarks are either based on outdated data setups or focus solely on simple, flat table structures. In this paper, we introduce RealHiTBench, a comprehensive benchmark designed to evaluate the performance of both LLMs and Multimodal LLMs (MLLMs) across a variety of input formats for complex tabular data, including LaTeX, HTML, and PNG. RealHiTBench also includes a diverse collection of tables with intricate structures, spanning a wide range of task types. Our experimental results, using 25 state-of-the-art LLMs, demonstrate that RealHiTBench is indeed a challenging benchmark. Moreover, we also develop TreeThinker, a tree-based pipeline that organizes hierarchical headers into a tree structure for enhanced tabular reasoning, validating the importance of improving LLMs' perception of table hierarchies. We hope that our work will inspire further research on tabular data reasoning and the development of more robust models. The code and data are available at https://github.com/cspzyy/RealHiTBench.",
+    "published": "2025-06-16T12:19:08Z",
+    "updated": "2025-12-14T11:02:36Z",
+    "authors": [
+      "Pengzuo Wu",
+      "Yuhang Yang",
+      "Guangcheng Zhu",
+      "Chao Ye",
+      "Hong Gu",
+      "Xu Lu",
+      "Ruixuan Xiao",
+      "Bowen Bao",
+      "Yijing He",
+      "Liangyu Zha",
+      "Wentao Ye",
+      "Junbo Zhao",
+      "Haobo Wang"
+    ],
+    "url": "https://arxiv.org/abs/2506.13405v2",
+    "pdf": "https://arxiv.org/pdf/2506.13405v2",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "RealHiTBench",
+    "category": "benchmark",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: benchmark; transferable to the five seed papers.",
+    "file": "2506.13405_RealHiTBench.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2506.13405v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2506.13405v2",
+    "pages": 33,
+    "sha256": "f582b2b8d0995a0f716a91dd0b7352d800ff197da9cc3c7247cf827808402b18",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2410.04739": {
+    "id": "2410.04739v3",
+    "title": "TableRAG: Million-Token Table Understanding with Language Models",
+    "abstract": "Recent advancements in language models (LMs) have notably enhanced their ability to reason with tabular data, primarily through program-aided mechanisms that manipulate and analyze tables. However, these methods often require the entire table as input, leading to scalability challenges due to the positional bias or context length constraints. In response to these challenges, we introduce TableRAG, a Retrieval-Augmented Generation (RAG) framework specifically designed for LM-based table understanding. TableRAG leverages query expansion combined with schema and cell retrieval to pinpoint crucial information before providing it to the LMs. This enables more efficient data encoding and precise retrieval, significantly reducing prompt lengths and mitigating information loss. We have developed two new million-token benchmarks from the Arcade and BIRD-SQL datasets to thoroughly evaluate TableRAG's effectiveness at scale. Our results demonstrate that TableRAG's retrieval design achieves the highest retrieval quality, leading to the new state-of-the-art performance on large-scale table understanding.",
+    "published": "2024-10-07T04:15:02Z",
+    "updated": "2024-12-26T13:58:31Z",
+    "authors": [
+      "Si-An Chen",
+      "Lesly Miculicich",
+      "Julian Martin Eisenschlos",
+      "Zifeng Wang",
+      "Zilong Wang",
+      "Yanfei Chen",
+      "Yasuhisa Fujii",
+      "Hsuan-Tien Lin",
+      "Chen-Yu Lee",
+      "Tomas Pfister"
+    ],
+    "url": "https://arxiv.org/abs/2410.04739v3",
+    "pdf": "https://arxiv.org/pdf/2410.04739v3",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "TableRAG",
+    "category": "long_table_retrieval",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: long_table_retrieval; transferable to the five seed papers.",
+    "file": "2410.04739_TableRAG.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2410.04739v3"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2410.04739v3",
+    "pages": 23,
+    "sha256": "63d6d450e9bdf090194290a7e0493c7090576c6b656bf9349f8ca082c1caeee1",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2404.10150": {
+    "id": "2404.10150v1",
+    "title": "TabSQLify: Enhancing Reasoning Capabilities of LLMs Through Table Decomposition",
+    "abstract": "Table reasoning is a challenging task that requires understanding both natural language questions and structured tabular data. Large language models (LLMs) have shown impressive capabilities in natural language understanding and generation, but they often struggle with large tables due to their limited input length. In this paper, we propose TabSQLify, a novel method that leverages text-to-SQL generation to decompose tables into smaller and relevant sub-tables, containing only essential information for answering questions or verifying statements, before performing the reasoning task. In our comprehensive evaluation on four challenging datasets, our approach demonstrates comparable or superior performance compared to prevailing methods reliant on full tables as input. Moreover, our method can reduce the input context length significantly, making it more scalable and efficient for large-scale table reasoning applications. Our method performs remarkably well on the WikiTQ benchmark, achieving an accuracy of 64.7%. Additionally, on the TabFact benchmark, it achieves a high accuracy of 79.5%. These results surpass other LLM-based baseline models on gpt-3.5-turbo (chatgpt). TabSQLify can reduce the table size significantly alleviating the computational load on LLMs when handling large tables without compromising performance.",
+    "published": "2024-04-15T21:42:20Z",
+    "updated": "2024-04-15T21:42:20Z",
+    "authors": [
+      "Md Mahadi Hasan Nahid",
+      "Davood Rafiei"
+    ],
+    "url": "https://arxiv.org/abs/2404.10150v1",
+    "pdf": "https://arxiv.org/pdf/2404.10150v1",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "TabSQLify",
+    "category": "decomposition",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: decomposition; transferable to the five seed papers.",
+    "file": "2404.10150_TabSQLify.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2404.10150v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2404.10150v1",
+    "pages": 13,
+    "sha256": "18907c5afdfb59c42a406ee1c11b0d14dc40c2ee05a2cd6f66d6533884a53e80",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2401.04398": {
+    "id": "2401.04398v2",
+    "title": "Chain-of-Table: Evolving Tables in the Reasoning Chain for Table Understanding",
+    "abstract": "Table-based reasoning with large language models (LLMs) is a promising direction to tackle many table understanding tasks, such as table-based question answering and fact verification. Compared with generic reasoning, table-based reasoning requires the extraction of underlying semantics from both free-form questions and semi-structured tabular data. Chain-of-Thought and its similar approaches incorporate the reasoning chain in the form of textual context, but it is still an open question how to effectively leverage tabular data in the reasoning chain. We propose the Chain-of-Table framework, where tabular data is explicitly used in the reasoning chain as a proxy for intermediate thoughts. Specifically, we guide LLMs using in-context learning to iteratively generate operations and update the table to represent a tabular reasoning chain. LLMs can therefore dynamically plan the next operation based on the results of the previous ones. This continuous evolution of the table forms a chain, showing the reasoning process for a given tabular problem. The chain carries structured information of the intermediate results, enabling more accurate and reliable predictions. Chain-of-Table achieves new state-of-the-art performance on WikiTQ, FeTaQA, and TabFact benchmarks across multiple LLM choices.",
+    "published": "2024-01-09T07:46:26Z",
+    "updated": "2024-01-19T01:05:05Z",
+    "authors": [
+      "Zilong Wang",
+      "Hao Zhang",
+      "Chun-Liang Li",
+      "Julian Martin Eisenschlos",
+      "Vincent Perot",
+      "Zifeng Wang",
+      "Lesly Miculicich",
+      "Yasuhisa Fujii",
+      "Jingbo Shang",
+      "Chen-Yu Lee",
+      "Tomas Pfister"
+    ],
+    "url": "https://arxiv.org/abs/2401.04398v2",
+    "pdf": "https://arxiv.org/pdf/2401.04398v2",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "Chain-of-Table",
+    "category": "table_state",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: table_state; transferable to the five seed papers.",
+    "file": "2401.04398_Chain-of-Table.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2401.04398v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2401.04398v2",
+    "pages": 24,
+    "sha256": "b852a161dacdd1eb3ebebc140b8d9f6724aba6512bdabf74ff75f84159d03918",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2310.00815": {
+    "id": "2310.00815v1",
+    "title": "ReAcTable: Enhancing ReAct for Table Question Answering",
+    "abstract": "Table Question Answering (TQA) presents a substantial challenge at the intersection of natural language processing and data analytics. This task involves answering natural language (NL) questions on top of tabular data, demanding proficiency in logical reasoning, understanding of data semantics, and fundamental analytical capabilities. Due to its significance, a substantial volume of research has been dedicated to exploring a wide range of strategies aimed at tackling this challenge including approaches that leverage Large Language Models (LLMs) through in-context learning or Chain-of-Thought (CoT) prompting as well as approaches that train and fine-tune custom models. Nonetheless, a conspicuous gap exists in the research landscape, where there is limited exploration of how innovative foundational research, which integrates incremental reasoning with external tools in the context of LLMs, as exemplified by the ReAct paradigm, could potentially bring advantages to the TQA task. In this paper, we aim to fill this gap, by introducing ReAcTable (ReAct for Table Question Answering tasks), a framework inspired by the ReAct paradigm that is carefully enhanced to address the challenges uniquely appearing in TQA tasks such as interpreting complex data semantics, dealing with errors generated by inconsistent data and generating intricate data transformations. ReAcTable relies on external tools such as SQL and Python code executors, to progressively enhance the data by generating intermediate data representations, ultimately transforming it into a more accessible format for answering the questions with greater ease. We demonstrate that ReAcTable achieves remarkable performance even when compared to fine-tuned approaches. In particular, it outperforms the best prior result on the WikiTQ benchmark, achieving an accuracy of 68.0% without requiring training a new model or fine-tuning.",
+    "published": "2023-10-01T23:14:38Z",
+    "updated": "2023-10-01T23:14:38Z",
+    "authors": [
+      "Yunjia Zhang",
+      "Jordan Henkel",
+      "Avrilia Floratou",
+      "Joyce Cahoon",
+      "Shaleen Deep",
+      "Jignesh M. Patel"
+    ],
+    "url": "https://arxiv.org/abs/2310.00815v1",
+    "pdf": "https://arxiv.org/pdf/2310.00815v1",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "ReAcTable",
+    "category": "online_planning",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: online_planning; transferable to the five seed papers.",
+    "file": "2310.00815_ReAcTable.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2310.00815v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2310.00815v1",
+    "pages": 14,
+    "sha256": "289d89bdb22f7bfbe2e57f6c5a81eaf7f44d4d6c1c71ccb61c4b6c714bc3cfee",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2301.13808": {
+    "id": "2301.13808v3",
+    "title": "Large Language Models are Versatile Decomposers: Decompose Evidence and Questions for Table-based Reasoning",
+    "abstract": "Table-based reasoning has shown remarkable progress in combining deep models with discrete reasoning, which requires reasoning over both free-form natural language (NL) questions and structured tabular data. However, previous table-based reasoning solutions usually suffer from significant performance degradation on huge evidence (tables). In addition, most existing methods struggle to reason over complex questions since the required information is scattered in different places. To alleviate the above challenges, we exploit large language models (LLMs) as decomposers for effective table-based reasoning, which (i) decompose huge evidence (a huge table) into sub-evidence (a small table) to mitigate the interference of useless information for table reasoning; and (ii) decompose complex questions into simpler sub-questions for text reasoning. Specifically, we first use the LLMs to break down the evidence (tables) involved in the current question, retaining the relevant evidence and excluding the remaining irrelevant evidence from the huge table. In addition, we propose a \"parsing-execution-filling\" strategy to alleviate the hallucination dilemma of the chain of thought by decoupling logic and numerical computation in each step. Extensive experiments show that our method can effectively leverage decomposed evidence and questions and outperforms the strong baselines on TabFact, WikiTableQuestion, and FetaQA datasets. Notably, our model outperforms human performance for the first time on the TabFact dataset.",
+    "published": "2023-01-31T17:51:45Z",
+    "updated": "2023-04-27T11:24:10Z",
+    "authors": [
+      "Yunhu Ye",
+      "Binyuan Hui",
+      "Min Yang",
+      "Binhua Li",
+      "Fei Huang",
+      "Yongbin Li"
+    ],
+    "url": "https://arxiv.org/abs/2301.13808v3",
+    "pdf": "https://arxiv.org/pdf/2301.13808v3",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "Dater",
+    "category": "decomposition",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: decomposition; transferable to the five seed papers.",
+    "file": "2301.13808_Dater.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2301.13808v3"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2301.13808v3",
+    "pages": 16,
+    "sha256": "f6c5906c6f777b576ec10e8ae688aa4f86c02d8db7aa69d545c0c982cc2effa0",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2210.02875": {
+    "id": "2210.02875v2",
+    "title": "Binding Language Models in Symbolic Languages",
+    "abstract": "Though end-to-end neural approaches have recently been dominating NLP tasks in both performance and ease-of-use, they lack interpretability and robustness. We propose Binder, a training-free neural-symbolic framework that maps the task input to a program, which (1) allows binding a unified API of language model (LM) functionalities to a programming language (e.g., SQL, Python) to extend its grammar coverage and thus tackle more diverse questions, (2) adopts an LM as both the program parser and the underlying model called by the API during execution, and (3) requires only a few in-context exemplar annotations. Specifically, we employ GPT-3 Codex as the LM. In the parsing stage, with only a few in-context exemplars, Codex is able to identify the part of the task input that cannot be answerable by the original programming language, correctly generate API calls to prompt Codex to solve the unanswerable part, and identify where to place the API calls while being compatible with the original grammar. In the execution stage, Codex can perform versatile functionalities (e.g., commonsense QA, information extraction) given proper prompts in the API calls. Binder achieves state-of-the-art results on WikiTableQuestions and TabFact datasets, with explicit output programs that benefit human debugging. Note that previous best systems are all finetuned on tens of thousands of task-specific samples, while Binder only uses dozens of annotations as in-context exemplars without any training. Our code is available at https://github.com/HKUNLP/Binder .",
+    "published": "2022-10-06T12:55:17Z",
+    "updated": "2023-03-01T03:21:40Z",
+    "authors": [
+      "Zhoujun Cheng",
+      "Tianbao Xie",
+      "Peng Shi",
+      "Chengzu Li",
+      "Rahul Nadkarni",
+      "Yushi Hu",
+      "Caiming Xiong",
+      "Dragomir Radev",
+      "Mari Ostendorf",
+      "Luke Zettlemoyer",
+      "Noah A. Smith",
+      "Tao Yu"
+    ],
+    "url": "https://arxiv.org/abs/2210.02875v2",
+    "pdf": "https://arxiv.org/pdf/2210.02875v2",
+    "discovery_queries": [
+      "foundational"
+    ],
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "short_name": "Binder",
+    "category": "program_execution",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: program_execution; transferable to the five seed papers.",
+    "file": "2210.02875_Binder.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2210.02875v2"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2210.02875v2",
+    "pages": 27,
+    "sha256": "8a125d224aeeedadc4a5cb490a2516a4bdf75671c962cb66de2ac21f6d89ae23",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2308.10144": {
+    "id": "2308.10144v3",
+    "title": "ExpeL: LLM Agents Are Experiential Learners",
+    "abstract": "The recent surge in research interest in applying large language models (LLMs) to decision-making tasks has flourished by leveraging the extensive world knowledge embedded in LLMs. While there is a growing demand to tailor LLMs for custom decision-making tasks, finetuning them for specific tasks is resource-intensive and may diminish the model's generalization capabilities. Moreover, state-of-the-art language models like GPT-4 and Claude are primarily accessible through API calls, with their parametric weights remaining proprietary and unavailable to the public. This scenario emphasizes the growing need for new methodologies that allow learning from agent experiences without requiring parametric updates. To address these problems, we introduce the Experiential Learning (ExpeL) agent. Our agent autonomously gathers experiences and extracts knowledge using natural language from a collection of training tasks. At inference, the agent recalls its extracted insights and past experiences to make informed decisions. Our empirical results highlight the robust learning efficacy of the ExpeL agent, indicating a consistent enhancement in its performance as it accumulates experiences. We further explore the emerging capabilities and transfer learning potential of the ExpeL agent through qualitative observations and additional experiments.",
+    "published": "2023-08-20T03:03:34Z",
+    "updated": "2024-12-20T06:14:53Z",
+    "authors": [
+      "Andrew Zhao",
+      "Daniel Huang",
+      "Quentin Xu",
+      "Matthieu Lin",
+      "Yong-Jin Liu",
+      "Gao Huang"
+    ],
+    "url": "https://arxiv.org/abs/2308.10144v3",
+    "pdf": "https://arxiv.org/pdf/2308.10144v3",
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "ExpeL",
+    "category": "experience_memory",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: experience_memory; transferable to the five seed papers.",
+    "file": "2308.10144_ExpeL.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2308.10144v3"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2308.10144v3",
+    "pages": 38,
+    "sha256": "01e533d81fb4a5f91797c073a9b1929acbaa64da45a592b26563ca7d135024f3",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2603.09151": {
+    "id": "2603.09151v2",
+    "title": "Deep Tabular Research via Continual Experience-Driven Execution",
+    "abstract": "Large language models often struggle with complex long-horizon analytical tasks over unstructured tables, which typically feature hierarchical and bidirectional headers and non-canonical layouts. We formalize this challenge as Deep Tabular Research (DTR), requiring multi-step reasoning over interdependent table regions. To address DTR, we propose a novel agentic framework that treats tabular reasoning as a closed-loop decision-making process. We carefully design a coupled query and table comprehension for path decision making and operational execution. Specifically, (i) DTR first constructs a hierarchical meta graph to capture bidirectional semantics, mapping natural language queries into an operation-level search space; (ii) To navigate this space, we introduce an expectation-aware selection policy that prioritizes high-utility execution paths; (iii) Crucially, historical execution outcomes are synthesized into a siamese structured memory, i.e., parameterized updates and abstracted texts, enabling continual refinement. Extensive experiments on challenging unstructured tabular benchmarks verify the effectiveness and highlight the necessity of separating strategic planning from low-level execution for long-horizon tabular reasoning.",
+    "published": "2026-03-10T03:42:54Z",
+    "updated": "2026-03-12T02:39:52Z",
+    "authors": [
+      "Junnan Dong",
+      "Chuang Zhou",
+      "Zheng Yuan",
+      "Yifei Yu",
+      "Qiufeng Wang",
+      "Yinghui Li",
+      "Siyu An",
+      "Di Yin",
+      "Xing Sun",
+      "Feiyue Huang"
+    ],
+    "url": "https://arxiv.org/abs/2603.09151v2",
+    "pdf": "https://arxiv.org/pdf/2603.09151v2",
+    "screening_date": "2026-11-18",
+    "download_selected": false,
+    "reading_level": "full_text_methods_results_appendix",
+    "score": 10,
+    "status": "seed",
+    "reason": "Adjacent direction; outside the selected implementation-focused core or overlapping coverage.",
+    "short_name": "DTR",
+    "file": "Deep-Tabular-Research_arXiv2026.pdf",
+    "source": "user_provided",
+    "download_status": "user_provided_verified_pdf",
+    "sha256": "938ca50fa257402d6cdf806fb20d798755b21bff51a1912521e59c793616a3cb",
+    "pages": 23,
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2210.03629": {
+    "id": "2210.03629v3",
+    "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+    "abstract": "While large language models (LLMs) have demonstrated impressive capabilities across tasks in language understanding and interactive decision making, their abilities for reasoning (e.g. chain-of-thought prompting) and acting (e.g. action plan generation) have primarily been studied as separate topics. In this paper, we explore the use of LLMs to generate both reasoning traces and task-specific actions in an interleaved manner, allowing for greater synergy between the two: reasoning traces help the model induce, track, and update action plans as well as handle exceptions, while actions allow it to interface with external sources, such as knowledge bases or environments, to gather additional information. We apply our approach, named ReAct, to a diverse set of language and decision making tasks and demonstrate its effectiveness over state-of-the-art baselines, as well as improved human interpretability and trustworthiness over methods without reasoning or acting components. Concretely, on question answering (HotpotQA) and fact verification (Fever), ReAct overcomes issues of hallucination and error propagation prevalent in chain-of-thought reasoning by interacting with a simple Wikipedia API, and generates human-like task-solving trajectories that are more interpretable than baselines without reasoning traces. On two interactive decision making benchmarks (ALFWorld and WebShop), ReAct outperforms imitation and reinforcement learning methods by an absolute success rate of 34% and 10% respectively, while being prompted with only one or two in-context examples. Project site with code: https://react-lm.github.io",
+    "published": "2022-10-06T01:00:32Z",
+    "updated": "2023-03-10T01:00:17Z",
+    "authors": [
+      "Shunyu Yao",
+      "Jeffrey Zhao",
+      "Dian Yu",
+      "Nan Du",
+      "Izhak Shafran",
+      "Karthik Narasimhan",
+      "Yuan Cao"
+    ],
+    "url": "https://arxiv.org/abs/2210.03629v3",
+    "pdf": "https://arxiv.org/pdf/2210.03629v3",
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "ReAct",
+    "category": "online_planning",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: online_planning; transferable to the five seed papers.",
+    "file": "2210.03629_ReAct.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2210.03629v3"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2210.03629v3",
+    "pages": 33,
+    "sha256": "f285b0971ae4a790e402fb93966bed3adde2cf0a04977d08b2b40d6ab0cace69",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2402.02716": {
+    "id": "2402.02716v1",
+    "title": "Understanding the planning of LLM agents: A survey",
+    "abstract": "As Large Language Models (LLMs) have shown significant intelligence, the progress to leverage LLMs as planning modules of autonomous agents has attracted more attention. This survey provides the first systematic view of LLM-based agents planning, covering recent works aiming to improve planning ability. We provide a taxonomy of existing works on LLM-Agent planning, which can be categorized into Task Decomposition, Plan Selection, External Module, Reflection and Memory. Comprehensive analyses are conducted for each direction, and further challenges for the field of research are discussed.",
+    "published": "2024-02-05T04:25:24Z",
+    "updated": "2024-02-05T04:25:24Z",
+    "authors": [
+      "Xu Huang",
+      "Weiwen Liu",
+      "Xiaolong Chen",
+      "Xingmei Wang",
+      "Hao Wang",
+      "Defu Lian",
+      "Yasheng Wang",
+      "Ruiming Tang",
+      "Enhong Chen"
+    ],
+    "url": "https://arxiv.org/abs/2402.02716v1",
+    "pdf": "https://arxiv.org/pdf/2402.02716v1",
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "LLM-Agent-Planning-Survey",
+    "category": "planning_survey",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: planning_survey; transferable to the five seed papers.",
+    "file": "2402.02716_LLM-Agent-Planning-Survey.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2402.02716v1"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2402.02716v1",
+    "pages": 9,
+    "sha256": "42104614ce8121f0a8c2c93742f294aeaf1425ffce7d5f7cfec5e14ebb41864c",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2303.11366": {
+    "id": "2303.11366v4",
+    "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+    "abstract": "Large language models (LLMs) have been increasingly used to interact with external environments (e.g., games, compilers, APIs) as goal-driven agents. However, it remains challenging for these language agents to quickly and efficiently learn from trial-and-error as traditional reinforcement learning methods require extensive training samples and expensive model fine-tuning. We propose Reflexion, a novel framework to reinforce language agents not by updating weights, but instead through linguistic feedback. Concretely, Reflexion agents verbally reflect on task feedback signals, then maintain their own reflective text in an episodic memory buffer to induce better decision-making in subsequent trials. Reflexion is flexible enough to incorporate various types (scalar values or free-form language) and sources (external or internally simulated) of feedback signals, and obtains significant improvements over a baseline agent across diverse tasks (sequential decision-making, coding, language reasoning). For example, Reflexion achieves a 91% pass@1 accuracy on the HumanEval coding benchmark, surpassing the previous state-of-the-art GPT-4 that achieves 80%. We also conduct ablation and analysis studies using different feedback signals, feedback incorporation methods, and agent types, and provide insights into how they affect performance.",
+    "published": "2023-03-20T18:08:50Z",
+    "updated": "2023-10-10T05:21:45Z",
+    "authors": [
+      "Noah Shinn",
+      "Federico Cassano",
+      "Edward Berman",
+      "Ashwin Gopinath",
+      "Karthik Narasimhan",
+      "Shunyu Yao"
+    ],
+    "url": "https://arxiv.org/abs/2303.11366v4",
+    "pdf": "https://arxiv.org/pdf/2303.11366v4",
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "Reflexion",
+    "category": "reflection_memory",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: reflection_memory; transferable to the five seed papers.",
+    "file": "2303.11366_Reflexion.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2303.11366v4"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2303.11366v4",
+    "pages": 19,
+    "sha256": "6059b6f89fea9959bd3dab553fbb97756a3dfb1b15e3cbab2fbf3ab6664333bd",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2506.05813": {
+    "id": "2506.05813v2",
+    "title": "MAPLE: Multi-Agent Adaptive Planning with Long-Term Memory for Table Reasoning",
+    "abstract": "Table-based question answering requires complex reasoning capabilities that current LLMs struggle to achieve with single-pass inference. Existing approaches, such as Chain-of-Thought reasoning and question decomposition, lack error detection mechanisms and discard problem-solving experiences, contrasting sharply with how humans tackle such problems. In this paper, we propose MAPLE (Multi-agent Adaptive Planning with Long-term mEmory), a novel framework that mimics human problem-solving through specialized cognitive agents working in a feedback-driven loop. MAPLE integrates 4 key components: (1) a Solver using the ReAct paradigm for reasoning, (2) a Checker for answer verification, (3) a Reflector for error diagnosis and strategy correction, and (4) an Archiver managing long-term memory for experience reuse and evolution. Experiments on WiKiTQ and TabFact demonstrate significant improvements over existing methods, achieving state-of-the-art performance across multiple LLM backbones.",
+    "published": "2025-06-06T07:21:28Z",
+    "updated": "2025-11-16T00:03:35Z",
+    "authors": [
+      "Ye Bai",
+      "Minghan Wang",
+      "Thuy-Trang Vu"
+    ],
+    "url": "https://arxiv.org/abs/2506.05813v2",
+    "pdf": "https://arxiv.org/pdf/2506.05813v2",
+    "screening_date": "2026-11-18",
+    "download_selected": false,
+    "reading_level": "full_text_methods_results_appendix",
+    "score": 10,
+    "status": "seed",
+    "reason": "Adjacent direction; outside the selected implementation-focused core or overlapping coverage.",
+    "short_name": "MAPLE",
+    "file": "MAPLE.pdf",
+    "source": "user_provided",
+    "download_status": "user_provided_verified_pdf",
+    "sha256": "d2d28a2269756e8f386669fb8ab5dd8645dda32c75ddaaead9cad7c3b701b445",
+    "pages": 27,
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "2502.12110": {
+    "id": "2502.12110v11",
+    "title": "A-MEM: Agentic Memory for LLM Agents",
+    "abstract": "While large language model (LLM) agents can effectively use external tools for complex real-world tasks, they require memory systems to leverage historical experiences. Current memory systems enable basic storage and retrieval but lack sophisticated memory organization, despite recent attempts to incorporate graph databases. Moreover, these systems' fixed operations and structures limit their adaptability across diverse tasks. To address this limitation, this paper proposes a novel agentic memory system for LLM agents that can dynamically organize memories in an agentic way. Following the basic principles of the Zettelkasten method, we designed our memory system to create interconnected knowledge networks through dynamic indexing and linking. When a new memory is added, we generate a comprehensive note containing multiple structured attributes, including contextual descriptions, keywords, and tags. The system then analyzes historical memories to identify relevant connections, establishing links where meaningful similarities exist. Additionally, this process enables memory evolution - as new memories are integrated, they can trigger updates to the contextual representations and attributes of existing historical memories, allowing the memory network to continuously refine its understanding. Our approach combines the structured organization principles of Zettelkasten with the flexibility of agent-driven decision making, allowing for more adaptive and context-aware memory management. Empirical experiments on six foundation models show superior improvement against existing SOTA baselines. The source code for evaluating performance is available at https://github.com/WujiangXu/A-mem, while the source code of the agentic memory system is available at https://github.com/WujiangXu/A-mem-sys.",
+    "published": "2025-02-17T18:36:14Z",
+    "updated": "2025-10-08T01:46:37Z",
+    "authors": [
+      "Wujiang Xu",
+      "Zujie Liang",
+      "Kai Mei",
+      "Hang Gao",
+      "Juntao Tan",
+      "Yongfeng Zhang"
+    ],
+    "url": "https://arxiv.org/abs/2502.12110v11",
+    "pdf": "https://arxiv.org/pdf/2502.12110v11",
+    "screening_date": "2026-11-18",
+    "download_selected": true,
+    "reading_level": "metadata_and_abstract_screening",
+    "short_name": "A-MEM",
+    "category": "experience_memory",
+    "score": 8,
+    "score_components": {
+      "topic": 3,
+      "method": 3,
+      "specificity": 2
+    },
+    "status": "relevant",
+    "reason": "Manually included: experience_memory; transferable to the five seed papers.",
+    "file": "2502.12110_A-MEM.pdf",
+    "pdf_urls": [
+      "https://arxiv.org/pdf/2502.12110v11"
+    ],
+    "source": "arxiv_search_or_seed_reference",
+    "download_url": "https://arxiv.org/pdf/2502.12110v11",
+    "pages": 28,
+    "sha256": "fec32b521c4a1f793442bf1aeb26139c583078350d1cd4ab8f4eccc54a0694f0",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "MACT": {
+    "id": "MACT",
+    "title": "Efficient Multi-Agent Collaboration with Tool Use for Online Planning in Complex Table Question Answering",
+    "url": "https://aclanthology.org/2025.findings-naacl.54/",
+    "short_name": "MACT",
+    "file": "MACT_Findings-NAACL2025.pdf",
+    "source": "user_provided",
+    "score": 10,
+    "status": "seed",
+    "reading_level": "full_text_methods_results_appendix",
+    "download_selected": false,
+    "download_status": "user_provided_verified_pdf",
+    "sha256": "34986c5c9da7bb36a5a9be2ad79d155ecd785e92f1ecff2eb33ac2125cba2365",
+    "pages": 24,
+    "screening_date": "2026-11-18",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "Table-Critic": {
+    "id": "Table-Critic",
+    "title": "Table-Critic: A Multi-Agent Framework for Collaborative Criticism and Refinement in Table Reasoning",
+    "url": "https://aclanthology.org/2025.acl-long.853/",
+    "short_name": "Table-Critic",
+    "file": "Table-Critic_ACL2025.pdf",
+    "source": "user_provided",
+    "score": 10,
+    "status": "seed",
+    "reading_level": "full_text_methods_results_appendix",
+    "download_selected": false,
+    "download_status": "user_provided_verified_pdf",
+    "sha256": "7f2cded037db00d0837672a6cc4d17bea566ca84f51c5ff386473ba5f15913cc",
+    "pages": 20,
+    "screening_date": "2026-11-18",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "TALON": {
+    "id": "TALON",
+    "title": "TALON: A Multi-Agent Framework for Long-Table Exploration and Question Answering",
+    "url": "https://aclanthology.org/2025.emnlp-main.1393/",
+    "short_name": "TALON",
+    "file": "TALON_EMNLP2025.pdf",
+    "source": "user_provided",
+    "score": 10,
+    "status": "seed",
+    "reading_level": "full_text_methods_results_appendix",
+    "download_selected": false,
+    "download_status": "user_provided_verified_pdf",
+    "sha256": "c92cacab116db810a7927445a069fa9c143245cb298bea00871b0f41033c3ac1",
+    "pages": 17,
+    "screening_date": "2026-11-18",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "10.18653/v1/2024.acl-long.692": {
+    "id": "10.18653/v1/2024.acl-long.692",
+    "title": "TaPERA: Enhancing Faithfulness and Interpretability in Long-Form Table QA by Content Planning and Execution-based Reasoning",
+    "short_name": "TaPERA",
+    "url": "https://aclanthology.org/2024.acl-long.692/",
+    "pdf_urls": [
+      "https://aclanthology.org/2024.acl-long.692.pdf"
+    ],
+    "file": "2024_TaPERA.pdf",
+    "score": 9,
+    "status": "relevant",
+    "category": "planning_execution",
+    "download_selected": true,
+    "source": "seed_reference_crossref_verified",
+    "screening_date": "2026-11-18",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "download_url": "https://aclanthology.org/2024.acl-long.692.pdf",
+    "pages": 17,
+    "sha256": "7a1b2a75c41bc31feb070ddad980211cb9e17c50b04f06f833a233457efc605e",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  },
+  "10.14778/3685800.3685816": {
+    "id": "10.14778/3685800.3685816",
+    "title": "AutoTQA: Towards Autonomous Tabular Question Answering through Multi-Agent Large Language Models",
+    "short_name": "AutoTQA",
+    "url": "https://doi.org/10.14778/3685800.3685816",
+    "pdf_urls": [
+      "https://www.vldb.org/pvldb/vol17/p3920-zhu.pdf"
+    ],
+    "file": "2024_AutoTQA.pdf",
+    "score": 9,
+    "status": "relevant",
+    "category": "planning_execution",
+    "download_selected": true,
+    "source": "seed_reference_crossref_verified",
+    "screening_date": "2026-11-18",
+    "reading_level": "full_text_method_excerpt_plus_abstract",
+    "download_url": "https://www.vldb.org/pvldb/vol17/p3920-zhu.pdf",
+    "pages": 14,
+    "sha256": "12bb148a4362cd343ed78191c3129889cd0ce55d2dbed549f6fa28ae51212710",
+    "download_status": "verified_pdf",
+    "pdf_verified": "signature_open_pages_sha256"
+  }
+}

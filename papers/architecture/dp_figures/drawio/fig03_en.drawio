@@ -1,0 +1,94 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-11-19T00:00:00.000Z" agent="Kinlin research architecture authoring" version="29.0.0" type="device" compressed="false">
+  <diagram id="fig03-en" name="Persistent release state machine">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig03_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig03_title" value="Persistent release state machine" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig03_new" value="NEW&#10;uncharged" style="shape=ellipse;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="55" y="190" width="170" height="100" />
+        </mxCell>
+        <mxCell id="fig03_reserved" value="RESERVED&#10;charge reserved" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="290" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_prepared" value="PREPARED&#10;exact bytes durable" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="600" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_maybe" value="MAYBE_SENT&#10;egress permitted" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="910" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_acked" value="ACKED&#10;receipt verified" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1210" y="190" width="180" height="100" />
+        </mxCell>
+        <mxCell id="fig03_e_reserve" value="admit" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_new" target="fig03_reserved">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_prepare" value="bind" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_reserved" target="fig03_prepared">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_mark" value="log" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_prepared" target="fig03_maybe">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_ack" value="ACK" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_acked">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_sealed" value="SEALED_CHARGED&#10;no further send / no refund" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="505" y="540" width="430" height="105" />
+        </mxCell>
+        <mxCell id="fig03_e_orphan" value="unrecoverable crash" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_reserved" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="-25" y="5" />
+            <Array as="points">
+              <mxPoint x="410" y="592" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_badbytes" value="bytes lost / cancel" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_prepared" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="115" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_unknown" value="cannot recover safely" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="50" y="0" />
+            <Array as="points">
+              <mxPoint x="1030" y="592" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_retry" value="recover first; same bytes only" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_maybe">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+            <Array as="points">
+              <mxPoint x="1090" y="110" />
+              <mxPoint x="970" y="110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_query" value="ACKED duplicates return the original receipt. Missing bytes never authorize resampling." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="677" width="1300" height="55" />
+        </mxCell>
+        <mxCell id="fig03_meaning" value="SEALED_CHARGED is an internal terminal marker; remote state may remain unknown." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="735" width="1300" height="55" />
+        </mxCell>
+        <mxCell id="fig03_budget" value="Conservative first version: all reservations remain charged; state transitions do not add the fee again." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="795" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

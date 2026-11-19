@@ -1,0 +1,965 @@
+                                                                            Rényi Differential Privacy
+                                                                                                       Ilya Mironov
+                                                                                                        Google Brain
+
+
+                                            Abstract—We propose a natural relaxation of differential                The second common use of (ǫ, δ)-differential privacy is
+                                         privacy based on the Rényi divergence. Closely related notions         due to applications of advanced composition theorems. The
+                                         have appeared in several recent papers that analyzed composition        central feature of ǫ-differential privacy is that it is closed
+                                         of differentially private mechanisms. We argue that the useful
+                                                                                                                 under composition; moreover, the ǫ parameters of composed
+arXiv:1702.07476v3 [cs.CR] 25 Aug 2017
+
+
+
+
+                                         analytical tool can be used as a privacy definition, compactly and
+                                         accurately representing guarantees on the tails of the privacy loss.    mechanisms simply add up, which motivates the concept of a
+                                            We demonstrate that the new definition shares many important         privacy budget. By relaxing the guarantee to (ǫ, δ)-differential
+                                         properties with the standard definition of differential privacy,        privacy, advanced composition allows tighter analyses for
+                                         while additionally allowing tighter analysis of composite hetero-       compositions of (pure) differentially private mechanisms. Iter-
+                                         geneous mechanisms.
+                                                                                                                 ating this process, however, quickly leads to a combinatorial
+                                                                 I. I NTRODUCTION                                explosion of parameters, as each application of an advanced
+                                            Differential privacy, introduced by Dwork et al. [1], has            composition theorem leads to a wide selection of possibilities
+                                         been embraced by multiple research communities as a com-                for (ǫ(δ), δ)-differentially private guarantees.
+                                         monly accepted notion of privacy for algorithms on statistical
+                                                                                                                    In part to address the shortcomings of (ǫ, δ)-differential
+                                         databases. As applications of differential privacy begin to
+                                                                                                                 privacy, several recent works, surveyed in the next section,
+                                         emerge, practical concerns of tracking and communicating
+                                                                                                                 explored the use of higher-order moments as a way of bound-
+                                         privacy guarantees are coming to the fore.
+                                                                                                                 ing the tails of the privacy loss variable.
+                                            Informally, differential privacy bounds a shift in the output
+                                         distribution of a randomized algorithm that can be induced                 Inspired by these theoretical results and their applications,
+                                         by a small change in its input. The standard definition of ǫ-           we propose Rényi differential privacy as a natural relaxation
+                                         differential privacy puts a multiplicative upper bound on the           of differential privacy that is well-suited for expressing guar-
+                                         worst-case change in the distribution’s density.                        antees of privacy-preserving algorithms and for composition
+                                            Several relaxations of differential privacy explored other           of heterogeneous mechanisms. Compared to (ǫ, δ)-differential
+                                         measures of closeness between two distributions. The most               privacy, Rényi differential privacy is a strictly stronger privacy
+                                         common such relaxation, the (ǫ, δ) definition, has been a               definition. It offers an operationally convenient and quan-
+                                         method of choice for expressing privacy guarantees of a                 titatively accurate way of tracking cumulative privacy loss
+                                         variety of differentially private algorithms, especially those          throughout execution of a standalone differentially private
+                                         that rely on the Gaussian additive noise mechanism or whose             mechanism and across many such mechanisms. Most sig-
+                                         analysis follows from composition theorems. The additive δ              nificantly, Rényi differential privacy allows combining the
+                                         parameter allows suppressing the long tails of the mechanism’s          intuitive and appealing concept of a privacy budget with
+                                         distribution where pure ǫ-differential privacy guarantees may           application of advanced composition theorems.
+                                         not hold.
+                                            Compared to the standard definition, (ǫ, δ)-differential pri-           The paper presents a self-contained exposition of the new
+                                         vacy offers asymptotically smaller cumulative loss under                definition, unifying current literature and demonstrating its
+                                         composition and allows greater flexibility in the selection of          applications. The organization of the paper is as follows. Sec-
+                                         privacy-preserving mechanisms.                                          tion II reviews the standard definition of differential privacy,
+                                            Despite its notable advantages and numerous applications,            its (ǫ, δ) relaxation and its most common uses. Section III in-
+                                         the definition of (ǫ, δ)-differential privacy is an imperfect fit for   troduces the definition of Rényi differential privacy and proves
+                                         its two most common use cases: the Gaussian mechanism and               its basic properties that parallel those of ǫ-differential privacy,
+                                         a composition rule. We briefly sketch them here and elaborate           summarizing the results in Table I. Section IV demonstrates a
+                                         on these points in the next section.                                    reduction from Rényi differential privacy to (ǫ, δ)-differential
+                                            The first application of (ǫ, δ)-differential privacy was the         privacy, followed by a proof of an advanced composition
+                                         analysis of the Gaussian noise mechanism [2]. In contrast               theorem in Section V. Section VI applies Rényi differential
+                                         with the Laplace mechanism, whose privacy guarantee is                  privacy to analysis of several basic mechanisms: randomized
+                                         characterized tightly and accurately by ǫ-differential privacy,         response for predicates, Laplace and Gaussian (see Table II for
+                                         a single Gaussian mechanism satisfies a curve of (ǫ(δ), δ)-             a brief summary). Section VII discusses assessment of risk due
+                                         differential privacy definitions. Picking any one point on this         to application of a Rényi differentially private mechanism and
+                                         curve leaves out important information about the mechanism’s            use of Rényi differential privacy as a privacy loss tracking
+                                         actual behavior.                                                        tool. Section VIII concludes with open questions.
+       II. D IFFERENTIAL P RIVACY AND I TS F LAVORS                   differ in what happens with the remaining probability δ. In
+                                                                      the first scenario privacy degrades gracefully, such as to ǫ1 -
+ǫ-D IFFERENTIAL PRIVACY [1]. We first recall the standard             DP with probability δ/2, to ǫ2 -DP with probability δ/4, etc.
+definition of ǫ-differential privacy.                                 In the other scenario, with probability δ the secret—whether
+Definition 1 (ǫ-DP). A randomized mechanism f : D 7→                  the record is part of the database or not—becomes completely
+R satisfies ǫ-differential privacy (ǫ-DP) if for any adjacent         exposed. The difference between the two failure modes can
+D, D′ ∈ D and S ⊂ R                                                   be quite stark. In the former, there is always some residual
+                                                                      deniability; in the latter, the adversary occasionally learns the
+              Pr[f (D) ∈ S] ≤ eǫ Pr[f (D′ ) ∈ S].                     secret with certainty. Depending on the adversary’s tolerance
+                                                                      to false positives, plausible deniability may offer adequate
+   The above definition is contingent on the notion of adjacent
+                                                                      protection, but a single (ǫ, δ)-DP privacy statement cannot
+inputs D and D′ , which is domain-specific and is typically
+                                                                      differentiate between the two alternatives. For a lively parable
+chosen to capture the contribution to the mechanism’s input
+                                                                      of the different guarantees offered by the ǫ-DP and (ǫ, δ)-DP
+by a single individual.
+                                                                      definitions see McSherry [5].
+   The Laplace mechanism is a prototypical ǫ-differentially
+                                                                         To avoid the worst-case scenario of always violating privacy
+private algorithm, allowing release of an approximate (noisy)
+                                                                      of a δ fraction of the dataset, the standard recommendation
+answer to an arbitrary query with values in Rn . The mecha-
+                                                                      is to choose δ ≪ 1/N or even δ = negl(1/N ), where N is
+nism is defined as
+                                                                      the number of contributors. This strategy forecloses possibility
+               Lǫ f (x) , f (x) + Λ(0, ∆1 f /ǫ),                      of one particularly devastating outcome, but other forms of
+                                                                      information leakage remain.
+where Λ is the Laplace distribution and ℓ1 -sensitivity of the           The definition of (ǫ, δ)-differential privacy was initially
+query f is                                                            proposed to capture privacy guarantees of the Gaussian mech-
+              ∆1 f , max′ kf (D) − f (D′ )k1                          anism, defined as follows:
+                         D,D
+
+taken over all adjacent inputs D and D′ .                                              Gσ f (x) , f (x) + N (0, σ 2 ).
+   The basic composition theorem states that if f and g are,          Elementary analysis shows that the Gaussian mechanism can-
+respectively, ǫ1 - and ǫ2 -DP, then the simultaneous release          not meet ǫ-DP for any ǫ. Instead, it satisfies a continuum
+of f (D) and g(D) satisfies (ǫ1 + ǫ2 )-DP. Moreover, the              of incomparablep(ǫ, δ)-DP guarantees, for all combinations of
+mechanism g may be selected adaptively, after seeing the              ǫ < 1 and σ > 2 ln 1.25/δ∆2 f /ǫ, where f ’s ℓ2 -sensitivity
+output of f (D).                                                      is defined as
+(ǫ, δ)-D IFFERENTIAL PRIVACY [2]. A relaxation of ǫ-                                  ∆2 f , max′ kf (D) − f (D′ )k2
+                                                                                              D,D
+differential privacy allows a δ additive term in its defining
+inequality:                                                           taken over all adjacent inputs D and D′ .
+                                                                         There exist valid reasons for preferring the Gaussian mech-
+Definition 2 ((ǫ, δ)-DP). A randomized mechanism f : D 7→             anism over Laplace: the noise comes from the same Gaussian
+R offers (ǫ, δ)-differential privacy if for any adjacent D, D′ ∈      distribution (closed under addition) as the error that may
+D and S ⊂ R                                                           already be present in the dataset; the standard deviation of the
+            Pr[f (D) ∈ S] ≤ eǫ Pr[f (D′ ) ∈ S] + δ.                   noise is proportional to the query’s ℓ2 sensitivity, which is no
+                                                                      larger and often much smaller than ℓ1 ; for the same standard
+   The common interpretation of (ǫ, δ)-DP is that it is ǫ-DP          deviation, the tails of the Gaussian (normal) distribution decay
+“except with probability δ”. Formalizing this statement runs          much faster than those of the Laplace (exponential) distribu-
+into difficulties similar to the ones addressed by Mironov et         tion. Unfortunately, distilling the guarantees of the Gaussian
+al. [3] for a different (computational) relaxation. For any two       mechanism down to a single number or a small set of numbers
+adjacent inputs, D1 and D2 , it is indeed possible to define an       using the language of (ǫ, δ)-DP always leaves a possibility of
+ǫ-DP mechanism that agrees with f with all but δ probability.         a complete privacy compromise that the mechanism itself may
+Extending this argument to domains of exponential sizes (for          not allow.
+instance, to a boolean hypercube) cannot be done without                 Another common reason for bringing in (ǫ, δ)-differential
+diluting the guarantee exponentially [4]. We conclude that            privacy is application of advanced composition theorems.
+(ǫ, δ)-differential privacy is a qualitatively different definition   Consider the case of k-fold adaptive composition of an (ǫ, δ)-
+than pure ǫ-DP (unless, of course, δ = 0, which we assume             DP mechanism. For any δ ′ > 0 it holds that   p the composite
+not to be the case through the rest of this section).                 mechanism is (ǫ′ , kδ + δ ′ )-DP, where ǫ′ , 2k ln(1/δ ′ )ǫ +
+   Even for the simple case of exactly two input databases            kǫ(eǫ − 1) [6]. Note that, similarly to our discussion of the
+(such as when the adversary knows the entire dataset except           Gaussian mechanism, a single mechanism satisfies a contin-
+whether it contains a particular record), the δ additive term         uum of incomparable (ǫ, δ)-DP guarantees.
+encompasses two very different modes in which privacy may                Kairouz et al. give a procedure for computing an optimal
+fail. In both scenarios ǫ-DP holds with probability 1 − δ, they       k-fold composition of an (ǫ, δ)-DP mechanism [7]. Murtagh
+and Vadhan [8] demonstrate that generalizing this result to           nection between the two notions has been pointed out before
+composition of heterogeneous mechanisms (i.e., satisfying             (mostly for one extreme order, known as the Kullback-Leibler
+(ǫi , δi )-DP for different ǫi ’s) is #P-hard; they describe a PTAS   divergence [6], [17]); our contribution is in systematically
+for an approximate solution. None of these works tackles the          exploring the relationship and its practical implications.
+problem of composing mechanisms that satisfy several (ǫ, δ)-            The (parameterized) Rényi divergence is classically defined
+DP guarantees simultaneously.                                         as follows [18]:
+( ZERO )-C ONCENTRATED D IFFERENTIAL P RIVACY AND THE                 Definition 3 (Rényi divergence). For two probability distribu-
+MOMENTS ACCOUNTANT. The closely related work by Dwork                 tions P and Q defined over R, the Rényi divergence of order
+and Rothblum [9], followed by Bun and Steinke [10], explore           α > 1 is
+privacy definitions—Concentrated Differential Privacy and                                       1
+                                                                                                              
+                                                                                                                P (x)
+                                                                                                                      α
+zero-Concentrated Differential Privacy—that are framed using                   Dα (P kQ) ,          log Ex∼Q              .
+                                                                                              α−1               Q(x)
+the language of, respectively, subgaussian tails and the Rényi
+divergence. The main difference between our approaches is               (All logarithms are natural; P (x) is the density of P at x.)
+that both Concentrated and zero-Concentrated DP require a               For the endpoints of the interval (1, ∞) the Rényi diver-
+linear bound on all positive moments of a privacy loss variable.      gence is defined by continuity. Concretely, D1 (P kQ) is set to
+In contrast, our definition applies to one moment at a time.          be limα→1 Dα (P kQ) and can be verified to be equal to the
+Although less restrictive, it allows for more accurate numerical      Kullback-Leibler divergence (also known as relative entropy):
+analyses.                                                                                                        P (x)
+   The work by Abadi et al. [11] on differentially private                             D1 (P kQ) = Ex∼P log            .
+                                                                                                                 Q(x)
+stochastic gradient descent introduced the moments accountant
+as an internal tool for tracking privacy loss across multiple         Note that the expectation is taken over P , rather than over
+invocations of the Gaussian mechanism applied to random               Q as in the previous definition. It is possible, though, that
+subsets of the input dataset. The paper’s results are expressed       D1 (P kQ) thus defined is finite whereas Dα (P kQ) = +∞
+via a necessarily lossy translation of the accountant’s output        for all α > 1.
+(bounds on select moments of the privacy loss variable) to the          Likewise,
+language of (ǫ, δ)-differential privacy.                                                                             P (x)
+   Taken together, the works on Concentrated DP, zero-                               D∞ (P kQ) =       sup     log         .
+                                                                                                    x∈supp Q         Q(x)
+Concentrated DP, and the moments accountant point towards
+adopting Rényi differential privacy as an effective and flexible        For completeness, we reproduce in the Appendix proper-
+mechanism for capturing privacy guarantees of a wide variety          ties of the Rényi divergence important to the sequel: non-
+of algorithms and their combinations.                                 negativity, monotonicity, probability preservation, and a weak
+                                                                      triangle inequality (Propositions 8–11).
+OTHER RELAXATIONS . We briefly mention other relaxations                 The relationship between the Rényi divergence with α = ∞
+and generalizations of differential privacy.                          and differential privacy is immediate. A randomized mecha-
+   Under the indistinguishability-based Computational Differ-         nism f is ǫ-differentially private if and only if its distribution
+ential Privacy (IND-CDP) definition [3], the test of closeness        over any two adjacent inputs D and D′ satisfies
+between distributions on adjacent inputs is computationally
+bounded (all other definitions considered in this paper hold                              D∞ (f (D)kf (D′ )) ≤ ǫ.
+against an unbounded, information-theoretic adversary). The
+                                                                        It motivates exploring a relaxation of differential privacy
+IND-CDP notion allows much more accurate functionalities
+                                                                      based on the Rényi divergence.
+in the two-party setting [12]; in the traditional client-server
+setup there is a natural class of functionalities where the gap       Definition 4 ((α, ǫ)-RDP). A randomized mechanism f : D 7→
+between IND-CDP and (ǫ, δ)-DP is minimal [13], and there              R is said to have ǫ-Rényi differential privacy of order α, or
+are (contrived) examples where the computational relaxation           (α, ǫ)-RDP for short, if for any adjacent D, D′ ∈ D it holds
+permits tasks that are infeasible under information-theoretic         that
+definitions [14].                                                                         Dα (f (D)kf (D′ )) ≤ ǫ.
+   Several other works, most notably the Pufferfish and
+the coupled-worlds frameworks [15], [16], propose different           Remark 1. Similarly to the definition of differential privacy, a
+stability constraints on the output distribution of privacy-          finite value for ǫ-RDP implies that feasible outcomes of f (D)
+preserving mechanisms. Although they differ in what distri-           for some D ∈ D are feasible, i.e., have a non-zero density,
+butions are compared, their notion of closeness is the same as        for all inputs from D except for a set of measure 0. Assuming
+in (ǫ, δ)-DP.                                                         that this is the case, we let the event space be the support of
+                                                                      the distribution.
+             III. R ÉNYI DIFFERENTIAL PRIVACY                        Remark 2. The Rényi divergence can be defined for α smaller
+   We describe a generalization of the notion of differential         than 1, including negative orders. We are not using these orders
+privacy based on the concept of the Rényi divergence. Con-           in our definition of Rényi differential privacy.
+   The standard definition of differential privacy has been            By taking the logarithm of both sides and applying Jensen’s
+successful as a privacy measure because it simultaneously            inequality we obtain that
+meets several important criteria. We verify that the relaxed
+definition inherits many of the same properties. The results of         Ef (D) [log Rpost (D, D′ ) − log Rprior (D, D′ )] ≤
+this section are summarized in Table I.                                                                       Dα (f (D)kf (D′ )). (1)
+“BAD OUTCOMES ” GUARANTEE . A privacy definition is only             (This can also be derived by observing that
+as useful as its guarantee for data contributors. The simplest
+such assurance is the “bad outcomes” interpretation. Consider           Ef (D) [log Rpost (D, D′ ) − log Rprior (D, D′ )] =
+a person, concerned about some adverse consequences, de-                                                          D1 (f (D)kf (D′ ))
+liberating whether to withhold her record from the database.
+Let us say that some outputs of the mechanism are labeled            and by monotonicity of the Rényi divergence.)
+                                                                       Compare (1) with the guarantee of pure differential privacy,
+as “bad.” The differential privacy guarantee asserts that the
+                                                                     which states that log Rpost (D, D′ ) − log Rprior (D, D′ ) ≤ ǫ
+probability of observing a bad outcome will not change (either
+                                                                     everywhere, not just in expectation.
+way) by more than a factor of eǫ whether anyone’s record is
+part of the input or not (for appropriately defined “adjacent”       P OST- PROCESSING . A privacy guarantee that can be dimin-
+inputs). This is an immediate consequence of the definition of       ished by manipulating output is unlikely to be useful. Con-
+differential privacy, where the subset S is the union of bad         sider a randomized mapping g : R 7→ R′ . We observe that
+outcomes.                                                            Dα (P kQ) ≥ Dα (g(P )kg(Q)) by the analogue of the data
+   This guarantee is relaxed for Rényi differential privacy.        processing inequality [19, Theorem 9]. It means that if f (·)
+Concretely, if f is (α, ǫ)-RDP, then by Proposition 10:              is (α, ǫ)-RDP, so is g(f (·)). In other words, Rényi differential
+                                                                     privacy is preserved by post-processing.
+  e−ǫ Pr[f (D′ ) ∈ S]α/(α−1) ≤ Pr[f (D) ∈ S]
+                                                      (α−1)/α        P RESERVATION UNDER ADAPTIVE SEQUENTIAL COMPOSI -
+                               ≤ (eǫ Pr[f (D′ ) ∈ S])           .
+                                                                     TION . The property that makes possible modular construction
+  We discuss consequences of this relaxation in Section VII.         of differentially private algorithms is self-composition: if f (·)
+ROBUSTNESS TO AUXILIARY INFORMATION . Critical to the                is ǫ1 -differentially private and g(·) is ǫ2 -differentially private,
+adoption of differential privacy as an operationally useful          then simultaneous release of f (D) and g(D) is ǫ1 + ǫ2 -
+definition is its lack of assumptions on the adversary’s knowl-      differentially private. The guarantee even extends to when
+edge. More formally, the property is captured by the Bayesian        g is chosen adaptively based on f ’s output: if g is indexed
+interpretation of privacy guarantees, which compares the ad-         by elements of R and gX (·) is ǫ2 -differentially private for
+versary’s prior with the posterior.                                  any X ∈ R, then publishing (X, Y ), where X ∼ f (D) and
+   Assume that the adversary has a prior p(D) over the set           Y ∼ gX (D), is ǫ1 + ǫ2 -differentially private.
+of possible inputs D ∈ D, and observes an output X of an                We prove a similar statement for the composition of two
+ǫ-differentially private mechanism f . Its posterior satisfies the   RDP mechanisms.
+following guarantee for all pairs of adjacent inputs D, D′ ∈ D       Proposition 1. Let f : D 7→ R1 be (α, ǫ1 )-RDP and g : R1 ×
+and all X ∈ R:                                                       D 7→ R2 be (α, ǫ2 )-RDP, then the mechanism defined as
+                       p(D |X)       p(D)                            (X, Y ), where X ∼ f (D) and Y ∼ g(X, D), satisfies
+                                ≤ eǫ        .
+                           ′
+                       p(D |X)       p(D′ )                          (α, ǫ1 + ǫ2 )-RDP.
+In other words, evidence obtained from an ǫ-differentially           Proof. Let h : D 7→ R1 × R2 be the result of running f and g
+private mechanism does not move the relative probabilities           sequentially. We write X, Y , and Z for the distributions f (D),
+assigned to adjacent inputs (the odds ratio) by more than eǫ .       g(X, D), and the joint distribution (X, Y ) = h(D). X ′ , Y ′ ,
+   The guarantee implied by RDP is a probabilistic statement         and Z ′ are similarly defined if the input is D′ . Then
+about the change in the Bayes factor. Let the random variable
+R(D, D′ ) be defined as follows:                                     exp [(α − 1)Dα (h(D)kh(D′ ))]
+                                                                            Z
+                p(D′ |X)   p(X|D′ ) · p(D′ )                             =          Z(x, y)α Z ′ (x, y)1−α dx dy
+  R(D, D′ ) ∼            =                   ,                              ZR1 ×R
+                                                                                Z 2
+                p(D |X)    p(X|D ) · p(D )
+                                        where X ∼ f (D).                 =          (X(x)Y (x, y))α (X ′ (x)Y ′ (x, y))1−α dy dx
+                                                                             R1 R2
+                                                                                                 Z                           
+  It follows immediately from definition that the Rényi diver-
+                                                                            Z
+                                                                                    α ′     1−α               α ′       1−α
+gence of order α between P = f (D′ ) and Q = f (D) bounds                = X(x) X (x)                 Y (x, y) Y (x, y)     dy dx
+the α-th moment of the change in R:                                         ZR1                      R2
+
+                          α                                            ≤      X(x)α X ′ (x)1−α dx · exp((α − 1)ǫ2 )
+           Rpost (D, D′ )
+       
+                                                                              R1
+                               = EQ P (x)α Q(x)−α =
+                                                   
+   EQ                 ′
+          Rprior (D, D )                                                  ≤ exp((α − 1)ǫ1 ) exp((α − 1)ǫ2 )
+                              exp[(α − 1)Dα (f (D′ )kf (D))].             = exp((α − 1)(ǫ1 + ǫ2 )),
+from which the claim follows.                                         Rényi divergence, (∞, ǫ)-RDP implies (α, ǫ)-RDP for all
+                                                                      finite α.
+   Significantly, the guarantee holds whether the releases of f
+                                                                         In turn, an (α, ǫ)-RDP implies (ǫδ , δ)-differential privacy
+and g are coordinated or not, or computed over the same or
+                                                                      for any given probability δ > 0.
+different versions of the input dataset. It allows us to operate
+with a well-defined notion of a privacy budget associated with        Proposition 3 (From RDP to (ǫ, δ)-DP). If f is an (α, ǫ)-RDP
+an individual, which is a finite resource consumed with each          mechanism, it also satisfies (ǫ + log 1/δ
+                                                                                                         α−1 , δ)-differential privacy
+differentially private data release.                                  for any 0 < δ < 1.
+   Extending the concept of the privacy budget, we say that the
+Rényi differential privacy has a budget curve parameterized by       Proof. Take any two adjacent inputs D and D′ , and a subset
+the order α. We present examples illustrating this viewpoint          of f ’s range S. To show that f is (ǫ′ , δ)-differentially private,
+                                                                                           1
+in Section VI.                                                        where ǫ′ = ǫ + α−1     log 1/δ, we need to demonstrate that
+                                                                                          ǫ′
+                                                                      Pr[f (D) ∈ S] ≤ e Pr[f (D′ ) ∈ S] + δ. In fact, we prove a
+G ROUP PRIVACY. Although the definition of differential pri-                                                              ′
+                                                                      stronger statement that Pr[f (D) ∈ S] ≤ max(eǫ Pr[f (D′ ) ∈
+vacy constrains a mechanism’s outputs on pairs of adjacent            S], δ).
+inputs, its guarantee extends, in a progressively weaker form,           Recall that by Proposition 10
+to inputs that are farther apart. This property has two im-
+portant consequences. First, the differential privacy guarantee                 Pr[f (D) ∈ S] ≤ {eǫ Pr[f (D′ ) ∈ S}1−1/α .
+degrades gracefully if our assumptions about one person’s
+influence on the input are (somewhat) wrong. For example,             Denote Pr[f (D′ ) ∈ S] by Q and consider two cases.
+a single family contributing to a survey will likely share              Case I. eǫ Q > δ α/(α−1) . Continuing the above,
+many socio-economic, demographic, and health characteris-
+tics. Rather than collapsing, the differential privacy guarantee            Pr[f (D) ∈ S] ≤ {eǫ Q}1−1/α = eǫ Q · {eǫ Q}−1/α
+will scale down linearly with the number of family members.
+                                                                                            ≤ eǫ Q · δ −1/(α−1)
+Second, the group privacy property allows preprocessing input                                                    
+into a differentially private mechanism, possibly amplifying (in                                          log 1/δ
+                                                                                            = exp ǫ +               · Q.
+a controlled fashion) one record’s impact on the output of the                                             α−1
+computation.
+   We define group privacy using a notion of c-stable transfor-         Case II. eǫ Q ≤ δ α/(α−1) . This case is immediate since
+mation [20]. We say that g : D 7→ D′ is c-stable if g(A) and
+g(B) are adjacent in D′ implies that there exists a sequence of                     Pr[f (D) ∈ S] ≤ {eǫ Q}1−1/α ≤ δ,
+length c + 1 so that D0 = A, . . . , Dc = B and all (Di , Di+1 )
+                                                                      which completes the proof.
+are adjacent in D.
+   The standard notion of differential privacy satisfies the
+following. If f is ǫ-differentially private and g : D′ 7→ D is c-        A more detailed comparison between the notions of RDP
+stable, then f ◦g is cǫ-differentially private. A similar statement   and (ǫ, δ)-differential privacy that goes beyond these reduc-
+holds for Rényi differential privacy.                                tions is deferred to Section VII.
+
+Proposition 2. If f : D 7→ R is (α, ǫ)-RDP, g : D′ 7→ D is                      V. A DVANCED C OMPOSITION T HEOREM
+2c -stable and α ≥ 2c+1 , then f ◦ g is (α/2c , 3c ǫ)-RDP.
+                                                                         The main thesis of this section is that the Rényi differential
+Proof. We prove the statement for c = 1, the rest follows by
+                                                                      privacy curve of a composite mechanism is sufficient to draw
+induction.
+                                                                      non-trivial conclusions about its privacy guarantees, similar to
+  Define h = f ◦ g. Since g is 2-stable, it means that for any
+                                                                      the ones given by other advanced composition theorems, such
+adjacent D, D′ ∈ D′ there exist A ∈ D, so that g(D) and A,
+                                                                      as Dwork et al. [6] or Kairouz et al. [7]. Although our proof
+A and g(D′ ) are adjacent in D.
+                                                                      is structured similarly to Dwork et al. (for instance, Lemma 1
+  By Corollary 4 and monotonicity of the Rényi divergence,
+                                                                      is a direct generalization of [6, Lemma III.2]), it is phrased
+we have that h = f ◦ g satisfies
+                                                                      entirely in the language of Rényi differential privacy without
+                            α−1                                       making any (explicit) use of probability arguments.
+  Dα/2 (h(D)kh(D′ )) ≤          Dα (h(D)kh(A))+
+                            α−2                                       Lemma 1. If P and Q are such that D∞ (P kQ) ≤ ǫ and
+                                Dα−1 (h(A)kh(D′ )) ≤ 3ǫ.              D∞ (QkP ) ≤ ǫ, then for α ≥ 1
+
+                                                                                             Dα (P kQ) ≤ 2αǫ2 .
+                    IV. RDP AND (ǫ, δ)-DP
+                                                                      Proof. If α ≥ 1 + 1/ǫ, then
+   As we observed earlier, the definition of ǫ-differential
+privacy coincides with (∞, ǫ)-RDP. By monotonicity of the                       Dα (P kQ) ≤ D∞ (P kQ) = ǫ ≤ (α − 1)ǫ2 .
+  Property                                     Differential Privacy                               Rényi Differential Privacy
+
+                                               Pr[f (D) ∈ S] ≤   eǫ Pr[f (D ′ ) ∈ S]              Pr[f (D) ∈ S] ≤ (eǫ Pr[f (D ′ ) ∈ S])(α−1)/α
+  Change in probability of outcome S
+                                               Pr[f (D) ∈ S] ≥ e−ǫ Pr[f (D ′ ) ∈ S]               Pr[f (D) ∈ S] ≥ e−ǫ Pr[f (D ′ ) ∈ S]α/(α−1)
+                                               Rpost (D, D ′ )                                          Rpost (D, D ′ ) α
+                                                                                                                        
+  Change in the Bayes factor                                    ≤ eǫ always                       E                          ≤ exp[(α − 1)ǫ]
+                                               Rprior (D, D ′ )                                         Rprior (D, D ′ )
+  Change in log of the Bayes factor            |∆ log R(D, D ′ )| ≤ ǫ always                      E[∆ log R(D, D ′ )] ≤ ǫ
+  Post-processing                                                f is ǫ-DP (or (α, ǫ)-RDP) ⇒ g ◦ f is ǫ-DP (or (α, ǫ)-RDP, resp.)
+  Adaptive sequential composition (basic)                      f, g are ǫ-DP (or (α, ǫ)-RDP) ⇒ (f, g) is 2ǫ-DP (resp., (α, 2ǫ)-RDP)
+  Group privacy, pre-processing                       f is ǫ-DP (or (α, ǫ)-RDP), g is 2c -stable ⇒ f ◦ g is 2c ǫ-DP (resp., (α/2c , 3c ǫ)-RDP)
+
+                                                                  TABLE I
+                                       S UMMARY OF PROPERTIES SHARED BY DIFFERENTIAL PRIVACY AND RDP.
+
+
+
+
+   Consider the case when α < 1 + 1/ǫ. We first observe that                      The constant in Lemma 1 can be improved to .5 via a
+for any x > y > 0, λ = log(x/y), and 0 ≤ β ≤ 1/λ the                           substantially more involved analysis [10, Proposition 3.3] (see
+following inequality holds:                                                    also )
+                                                                               Proposition 4. Let f : D 7→ R be an adaptive composition of
+  xβ+1 y −β + x−β y β+1 = x · eβλ + y · e−βλ
+                                                                               n mechanisms all satisfying ǫ-differential privacy. Let D and
+          ≤ x(1 + βλ + (βλ)2 ) + y(1 − βλ + (βλ)2 )                            D′ be two adjacent inputs. Then for any S ⊂ R:
+                       = (1 + (βλ)2 )(x + y) + βλ(x − y). (2)                                           p                           
+                                                                                 Pr[f (D) ∈ S] ≤ exp 2ǫ n log 1/ Pr[f (D′ ) ∈ S]
+Since all terms of the right hand side of (2) are positive, the
+inequality applies if λ is an upper bound on log x/y, which                                                                     · Pr[f (D′ ) ∈ S].
+we use in the argument below.
+                                                                               Proof. By applying Lemma 1 to the Rényi differential privacy
+                                                                               curve of the underlying mechanisms and Proposition 1 to their
+   exp[(α − 1)Dα (P kQ)]                                                       composition, we find that for all α ≥ 1
+         Z
+       =     P (x)α Q(x)1−α dx                                                                  Dα (f (D)kf (D′ )) ≤ 2αnǫ2 .
+         ZR
+
+       ≤
+             
+              P (x)α Q(x)1−α + Q(x)α P (x)1−α dx − 1                             Denote Pr[f (D′ ) ∈ S] by Q and consider two cases.
+             R                                                                 pCase I: log √ 1/Q ≥ ǫ2 n. Choosing with some foresight α =
+                                (by nonnegativity of Dα (QkP ))                  log 1/Q/(ǫ n) ≥ 1, we have by Proposition 10 (probability
+             Z
+                                                                               preservation):
+                  (1 + (α − 1)2 ǫ2 )(P (x) + Q(x))+
+                 
+        ≤
+             R                                                                                                                           1−1/α
+                 (α − 1)ǫ|P (x) − Q(x)| dx − 1                                    Pr[f (D) ∈ S] ≤ {exp[Dα (f (D)kf (D′ )] · Q}
+                                  (by (2) for β = α − 1 ≤ 1/ǫ)                                    ≤ exp(2(α − 1)nǫ2 ) · Q1−1/α
+                           2 2
+                                                                                                        p                     
+        = 1 + 2(α − 1) ǫ + (α − 1)ǫkP − Qk1 .                                                     < exp ǫ n log 1/Q − (log Q)/α · Q
+                                                                                                        p              
+                                                                                                  = exp 2ǫ n log 1/Q · Q.
+Taking the logarithm of both sides and using that log(1+x) <
+x for positive x we find that                                                     Case II: log 1/Q < ǫ2 n. This case follows trivially, since
+                                                                               the right hand side of the claim is larger than 1:
+             Dα (P kQ) ≤ 2(α − 1)ǫ2 + ǫkP − Qk1 .                     (3)            p             
+                                                                                exp 2ǫ n log 1/Q · Q ≥ exp (2 log 1/Q) · Q = 1/Q > 1.
+  Observe that
+             Z
+  kP − Qk1 = |P (x) − Q(x)| dx
+                                                                                 The notable feature of Proposition 4 is that its privacy
+                          max(P (x), Q(x))
+      Z
+    =    min(P (x), Q(x))                  − 1 dx                              guarantee—bounded probability gain—comes in the form that
+       R                  min(P (x), Q(x))                                     depends on the event’s probability. We discuss this type of
+                             ≤ min(2, eǫ − 1) ≤ 2ǫ2 .                          guarantee in Section VII.
+                                                                                 The following corollary gives a more conventional (ǫ, δ)
+Plugging the bound on kP −Qk1 into (3) completes the proof.                    variant of advanced composition.
+  The claim for α = 1 follows by continuity.
+Corollary 1. Let f be the composition of the n ǫ-differentially      A. Randomized response
+private mechanisms. Let 0 < δ < 1 be such that log(1/δ) ≥
+ǫ2 n. Then f satisfies (ǫ′ , δ)-differential privacy where             Let f be a predicate, i.e., f : D 7→ {0, 1}. The Randomize
+                              p                                      Response mechanism for f is defined as
+                     ǫ′ , 4ǫ 2n log(1/δ).
+                                                                                        (
+Proof. Let D and D′ be two adjacent inputs, and S be some                                   f (D)         with probability p
+                                                                         RRp f (D) ,                                             .
+subset of the range of f . To argue (ǫ′ , δ)-differential privacy                           1 − f (D)     with probability 1 − p
+of f , we need to verify that
+                                ′                                      The following statement can be verified by direct application
+           Pr[f (D) ∈ S] ≤ eǫ Pr[f (D′ ) ∈ S] + δ.
+                                                                     of the definition of Rényi differential privacy:
+In fact, we prove a somewhat stronger statement, namely that
+                        ′                                            Proposition 5. Randomized Response mechanism RRp (f )
+Pr[f (D) ∈ S] ≤ max(eǫ Pr[f (D′ ) ∈ S], δ).
+                                                                     satisfies
+   By Proposition 4
+                                                                                                                  
+                       p                                                     1       α       1−α          α 1−α
+                                                                                                                  
+   Pr[f (D) ∈ S] ≤ exp 2ǫ n log 1/ Pr[f (D′ ) ∈ S]                       α,       log p (1 − p)    + (1 − p) p       -RDP
+                                                                              α−1
+                                             · Pr[f (D′ ) ∈ S].
+                                                                     if α > 1, and
+  Denote Pr[f (D′ ) ∈ S] by Q and consider two cases.
+  Case I: 8 log 1/δ > log 1/Q. Then                                                                           
+                                                                                                          p
+                                                                                      α, (2p − 1) log              -RDP
+                                                                                                         1−p
+                              p              
+         Pr[f (D) ∈ S] ≤ exp 2ǫ n log 1/Q · Q
+                              p              
+                        < exp 2ǫ 8n log 1/δ · Q                      if α = 1.
+                                   (by 8 log 1/δ > log 1/Q)
+                         = exp (ǫ′ ) · Q.
+                                                                     B. Laplace noise
+  Case II: 8 log 1/δ ≤ log 1/Q. Then
+                             p                                        Through the rest of this section we assume that f : D 7→ R
+     Pr[f (D) ∈ S] ≤ exp 2ǫ n log 1/Q · Q                            is a function of sensitivity 1, i.e., for any two adjacent D, D′ ∈
+                             p                                     D: |f (D) − f (D′ )| ≤ 1.
+                     ≤ exp 2 log 1/δ · log 1/Q · Q                      Define the Laplace mechanism for f of sensitivity 1 as
+                                      (since log(1/δ) ≥ ǫ2 n)
+                            p              
+                     ≤ exp     1/2 log 1/Q · Q                                        Lλ f (D) = f (D) + Λ(0, λ),
+                                 (since 8 log 1/δ ≤ log 1/Q)
+                                √
+                                                                     where Λ(µ, λ) is Laplace distribution with mean µ and scale
+                      = Q1−1/ 2 ≤ Q1/8                                                                             1
+                                                                     λ, i.e., its probability density function is 2λ exp(−|x − µ|/λ).
+                      ≤ δ.                                 (ditto)
+                                                                        To derive the RDP budget curve for the exponential mech-
+                                                                     anism we compute the Rényi divergence for Laplace distribu-
+                                                                     tion and its offset.
+Remark 3. The condition log(1/δ) ≥ ǫ2 n corresponds to the           Proposition 6. For any α ≥ 1 and λ > 0:
+                            √ of the advanced composition
+so-called “high privacy” regime
+theorem [7], where ǫ′ < (1+ 2) log(1/δ). Since δ is typically                                                                   
+chosen to be small, say, less than 1%, it covers the case of                                   1                α           α−1
+                                                                       Dα (Λ(0, λ)kΛ(1, λ)) =     log                exp
+ǫ′ < 11. In other words, if log(1/δ) > ǫ2 n, this and other                                   α−1             2α − 1          λ
+composition theorems are unlikely to yield strong bounds.
+                                                                                                                            
+                                                                                                            α−1          −α
+                                                                                                          +        exp          .
+                                                                                                            2α − 1        λ
+                  VI. BASIC M ECHANISMS
+   In this section we analyze Rényi differential privacy of three   Proof. For continuous distributions P and Q defined over the
+basic mechanisms and their self-composition: randomized              real interval with densities p and q
+response, Laplace and Gaussian noise addition. The results
+                                                                                                        Z ∞
+are summarized in Table II and plotted for select parameters                               1
+in Figures 1 and 2.                                                           Dα (P kQ) =     log             p(x)α q(x)1−α dx.
+                                                                                          α−1           −∞
+   Mechanism                        Differential Privacy             Rényi Differential Privacy for α
+                                                                               1
+                                                                                  log pα (1 − p)1−α + (1 − p)α p1−α
+                                                                                                                    
+                                          p                          α > 1: α−1
+   Randomized Response               log 1−p                                                p
+                                                                     α = 1: (2p − 1) log 1−p
+                                                                                      n                                  o
+                                                                     α > 1: α−11
+                                                                                  log 2α−1α
+                                                                                              exp( α−1     α−1
+                                                                                                       ) + 2α−1 exp(− α )
+   Laplace Mechanism                1/λ                                                              λ                λ
+                                                                     α = 1: 1/λ + exp(−1/λ) − 1 = .5/λ2 + O(1/λ3 )
+   Gaussian Mechanism               ∞                                α/(2σ2 )
+
+                                                              TABLE II
+                                          S UMMARY OF RDP PARAMETERS FOR BASIC MECHANISMS .
+
+
+
+                                           1
+   To compute the integral for p(x) = 2λ     exp(−|x|/λ) and       where N (0, σ 2 ) is normally distributed random variable with
+          1
+q(x) = 2λ exp(−|x − 1|/λ), we evaluate it separately over          standard deviation σ 2 and mean 0.
+the intervals (−∞, 0], [0, 1] and [1, +∞].                            The following statement is a closed-form expression of the
+   Z +∞                                                            Rényi divergence between a Gaussian and its offset (for a more
+         p(x)α q(x)1−α dx =                                        general version see [19], [21]).
+    −∞
+              1
+                 Z 0                                               Proposition 7. Dα (N (0, σ 2 )kN (µ, σ 2 )) = αµ2 /(2σ 2 ).
+                      exp(αx/λ + (1 − α)(x − 1)/λ) dx
+             2λ −∞                                                 Proof. By direct computation we verify that
+                 Z 1
+              1
+          +          exp(−αx/λ + (1 − α)(x − 1)/λ) dx                   Dα (N (0, σ 2 )kN (µ, σ 2 ))
+             2λ 0                                                                          Z ∞
+                 Z +∞                                                            1                   1
+              1                                                             =          log         √ exp(−αx2 /(2σ 2 ))
+          +            exp(−αx/λ − (1 − α)(x − 1)/λ) dx                       α−1           −∞   σ    2π
+             2λ 1
+             1                                                                         · exp(−(1 − α)(x − µ)2 /(2σ 2 )) dx
+       =        exp((α − 1)/λ)                                                   1           1
+                                                                                                   Z ∞
+             2                                                              =          log √             exp[(−x2 +
+                  1                                                           α−1          σ 2π −∞
+          +             (exp((α − 1)/λ) − exp(−α/λ))
+             2(2α − 1)                                                                 2(1 − α)µx − (1 − α)µ2 )/(2σ 2 )] dx
+             1                                                                             ( √                                )
+          + exp(−α/λ)                                                            1           σ 2π          2       2     2
+                                                                                                                            
+             2                                                              =          log    √ exp (α − α)µ /(2σ )
+            α                          α−1                                    α−1            σ 2π
+       =          exp((α − 1)/λ) +           exp(−α/λ),
+          2α − 1                      2α − 1                                = αµ2 /(2σ 2 ).
+from which the claim follows.
+   Since the Laplace mechanism is additive, the Rényi diver-
+gence between Lλ f (D) and Lλ f (D′ ) depends only on α               The following corollary is immediate:
+and the distance |f (D) − f (D′ )|. Proposition 6 implies the
+                                                                   Corollary 3. If f has sensitivity 1, then the Gaussian mech-
+following:
+                                                                   anism Gσ f satisfies (α, α/(2σ 2 ))-RDP.
+Corollary 2. If real-valued function f has sensitiv-
+                                                                      Observe that the RDP budget curve for the Gaussian mech-
+ity 1, then  the Laplace mechanism Lλof satisfies (α,
+  1
+       n
+           α      α−1    α−1        α                              anism is particularly simple—a straight line (Figure 1). Recall
+α−1 log 2α−1 exp( λ ) + 2α−1 exp(− λ ) )-RDP.                      that the (adaptive) composition of RDP mechanisms satisfies
+  Predictably,                                                     Rényi differential privacy with the budget curve that is the sum
+                                                                   of the mechanisms’ budget curves. It means that a composition
+                                                          1        of Gaussian mechanisms will behave, privacy-wise, “like” a
+   lim Dα (Λ(0, λ)kΛ(1, λ)) = D∞ (Λ(0, λ)kΛ(1, λ)) =        .
+  α→∞                                                     λ        Gaussian mechanism. Concretely, a composition of n Gaussian
+This is, of course, consistent with the Laplace mechanism sat-     mechanisms each with parameter σ will have√the RDP curve
+isfying 1/λ-differential privacy. The other extreme evaluates      of a Gaussian mechanism with parameter σ/ n.
+to the following expression limα→1 Dα (Λ(0, λ)kΛ(1, λ)) =
+1/λ + exp(−1/λ) − 1, which is well approximated by .5/λ2           D. Privacy of basic mechanisms under composition
+for large λ.                                                          The “bad outcomes” interpretation of Rényi differential
+C. Gaussian noise                                                  privacy ties the probabilities of seeing the same outcome
+                                                                   under runs of the mechanism applied to adjacent inputs. The
+  Assuming, as before, that f is a real-valued function, the
+                                                                   dependency of the upper bound on the increase in probability
+Gaussian mechanism for approximating f is defined as
+                                                                   on its initial value is complex, especially compared to the
+                 Gσ f (D) = f (D) + N (0, σ 2 ),                   standard differential privacy guarantee. The main advantage
+                                     Randomized Response                                     Laplace Mechanism                                    Gaussian Mechanism
+                      2.5
+                                                               p = 0.55                                           1/λ = 0.25                                                 σ=4
+                      2.0                                      p = 0.6                                            1/λ = 0.5                                                  σ=3
+                                                               p = 0.75                                           1/λ = 1.0                                                  σ=2
+                      1.5
+      ǫ
+
+
+
+
+                                                                                ǫ
+
+
+
+
+                                                                                                                                     ǫ
+                      1.0
+
+
+                      0.5
+
+
+                      0.0
+                            1          4                   7              10        1         4                   7            10        1          4                   7          10
+                                                 α                                                      α                                                     α
+
+
+                                        Fig. 1. (α, ǫ)-Rényi differential privacy budget curve for three basic mechanisms with varying parameters.
+
+
+
+
+                                        Pr[S] = 10−6                                           Pr[S] = 10−3                                         Pr[S] = 10−1
+
+                                                                                                                                                                  Naı̈ve bound
+                                                                                                                                                                  Generic Rényi
+                      101
+Randomized Response
+
+
+
+
+                                                                                                                                                                  Generic (ǫ, δ)
+                                                                                                                                                                  RDP analysis
+
+
+
+
+                      100
+                            1   50         100       150       200        250       1   50        100       150       200      250       1   50         100       150       200    250
+
+
+
+                                        Pr[S] = 10−6                                           Pr[S] = 10−3                                         Pr[S] = 10−1
+
+                                                                                                                                                                  Naı̈ve bound
+                                                                                                                                                                  Generic Rényi
+                        1
+Laplace Mechanism
+
+
+
+
+                      10
+                                                                                                                                                                  Generic (ǫ, δ)
+                                                                                                                                                                  RDP analysis
+
+
+
+
+                      100
+                            1   50         100       150       200        250       1   50        100       150       200      250       1   50         100       150       200    250
+
+
+
+Fig. 2. Various privacy guarantees of the randomized response with parameter p = 51% (top row) and the Laplace mechanism with parameter λ = 20
+(bottom row) under self-composition. The x-axis is the number of compositions (1–250). The y-axis, in log scale, is the upper bound on the multiplicative
+increase in probability of event S, where S’s initial mass is either 10−6 (left), 10−3 (center), or .1 (right). The four plot lines are the “naı̈ve” nǫ bound
+(blue); optimal choice (ǫ, δ) in the standard advanced composition theorem (red); generic bound of Proposition 4 (blue); optimal choice of α in Proposition 10
+(cyan).
+of this more involved analysis is that for most parameters the     BASELINE - DEPENDENT GUARANTEES . The Rényi differen-
+bound becomes tighter.                                             tial privacy bound gets weaker for less likely outcomes. For
+   In this section we compare numerical bounds for several         instance, if f is a (10.0, .1)-RDP mechanism, an event of
+analyses of self-composed mechanisms (see Figure 2), pre-          probability .5 under f (D) can be as large as .586 and as
+sented as three sets of graphs, where Pr[f (D) ∈ S] takes          small as .419 under f (D′ ). For smaller events the range is (in
+values 10−6 , 10−3 , and 10−1 .                                    relative terms) wider. If the probability under f (D) is .001,
+   Each of the six graphs in Figure 2 (three probability           then Pr[f (D′ ) ∈ S] ∈ [.00042, 0.00218]. For Pr[f (D) ∈
+values × {randomized response, Laplace}) plots bounds in           S] = 10−6 the range is wider still: Pr[f (D′ ) ∈ S] ∈
+logarithmic scale on the relative increase in probability of S     [.195 · 10−6 , 4.36 · 10−6 ].
+(i.e., Pr[f (D′ ) ∈ S]/ Pr[f (D) ∈ S]) offered by four analyses.      Contrasted with the pure ǫ-differential privacy this type
+The first, “naı̈ve”, bound follows from the basic composition      of guarantee is conceptually weaker and more onerous in
+theorem for differential privacy and, as expected, is very         application: in order to decide whether the increased risk is
+pessimistic for all but a handful of parameters. A tighter,        tolerable, one is required to estimate the baseline risk first.
+advanced composition theorem [6], gives a choice of δ, from           However, in comparison with (ǫ, δ)-DP the analysis via
+which one computes ǫ′ so that the n-fold composition satisfies     Rényi differential privacy is simpler and, especially for prob-
+(ǫ′ , δ)-differential privacy. The second curve plots the bound    abilities that are smaller than δ, leads to stronger bounds.
+for the optimal (tightest) choice of (ǫ′ , δ). Two other bounds    The reason is that (ǫ, δ)-differential privacy often arises as
+come from Rényi differential privacy analysis: our generic        a result of some analysis that implicitly comes with an ǫ-δ
+advanced composition theorem (Proposition 4) and the bound         tradeoff. Finding an optimal value of (ǫ, δ) given the baseline
+of Proposition 10 for the optimal combination of (α, ǫ) from       risk may be non-trivial, especially in closed form. Contrast the
+the RDP curve of the composite mechanism.                          following two, basically equivalent, statements of advanced
+   Several observations are in order. The RDP-specific analysis    composition theorems (Proposition 4 and its Corollary 1):
+for both mechanisms is tighter than all generic bounds whose             Let f : D 7→ R be an adaptive composition of n
+only input is the mechanism’s differential privacy parameter.            mechanisms all satisfying ǫ-differential privacy for
+On the other hand, our version of the advanced composition               ǫ ≤ 1. Let D and D′ be two adjacent inputs. Then
+bound (Proposition 4) is consistently outperformed by the                for any S ⊂ R, by Proposition 4:
+standard (ǫ, δ)-form of the composition theorem, where δ is                                         p                           
+chosen optimally. We elaborate on this distinction in the next              Pr[f (D′ ) ∈ S] ≤ exp 2ǫ n log 1/ Pr[f (D) ∈ S]
+section.
+                                                                                                          · Pr[f (D) ∈ S].
+                      VII. D ISCUSSION                                  or, by Corollary 1,
+   Rényi differential privacy is a natural relaxation of the                                    p            
+standard notion of differential privacy that preserves many                Pr[f (D′ ) ∈ S] ≤ exp 4ǫ 2n log 1/δ
+of its essential properties. It can most directly be compared                                         · Pr[f (D) ∈ S] + δ,
+with (ǫ, δ)-differential privacy, with which it shares several
+important characteristics.                                              where 0 < ǫ, δ < 1 such that log(1/δ) ≥ ǫ2 n.
+                                                                      Given some value of baseline risk Pr[f (D) ∈ S], which
+P ROBABILISTIC PRIVACY GUARANTEE . The standard “bad
+                                                                   formulation is easier to interpret? We argue that it is the
+outcomes” guarantee of ǫ-differential privacy is independent
+                                                                   former, since the (ǫ, δ) form has a free parameter (δ) that
+of the probability of a bad outcome: it may increase only by
+                                                                   ought to be optimized in order to extract a tight bound that
+a factor of exp(ǫ). Its relaxation, (ǫ, δ)-differential privacy,
+                                                                   Proposition 4 gives directly.
+allows for an additional δ term, which allows for a complete
+                                                                      The use of (ǫ, δ) bounds gets even more complex if we con-
+privacy compromise with probability δ.
+                                                                   sider a composition of heterogeneous mechanisms. It brings
+   In stark contrast, Rényi differential privacy even with very
+                                                                   us to the last point of comparison between (ǫ, δ)- and Rényi
+weak parameters never allows a total breach of privacy with
+                                                                   differential privacy measures.
+no residual uncertainty. The following analysis quantifies this
+assurance.                                                         K EEPING TRACK OF ACCUMULATED PRIVACY LOSS . A finite
+   Let f be (α, ǫ)-RDP with α > 1. Recall that for                 privacy budget associated with an individual is an intuitive and
+any two adjacent inputs D and D′ , and an arbitrary prior          appealing concept, to which ǫ-differential privacy gives a rig-
+p the odds function R(D, D′ ) ∼ p(D)/p(D′ ) satisfies            orous mathematical expression. Cumulative loss of differential
+                    oα−1
+                                                                   privacy over the cause of a mechanism run, a protocol, or one’s
+    n
+      Rpost (D,D′ )
+E Rprior    (D,D )
+                ′         ≤ exp((α − 1)ǫ). By Markov’s in-
+                                                                   lifetime can be tracked easily thanks to the additivity property
+equality Pr[Rpost (D, D′ ) > βRprior (D, D′ )] < eǫ /β 1/(α−1) .   of differential privacy. Unfortunately, doing so naı̈vely likely
+For instance, if α = 2, the probability that the ratio between     exaggerates privacy loss, which grows sublinearly in the num-
+two posteriors increases by more than the β factor drops off       ber of queries with all but negligible probability (via advanced
+as O(1/β).                                                         composition theorems).
+                    100                                                                                                                                          64
+                                               S = 10−6                                                                               optimal α, S = .1
+                                                                                                                                      restricted α, S = .1
+                                                                                                                                                                 32
+                                                                                                                                      optimal α, S = 10−3
+                                                                                                                                      restricted α, S = 10−3
+                                                                                                                                      optimal α, S = 10−6        16
+probability ratio
+
+
+
+
+                                                                                                                                      restricted α, S = 10−6
+                                                             S = 10−3
+                                                                                                                                                                 8
+
+
+
+
+                                                                                      α
+                     50
+                                                                                                                                                                 6
+                                                                                                                                                                 5
+                                                                                                                                                                 4
+                                                                                                                                                                 3
+                                                                                                                                                                 2.5
+                                                                                                                                                                 2
+                                                                                                                                                                 1.75
+                                                             S = .1                                                                                              1.5
+
+                      1
+                          20          40                60       80           100                     20            40                60          80           100
+                                           iterations                                                                    iterations
+
+
+
+    Fig. 3. Left: Bounds on the ratio Pr[f (D ′ ) ∈ S]/ Pr[f (D) ∈ S] for Pr[f (D) ∈ S] ∈ {.1, 10−3 , 10−6 } for up to 100 iterations of a mixed mechanism
+    (randomized response with p = .52, Laplace with λ = 20 and Gaussian with σ = 10). Each bound is computed twice: once for an optimal choice of α and
+    once for α restricted to {1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 16, 32, 64, +∞}. The curves for two choices of α are nearly identical. Right: corresponding values of
+    α in log scale.
+
+
+
+       Critically, applying advanced composition theorems breaks                      three basic mechanisms: randomized response, Gaussian, and
+    the convenient abstraction of privacy as a non-negative real                      Laplace. Its RDP curve is given, in the closed form, by
+    number. Instead, the guarantee comes in the (ǫ, δ) form that                      application of the basic composition rule to RDP curves of
+    effectively corresponds to a single point on an implicitly                        the underlying mechanisms (Table II). The privacy guarantee
+    defined curve. Composition of multiple, heterogeneous mech-                       is presented in Figure 3 for three values of the baseline risk:
+    anisms makes applying the composition rule optimally much                         .1, .001, and 10−6 . For each set of parameters two curves
+    more challenging, as one may choose various (ǫ, δ) points to                      are plotted: one for an optimal value of α from (1, +∞],
+    represent their privacy (in the analysis, not during the mech-                    the other for an optimal α restricted to the set of 13 values
+    anisms’ run time!). It begs the question of how to represent                      {1.5, 1.75, 2, 2.5, 3, 4, 5, 6, 8, 16, 32, 64, +∞}. The two curves
+    the privacy guarantee of a complex mechanism: distilling it                       are nearly identical, which illustrates our thesis that reporting
+    to a single number throws away valuable information, while                        RDP curves for a restricted set of α’s preserves tightness of
+    publishing the entire (ǫ, δ) curve shifts the problem to the                      privacy analysis.
+    aggregation step. (See Kairouz et al. [7] for an optimal bound
+    on composition of homogeneous mechanisms and Murtagh                                       VIII. C ONCLUSIONS AND O PEN Q UESTIONS
+    and Vadhan [8] for hardness results and an approximation                             We put forth the proposition that Rényi divergence yields
+    scheme for composition of mechanisms with heterogeneous                           useful insight into analysis of differentially private mecha-
+    privacy guarantees.)                                                              nisms. Among our findings
+       Rényi differential privacy restores the concept of a pri-                        • Rényi differential privacy (RDP) is a natural generaliza-
+    vacy budget, thanks to its composition rule: RDP curves for                            tion of pure differential privacy.
+    composed mechanisms simply add up. Importantly, the α’s                              • RDP shares, with some adaptations, many properties that
+    of (α, ǫ)-Rényi differential privacy do not change. If RDP                            make differential privacy a useful and versatile tool.
+    statements are reported for a common set of α’s (which                               • RDP analysis of Gaussian noise is particularly simple.
+    includes +∞, to keep track of pure differential privacy), RDP                        • A composition theorem can be proved based solely on
+    of the aggregate is the sum of the reported vectors. Since the                         the properties of RDP, which implies that RDP packs
+    composition theorem of Proposition 4 takes as an input the                             sufficient information about a composite mechanism as
+    mechanism’s RDP curve, it means that the sublinear loss of                             to enable its analysis without consideration of its compo-
+    privacy as a function of the number of queries will still hold.                        nents.
+       For an example of this approach we tabulate the bound                             • Furthermore, an RDP curve may be sampled in just a few
+    on privacy loss for an iterative mechanism consisting of                               points to provide useful guarantees for a wide range of
+       parameters. If these points are chosen consistently across                [14] M. Bun, Y. Chen, and S. P. Vadhan, “Separating computational and
+       multiple mechanisms, this information can be used to                           statistical differential privacy in the client-server model,” in Theory
+                                                                                      of Cryptography—14th International Conference, TCC 2016-B, Part I,
+       estimate aggregate privacy loss.                                               M. Hirt and A. D. Smith, Eds., 2016, pp. 607–634.
+   Naturally, multiple questions remain open. Among those                        [15] D. Kifer and A. Machanavajjhala, “Pufferfish: A framework for math-
+                                                                                      ematical privacy definitions,” ACM Transactions on Database Systems
+   • As Lemma 1 demonstrates, the RDP curve of a differen-                            (TODS), vol. 39, no. 1, pp. 3:1–3:36, Jan. 2014.
+     tially private mechanism is severely constrained. Making                    [16] R. Bassily, A. Groce, J. Katz, and A. D. Smith, “Coupled-worlds privacy:
+                                                                                      Exploiting adversarial uncertainty in statistical data privacy,” in 54th
+     fuller use of these constraints is a promising direction,                        Annual IEEE Symposium on Foundations of Computer Science, 2013,
+     in particular towards formal bounds on tightness of RDP                          pp. 439–448.
+     guarantees from select α values.                                            [17] J. C. Duchi, M. I. Jordan, and M. J. Wainwright, “Local privacy
+                                                                                      and statistical minimax rates,” in 54th Annual IEEE Symposium on
+   • Proposition 10 (probability preservation) is not tight when
+                                                                                      Foundations of Computer Science (FOCS). IEEE, Oct. 2013, pp. 429–
+     Dα (P kQ) → 0. We expect that P (A) → Q(A) but the                               438.
+     bound does not improve beyond P (A)(α−1)/α .                                [18] A. Rényi, “On measures of entropy and information,” in Proceedings of
+                                                                                      the fourth Berkeley symposium on mathematical statistics and probabil-
+                                                                                      ity, vol. 1, 1961, pp. 547–561.
+                        ACKNOWLEDGMENTS                                          [19] T. van Erven and P. Harremoës, “Rényi divergence and Kullback-Leibler
+                                                                                      divergence,” IEEE Transactions on Information Theory, vol. 60, no. 7,
+  We would like to thank Cynthia Dwork, Kunal Talwar, Salil                           pp. 3797–3820, Jul. 2014, arxiv.org/abs/1206.2459.
+Vadhan, and Li Zhang for numerous fruitful discussions, the                      [20] F. D. McSherry, “Privacy integrated queries: an extensible platform
+CSF reviewers, Nicolas Papernot and Damien Desfontaines for                           for privacy-preserving data analysis,” in Proceedings of the 2009 ACM
+                                                                                      SIGMOD International Conference on Management of Data, C. Binnig
+their helpful comments, and Mark Bun and Thomas Steinke                               and B. Dageville, Eds., 2009, pp. 19–30.
+for sharing a draft of [10].                                                     [21] F. Liese and I. Vajda, Convex Statistical Distances. Teubner, 1987.
+                                                                                 [22] O. Shayevitz, “On Rényi measures and hypothesis testing,” in 2011 IEEE
+                                                                                      International Symposium on Information Theory Proceedings. IEEE,
+                             R EFERENCES                                              Jul. 2011, pp. 894–898.
+                                                                                 [23] A. Langlois, D. Stehlé, and R. Steinfeld, “GGHLite: More efficient
+ [1] C. Dwork, F. McSherry, K. Nissim, and A. D. Smith, “Calibrating noise
+                                                                                      multilinear maps from ideal lattices,” in Advances in Cryptology—
+     to sensitivity in private data analysis,” in Third Theory of Cryptography
+                                                                                      EUROCRYPT 2014, P. Q. Nguyen and E. Oswald, Eds. Springer Berlin
+     Conference, TCC 2006, S. Halevi and T. Rabin, Eds. Springer, 2006,
+                                                                                      Heidelberg, 2014, pp. 239–256.
+     pp. 265–284.
+                                                                                 [24] V. Lyubashevsky, C. Peikert, and O. Regev, “On ideal lattices and
+ [2] C. Dwork, K. Kenthapadi, F. McSherry, I. Mironov, and M. Naor, “Our
+                                                                                      learning with errors over rings,” J. ACM, vol. 60, no. 6, pp. 43:1–43:35,
+     data, ourselves: Privacy via distributed noise generation,” in Advances
+                                                                                      Nov. 2013.
+     in Cryptography—Eurocrypt ’06. Springer, 2006, pp. 486–503.
+                                                                                 [25] Y. Mansour, M. Mohri, and A. Rostamizadeh, “Multiple source adapta-
+ [3] I. Mironov, O. Pandey, O. Reingold, and S. P. Vadhan, “Computa-
+                                                                                      tion and the Rényi divergence,” in UAI ’09 Proceedings of the Twenty-
+     tional differential privacy,” in Advances in Cryptology—CRYPTO 2009,
+                                                                                      Fifth Conference on Uncertainty in Artificial Intelligence. AUAI Press,
+     S. Halevi, Ed., 2009, pp. 126–142.
+                                                                                      Jun. 2009, pp. 367–374.
+ [4] A. De, “Lower bounds in differential privacy,” in Theory of
+     Cryptography—9th Theory of Cryptography Conference, TCC 2012,
+     R. Cramer, Ed., 2012, pp. 321–338.                                                                          A PPENDIX
+ [5] F. D. McSherry, “How many secrets do you have?”
+     https://github.com/frankmcsherry/blog/blob/master/posts/2017-02-08.md,        For comprehensive exposition of properties of the Rényi
+     Feb. 2017.
+ [6] C. Dwork, G. N. Rothblum, and S. Vadhan, “Boosting and differential         divergence we refer to two recent papers [19], [22]. Here we
+     privacy,” in 51st Annual IEEE Symposium on Foundations of Computer          recall and re-prove several facts useful for our analysis.
+     Science (FOCS), L. Trevisan, Ed. IEEE, Oct. 2010, pp. 51–60.
+ [7] P. Kairouz, S. Oh, and P. Viswanath, “The composition theorem for dif-      Proposition 8 (Non-negativity). For 1 ≤ α and arbitrary
+     ferential privacy,” in Proceedings of the 32nd International Conference
+     on Machine Learning (ICML), 2015, pp. 1376–1385.
+                                                                                 distributions P, Q
+ [8] J. Murtagh and S. Vadhan, “The complexity of computing the optimal                                       Dα (P kQ) ≥ 0.
+     composition of differential privacy,” in Theory of Cryptography—13th
+     International Conference, TCC 2016-A, Part I, E. Kushilevitz and
+     T. Malkin, Eds., 2016, pp. 157–175.                                         Proof. Assume that α > 1. Define φ(x) , x1−α and g(x) ,
+ [9] C. Dwork and G. N. Rothblum, “Concentrated differential privacy,”           Q(x)/P (x). Then
+     CoRR, vol. abs/1603.01887, 2016.
+[10] M. Bun and T. Steinke, “Concentrated differential privacy: Simplifica-                                      1
+     tions, extensions, and lower bounds,” in Theory of Cryptography—14th                       Dα (P kQ) =         log EP [φ(g(x))]
+     International Conference, TCC 2016-B, Part I, M. Hirt and A. D. Smith,                                     α−1
+     Eds., 2016, pp. 635–658.                                                                                    1
+[11] M. Abadi, A. Chu, I. Goodfellow, H. B. McMahan, I. Mironov,
+                                                                                                              ≥     log φ(EP [g(x)])
+                                                                                                                α−1
+     K. Talwar, and L. Zhang, “Deep learning with differential privacy,” in
+     Proceedings of the 2016 ACM SIGSAC Conference on Computer and                                            =0
+     Communications Security (CCS). ACM, 2016, pp. 308–318.
+[12] A. McGregor, I. Mironov, T. Pitassi, O. Reingold, K. Talwar, and S. Vad-    by the Jensen inequality applied to the convex function φ. The
+     han, “The limits of two-party differential privacy,” in 51st Annual IEEE    case of α = 1 follows by letting φ to be log 1/x.
+     Symposium on Foundations of Computer Science (FOCS), L. Trevisan,
+     Ed. IEEE, 2010, pp. 81–90.
+[13] A. Groce, J. Katz, and A. Yerukhimovich, “Limits of computa-                Proposition 9 (Monotonicity). For 1 ≤ α < β and arbitrary
+     tional differential privacy in the client/server setting,” in Theory of     P, Q
+     Cryptography—8th Theory of Cryptography Conference, TCC 2011,
+     Y. Ishai, Ed., 2011, pp. 417–431.                                                                  Dα (P kQ) ≤ Dβ (P kQ).
+Proof (following [19]). Assume that α > 1. Observe that the         Proof. By Hölder’s inequality we have:
+                α−1
+function x 7→ x β−1 is concave. By Jensen’s inequality
+                                                                      exp[(α − 1)Dα (P kQ)]
+                                        α−1                               Z
+                       1           P (x)                                  =     P (x)α Q(x)1−α dx
+       Dα (P kQ) =        log EP
+                    α−1            Q(x)                                      R
+                                                                                   P (x)α R(x)α−1/p
+                                                                            Z
+                                        (β−1) α−1
+                       1           P (x)        β−1
+                                                                          =                           dx
+                 =        log EP                                             R R(x)
+                                                                                      α−1/p Q(x)α−1
+                    α−1            Q(x)                                                        1/p Z                1/q
+                                                                                    P (x)pα              R(x)qα−q/p
+                                                                            Z
+                              (            β−1 ) α−1
+                                                  β−1
+                                                                          ≤                  dx                     dx
+                                   
+                       1             P (x)                                              pα−1                  qα−q
+                 ≤        log EP                                               R R(x)                 R Q(x)
+                    α−1              Q(x)
+                                                                          = exp[(α − 1/p)Dpα (P kR)]·
+                   = Dβ (P kQ).                                             exp[(α − 1)Dqα−q/p (RkQ)].
+                                                                    By taking the logarithm and dividing both sides by α − 1 we
+The case of α = 1 follows by continuity.                            establish the claim.
+                                                                       Several important special cases of the weak triangle inequal-
+  The following proposition appears in Langlois et al. [23],        ity can be obtained by fixing parameters p and q (compare it
+generalizing Lyubashevsky et al. [24].                              with [25, Lemma 12] and [23, Lemma 4.1]):
+Proposition 10 (Probability preservation [23]). Let α > 1,          Corollary 4. For P, Q, R with common support we have
+P and Q be two distributions defined over R with identical
+                                                                      1) Dα (P kQ) ≤ α−1/2
+                                                                                        α−1 D2α (P kR) + D2α−1 (RkQ).
+support, A ⊂ R be an arbitrary event. Then                                              α
+                                                                      2) Dα (P kQ) ≤ α−1   D∞ (P kR) + Dα (RkQ).
+                                               (α−1)/α                3) Dα (P kQ) ≤ Dα (P kR) + D∞ (RkQ).
+          P (A) ≤ (exp[Dα (P kQ)] · Q(A))                .
+                                                                      4) Dα (P kQ) ≤ α−α/β
+                                                                                         α−1 Dβ (P kR) + Dβ (RkQ), for some
+Proof. The result follows by application of Hölder’s inequal-           explicit β = 2α − .5 + O(1/α).
+ity, which states that for real-valued functions f and g, and       Proof. All claims follow from the weak triangle inequality
+real p, q > 1, such that 1/p + 1/q = 1,                             (Proposition 11) where p and q are chosen, respectively, as
+                                                                      1) p = q = 2.
+                        kf gk1 ≤ kf kpkgkq .
+                                                                      2) p → ∞ and q , p/(p − 1) → 1.
+By setting p , α, q , α/(α − 1), f (x) , P (x)/Q(x)1/q ,              3) q → ∞ and p , q/(q − 1) → 1.
+g(x) , Q(x)1/q , and applying Hölder’s, we have                      4) such that αp = αq − 1 and 1/p + 1/q = 1.
+                                                                    In the last case β , pα = 2α − .5 + O(1/α).
+ Z                Z                       α1 Z         α−1
+                                                            α
+                            α     1−α
+     P (x) dx ≤        P (x) Q(x)       dx        Q(x) dx
+  A                 A                           A
+                                  (α−1)/α      (α−1)/α
+             ≤ exp[Dα (P kQ)]               Q(A)         ,
+
+completing the proof.
+
+  The most salient feature of the bound is its (often non-
+monotone) dependency on α: as α approaches 1, Dα (P kQ)
+shrinks (by monotonicity of the Rényi divergence) but the
+power to which it is raised goes to 0, pushing the result in the
+opposite direction. Several our proofs proceed by finding the
+optimal, or approximately optimal, α minimizing the bound.
+  The Rényi divergence is not a metric: it is not symmetric
+and it does not satisfy the triangle inequality. A weaker variant
+of the triangle inequality tying together the Rényi divergence
+of different orders does hold. Its general version is presented
+below.
+Proposition 11 (Weak triangle inequality). Let P, Q, R be
+distributions on R. Then for α > 1 and for any p, q > 1
+satisfying 1/p + 1/q = 1 it holds that
+                   α − 1/p
+     Dα (P kQ) ≤           Dpα (P kR) + Dq(α−1/p) (RkQ).
+                    α−1
+

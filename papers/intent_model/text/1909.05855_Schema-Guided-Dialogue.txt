@@ -1,0 +1,617 @@
+                                            Towards Scalable Multi-Domain Conversational Agents: The Schema-Guided
+                                                                       Dialogue Dataset
+
+                                                   Abhinav Rastogi, Xiaoxue Zang, Srinivas Sunkara, Raghav Gupta, Pranav Khaitan
+                                                                                   Google Research, Mountain View, California, USA
+                                                                     {abhirast, xiaoxuez, srinivasksun, raghavgupta, pranavkhaitan}@google.com
+arXiv:1909.05855v2 [cs.CL] 29 Jan 2020
+
+
+
+
+                                                                      Abstract                                  for multi-domain modeling have shown promise, both for
+                                           Virtual assistants such as Google Assistant, Alexa and Siri          end-to-end and modular systems involving dialogue state
+                                           provide a conversational interface to a large number of ser-         tracking and policy learning. This line of work has been
+                                           vices and APIs spanning multiple domains. Such systems               facilitated by the release of multi-domain dialogue corpora
+                                           need to support an ever-increasing number of services with           such as MultiWOZ (Budzianowski et al. 2018), M2M (Shah
+                                           possibly overlapping functionality. Furthermore, some of             et al. 2018) and FRAMES (El Asri et al. 2017).
+                                           these services have little to no training data available. Existing      However, existing datasets for multi-domain task-oriented
+                                           public datasets for task-oriented dialogue do not sufficiently       dialogue do not sufficiently capture a number of challenges
+                                           capture these challenges since they cover few domains and            that arise with scaling virtual assistants in production. These
+                                           assume a single static ontology per domain. In this work, we         assistants need to support a large (Kim et al. 2018), con-
+                                           introduce the the Schema-Guided Dialogue (SGD) dataset,
+                                           containing over 16k multi-domain conversations spanning 16
+                                                                                                                stantly increasing number of services over a large number of
+                                           domains. Our dataset exceeds the existing task-oriented dia-         domains. In comparison, existing public datasets cover few
+                                           logue corpora in scale, while also highlighting the challenges       domains. Furthermore, they define a single static API per do-
+                                           associated with building large-scale virtual assistants. It pro-     main, whereas multiple services with overlapping function-
+                                           vides a challenging testbed for a number of tasks including          ality, but heterogeneous interfaces, exist in the real world.
+                                           language understanding, slot filling, dialogue state tracking           To highlight these challenges, we introduce the Schema-
+                                           and response generation. Along the same lines, we present a          Guided Dialogue (SGD) dataset1 , which is, to the best of our
+                                           schema-guided paradigm for task-oriented dialogue, in which          knowledge, the largest public task-oriented dialogue corpus.
+                                           predictions are made over a dynamic set of intents and slots,        It exceeds existing corpora in scale, with over 16000 dia-
+                                           provided as input, using their natural language descriptions.
+                                                                                                                logues in the training set spanning 26 services belonging to
+                                           This allows a single dialogue system to easily support a large
+                                           number of services and facilitates simple integration of new         16 domains (more details in Table 1). Further, to adequately
+                                           services without requiring additional training data. Building        test the models’ ability to generalize in zero-shot settings,
+                                           upon the proposed paradigm, we release a model for dia-              the evaluation sets contain unseen services and domains. The
+                                           logue state tracking capable of zero-shot generalization to          dataset is designed to serve as an effective testbed for intent
+                                           new APIs, while remaining competitive in the regular setting.        prediction, slot filling, state tracking and language genera-
+                                                                                                                tion, among other tasks in large-scale virtual assistants.
+                                                               1    Introduction                                   We also propose the schema-guided paradigm for task-
+                                         Virtual assistants help users accomplish tasks including but           oriented dialogue, advocating building a single unified di-
+                                         not limited to finding flights, booking restaurants and, more          alogue model for all services and APIs. Using a service’s
+                                         recently, navigating user interfaces, by providing a natural           schema as input, the model would make predictions over
+                                         language interface to services and APIs on the web. The re-            this dynamic set of intents and slots present in the schema.
+                                         cent popularity of conversational interfaces and the advent of         This setting enables effective sharing of knowledge among
+                                         frameworks like Actions on Google and Alexa Skills, which              all services, by relating semantically similar concepts across
+                                         allow developers to easily add support for new services, has           APIs, and allows the model to handle unseen services and
+                                         resulted in a major increase in the number of application do-          APIs. Under the proposed paradigm, we present a novel ar-
+                                         mains and individual services that assistants need to support,         chitecture for multi-domain dialogue state tracking. By us-
+                                         following the pattern of smartphone applications.                      ing large pre-trained models like BERT (Devlin et al. 2019),
+                                            Consequently, recent work has focused on scalable dia-              our model can generalize to unseen services and is robust
+                                         logue systems that can handle tasks across multiple applica-           to API changes, while achieving competitive results on the
+                                         tion domains. Data-driven deep learning based approaches               original and updated MultiWOZ datasets (Eric et al. 2019).
+                                                                                                                   1
+                                         Copyright c 2020, Association for the Advancement of Artificial             The dataset has been released at github.com/google-research-
+                                         Intelligence (www.aaai.org). All rights reserved.                      datasets/dstc8-schema-guided-dialogue
+                Metric ↓ Dataset →         DSTC2       WOZ2.0     FRAMES       M2M       MultiWOZ          SGD
+                  No. of domains              1           1           3            2          7             16
+                 No. of dialogues           1,612        600        1,369       1,500      8,438          16,142
+                 Total no. of turns        23,354       4,472      19,986      14,796     113,556        329,964
+               Avg. turns per dialogue      14.49        7.45       14.60        9.86      13.46          20.44
+                Avg. tokens per turn        8.54        11.24       12.60        8.24       13.13          9.75
+                Total unique tokens          986        2,142      12,043       1,008      23,689         30,352
+                     No. of slots             8           4          61           13         24            214
+                 No. of slot values          212          99        3,871        138        4,510         14,139
+
+Table 1: Comparison of our SGD dataset to existing related datasets for task-oriented dialogue. Note that the numbers reported
+are for the training portions for all datasets except FRAMES, where the numbers for the complete dataset are reported.
+
+
+                   2    Related Work                               ing these concerns, approaches utilizing a dynamic vocab-
+Task-oriented dialogue systems have constituted an active          ulary of slot values have been proposed (Rastogi, Gupta,
+area of research for decades. The growth of this field has         and Hakkani-Tur 2018; Goel, Paul, and Hakkani-Tür 2019;
+been consistently fueled by the development of new datasets.       Wu et al. 2019).
+Initial datasets were limited to one domain, such as ATIS
+(Hemphill, Godfrey, and Doddington 1990) for spoken lan-              3    The Schema-Guided Dialogue Dataset
+guage understanding for flights. The Dialogue State Track-         An important goal of this work is to create a benchmark
+ing Challenges (Williams et al. 2013; Henderson, Thomson,          dataset highlighting the challenges associated with building
+and Williams 2014a; 2014b; Kim et al. 2017) contributed to         large-scale virtual assistants. Table 1 compares our dataset
+the creation of dialogue datasets with increasing complex-         with other public datasets. Our Schema-Guided Dialogue
+ity. Other notable related datasets include WOZ2.0 (Wen et         (SGD) dataset exceeds other datasets in most of the met-
+al. 2017), FRAMES (El Asri et al. 2017), M2M (Shah et              rics at scale. The especially larger number of domains, slots,
+al. 2018) and MultiWOZ (Budzianowski et al. 2018). These           and slot values, and the presence of multiple services per
+datasets have utilized a variety of data collection techniques,    domain, are representative of these scale-related challenges.
+falling within two broad categories:                               Furthermore, our evaluation sets contain many services, and
+• Wizard-of-Oz This setup (Kelley 1984) connects two               consequently slots, which are not present in the training set,
+  crowd workers playing the roles of the user and the sys-         to help evaluate model performance on unseen services.
+  tem. The user is provided a goal to satisfy, and the system         The 20 domains present across the train, dev and test splits
+  accesses a database of entities, which it queries as per the     are listed in Table 2. We create synthetic implementations of
+  user’s preferences. WOZ2.0, FRAMES and MultiWOZ,                 a total of 45 services or APIs over these domains. Our simu-
+  among others, have utilized such methods.                        lator framework interacts with these services to generate di-
+                                                                   alogue outlines, which are a structured representation of di-
+• Machine-machine Interaction A related line of work ex-           alogue semantics. We then used a crowd-sourcing procedure
+  plores simulation-based dialogue generation, where the           to paraphrase these outlines to natural language utterances.
+  user and system roles are simulated to generate a com-           Our novel crowd-sourcing procedure preserves all annota-
+  plete conversation flow, which can then be converted to          tions obtained from the simulator and does not require any
+  natural language using crowd workers as done in Shah et          extra annotations after dialogue collection. In this section,
+  al. (2018). Such a framework may be cost-effective and           we describe these steps in detail and then present analyses
+  error-resistant since the underlying crowd worker task is        of the collected dataset.
+  simpler, and annotations are obtained automatically.
+   As virtual assistants incorporate diverse domains, recent       3.1    Services and APIs
+work has focused on zero-shot modeling (Bapna et al. 2017;         We define the schema for a service as a combination of in-
+Xia et al. 2018; Shah et al. 2019), domain adaptation and          tents and slots with additional constraints, with an example
+transfer learning techniques (Yang, Salakhutdinov, and Co-         in Figure 1. We implement all services using a SQL engine.
+hen 2017; Rastogi, Hakkani-Tür, and Heck 2017; Zhu and            For constructing the underlying tables, we sample a set of
+Yu 2018). Deep-learning based approaches have achieved             entities from Freebase and obtain the values for slots defined
+state of the art performance on dialogue state tracking tasks.     in the schema from the appropriate attribute in Freebase. We
+Popular approaches on small-scale datasets estimate the di-        decided to use Freebase to sample real-world entities instead
+alogue state as a distribution over all possible slot-values       of synthetic ones since entity attributes are often correlated
+(Henderson, Thomson, and Young 2014; Wen et al. 2017;              (e.g, a restaurant’s name is indicative of the cuisine served).
+Ren et al. 2018) or individually score all slot-value com-         Some slots like event dates/times and available ticket counts,
+binations (Mrkšić et al. 2017; Zhong, Xiong, and Socher          which are not present in Freebase, are synthetically sampled.
+2018). Such approaches are not practical for deployment in            To reflect the constraints present in real-world services
+virtual assistants operating over real-world services having       and APIs, we impose a few other restrictions. First, our
+a very large and dynamic set of possible values. Address-          dataset does not expose the set of all possible slot values
+ Domain         #Intents   #Dialogs   Domain             #Intents   #Dialogs
+ Alarm2,3         2 (1)      324      Movies1,2,3          5 (3)     2339
+ Banks1,2         4 (2)     1021      Music1,2,3           6 (3)     1833
+ Buses1,2,3       6 (3)     3135      Payment3             2 (1)      222
+ Calendar1        3 (1)     1602      RentalCars1,2,3      6 (3)     2510
+ Events1,2,3      7 (3)     4519      Restaurants1,2,3     4 (2)     3218
+ Flights1,2,3    10 (4)     3644      RideSharing1,2,3     2 (2)     2223
+ Homes1,2,3       2 (1)     1273      Services1,2,3        8 (4)     2956
+ Hotels1,2,3      8 (4)     4992      Train3               2 (1)      350
+ Media1,2,3       6 (3)     1656      Travel1,2,3          1 (1)     2808
+ Messaging3       1 (1)      298      Weather1,2,3         1 (1)     1783
+
+Table 2: The total number of intents (services in parentheses)
+and dialogues for each domain across train1 , dev2 and test3
+sets. Multi-domain dialogues contribute to counts of each
+constituent domain. The domain ‘Service’ includes salons,
+dentists, doctors etc. The ‘Alarm’, ‘Messaging’, ‘Payment’
+and ‘Train’ domains are only present in the dev or test sets
+to test generalization to new domains.
+
+
+for some slots. Having such a list is impractical for slots like                  Figure 1: Example schema for a digital wallet service.
+date or time because they have infinitely many possible val-
+ues or for slots like movie or song names, for which new val-
+ues are periodically added. Our dataset specifically identifies                filled. We identified over 200 distinct scenarios for the train-
+such slots as non-categorical and does not provide a set of all                ing set, each comprising up to 5 intents. For multi-domain
+possible values for these. We also ensure that the evaluation                  dialogues, we also identify combinations of slots whose val-
+sets have a considerable fraction of slot values not present                   ues may be transferred when switching intents e.g. the ‘ad-
+in the training set to evaluate the models in the presence of                  dress’ slot value in a restaurant service could be transferred
+new values. Some slots like gender, number of people, day                      to the ‘destination’ slot for a taxi service invoked right after.
+of the week etc. are defined as categorical and we specify                         The user agent then generates the dialogue acts to be out-
+the set of all possible values taken by them. However, these                   put in the next turn. It may retrieve arguments i.e. slot values
+values are not assumed to be consistent across services. E.g.,                 for some of the generated acts by accessing either the service
+different services may use (‘male’, ‘female’), (‘M’, ‘F’) or                   schema or the SQL backend. The acts, combined with the
+(‘he’, ‘she’) as possible values for gender slot.                              respective parameters yield the corresponding user actions.
+                                                                               Next, the system agent generates the next set of actions using
+   Second, real-world services can only be invoked with a
+                                                                               a similar procedure. Unlike the user agent, however, the sys-
+limited number of slot combinations: e.g. restaurant reser-
+                                                                               tem agent has restricted access to the services (denoted by
+vation APIs do not let the user search for restaurants by date
+                                                                               dashed line), e.g. it can only query the services by supplying
+without specifying a location. However, existing datasets
+                                                                               values for all required slots for some service call. This helps
+simplistically allow service calls with any given combina-
+                                                                               us ensure that all generated flows are valid.
+tion of slot values, thus giving rise to flows unsupported by
+                                                                                   After an intent is fulfilled through a series of user and
+actual services or APIs. As in Figure 1, the different service
+                                                                               system actions, the user agent queries the scenario to pro-
+calls supported by a service are listed as intents. Each in-
+                                                                               ceed to the next intent. Alternatively, the system may sug-
+tent specifies a set of required slots and the system is not al-
+                                                                               gest related intents e.g. reserving a table after searching for
+lowed to call this intent without specifying values for these
+                                                                               a restaurant. The simulator also allows for multiple intents
+required slots. Each intent also lists a set of optional slots
+                                                                               to be active during a given turn. While we skip many imple-
+with default values, which the user can override.
+                                                                               mentation details for brevity, it is worth noting that we do
+                                                                               not include any domain-specific constraints in the simula-
+3.2    Dialogue Simulator Framework                                            tion automaton. All domain-specific constraints are encoded
+The dialogue simulator interacts with the services to gener-                   in the schema and scenario, allowing us to conveniently use
+ate dialogue outlines. Figure 2 shows the overall architec-                    the simulator across a wide variety of domains and services.
+ture of our dialogue simulator framework. It consists of two
+agents playing the roles of the user and the system. Both                      3.3   Dialogue Paraphrasing
+agents interact with each other using a finite set of actions                  The dialogue paraphrasing framework converts the outlines
+specified through dialogue acts over a probabilistic automa-                   generated by the simulator into a natural conversation. Fig-
+ton designed to capture varied dialogue trajectories. These                    ure 3a shows a snippet of the dialogue outline generated by
+dialogue acts can take a slot or a slot-value pair as argument.                the simulator, containing a sequence of user and system ac-
+Figure 4b shows all dialogue acts supported by the agents.                     tions. The slot values present in these actions are in a canon-
+   At the start of a conversation, the user agent is seeded                    ical form because they obtained directly from the service.
+with a scenario, which is a sequence of intents to be ful-                     However, users may refer to these values in various differ-
+Figure 2: The overall architecture of the dialogue simulation
+framework for generating dialogue outlines.
+
+
+ent ways during the conversation, e.g., “los angeles” may be
+referred to as “LA” or “LAX”. To introduce these natural
+variations in the slot values, we replace different slot values
+with a randomly selected variation (kept consistent across         Figure 3: Steps for obtaining paraphrased conversations. To
+user turns in a dialogue) as shown in Figure 3b.                   increase the presence of relative dates like tomorrow, next
+   Next we define a set of action templates for converting         Monday, the current date is assumed to be March 1, 2019.
+each action into a utterance. A few examples of such tem-
+plates are shown below. These templates are used to convert
+each action into a natural language utterance, and the result-     23 turns on an average. These numbers are also reflected
+ing utterances for the different actions in a turn are concate-    in Figure 4a showing the histogram of dialogue lengths on
+nated together as shown in Figure 3c. The dialogue trans-          the training set. Table 2 shows the distribution of dialogues
+formed by these steps is then sent to the crowd workers. One       across the different domains. We note that distribution of di-
+crowd worker is tasked with paraphrasing all utterances of a       alogues across the domains and services covered is largely
+dialogue to ensure naturalness and coherence.                      balanced, with the exception domains which are not present
+    REQUEST(location) → Which city are you in?                     in the training set. Figure 4b shows the frequency of dia-
+                                                                   logue acts contained in the dataset. Note that all dialogue
+  INFORM(location=$x) → I want to eat in $x.                       acts except INFORM, REQUEST and GOODBYE are specific
+ OFFER(restaurant=$x) → $x is a nice restaurant.                   to either the user or the system.
+   In our paraphrasing task, the crowd workers are instructed
+to exactly repeat the slot values in their paraphrases. This not           4   The Schema-Guided Approach
+only helps us verify the correctness of the paraphrases, but       Virtual assistants aim to support a large number of services
+also lets us automatically obtain slot spans in the generated      available on the web. One possible approach is to define
+utterances by string search. This automatic slot span genera-      a large unified schema for the assistant, to which different
+tion greatly reduced the annotation effort required, with little   service providers can integrate with. However, it is difficult
+impact on dialogue naturalness, thus allowing us to collect        to come up with a common schema covering all use cases.
+more data with the same resources. Furthermore, it is im-          Having a common schema also complicates integration of
+portant to note that this entire procedure preserves all other     tail services with limited developer support. We propose the
+annotations obtained from the simulator including the dia-         schema-guided approach as an alternative to allow easy in-
+logue state. Hence, no further annotation is needed.               tegration of new services and APIs.
+                                                                      Under our proposed approach, each service provides a
+3.4   Dataset Analysis                                             schema listing the supported slots and intents along with
+With over 16000 dialogues in the training set, the Schema-         their natural language descriptions (Figure 1 shows an ex-
+Guided Dialogue dataset is the largest publicly available an-      ample). These descriptions are used to obtain a semantic
+notated task-oriented dialogue dataset. The annotations in-        representation of these schema elements. The assistant em-
+clude the active intents and dialogue states for each user ut-     ploys a single unified model containing no domain or ser-
+terance and the system actions for every system utterance.         vice specific parameters to make predictions conditioned on
+We have a few other annotations like the user actions but we       these schema elements. For example, Figure 5 shows how
+withhold them from the public release. These annotations           dialogue state representation for the same dialogue can vary
+enable our dataset to be used as benchmark for tasks like          for two different services. Here, the departure and arrival
+intent detection, dialogue state tracking, imitation learning      cities are captured by analogously functioning but differ-
+of dialogue policy, dialogue act to text generation etc. The       ently named slots in both schemas. Furthermore, values for
+schemas contain semantic information about the APIs and            the number stops and direct only slots highlight idiosyn-
+the constituent intents and slots, in the form of natural lan-     crasies between services interpreting the same concept.
+guage descriptions and other details (example in Figure 1).           Using a single model facilitates representation and trans-
+   The single-domain dialogues in our dataset contain an av-       fer of common knowledge across related services. Since the
+erage of 15.3 turns, whereas the multi-domain ones contain         model utilizes semantic representation of schema elements
+                                                                  ues in each service schema. Table 3 shows the sequence pairs
+                                                                  used for embedding each schema element. These sequence
+                                                                  pairs are fed to a pretrained BERT encoder shown in Fig-
+                                                                  ure 6 and the output uCLS is used as the schema embedding.
+
+                                                                                      Sequence 1             Sequence 2
+                                                                        Intent    service description     intent description
+                                                                        Slot      service description      slot description
+                                                                        Value       slot description             value
+          (a) Histogram of lengths of training set dialogues.
+                                                                  Table 3: Input sequences for the pretrained BERT model to
+                                                                  obtain embeddings of different schema elements.
+
+                                                                      For a given service with I intents and S slots, let {ij },
+                                                                  1 ≤ j ≤ I and {sj }, 1 ≤ j ≤ S be the embeddings of all
+                                                                  intents and slots respectively. As a special case, we let {snj },
+                                                                  1 ≤ j ≤ N ≤ S denote the embeddings for the N non-
+                                                                  categorical slots in the service. Also, let {vkj }, 1 ≤ j ≤ V k
+                                                                  denote the embeddings for all possible values taken by the
+                                                                  k th categorical slot, 1 ≤ k ≤ C, with C being the number of
+                                                                  categorical slots and N + C = S. All these embeddings are
+           (b) Distribution of dialogue acts in training set.
+                                                                  collectively called schema embeddings.
+      Figure 4: Detailed statistics of the SGD dataset.           Utterance Encoding Like Chao and Lane (2019), we use
+                                                                  BERT to encode the user utterance and the preceding sys-
+                                                                  tem utterance to obtain utterance pair embedding u = uCLS
+as input, it can interface with unseen services or APIs on        and token level representations t1 , t2 · · · tM , M being the
+which it has not been trained. It is also robust to changes       total number of tokens in the two utterances. The utterance
+like addition of new intents or slots to the service.             and schema embeddings are used together to obtain model
+                                                                  predictions using a set of projections (defined below).
+      5     Zero-Shot Dialogue State Tracking                     Projection Let x, y ∈ Rd . For a task K, we define l =
+Models in the schema-guided setting can condition on the          FK (x, y, p) as a projection transforming x and y into the
+pertinent services’ schemas using descriptions of intents and     vector l ∈ Rp using Equations 1-3. Here, h1 , h2 ∈ Rd , WiK
+slots. These models, however, also need access to represen-       and bK
+                                                                       i for 1 ≤ i ≤ 3 are trainable parameters of suitable
+tations for potentially unseen inputs from new services. Re-      dimensions and A is the activation function. We use gelu
+cent pretrained models like ELMo (Peters et al. 2018) and         (Hendrycks and Gimpel 2016) activation as in BERT.
+BERT (Devlin et al. 2019) can help, since they are trained
+on very large corpora. Building upon these, we present a                          h1 = A(W1K x + bK
+                                                                                                  1 )                           (1)
+simple prototype model for zero-shot schema-guided DST.                           h2 = A(W2K (y ⊕ h1 ) + bK
+                                                                                                          2 )                   (2)
+                                                                                         K       K
+5.1   Model                                                                        l = W3 h2 + b3                               (3)
+                           2                                      Active Intent For a given service, the active intent denotes
+We use a single model , shared among all services and do-
+mains, to make these predictions. We first encode all the in-     the intent requested by the user and currently being fulfilled
+tents, slots and slot values for categorical slots present in     by the system. It takes the value “NONE” if no intent for
+the schema into an embedded representation. Since differ-         the service is currently being processed. Let i0 be a trainable
+ent schemas can have differing numbers of intents or slots,       parameter in Rd for the “NONE” intent. We define the intent
+predictions are made over dynamic sets of schema elements         network as below.
+by conditioning them on the corresponding schema embed-                           j
+                                                                                 lint = Fint (u, ij , 1), 0 ≤ j ≤ I             (4)
+dings. This is in contrast to existing models which make pre-
+                                                                                 j
+dictions over a static schema and are hence unable to share          The logits lint are normalized using softmax to yield a dis-
+knowledge across domains and services. They are also not          tribution over all I intents and the “NONE” intent. During
+robust to changes in schema and require the model to be           inference, we predict the highest probability intent as active.
+retrained with new annotated data upon addition of a new
+                                                                  Requested Slots These are the slots whose values are re-
+intent, slot, or in some cases, a slot value to a service.
+                                                                  quested by the user in the current utterance. Projection Freq
+Schema Embedding This component obtains the embed-                                j
+                                                                  predicts logit lreq for the j th slot. Obtained logits are normal-
+ded representations of intents, slots and categorical slot val-   ized using sigmoid to get a score in [0, 1]. During inference,
+    2                                                             all slots with score > 0.5 are predicted as requested.
+      Our model code is available at github.com/google-
+                                                                                  j
+research/google-research/tree/master/schema guided dst                           lreq = Freq (u, sj , 1), 1 ≤ j ≤ S             (5)
+Figure 5: The predicted dialogue state (shown with dashed edges) for the first two user turns for an example dialogue, showing
+the active intent and slot assignments, with two related annotation schemas. Note that the dialogue state representation is
+conditioned on the schema under consideration, which is provided as input, as are the user and system utterances.
+
+
+                                                                  mass is assigned to the slot. For each non-categorical slot,
+                                                                  logits obtained using equations 8 and 9 are normalized using
+                                                                  softmax to yield two distributions over all tokens. These two
+                                                                  distributions respectively correspond to the start and end in-
+                                                                  dex of the span corresponding to the slot. The indices p ≤ q
+                                                                  maximizing start[p] + end[q] are predicted to be the span
+                                                                  boundary and the corresponding value is assigned to the slot.
+
+                                                                  5.2   Evaluation
+Figure 6: BERT encoder, taking in two sequences p and q           We consider the following metrics for evaluation of the dia-
+as input and outputs an embedded sequence pair representa-        logue state tracking task:
+tion uCLS and token level representations {t1 · · · tn+m }. We    1. Active Intent Accuracy: The fraction of user turns for
+use BERT to obtain schema element embeddings and encode              which the active intent has been correctly predicted.
+system and user utterances for dialogue state tracking.
+                                                                  2. Requested Slot F1: The macro-averaged F1 score for
+                                                                     requested slots over all eligible turns. Turns with no re-
+User Goal We define the user goal as the user constraints            quested slots in ground truth and predictions are skipped.
+specified over the dialogue context till the current user ut-
+                                                                  3. Average Goal Accuracy: For each turn, we predict a sin-
+terance. Instead of predicting the entire user goal after each
+                                                                     gle value for each slot present in the dialogue state. The
+user utterance, we predict the difference between the user
+                                                                     slots which have a non-empty assignment in the ground
+goal for the current turn and preceding user turn. During
+                                                                     truth dialogue state are considered for accuracy. This is
+inference, the predicted user goal updates are accumulated
+                                                                     the average accuracy of predicting the value of a slot cor-
+to yield the predicted user goal. We predict the user goal
+                                                                     rectly. A fuzzy matching score is used for non-categorical
+updates in two stages. First, for each slot, a distribution
+                                                                     slots to reward partial matches with the ground truth.
+of size 3 denoting the slot status and taking values none,
+dontcare and active is obtained by normalizing the                4. Joint Goal Accuracy: This is the average accuracy of
+logits obtained in equation 6 using softmax. If the status of        predicting all slot assignments for a turn correctly. For
+a slot is predicted to be none, its assigned value is assumed        non-categorical slots a fuzzy matching score is used.
+to be unchanged. If the prediction is dontcare, then the
+special dontcare value is assigned to it. Otherwise, a slot       Performance on other datasets We evaluate our model
+value is predicted and assigned to it in the second stage.        on public datasets WOZ2.0 and MultiWOZ 2.1 (Eric et al.
+                                                                  2019). As results in Table 4 show, our model performs com-
+   ljstatus = Fstatus (u, sj , 3), 1 ≤ j ≤ S                (6)   petitively on these datasets. In these experiments, we omit
+    j,k
+   lvalue  = Fvalue (u, vjk , 1), 1 ≤ j ≤ V k , 1 ≤ k ≤ C   (7)   the use of fuzzy matching scores and use exact match while
+                                                                  calculating the goal accuracies to keep our numbers com-
+     j,k
+    lstart = Fstart (tk , snj , 1), 1 ≤ j ≤ N, 1 ≤ k ≤ M    (8)   parable with other works. Furthermore, for the MultiWOZ
+      j,k                                                         2.1 dataset, we also trained a model incorporating pointer-
+     lend  = Fend (tk , snj , 1), 1 ≤ j ≤ N, 1 ≤ k ≤ M      (9)
+                                                                  generator style copying for non-categorical slots, similar to
+  In the second stage, equation 7 is used to obtain a logit for   Wu et al. (2019), giving us a joint goal accuracy of 0.489, ex-
+each value taken by each categorical slot. Logits for a given     ceeding the best-known result of 0.456 as reported in Eric
+categorical slot are normalized using softmax to get a distri-    et al. (2019). We omit the details of this model since it is not
+bution over all possible values. The value with the maximum       the main focus of this work.
+Performance on SGD The model performs well for Ac-                     Domain    Joint GA Avg GA      Domain     Joint GA Avg GA
+tive Intent Accuracy and Requested Slots F1 across both              RentalCars*   0.086   0.480    Restaurants*   0.228   0.558
+seen and unseen services, shown in Table 4. For joint goal             Buses*      0.097   0.509      Events*      0.235   0.579
+and average goal accuracy, the model performs better on              Messaging*    0.102   0.200      Flights*     0.239   0.659
+seen services compared to unseen ones (Figure 7). The                 Payment*     0.115   0.348      Hotels**     0.289   0.582
+main reason for this performance difference is a significantly         Trains*     0.136   0.635     Movies**      0.378   0.686
+higher OOV rate for slot values of unseen services.                    Music*      0.155   0.399     Services**    0.409   0.721
+                                                                     RideSharing   0.170   0.502       Travel      0.415   0.572
+                                                                       Media*      0.180   0.308      Alarm*       0.577   0.018
+Performance on different domains (SGD) The model                       Homes       0.189   0.727      Weather      0.620   0.764
+performance also varies across various domains. The perfor-
+mance for the different domains is shown in Table 5. We ob-         Table 5: Model performance per domain (GA: goal accu-
+serve that one of the major factors affecting the performance       racy). Domains marked with ‘*’ are those for which the ser-
+across domains is still the presence of the service in the          vice in the test set is not present in the training set. Domains
+training data (seen services). In most cases, the performance       like Hotels marked with ‘**’ has one unseen and one seen
+can be observed to degrade for domains with more unseen             service. For other domains, the service in the test set was
+services. Among the unseen services, those in the ‘Rental-          also seen in the training set. We see that the model generally
+Cars’ and ‘Buses’ domain, have a very high OOV rate for             performs better for domains containing services seen during
+slot values leading to worse performance. A low joint goal          training.
+accuracy and high average goal accuracy for these two do-
+mains indicates a possible skew between the performance
+of different slots. Among seen services, ‘RideSharing’ do-                                6    Discussion
+main also exhibits poor performance, since it possesses the         It is often argued that simulation-based data collection does
+largest number of the possible slot values across the dataset.      not yield natural dialogues or sufficient coverage, when
+We also notice that for categorical slots, with similar slot val-   compared to other approaches such as Wizard-of-Oz. We ar-
+ues (e.g. “Psychologist” and “Psychiatrist”), there is a very       gue that simulation-based collection is a better alternative
+weak signal for the model to distinguish between the differ-        for collecting datasets like this owing to the factors below.
+ent classes, resulting in inferior performance.
+                                                                    • Fewer Annotation Errors: All annotations are automat-
+                                                                      ically generated, so these errors are rare. In contrast, Eric
+   Dataset    Active Int Acc Req Slot F1 Avg GA Joint GA              et al. (2019) reported annotation errors in 40% of turns in
+   WOZ2.0          N.A.        0.970      0.920   0.810               MultiWOZ 2.0 which utilized a Wizard-of-Oz setup.
+ MultiWOZ 2.1      N.A.         N.A.      0.875   0.434             • Simpler Task: The crowd worker task of paraphrasing a
+    SGD-S            0.885         0.956      0.684     0.356         readable utterance for each turn is simple. The error-prone
+   SGD-All           0.906         0.965      0.560     0.254         annotation task requiring skilled workers is not needed.
+                                                                      Furthermore, Wizard-of-Oz style collection requires do-
+Table 4: Model performance on test sets of the respective             main specific task definitions and instructions, making the
+datasets. SGD-Single model is trained on single-domain di-            collection of a diverse dataset like ours time consuming.
+alogues only whereas SGD-All model is trained on the en-            • Low Cost: The simplicity of the crowd worker task and
+tire training set. We also report results on MultiWOZ 2.1 and         lack of an annotation task greatly cut data collection costs.
+WOZ2.0. N.A. indicates unavailable tasks.
+                                                                    • Better Coverage: A wide variety of dialogue flows can
+                                                                      be collected and specific usecases can be targeted.
+                                                                       To ensure naturalness of the generated conversations, we
+                                                                    used the conversational flows present in other public datasets
+                                                                    like MultiWOZ 2.0 and WOZ2.0 as a guideline while devel-
+                                                                    oping the dialogue simulator. It was difficult for us to con-
+                                                                    duct a side-by-side comparison with existing datasets since
+                                                                    this is the first dataset to cover many new domains at such
+                                                                    scale, but we plan to explore it in the future.
+
+                                                                                         7    Conclusions
+                                                                    We presented the Schema-Guided Dialogue dataset to en-
+                                                                    courage scalable modeling approaches for virtual assistants.
+                                                                    We also introduced the schema-guided paradigm for task-
+Figure 7: Performance of the model on all services, services        oriented dialogue that simplifies the integration of new ser-
+seen in training data, services not seen in training data.          vices and APIs with large scale virtual assistants. Building
+                                                                    upon this paradigm, we present a simplistic model for zero-
+                                                                    shot dialogue state tracking achieving competitive results.
+Acknowledgements The authors thank Guan-Lin Chao,                       attention. In Proceedings of the 56th Annual Meeting of the As-
+Amir Fayazi and Maria Wang for their advice and assistance.             sociation for Computational Linguistics (Volume 1: Long Papers),
+                                                                        2214–2224. Melbourne, Australia: Association for Computational
+                          References                                    Linguistics.
+Bapna, A.; Tür, G.; Hakkani-Tür, D.; and Heck, L. P. 2017. To-        Mrkšić, N.; Séaghdha, D. Ó.; Wen, T.-H.; Thomson, B.; and Young,
+wards zero-shot frame semantic parsing for domain scaling. In           S. 2017. Neural belief tracker: Data-driven dialogue state track-
+Interspeech 2017, 18th Annual Conference of the International           ing. In Proceedings of the 55th Annual Meeting of the Association
+Speech Communication Association, Stockholm, Sweden, August             for Computational Linguistics (Volume 1: Long Papers), volume 1,
+20-24, 2017.                                                            1777–1788.
+Budzianowski, P.; Wen, T.-H.; Tseng, B.-H.; Casanueva, I.; Ultes,       Peters, M. E.; Neumann, M.; Iyyer, M.; Gardner, M.; Clark, C.;
+S.; Ramadan, O.; and Gasic, M. 2018. Multiwoz-a large-scale             Lee, K.; and Zettlemoyer, L. 2018. Deep contextualized word
+multi-domain wizard-of-oz dataset for task-oriented dialogue mod-       representations. arXiv preprint arXiv:1802.05365.
+elling. In Proceedings of the 2018 Conference on Empirical Meth-        Rastogi, A.; Gupta, R.; and Hakkani-Tur, D. 2018. Multi-task
+ods in Natural Language Processing, 5016–5026.                          learning for joint language understanding and dialogue state track-
+Chao, G.-L., and Lane, I. 2019. BERT-DST: Scalable end-to-end           ing. In Proceedings of the 19th Annual SIGdial Meeting on Dis-
+dialogue state tracking with bidirectional encoder representations      course and Dialogue, 376–384.
+from transformer. In INTERSPEECH.                                       Rastogi, A.; Hakkani-Tür, D.; and Heck, L. 2017. Scalable
+Devlin, J.; Chang, M.-W.; Lee, K.; and Toutanova, K. 2019. Bert:        multi-domain dialogue state tracking. In 2017 IEEE Automatic
+Pre-training of deep bidirectional transformers for language un-        Speech Recognition and Understanding Workshop (ASRU), 561–
+derstanding. In Proceedings of the 2019 Conference of the North         568. IEEE.
+American Chapter of the Association for Computational Linguis-          Ren, L.; Xie, K.; Chen, L.; and Yu, K. 2018. Towards universal
+tics: Human Language Technologies, Volume 1 (Long and Short             dialogue state tracking. In Proceedings of the 2018 Conference on
+Papers), 4171–4186.                                                     Empirical Methods in Natural Language Processing, 2780–2786.
+El Asri, L.; Schulz, H.; Sharma, S.; Zumer, J.; Harris, J.; Fine, E.;   Shah, P.; Hakkani-Tür, D.; Tür, G.; Rastogi, A.; Bapna, A.; Nayak,
+Mehrotra, R.; and Suleman, K. 2017. Frames: a corpus for adding         N.; and Heck, L. 2018. Building a conversational agent overnight
+memory to goal-oriented dialogue systems. In Proceedings of the         with dialogue self-play. arXiv preprint arXiv:1801.04871.
+18th Annual SIGdial Meeting on Discourse and Dialogue, 207–             Shah, D.; Gupta, R.; Fayazi, A.; and Hakkani-Tur, D. 2019. Robust
+219.                                                                    zero-shot cross-domain slot filling with example values. In Pro-
+Eric, M.; Goel, R.; Paul, S.; Sethi, A.; Agarwal, S.; Gao, S.;          ceedings of the 57th Annual Meeting of the Association for Com-
+and Hakkani-Tur, D. 2019. Multiwoz 2.1: Multi-domain dia-               putational Linguistics, 5484–5490. Florence, Italy: Association for
+logue state corrections and state tracking baselines. arXiv preprint    Computational Linguistics.
+arXiv:1907.01669.                                                       Wen, T.; Vandyke, D.; Mrkšı́c, N.; Gašı́c, M.; Rojas-Barahona, L.;
+Goel, R.; Paul, S.; and Hakkani-Tür, D. 2019. Hyst: A hybrid           Su, P.; Ultes, S.; and Young, S. 2017. A network-based end-to-end
+approach for flexible and accurate dialogue state tracking. arXiv       trainable task-oriented dialogue system. In 15th Conference of the
+preprint arXiv:1907.00883.                                              European Chapter of the Association for Computational Linguis-
+                                                                        tics, EACL 2017-Proceedings of Conference, volume 1, 438–449.
+Hemphill, C. T.; Godfrey, J. J.; and Doddington, G. R. 1990. The
+atis spoken language systems pilot corpus. In Speech and Natu-          Williams, J.; Raux, A.; Ramachandran, D.; and Black, A. 2013.
+ral Language: Proceedings of a Workshop Held at Hidden Valley,          The dialog state tracking challenge. In Proceedings of the SIGDIAL
+Pennsylvania, June 24-27, 1990.                                         2013 Conference, 404–413.
+Henderson, M.; Thomson, B.; and Williams, J. D. 2014a. The              Wu, C.-S.; Madotto, A.; Hosseini-Asl, E.; Xiong, C.; Socher, R.;
+second dialog state tracking challenge. In Proceedings of the 15th      and Fung, P. 2019. Transferable multi-domain state generator for
+Annual Meeting of the Special Interest Group on Discourse and           task-oriented dialogue systems. In Proceedings of the 57th Annual
+Dialogue (SIGDIAL), 263–272.                                            Meeting of the Association for Computational Linguistics, 808–
+                                                                        819. Florence, Italy: Association for Computational Linguistics.
+Henderson, M.; Thomson, B.; and Williams, J. D. 2014b. The
+third dialog state tracking challenge. 2014 IEEE Spoken Language        Xia, C.; Zhang, C.; Yan, X.; Chang, Y.; and Yu, P. 2018. Zero-shot
+Technology Workshop (SLT) 324–329.                                      user intent detection via capsule neural networks. In Proceedings of
+                                                                        the 2018 Conference on Empirical Methods in Natural Language
+Henderson, M.; Thomson, B.; and Young, S. 2014. Word-based              Processing, 3090–3099. Association for Computational Linguis-
+dialog state tracking with recurrent neural networks. In Proceed-       tics.
+ings of the 15th Annual Meeting of the Special Interest Group on
+Discourse and Dialogue (SIGDIAL), 292–299.                              Yang, Z.; Salakhutdinov, R.; and Cohen, W. W. 2017. Transfer
+                                                                        learning for sequence tagging with hierarchical recurrent networks.
+Hendrycks, D., and Gimpel, K. 2016. Gaussian error linear units         arXiv preprint arXiv:1703.06345.
+(gelus). arXiv preprint arXiv:1606.08415.
+                                                                        Zhong, V.; Xiong, C.; and Socher, R. 2018. Global-locally self-
+Kelley, J. F. 1984. An iterative design methodology for user-           attentive encoder for dialogue state tracking. In Proceedings of the
+friendly natural language office information applications. ACM          56th Annual Meeting of the Association for Computational Lin-
+Transactions on Information Systems (TOIS) 2(1):26–41.                  guistics (Volume 1: Long Papers), 1458–1467. Melbourne, Aus-
+Kim, S.; DHaro, L. F.; Banchs, R. E.; Williams, J. D.; and Hen-         tralia: Association for Computational Linguistics.
+derson, M. 2017. The fourth dialog state tracking challenge. In         Zhu, S., and Yu, K. 2018. Concept transfer learning for adaptive
+Dialogues with Social Robots. Springer. 435–449.                        language understanding. In Proceedings of the 19th Annual SIG-
+Kim, Y.-B.; Kim, D.; Kumar, A.; and Sarikaya, R. 2018. Ef-              dial Meeting on Discourse and Dialogue, 391–399.
+ficient large-scale neural domain classification with personalized
+                                                 A     Appendix
+
+User     My best friend and his family are coming to visit and I want to take them out while they are here. Is there a
+         concert playing next Friday?
+System   I can look into that but let’s narrow it down a bit first. What city or cities would you like me to search in?
+User     I would prefer it to be fairly local so NY would be my first choice.
+System   Amber Run Brooklyn appears to be playing at Warsaw.
+User     I don’t much care for that one, can you find me a different concert please?
+System   There will also be Chris Botti playing at Sony Hall.
+User     Let’s try some other kind of activity. How about games, preferably baseball.
+System   I was able to find 8 baseball games the first of which is the Mets Vs Cubs playing at Citi Field.
+User     That sounds like something we would all enjoy very much.
+System   Would you like for me to go ahead and purchase tickets for you in advance?
+User     Yes, can you reserve 3 tickets for that game?
+System   You want 3 tickets to the Mets Vs Cubs game taking place in New York next Friday, is that correct?
+User     Yes, that’s what I want. Can you give me the address of the event and the starting time as well?
+System   I was able to book those tickets for you. The game will be held at 123-01 Roosevelt Avenue and it begins at 6
+         pm.
+User     Thanks for the research and help, that is the only thing I needed for now.
+System   It was my pleasure, have a great day and enjoy the game.
+
+             Figure A.1: An example single domain dialogue from our dataset in the “Events” domain.
+
+
+User     I wanna change my hair style, help me find a salon
+System   Where are you trying to get your hair done?
+User     Let’s find a place in Oakland
+System   How about 17 Jewels Salon in Oakland, I hear it’s nice
+User     Umm...Doesn’t sound like something I’d like, find me something else
+System   What about this other Oakland salon called Benny Adem Grooming Parlor
+User     What’s their contact info and address?
+System   You can reach them at 510-227-4268 and they’re at 408 14th Street
+User     Actually find me something else
+System   Bibo Salon in Oakland has great reviews
+User     Yes that’ perfect
+System   Shall I book an appointment for you then?
+User     Yeah I want it done ASAP, maybe later today if possible?
+System   What time then?
+User     afternoon 12:30 would be great
+System   Confirming your 12:30 pm Bibo Salon appointment today
+User     Yes that’s correct
+System   Ok glad I was able to book it
+User     Thanks that’s it for now
+System   Can’t wait to see your new hair!
+
+             Figure A.2: An example single domain dialogue from our dataset in the “Services” domain.
+    User     I’d like to catch a movie nearby. Can you find me any movie showings?
+    System   Sure, where should I look?
+    User     Please look around SFO for movie showings.
+    System   Okay, I found 10 movies being shown in that area that you might like. What do you think about the movies
+             Ash Is Purest White, Captain Marvel or Citizen Kane?
+    User     Citizen Kane sounds like a good one.
+    System   How about buying any tickets for the movie?
+    User     No thanks, not right now. I’d like to grab something to eat around there too. Can you find any good restau-
+             rants to eat at?
+    System   Are you looking for a restaurant that serves a certain kind of food?
+    User     Yeah, can you find restaurants that serve Punjabi food and are moderate with their price range?
+    System   How about eating at a nice restaurant in San Francisco called August 1 Five?
+    User     Great, that sounds perfect. When can I watch the movie you found me earlier?
+    System   How about seeing it on March 2nd?
+    User     Yeah, that works for me.
+    System   Okay, there’s 1 showing at 7:30 pm at the Vogue Theatre.
+    User     Great, that works.
+    System   Anything else I can help you with today?
+    User     Yeah, can you book me a table at the restaurant you found for me?
+    System   Sure, what time would you like to eat there?
+    User     Reserve a table for me at around 5:30 pm, dinner time.
+    System   Okay, please confirm that you’d like to reserve a table for 2 at August 1 Five located in San Francisco for
+             March 2nd at 5:30 pm.
+    User     Yup, that sounds right. Where exactly are they located and do you know if they play live music?
+    System   Your table has been successfully booked! Their address is 524 Van Ness Avenue and unfortunately they
+             don’t have live music here.
+    User     Okay, can you get me a cab to take me there?
+    System   Sure, do you have a ride preference? I can get you a regular, luxury or other type of ride if you’d like.
+    User     Yes, please get me a luxury ride.
+    System   Okay, please confirm that you want a luxury ride with 2 seats to take you to 524 Van Ness Avenue.
+    User     Yeah that sounds right to me.
+    System   Okay, your cab has been booked and it’s on its way.
+    User     Awesome, thanks!
+    System   Anything else I can do for you today?
+    User     Nope, that’s all I needed, thanks!
+    System   No problem, enjoy your day!
+
+Figure A.3: An example multi-domain dialogue from our dataset covering “Movies”, “Restaurants” and “RideSharing” do-
+mains.
+    User       My buddy is getting married and I need to find a bus ticket.
+    System     I can help you with that. Can you give me a little more information like where you are traveling from, where
+               you are traveling to, and when you would like to leave.
+    User       I need to go from Las Vegas to Sacramento on the 7th of this month.
+    System     Great, I was able to find 4 buss’s matching that criteria. How does a bus with 1 transfer, leaving at 7:20 am,
+               for $88 sound?
+    User       That sounds like just what i’m looking for. I will also be needing a rental car until the 11th of this month.
+    System     Will this car be from Sacramento from March 7th.
+    User       I would like to pick up the car on the 8th around two in the afternoon.
+    System     The first of 5 cars I have found for you is a standard Accord, located at SMF International Airport, available
+               for pickup on March 8th.
+    User       That one sounds perfect.
+    System     Would you like me to proceed with making that reservation for you?
+    User       Yes, let’s go ahead with that car.
+    System     Before I reserve this I would like to make sure all the details I have are correct. You would like to pickup
+               a standard vehicle from SMF International Airport on March 8th at 2 pm, and will be returning the car on
+               March 11th.
+    User       Yes, that is all correct but can you give me an estimated price too please?
+    System     I was successfully able to reserve that with a total cost of $105 for you.
+    User       Great, could you also help me find an online movie to watch?
+    System     What genre of movie are you looking for?
+    User       I am really into detective movies right now.
+    System     The 2 movies I found that you may like are Body Double and Citizen Kane.
+    User       I would really like to see Body Double now if possible, I heard it’s pretty good.
+    System     Okay, so you would like me to begin playing the movie Body Double without subtitles now. Is that correct?
+    User       Yes, that would be great.
+    System     I’ve went ahead and started playing that movie for you.
+    User       Thanks so much!
+    System     Is there anything else I can help you with for now?
+    User       No, that’s all for now.
+    System     Have a good day and enjoy your movie!
+
+   Figure A.4: An example multi-domain dialogue from our dataset covering “Buses”, “RentalCars” and “Media” domains.
+
+
+
+
+Figure A.5: Interface of the dialogue paraphrasing task where the crowd workers are asked to rephrase the dialogue outlines to
+a more natural expression. The actual interface shows the entire conversation, but only a few utterances have been shown in this
+figure. All non-categorical slot values are highlighted in blue. The task cannot be submitted unless all highlighted values in the
+outline are also present in the conversational dialogue.
+

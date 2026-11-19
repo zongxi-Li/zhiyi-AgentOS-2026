@@ -1,0 +1,883 @@
+                                        Organizing, Orchestrating, and Benchmarking Agent Skills
+                                        at Ecosystem Scale
+
+                                        Hao Li∗ Chunjiang Mu∗ Jianhao Chen Siyue Ren                      Zhiyao Cui
+                                        Yiqun Zhang Lei Bai Shuyue Hu†
+                                        Shanghai Artificial Intelligence Laboratory
+
+
+
+                                                                                               Abstract
+arXiv:2603.02176v1 [cs.CL] 2 Mar 2026
+
+
+
+
+                                                  The rapid proliferation of Claude agent skills has raised the central question of how to
+                                                  effectively leverage, manage, and scale the agent skill ecosystem. In this paper, we propose
+                                                  AgentSkillOS, the first principled framework for skill selection, orchestration, and ecosystem-
+                                                  level management. AgentSkillOS comprises two stages: (i) Manage Skills, which organizes
+                                                  skills into a capability tree via node-level recursive categorization for efficient discovery;
+                                                  and (ii) Solve Tasks, which retrieves, orchestrates, and executes multiple skills through
+                                                  DAG-based pipelines. To evaluate the agent’s ability to invoke skills, we construct a
+                                                  benchmark of 30 artifact-rich tasks across five categories: data computation, document
+                                                  creation, motion video, visual design, and web interaction. We assess the quality of task
+                                                  outputs using LLM-based pairwise evaluation, and the results are aggregated via a Bradley–
+                                                  Terry model to produce unified quality scores. Experiments across three skill ecosystem
+                                                  scales (200 to 200K skills) show that tree-based retrieval effectively approximates oracle
+                                                  skill selection, and that DAG-based orchestration substantially outperforms native flat
+                                                  invocation even when given the identical skill set. Our findings confirm that structured
+                                                  composition is the key to unlocking skill potential. Our GitHub repository is available at:
+                                                  https://github.com/ynulihao/AgentSkillOS.
+
+
+                                        1     Introduction
+                                        The agent skill ecosystem is rapidly expanding (Ling et al., 2026). Introduced by Claude in October 2025,
+                                        a skill is a markdown file that defines a structured folder comprising declarative instructions, executable
+                                        scripts, and auxiliary resources (Anthropic, 2025). By supporting dynamic loading and execution at runtime,
+                                        skills enable a large language model (LLM) to acquire domain-specific knowledge and extend its operational
+                                        capabilities (Xu & Yan, 2026). Skills have been adopted by multiple model service providers and integrated
+                                        into platforms such as Coze, enabling cross-model skill reuse and execution. As of late Feb 2026, more
+                                        than 280,000 skills are publicly available,1 and the overwhelming majority is developed and maintained
+                                        by decentralized, third-party contributors. At this scale and degree of decentralization, a critical question
+                                        emerges: how can the agent skill ecosystem be effectively leveraged, managed, and scaled?
+                                        This question is of both practical importance and research interest. From a user perspective, the sheer
+                                        number of available skills makes it difficult to obtain a global view of the ecosystem. Users often lack visibility
+                                        into what skills exist, what capabilities they expose, and how they differ from or overlap with one another,
+                                        making targeted skill selection for specific tasks challenging. From a platform provider perspective, a rapidly
+                                        expanding, largely third-party ecosystem creates major governance challenges, especially around quality
+                                        and reliability (Liu et al., 2026; Schmotz et al., 2025). More fundamentally, as the ecosystem scales, skills
+                                        increasingly become fragmented and isolated contributions; without explicit mechanisms for composition and
+                                        coordination, many skills remain underused, and the ecosystem fails to deliver its key value: orchestrating
+                                        multiple skills to solve tasks beyond any single skill (Li, 2026).
+                                            ∗ Equal contribution
+                                            † Corresponding author. Email: hushuyue@pjlab.org.cn.
+                                            1 https://skillsmp.com/
+
+
+
+
+                                                                                                    1
+In this paper, we introduce AgentSkillOS, the first principled framework for skill selection, orchestration,
+and ecosystem-level management. It consists of two stages: Manage Skills and Solve Tasks. In the
+Manage Skills stage, we construct a capability tree that organizes skills into a hierarchy based on their
+capabilities. Specifically, starting from the root node, AgentSkillOS organizes skills into a node-level hierarchy
+by recursively partitioning each node’s skill set into category groups, splitting any category node that
+exceeds a per-node capacity threshold until all nodes conform to the limit. We note that the construction of
+a capability tree is essential. It surfaces non-obvious yet functionally relevant skills, thereby enabling broader
+and more creative skill discovery than pure semantic retrieval. In the Solve Tasks stage, AgentSkillOS builds
+on the capability tree to retrieve and orchestrate multiple skills, equipping a task-specific agent to solve tasks
+beyond any single skill. This stage comprises three steps: (i) Task-driven Skill Retrieval, which explores
+the capability tree to retrieve a broad set of relevant skills and then prunes them via filtering, deduplication,
+and relevance ranking; (ii) DAG-based Skill Orchestration, which decomposes the task into subtasks
+and composes the selected skills into Directed-Acyclic-Graph (DAG) plans, offering three different strategies
+for orchestration; and (iii) Multi-skill Task Execution, which executes the selected DAG, automatically
+managing execution order, dependencies, and data flow across steps.
+To systematically evaluate AgentSkillOS, we construct a benchmark of 30 tasks across five categories: data
+computation, document creation, motion video, visual design, and web interaction. All tasks are constructed
+by human experts who first curate high-quality skills from public marketplaces and GitHub repositories, then
+craft task descriptions and deliverable requirements based on these skills and real-world user needs, either from
+a single skill or by cross-composing multiple skills. The benchmark features three key properties tailored for
+skill evaluation: (i) Multi-format Creative Tasks: each task requires delivering a complete, end-user-facing
+artifact, going beyond code generation or question answering to test real-world delivery quality; (ii) Pairwise
+Comparison with Position-bias Mitigation: we evaluate via LLM-based pairwise judging conducted in
+both orderings to counteract position bias, and aggregate preferences via a Bradley–Terry model (Bradley &
+Terry, 1952) for fine-grained ranking; and (iii) High Skill-discriminability: by grounding tasks in specific
+skills, task quality depends critically on whether the agent correctly selects and invokes the relevant skills,
+clearly surfacing differences in skill configuration.
+We evaluate different configurations across three skill ecosystem sizes (200, 1K, 200K). Results show that our
+AgentSkillOS consistently achieves the highest scores across all ecosystem sizes, substantially outperforming
+both the vanilla Claude Code skill invocation and the skill-free baseline. Notably, our ablation study reveals
+that DAG-based skill orchestration is a critical contributor to performance: even when provided with the
+identical oracle skill set, the vanilla Claude Code agent, which invokes skills in a flat, unstructured manner,
+performs significantly worse than AgentSkillOS with DAG orchestration. This demonstrates that structured
+skill composition, not merely skill availability, is the key to unlocking the full potential of the skill ecosystem.
+The main contributions of this paper are summarized as follows:
+
+     • We propose AgentSkillOS, the first principled framework comprising capability-tree-based skill
+       organization and DAG-based multi-skill orchestration, for efficiently leveraging, managing, and
+       scaling agent skill ecosystems.
+     • We construct a benchmark of 30 artifact-rich tasks across five categories with an LLM-based pairwise
+       evaluation protocol aggregated via a Bradley–Terry model for fine-grained quality assessment.
+     • Through comprehensive experiments across three ecosystem scales (200 to 200K skills), we demon-
+       strate that tree-based retrieval effectively approximates oracle skill selection, and that DAG-based
+       orchestration substantially outperforms native flat skill invocation even when given the oracle skill
+       set.
+
+2    Method
+
+In this section, we present AgentSkillOS, the first principled framework for efficiently selecting, orchestrating,
+and managing skills from a large-scale ecosystem to solve a user-specified task. AgentSkillOS comprises
+two stages: (i) Manage Skills, which organizes a large-scale skill ecosystem into a capability tree to
+
+
+                                                         2
+                                            TopK +
+                                         User Selected
+                                                                               User Task                                                      Task-specific Agent
+                                                                               Help me promote my paper
+
+                                 Usage-frequency
+                                     Queue                          Task-Driven Retrieval                                         Layered DAG Execution
+   Skill Ecosystem
+                                                                                                                                  Prompt              Environment
+                                                                                                                               (for each node)
+       Capability Tree Construcion                                                                                              - Task
+                                                             Capability Tree           Task-Driven           Deduplication &
+                            Group Discovery                                             Retrieval               Ranking         - SubTask
+                           & Skill Assignment                                                                                   - Skill
+                                                                                                                                - Upstream
+                                                                                                                                                                  ...
+                          Root                              Skill Orchestration Graph (DAG)
+                                                                                                                                  Artifacts
+                                                                                                                                - Expected
+                                                             Layer 1                            pdf
+      Content     Data     Software              Domain-                                                                          Outputs
+      Creation Processing Development
+                                      Automation
+                                                 specific
+                                                              Layer 2
+                                                                                                                                     ...
+                                                                                                                                                   Artifacts Summary
+                                                             (Parallel)        image         frontend           pptx
+
+
+
+
+                                                             Layer 3                        social-media
+
+                                                     ...
+                                                             Qulaity-First      Efficiency-First           Simplicity-First    Task Solution            Recipe Pool
+
+
+               Skills Management                             Skill Retrieval & Orchestration                                              Multi-skill Execution
+
+
+Figure 1: AgentSkillOS is a principled framework for efficient skill retrieval, orchestration, and ecosystem-level
+management to solve user-specified tasks.
+
+
+enable efficient use of available skills prior to task execution; and (ii) Solve Tasks, which automatically
+selects, orchestrates, and executes multiple skills during task execution. Fig. 1 shows the overall workflow of
+AgentSkillOS.
+
+2.1       Manage Skills: Capability Tree Construction
+
+To enable efficient retrieval of required skills from a large-scale skill ecosystem, we organize the skill ecosystem
+using a tree structure. We refer to this tree as the capability tree, which is constructed and updated offline,
+independent of the task execution process. Formally, we denote skill ecosystem to be managed by S, and
+the capability tree by T . Each node n ∈ T corresponds to a skill partition and is assigned a specific subset
+of skills Sn ⊆ ST , where ST is the set of all skills used to construct the capability tree T . Therefore, for
+the root node r, it holds that Sr = ST .SFor node n with children ch(n), the node’s children c ∈ ch(n) form
+a partition of Sn which satisfies Sn = c∈ch(n) Sc and Sc ∩ Sc′ = ∅ for any c ̸= c′ . From high-level nodes
+to low-level nodes of this capability tree, the skill number of each level of nodes decreases approximately
+exponentially. Ultimately, each leaf node in the capability tree corresponds to a skill partition containing
+exactly one skill. This structure of our capability tree supports coarse-to-fine, level-by-level localization:
+agents can first identify relevant top-level capability domains and then search within the corresponding node
+partitions, avoiding unguided retrieval over ST . It is worth noting that ST is not necessarily equal to the
+entire skill ecosystem, which we denote as S. In the following subsections, we first describe how the capability
+tree is constructed and updated through node-level recursive categorization over ST . We further introduce a
+usage-frequency queue to select ST from S to control the tree size and reduce the inclusion of low-quality
+skills when S becomes excessively large.
+
+2.1.1        Node-Level Recursive Categorization
+
+Prior to capability tree construction, AgentSkillOS scans ST and extracts name and description of each skill
+as the basis for subsequent partition. Then, starting from the root node, AgentSkillOS adopts a breadth-first
+strategy to generate child nodes for each node, thereby building the capability tree T level by level. The
+child nodes are generated by partitioning the skill sets of the current node, which consists of two steps:
+
+
+                                                                                        3
+Group Discovery and Skill Assignment. Given the current node n and its assigned skill set Sn , during Group
+Discovery, AgentSkillOS employs an LLM to generate a specific number of category groups for Sn , including
+the name and description of each category. The target number of groups is guided by a branching factor
+B. In Skill Assignment, AgentSkillOS employs an LLM to assign each skill in Sn to one of the generated
+categorie groups. By splitting children generation into two steps, AgentSkillOS greatly reduces the probability
+of missing skills during tree construction.
+AgentSkillOS performs additional handling for three special cases. (i) If the current node is the root node,
+to ensure stable and reliable classification, five fixed category groups are manually specified in the Group
+Discovery: content creation, data processing, software development, automation, and domain-specific. (ii) If
+the number of skills in any generated category after Skill Assignment is equal to 1, that category and all
+its skills will be merged into the most relevant target category, and the name and description of the target
+category will be updated. If the number of skills in a category is below the per-node capacity threshold C but
+greater than or equal to 2, all skills in that category are converted into leaf nodes, and no further child nodes
+of them will be generated. By ensuring that each node is assigned a sufficient number of skills, AgentSkillOS
+reduces the depth of the capability tree and accelerating skill retrieval. (iii) If some skills are not assigned to
+any category because of LLM hallucination or other bugs, these skills will be reassigned. If they still have no
+category after the second Skill Assignment, they will be assigned to the category with the largest number of
+skills. Ultimately, each node in the capability tree corresponds to a category of skills, while each leaf node
+represents an individual skill.
+The capability tree will be updated if S changes. The newly introduced skills are incorporated into the
+capability tree as follows. Starting from the root node, each new skill is progressively assigned to the most
+appropriate category at each level, forming a path down the tree and ultimately being inserted as a new leaf
+node at the proper position. After insertion, we perform a bottom-up update along the constructed path to
+refine the category names and descriptions of the affected nodes. Overall, our tree construction and update
+method achieves a balance between skill classification accuracy and retrieval efficiency.
+
+2.1.2    Usage-Frequency Queue for Skill Selection for Tree-construction
+
+We control the depth of the tree by selecting only the skills that satisfy specific criteria from S to construct the
+capability tree, when the number of skills in S is above the threshold K. To select ST , AgentSkillOS maintains
+a usage-frequency queue Q that ranks s ∈ S by a frequency score f (s), which we set as the install count of
+skill s on the marketplace2 . Then, ST is selected to construct the tree by ST = TopK(Q, K) ∪ S user , where
+S user denotes the skills manually selected by the user from the S. This design enables users to conveniently
+incorporate their own custom and private skills. We place the remaining skills S \ ST into a dormant index
+that supports semantic suggestions. Specifically, we build a vector index over dormant-skill metadata (name
+and description) and retrieve suggestions by embedding similarity. If a suggested dormant skill proves useful
+during task solving, AgentSkillOS allows users to add it to S user and trigger the tree update.
+
+2.2     Solve Tasks: a Task-Specific Agent with Multiple Skills
+
+Building on the capability tree of skills, AgentSkillOS retrieves and orchestrates multiple skills to equip a
+task-specific agent, enabling it to solve tasks beyond the reach of any single skill and improving overall skill
+utilization. The key to constructing a task-specific agent lies in generating and executing a skill orchestration
+graph for the given task, formulated as a Directed Acyclic Graph (DAG). We denote it by G = (V, E), where
+each node v ∈ V denotes a skill in the capability tree and is selected to solve the task, and each directed
+edge (u, v) ∈ E indicates that skill v depends on the outputs or effects of skill u. In practice, different
+nodes typically correspond to distinct stages of task execution. By exposing relevant skills at specific stages
+of the task, AgentSkillOS enables the agent to invoke skills more accurately. The task-solving process is
+organized into three stages: (i) Task-driven Skill Retrieval, which retrieves the skills that serve as nodes in
+the skill orchestration graph; (ii) DAG-based Skill Orchestration, which constructs the DAG by organizing
+the retrieved skills; and (iii) Multi-skill Task Execution, which completes the task based on the DAG. We will
+introduce three stages in the following sections. Incidentally, AgentSkillOS introduces a skill orchestration
+  2 https://skills.sh/
+
+
+
+
+                                                         4
+reuse mechanism based on task description vector similarity to improve the operational efficiency. For
+similar user tasks, this mechanism allows the system to directly reuse the skill orchestration
+plans in the recipe pool with user consent, thereby skipping stage 1 and stage 2.
+
+
+2.2.1   Task-driven Skill Retrieval
+
+AgentSkillOS selects skills for a user-specified task in two stages: retrieval and pruning. Leveraging the
+capability tree, AgentSkillOS prompts the LLM to traverse the hierarchy and select relevant category nodes
+layer by layer based on the user’s task, ultimately treating all reached leaf nodes as candidate skills. In this
+process, the LLM is explicitly encouraged to include any skill that could help achieve the user’s goal. For
+skills not included in the tree (if any), AgentSkillOS uses a vector similarity search to retrieve the skills most
+relevant to the task and adds them to the candidate skill set. Compared with keyword search or purely
+embedding-based retrieval, this tree-guided approach enables the LLM to leverage reasoning and creativity
+to surface complementary, non-obvious skills. In the pruning stage, AgentSkillOS instructs the LLM to
+deduplicate and rank the retrieved skills according to their relevance to the user’s task, discarding those
+that are clearly irrelevant or redundant. Subsequently, AgentSkillOS produces a compact shortlist of the
+top M ranked skills. These skills are then presented to the user, who may additionally select skills, thereby
+determining the final node set V for constructing the skill orchestration graph G.
+
+
+2.2.2   DAG-based Skill Orchestration
+
+Once V is determined, AgentSkillOS generates alternative skill-orchestration plans for the user to select from,
+based on different pre-defined orchestration strategies. The strategies define different structural patterns for
+organizing skills into an executable graph, reflecting trade-offs among latency, risk, and solution diversity. In
+this paper, we define three such strategies: (i) Quality-First, which maximizes the output quality of every
+deliverable by fully leveraging each skill’s strengths and adding preparation or refinement stages where they
+improve results; (ii) Efficiency-First, which maximizes parallelism by reducing sequential hops and structuring
+the DAG so that independent sub-tasks run concurrently whenever possible, and (iii) Simplicity-First, which
+produces a minimal DAG in which every node is essential—no node can be removed without compromising
+task completion.
+During skill-orchestration generation, AgentSkillOS provides the LLM with the user task t, the selected
+skill set V , and orchestration strategies to decompose the task into sub-tasks, each of which can be handled
+by a corresponding skill to improve its performance. For each sub-task, it specifies two aspects: (i) its
+dependencies on other sub-tasks (i.e., its inputs rely on outputs produced by other sub-tasks) and (ii) its
+objective and expected outputs. Based on this information, AgentSkillOS then organizes the sub-tasks and
+their corresponding skills into three skill orchestration graphs with different strategies, where dependencies
+among nodes define the directed edges. Formally, let ℓ(v) denote the layer index for any node v ∈ V , and
+each dependency satisfies (u, v) ∈ E ⇒ ℓ(u) < ℓ(v).
+
+
+2.2.3   Multi-skill Task Execution
+
+Once an orchestration with specific strategies is selected by the user, the task-specific agent equipped with
+the selected skills executes the nodes according to the DAG’s layered dependencies: nodes within the same
+layer have no dependencies and can be executed in parallel, while those on different layers must be executed
+sequentially. For each node, AgentSkillOS constructs an execution prompt that restates the user task, specifies
+the skill to invoke, and clarifies the sub-task. It also lists upstream artifacts (i.e., files produced by prior nodes)
+with brief usage hints, states the expected outputs, and explains how downstream nodes will consume them.
+The agent then executes the specified skill, saves all generated files as artifacts, and produces a structured
+summary of execution status and outputs to support inspection. Specifically, the skill orchestration graph for
+each task is also stored for reuse in future similar tasks.
+
+
+                                                          5
+          Task Construction                                               Evaluation on Task Execution
+          Human-crafted Dataset                                                Artifacts’ Format Conversion
+             (30 tasks in 5 types)                                        Raw output format                                    LLM-evaluable format
+
+
+                                                                                                                   … scripted
+                     Data Computation                     csv   video   json      web       pdf      ppt    gif                     text    image
+                                                ×𝑘
+                                             Artifacts
+
+                   Document Creation                                       LLM-based Pairwise Evaluation
+                                                         System A
+                                                                                Pairwise Comparison                          Global Win Matrix
+
+                                          Agent                                         A vs. B              Pref. A           10 ⋯ 3.5
+                     Motion Video                                        LLM              Swap
+                                        Execution        System B       Judge            Positions           Pref. B            ⋮ ⋱  ⋮
+                                                                                        B vs. A                   Tie          5 ⋯ 1
+                     Visual Design
+                                                                                                            Evaluation Results
+
+
+                    Web Interaction
+                                                 Final                               𝑒 !!
+                                                                                                     Maximum
+                                                                                                     Likelihood
+                                                                                                                         Rescale           𝑺𝒊
+                                                                𝑃 𝑖≻𝑗 =                                             𝛽"
+                                                 Score                           𝑒!! + 𝑒 !"                                        Ranking Score
+                                                                                                                                    of System 𝑖
+
+
+Figure 2: Overview of our benchmark framework. The benchmark consists of a human-crafted dataset of
+30 tasks spanning five categories: Data Computation, Document Creation, Motion Video, Visual Design,
+and Web Interaction. For evaluation, artifacts produced by agents in diverse raw formats (csv, video, json,
+web, pdf, gif) are first converted into LLM-evaluable formats (text and image) via scripted pipelines. An
+LLM judge then performs pairwise comparisons between systems with position swapping to mitigate order
+bias, and the results are aggregated into a global win matrix. Finally, a Bradley–Terry model is fitted via
+maximum likelihood to obtain strength parameters βi , which are rescaled to produce continuous ranking
+scores Si for fine-grained differentiation of agent performance.
+
+
+3     Benchmark
+
+We construct a benchmark of 30 tasks to evaluate agents’ ability to discover and invoke skills for generating
+diverse types of artifacts (see Fig. 2). Our benchmark features three key design principles: (i) Multi-format
+Creative Tasks. Tasks go beyond code generation or question answering: they require producing polished,
+end-user-facing artifacts in diverse formats (PDF, PPTX, DOCX, HTML pages, videos, and generated images),
+where layout, design, and aesthetics all matter. (ii) Pairwise Comparison with Position-bias Mitigation.
+Rather than assigning absolute scores, the evaluation asks an LLM judge to select the better output from two
+systems. Each comparison is conducted in both orderings; consistent preferences are accepted and conflicting
+ones are recorded as ties, directly counteracting position bias. (iii) High Skill-discriminability. Task
+quality depends critically on whether the agent correctly selects and invokes the corresponding skill—an
+agent with the right skill produces high-quality output, while one lacking it fails or yields drastically degraded
+results—ensuring that evaluation clearly surfaces differences in skill configuration.
+
+3.1   Task
+
+The tasks in our benchmark span five categories: data computation, document creation, motion
+video, visual design, and web interaction. Data computation tasks involve numerical analysis and
+statistical modeling; document creation tasks require generating professionally formatted documents and
+presentations; motion video tasks focus on producing educational animations explaining mathematical and
+technical concepts; visual design tasks center on designing static visual artifacts; and web interaction tasks
+encompass building interactive web pages or automated web data collection. Each task requires delivering
+a complete, end-user-facing artifact, closely resembling the real-world workflows of human users. All tasks
+are constructed by human experts through the following procedure. We first manually select high-quality
+skills from public skill marketplaces and GitHub repositories. Based on the scenarios these skills target and
+the likely needs of real-world users, we then craft task descriptions and specify the required deliverables,
+
+
+                                                                6
+                                                                                                                    )
+           2038    -21                                      )   1 )5     -21               (         )( (
+       )1 8-1 1 / 6-6                                       203 21- 25                     )   (        (
+        21 ) 5/2                                               ) 6      5                      (
+       - )5)1 - / 4                                         8 -     25. /2
+                                                                                               )
+            3)53 5 0                                        1 / - 6    6
+         32 )6-6 )6                                               -3)/-1)
+                                                                                                 (     (
+         0 2/- 1 ) 5                                         )    5 3-1
+
+
+
+                                                                                                                )        )( )(
+                                                                                           (         )( (
+      2 80)1    5) -21
+                                                                                           )   (        (
+      )  / 21 5
+                                      )1   0 5.       6.6                                      (
+       3)5 21 )56-21
+                                            ) 25-)6
+        1 ) )5)1 )6                                                                            )
+      5)6 /-()6                                                                                  (     (
+      8 5 )5/   )325
+      8 1 80 3)5                                                       -68 /   )6- 1
+                                                                        21   26 )5
+                                                                            85 ) )6- 1
+                                                                                                            )           )( )(    (
+                                                                          ) ( )5 6
+                         2 -21 -()2
+                                                                        )0) )1)5 25        (         )( (
+                            5-   -1
+                         285-)5 1-0
+                                                                        5     - - -21      )   (        (
+                                                                         52// 3                (
+                           8 /) 2/ )5
+                           )1 -21 -()2                                                         )
+                         25 -1 -68 /                                                             (     (
+                          / 8/86 1-0
+
+
+
+
+Figure 3: Overview of benchmark tasks. (a) All 30 tasks organized into five categories: Data Computation,
+Document Creation, Motion Video, Visual Design, and Web Interaction, with six tasks per category. Each
+task is listed with its abbreviated name. (b) Task complexity distributions across categories, measured by
+three dimensions: the number of skills required to complete the task, the number of output files the task
+expects, and the number of distinct output formats involved.
+
+
+either from a single skill or by cross-composing multiple skills. Figure 3 (a) lists all 30 tasks organized by
+category, and (b) shows the complexity profile of each category in terms of the number of skills, output files,
+and output formats required per task.
+
+3.2       Evaluation
+
+To evaluate task artifacts, we adopt pairwise comparative evaluation as the primary metric. Given the outputs
+of two systems for the same task, an LLM judge examines all artifacts from both sides and determines which
+system produced the better result, considering dimensions such as correctness, completeness, quality, and
+aesthetics. To support multi-modal comparison, artifacts in non-text formats are converted into representations
+consumable by the LLM judge: documents and slides are rendered as page images, HTML pages are captured
+as full-page screenshots, videos are represented by uniformly sampled frames accompanied by metadata
+(duration, resolution, frame rate), and images are resized to a standardized resolution. Text files are included
+verbatim up to a length limit. To mitigate position bias inherent in LLM-based judging, each comparison
+is conducted in both orderings. The two judgments are then consolidated into a single verdict: if both
+orderings agree, the consistent preference is adopted; if exactly one ordering produces an error, the valid
+judgment is used; if the two orderings yield conflicting preferences (i.e., each favors a different system), the
+outcome is recorded as a tie. When ranking N systems, we perform all N2 pairwise comparisons across every
+                                                                            
+
+shared task. The pairwise outcomes are aggregated into a win matrix W ∈ RN ×N , where Wij records the
+number of times system i is preferred over system j. Ties contribute 0.5 to both Wij and Wji . We then fit a
+Bradley-Terry model (Bradley & Terry, 1952) to derive a ranking from the win matrix. The Bradley-Terry
+model assigns each system i a latent strength parameter βi ∈ R, and models the probability that system i is
+preferred over system j as:
+                                                            eβi
+                                             P (i ≻ j) = βi                                                   (1)
+                                                         e + eβj
+We fit the model via maximum likelihood using the MM algorithm (Hunter, 2004) with Laplace smoothing
+(α = 1), yielding centered strength parameters {βi } with zero mean. The resulting strength parameters are
+
+
+                                                                                       7
+linearly rescaled to [0, 100] to obtain the final ranking score for each system:
+                                                   βi − βmin
+                                           Si =               × 100                                         (2)
+                                                  βmax − βmin
+Overall, this benchmark provides a systematic and reproducible evaluation of an agent’s ability to deliver
+high-quality artifacts for complex, real-world tasks. We use this benchmark to evaluate different settings in
+the following experiments.
+
+4     Experiments
+
+4.1   Experimental Setup
+
+Skill ecosystem. We construct skill ecosystems of three sizes (|S|=200, 1K, 200K) to evaluate scalability.
+All skills are sourced from a public skill marketplace and GitHub repositories. The smallest pool (200) consists
+of two manually curated components: (i) the best-performing skill for each benchmark task, and (ii) a set
+of additional high-quality skills manually selected by human experts. The two larger pools (1K and 200K)
+extend the 200-skill base by automatically including skills ranked by install count from the marketplace until
+the target size is reached. This construction progresses from a curated, high-quality core to increasingly open
+and noisy skill ecosystems, allowing us to assess how retrieval and orchestration degrade as ecosystem size
+and heterogeneity grow.
+
+Compared methods. We evaluate eight configurations organized into four groups. (i) AgentSkillOS
+variants employ capability-tree-based retrieval and DAG-based orchestration, differing only in orchestration
+strategy: Quality-First maximizes output quality by adding preparation and refinement stages; Efficiency-
+First maximizes parallelism by reducing sequential hops; and Simplicity-First produces a minimal DAG
+in which every node is essential. (ii) Oracle orchestration. Quality-First (Oracle) bypasses tree retrieval
+and instead uses the benchmark-designated skills (i.e., the ground-truth relevant skills for each task), while
+retaining the Quality-First DAG orchestration, serving as an upper-bound reference for skill retrieval.
+(iii) Claude Code Agent SDK with skills but without orchestration. Three ablations supply skills to Claude
+Code without DAG-based composition: w/ Full Pool provides the entire skill ecosystem; w/ Retrieval
+provides only the tree-retrieved skills; and w/ Oracle Skills provides the benchmark-designated skills. In
+all three cases, the agent invokes skills in a flat, unstructured manner. (iv) Baseline. Vanilla runs the native
+Claude Code Agent SDK without access to any skills.
+
+Models. For the AgentSkillOS variants (groups i and ii), capability tree construction, tree-based skill
+retrieval, and DAG-based skill orchestration use claude-opus-4.5 as the LLM backbone, while each DAG
+node is executed by the Claude Code Agent SDK with claude-sonnet-4.5. For the Claude Code Agent SDK
+variants (groups iii and iv), all configurations use the Claude Code Agent SDK with claude-sonnet-4.5. For
+benchmark evaluation, the LLM-judge pairwise comparison is implemented using the Claude Code Agent
+SDK with claude-opus-4.5 as the judge model.
+
+Hyperparameters. The branching factor for capability tree construction is set to B=7 for the 200 and
+1K ecosystems, and B=12 for the 200K ecosystem; during Group Discovery, each node is partitioned into
+[B−3, ; B+2] child groups. The per-node capacity threshold is C = ⌊1.5B⌋. For the 200K ecosystem, the
+usage-frequency queue retains the top K=10,000 skills as the active set ST for tree construction; the remaining
+skills are placed in a dormant index. During skill retrieval, the top M =8 ranked skills are retained after
+pruning.
+
+4.2   Results
+
+AgentSkillOS substantially outperforms both native skill provisioning and the skill-free baseline,
+and this advantage persists as the skill ecosystem scales. As shown in Table 1, the three AgentSkillOS
+variants (Quality-First, Efficiency-First, and Simplicity-First) consistently achieve the highest Bradley–Terry
+scores across all ecosystem sizes, substantially outperforming w/ Full Pool, which in turn outperforms the
+
+
+                                                       8
+Table 1: Per-category W / T / L (wins / ties / losses) counts from LLM-judge pairwise comparisons against all
+other methods. Category abbreviations: Data = Data Computation, Document = Document Creation, Video
+= Motion Video, Visual = visual Design, Web = Web Interaction. Each pair is judged twice with reversed
+presentation order and merged into a single debiased decision. The last column reports the Bradley–Terry
+score rescaled to [0, 100], where 100 corresponds to the top-ranked method and 0 to the bottom-ranked
+method within each ecosystem size. Bold indicates the best result per column within each ecosystem size.
+                |S|   Method                       Data         Document               Video            Visual         Web          BT
+                      Quality-First    18/1/5                     12/6/6               11/7/6           17/7/0      20/3/1 100.0
+                      Efficiency-First 13/2/9                     7/10/7               6/9/9            11/8/5      14/3/7 58.5
+               200    Simplicity-First 10/4/10                     7/9/8               8/7/9            12/6/6      13/3/8 53.6
+                      w/ Full Pool.               5/4/15              11/8/5          13/3/8            3/4/17         2/4/18       24.3
+                      Vanilla                     6/5/13              4/5/15          5/8/11            2/5/17         2/5/17        0.0
+                      Quality-First    14/4/6                     11/7/6              13/2/9            9/10/5      20/2/2 100.0
+                      Efficiency-First 10/4/10                    11/5/8              15/1/8            8/10/6      10/6/8 76.1
+               1K     Simplicity-First 9/3/12                     10/5/9              7/3/14            9/8/7       11/6/7 56.3
+                      w/ Full Pool.               11/1/12             9/5/10           14/2/8       10/4/10            4/4/16       48.1
+                      Vanilla                     9/2/13              5/6/13           6/2/16        5/6/13            4/4/16        0.0
+                    Quality-First    15/7/2                       15/5/4              13/3/8            9/4/11      18/1/5 100.0
+                    Efficiency-First 11/7/6                       12/7/5              14/4/6            10/5/9      16/2/6 89.0
+               200K Simplicity-First 8/3/13                       11/5/8              8/3/13            12/5/7      14/3/7 56.0
+                      w/ Full Pool.               7/4/13              4/5/15          12/2/10           8/3/13         4/6/14       17.2
+                      Vanilla                     6/5/13              3/8/13          6/2/16            10/5/9         0/4/20       0.0
+
+
+
+skill-free Vanilla baseline. Notably, the w/ Full Pool configuration, which supplies the entire skill ecosystem
+directly to Claude Code, achieves limited Bradley–Terry scores across all ecosystem sizes. This reflects an
+inherent limitation of the native skill invocation mechanism in Claude Code. As the pool grows, an increasing
+fraction of skills becomes invisible to the agent, effectively nullifying the benefit of a larger ecosystem.
+
+
+                || = 200                                              || = 1K                                          || = 200K
+
+                  Overall                                               Overall                                             Overall
+
+                             100                                                     100                                                 100
+    Web                                Data          Web                                      Data          Web                                   Data
+                           80                                                      80                                                  80
+ Interaction              60
+                                    Computation   Interaction                     60
+                                                                                           Computation   Interaction                  60
+                                                                                                                                               Computation
+                        40                                                      40                                                  40
+                       20                                                      20                                                  20
+
+
+
+
+   Visual                            Document       Visual                                  Document       Visual                               Document
+   Design                             Creation      Design                                   Creation      Design                                Creation
+
+                Motion Video                                          Motion Video                                        Motion Video
+
+
+                               Quality-First       Efficiency-First        Simplicity-First         w/ Full Pool.        Vanilla
+
+
+
+Figure 4: Per-category and overall Bradley-Terry scores (rescaled to [0, 100]) derived from the pairwise
+comparisons in Table 1, shown for three skill ecosystem sizes (|S|=200, 1K, 200K). Larger polygon area
+indicates stronger performance across categories. Three AgentSkillOS variants achieve the broadest coverage
+in all settings, consistent with the top Bradley–Terry scores reported in Table 1.
+
+
+                                                                           9
+In contrast, the three AgentSkillOS variants consistently rank at the top across all ecosystem sizes, demon-
+strating that structured retrieval via the capability tree and DAG-based orchestration together overcome
+the scalability bottleneck of flat skill provision. Fig. 4 provides a per-category view by fitting separate
+Bradley–Terry models to the win matrix of each task category. The resulting radar charts show that the three
+AgentSkillOS variants form large, well-rounded polygons across all ecosystem sizes, whereas w/ Full Pool and
+Vanilla produce small, irregular shapes with pronounced weaknesses in specific categories, confirming that
+the advantage holds uniformly across diverse task types. The limited scores of w/ Full Pool further highlight
+a fundamental tension between the rapidly expanding skill ecosystem and the agent’s inherently constrained
+ability to discover and invoke skills, underscoring the necessity of principled skill management frameworks
+such as our AgentSkillOS.
+
+Tree-based retrieval approximates oracle skill selection, and DAG orchestration provides clear
+additional improvements. To disentangle the contributions of AgentSkillOS’s two core components,
+capability-tree-based retrieval and DAG-based orchestration, we conduct an ablation study using Quality-First
+as the reference and report pairwise W / T / L counts against four ablation variants (Fig. 5). The results reveal
+a clear degradation gradient as components are removed. Quality-First wins most decisively against w/ Full
+Pool, where neither retrieval nor orchestration is available. Adding tree-based retrieval alone (w/ Retrieval)
+reduces the gap but Quality-First still dominates, confirming that retrieval without structured composition is
+insufficient. Providing the oracle skill set without orchestration (w/ Oracle Skills) yields further improvement,
+yet Quality-First retains a clear lead, demonstrating that DAG orchestration contributes substantially even
+when the perfect skill set is given. Finally, when compared against Quality-First (Oracle), which combines
+oracle skills with DAG orchestration, Quality-First shows only a modest deficit, and the gap narrows as the
+ecosystem grows. This validates that tree-based retrieval effectively approximates oracle skill selection.
+
+                                       || = 200                                   || = 1K                              || = 200K
+
+ vs. Quality-First (Oracle)       10         6        14                 11           7           12                10         9           11
+
+
+      vs. w/ Oracle Skills             18         6        6                  17              7        6                 19        3        8
+
+
+          vs. w/ Retrieval              22             5       3              15          7            8                 18        5            7
+
+
+          vs. w/ Full Pool.             21         2       7                   18          3       9                      21           2        7
+
+                              0        10        20            30   0          10          20              30   0        10        20               30
+                                   Number of Tasks                        Number of Tasks                            Number of Tasks
+
+                                                       Win              Tie               Lose
+
+
+
+Figure 5: Ablation study of AgentSkillOS components. Each panel shows pairwise W / T / L counts
+(green = win, gray = tie, orange = lose) of Quality-First against four ablation variants for |S|=200, 1K, and
+200K. Removing DAG orchestration (w/ Oracle Skills, w/ Retrieval) or both retrieval and orchestration (w/
+Full Pool) consistently degrades performance, confirming that both components are essential. Quality-First
+closely approaches the oracle upper bound (Quality-First (Oracle)), validating the effectiveness of tree-based
+skill retrieval.
+
+
+Orchestration strategies produce structurally distinct skill graphs that faithfully reflect their
+design objectives. As shown in Fig. 6, the three strategies yield clearly separable distributions over
+four graph-level metrics: node count, maximum depth (the longest dependency chain, reflecting sequential
+decomposition), maximum width (the largest number of concurrent nodes at any single layer, reflecting
+parallelism), and edge count. Quality-First consistently produces the largest and deepest graphs with the
+most edges, indicating that it decomposes tasks into fine-grained, multi-stage pipelines with rich inter-skill
+dependencies. Efficiency-First maintains a comparable node count but favors wider, shallower graphs, trading
+sequential depth for parallel execution. Simplicity-First generates the most compact graphs overall, with
+
+
+                                                                    10
+the fewest nodes, minimal depth, and sparse connectivity, consistent with its objective of retaining only
+essential steps. These structural differences confirm that the three strategies do not merely reorder the same
+set of skills, but shape fundamentally different compositional topologies, providing users with meaningful and
+interpretable choices when configuring the orchestration pipeline.
+
+              (a)                                  (b)                                       (c)                                  (d)
+
+                                                   24                                                                             6
+              12                                                                             6
+ Node Count
+
+
+
+
+                                      Edge Count
+
+
+
+
+                                                                                 Max Width
+
+
+
+
+                                                                                                                      Max Depth
+                                                   16                                                                             4
+              8                                                                              4
+
+                                                   8                                                                              2
+              4
+                                                                                             2
+                                                   0                                                                              0
+
+                                                         Quality-First   Efficiency-First          Simplicity-First
+
+
+
+Figure 6: Structural properties of DAG-based skill orchestration plans across three strategies, aggregated
+over all 30 benchmark tasks and three skill ecosystem sizes (|S|=200, 1K, 200K). Each panel reports a
+different graph-level metric: (a) node count, (b) edge count, (c) max width, and (d) max depth. Boxes span
+the interquartile range with individual task results overlaid as jittered points. Quality-First produces the
+largest and deepest DAGs, reflecting its strategy of adding preparation and refinement stages. Efficiency-First
+produces graphs of comparable size but with notably greater width and shallower depth, reflecting its
+preference for maximizing parallel execution over sequential refinement. Simplicity-First yields the most
+compact graphs, consistent with its minimal-node design objective.
+
+
+AgentSkillOS produces more professional and usable artifacts than skill-free generation. Figure 7
+presents three representative tasks from the |S|=200 setting, comparing the vanilla Claude Code baseline
+(left) with the Quality-First variant of AgentSkillOS (right). Case 1 requires building an immersive scrolling
+web page for a space exploration exhibit with chapter illustrations. The vanilla baseline produces a functional
+but visually plain page with small, low-fidelity images, whereas AgentSkillOS leverages image-generation and
+frontend-design skills to deliver full-screen sections with high-quality illustrations and layered scrolling effects.
+Case 2 asks for a calculus teaching package comprising a derivative animation and a companion handout.
+The vanilla baseline generates basic matplotlib plots without smooth transitions, while AgentSkillOS invokes
+an animation skill to produce a polished Manim-rendered video with dynamic secant-to-tangent progression
+and clean mathematical annotations, alongside a well-structured PDF handout. Case 3 requires generating
+a presentation on quantum computing fundamentals. The vanilla baseline produces text-heavy slides with
+minimal visual design, whereas AgentSkillOS composes illustration-generation and presentation skills to
+produce professionally designed slides with Bloch sphere visualizations, structured layouts, and consistent
+branding. Across all three cases, the quality gap stems not from differences in backbone model ability but from
+whether the agent successfully discovers and invokes the appropriate skills, corroborating the quantitative
+findings above.
+
+5             Related Work
+
+5.1                Tool-Augmented and Multi-Skill Agents
+
+The integration of external tools into LLM-based agents has become a prevalent paradigm for extending
+model capabilities (Schick et al., 2023; Hao et al., 2023; Qin et al., 2024a). Within such systems, LLMs
+are provisioned with access to APIs, functions, and execution environments (Yao et al., 2022), allowing
+them to perform computation (Gao et al., 2023), retrieve information (Lewis et al., 2020), or interact with
+external software during inference (Shen et al., 2023; Wang et al., 2024). As tool ecosystems grow in scale and
+diversity, skill abstractions have been introduced as higher-level primitives that package procedural knowledge,
+executable resources, and structured instructions into self-contained, composable modules (Anthropic, 2025).
+
+
+                                                                              11
+Figure 7: Qualitative comparison between the vanilla Claude Code baseline (left) and the Quality-First
+variant of AgentSkillOS (right) on three representative tasks from the |S|=200 setting. Case 1: an immersive
+scrolling web page on space exploration history with illustrations. Case 2: a calculus derivatives teaching
+package comprising an animation video and a companion PDF handout. Case 3: a quantum computing
+fundamentals presentation with generated illustrations. In all cases, AgentSkillOS produces substantially
+higher-quality artifacts by effectively selecting and composing relevant skills, whereas the vanilla baseline,
+lacking structured skill discovery and orchestration, yields visually plain or text-heavy outputs.
+
+
+Unlike individual tools, which typically expose a single function or API endpoint, skills encapsulate composite
+workflows or domain-specific procedures, enabling modular encapsulation and scalable reuse across users
+and platforms. Despite these advances, new challenges emerge when skill repositories scale into large,
+decentralized ecosystems. First, human users struggle to identify the most relevant skills from repositories
+containing tens of thousands of entries, especially when skills are contributed by decentralized developers
+with heterogeneous naming conventions, overlapping functionalities, and varying quality levels. Without
+a structured overview of the ecosystem, users often lack visibility into capability coverage and functional
+boundaries, making targeted skill selection both time-consuming and unreliable. Moreover, it is difficult
+for LLM agents to effectively compose and coordinate diverse skills to handle complex, multi-step tasks, as
+such composition requires reasoning about inter-skill dependencies, data flow, execution order, and potential
+conflicts across heterogeneous tools. To this end, we present AgentSkillOS, the first framework for the
+structural organization and orchestration of open, evolving skill ecosystems at scale. Concretely, AgentSkillOS
+introduces a capability-tree-based organization mechanism for hierarchical skill discovery, together with
+DAG-based multi-skill orchestration that enables structured composition and execution across heterogeneous
+skills.
+
+
+5.2   Agent Benchmarks for Complex Tasks
+
+The rapid advancement of LLM-based agents has spurred the development of numerous benchmarks to
+evaluate their capabilities across diverse scenarios. Domain-specific benchmarks provide rigorous evaluation
+within individual domains such as code repair (Jimenez et al., 2024), web navigation (Zhou et al., 2024),
+OS-level interaction (Xie et al., 2024), and scientific computing (Chen et al., 2025). Tool-use benchmarks such
+as ToolLLM (Qin et al., 2024b), API-Bank (Li et al., 2023), Gorilla (Patil et al., 2024), and TaskBench (Shen
+et al., 2024) assess agents’ ability to select and invoke external APIs with increasing scale and compositional
+complexity. Comprehensive benchmarks such as AgentBench (Liu et al., 2024), GAIA (Mialon et al., 2024),
+and TheAgentCompany (Xu et al., 2024) further broaden coverage by spanning multiple environments or
+task types. Despite their breadth, these benchmarks share two structural constraints: they confine agents to
+predefined and finite sets of tools rather than open-ended skill spaces; and they primarily emphasize endpoint
+
+
+                                                      12
+success metrics over qualitative assessment of outputs. Therefore, they provide limited insight into agents’
+ability to leverage skills in more open and generative settings. A concurrent work SkillsBench (Li et al.,
+2026) primarily measures the marginal performance gain from curated skills. It focuses predominantly on
+terminal-based tasks, limiting its ability to evaluate multi-modal or artifact-rich outputs, where the impact of
+skill augmentation remains underexplored. More importantly, SkillsBench does not explicitly evaluate an
+agent’s ability to autonomously discover, select, or compose skills across tasks. In this paper, we construct a
+benchmark that situates agents in an open-ended skill space spanning data analysis, visualization, document
+generation, and multimedia creation, requiring them to autonomously select and compose skills within each
+task. Beyond binary pass/fail evaluation, we adopt an LLM-based pairwise comparison protocol and aggregate
+the results through a Bradley-Terry model to derive unified quality scores, enabling fine-grained differentiation
+of agent performance on open-ended, artifact-rich tasks.
+
+6   Conclusions and Future Work
+Skills have proven highly effective at extending LLM-based agents with domain-specific capabilities. However,
+there exists a fundamental tension between the rapidly expanding skill ecosystem and the agent’s inherently
+limited ability to discover and invoke skills, which requires an effective intermediate layer for skill management.
+To address this challenge, this paper introduces AgentSkillOS, the first principled framework that addresses
+this challenge through capability-tree-based skill organization, DAG-based multi-skill orchestration, and
+automated task execution. We further construct a benchmark of 30 artifact-rich tasks across five categories
+with an LLM-based pairwise evaluation protocol for fine-grained quality assessment. Through comprehensive
+experiments across different ecosystem scales, we demonstrate two key findings: (i) tree-based retrieval
+effectively approximates oracle skill selection, enabling agents to discover the most relevant skills from
+large-scale ecosystems; and (ii) DAG-based skill orchestration substantially outperforms native flat skill
+invocation even when given the identical skill set, unlocking significantly more potential from the skill
+ecosystem through structured composition.
+We believe that two important directions remain for future work. First, our current framework assumes
+that skills are already collected and available; automated skill collection, including discovery of new skills
+from open sources, quality assessment, and continuous integration into the ecosystem, is a natural next step.
+Second, since skills are inherently readable artifacts, they naturally lend themselves to self-evolution, where
+agents automatically refine skill instructions, fix failure modes, and generate higher-quality skill variants
+based on execution feedback.
+
+References
+Anthropic. Agent skills. Claude API Docs, 2025. URL https://platform.claude.com/docs/en/
+ agents-and-tools/agent-skills/overview. Accessed: 2026-01-26.
+Ralph Allan Bradley and Milton E Terry. Rank analysis of incomplete block designs: I. the method of paired
+  comparisons. Biometrika, 39(3/4):324–345, 1952.
+Ziru Chen, Shijie Chen, Yuting Ning, Qianheng Zhang, Boshi Wang, Botao Yu, Yifei Li, Zeyi Liao, Chen Wei,
+  Zitong Lu, et al. Scienceagentbench: Toward rigorous assessment of language agents for data-driven scientific
+  discovery. In 13th International Conference on Learning Representations, ICLR 2025, pp. 12138–12194.
+  International Conference on Learning Representations, ICLR, 2025.
+Luyu Gao, Aman Madaan, Shuyan Zhou, Uri Alon, Pengfei Liu, Yiming Yang, Jamie Callan, and Graham
+  Neubig. Pal: Program-aided language models. In International conference on machine learning, pp.
+  10764–10799. PMLR, 2023.
+Shibo Hao, Tianyang Liu, Zhen Wang, and Zhiting Hu. Toolkengpt: Augmenting frozen language models with
+  massive tools via tool embeddings. Advances in neural information processing systems, 36:45870–45894,
+  2023.
+David R Hunter. Mm algorithms for generalized bradley-terry models. The annals of statistics, 32(1):384–406,
+ 2004.
+
+
+                                                        13
+Carlos E Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan.
+  Swe-bench: Can language models resolve real-world github issues? In 12th International Conference on
+ Learning Representations, ICLR 2024, 2024.
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich
+  Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented generation for knowledge-
+  intensive nlp tasks. Advances in neural information processing systems, 33:9459–9474, 2020.
+Minghao Li, Yingxiu Zhao, Bowen Yu, Feifan Song, Hangyu Li, Haiyang Yu, Zhoujun Li, Fei Huang, and
+ Yongbin Li. Api-bank: A comprehensive benchmark for tool-augmented llms. In Proceedings of the 2023
+ conference on empirical methods in natural language processing, pp. 3102–3116, 2023.
+Xiangyi Li, Wenbo Chen, Yimin Liu, Shenghan Zheng, Xiaokun Chen, Yifeng He, Yubo Li, Bingran You,
+  Haotian Shen, Jiankai Sun, et al. Skillsbench: Benchmarking how well agent skills work across diverse
+  tasks. arXiv preprint arXiv:2602.12670, 2026.
+Xiaoxiao Li. When single-agent with skills replace multi-agent systems and when they fail. arXiv preprint
+  arXiv:2601.04748, 2026.
+George Ling, Shanshan Zhong, and Richard Huang. Agent skills: A data-driven analysis of claude skills for
+ extending large language model functionality. arXiv preprint arXiv:2602.08004, 2026.
+Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen Men,
+  Kejuan Yang, et al. Agentbench: Evaluating llms as agents. In 12th International Conference on Learning
+  Representations, ICLR 2024, 2024.
+Yi Liu, Zhihao Chen, Yanjun Zhang, Gelei Deng, Yuekang Li, Jianting Ning, and Leo Yu Zhang. Malicious
+  agent skills in the wild: A large-scale security empirical study. arXiv preprint arXiv:2602.06547, 2026.
+Grégoire Mialon, Clémentine Fourrier, Thomas Wolf, Yann LeCun, and Thomas Scialom. Gaia: a benchmark
+  for general ai assistants. In 12th International Conference on Learning Representations, ICLR 2024, 2024.
+Shishir G Patil, Tianjun Zhang, Xin Wang, and Joseph E Gonzalez. Gorilla: Large language model connected
+  with massive apis. Advances in Neural Information Processing Systems, 37:126544–126565, 2024.
+Yujia Qin, Shengding Hu, Yankai Lin, Weize Chen, Ning Ding, Ganqu Cui, Zheni Zeng, Xuanhe Zhou, Yufei
+  Huang, Chaojun Xiao, et al. Tool learning with foundation models. ACM Computing Surveys, 57(4):1–40,
+  2024a.
+Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang,
+  Bill Qian, et al. Toolllm: Facilitating large language models to master 16000+ real-world apis. In 12th
+  International Conference on Learning Representations, ICLR 2024, 2024b.
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke
+  Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves
+  to use tools. Advances in neural information processing systems, 36:68539–68551, 2023.
+David Schmotz, Sahar Abdelnabi, and Maksym Andriushchenko. Agent skills enable a new class of realistic
+  and trivially simple prompt injections. arXiv preprint arXiv:2510.26328, 2025.
+Yongliang Shen, Kaitao Song, Xu Tan, Dongsheng Li, Weiming Lu, and Yueting Zhuang. Hugginggpt: Solving
+  ai tasks with chatgpt and its friends in hugging face. Advances in Neural Information Processing Systems,
+  36:38154–38180, 2023.
+Yongliang Shen, Kaitao Song, Xu Tan, Wenqi Zhang, Kan Ren, Siyu Yuan, Weiming Lu, Dongsheng Li,
+  and Yueting Zhuang. Taskbench: Benchmarking large language models for task automation. Advances in
+  Neural Information Processing Systems, 37:4540–4574, 2024.
+Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng Ji. Executable code
+  actions elicit better llm agents. In Forty-first International Conference on Machine Learning, 2024.
+
+
+                                                    14
+Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan Li, Siheng Zhao, Ruisheng Cao, Toh J Hua, Zhoujun
+  Cheng, Dongchan Shin, Fangyu Lei, et al. Osworld: Benchmarking multimodal agents for open-ended tasks
+  in real computer environments. Advances in Neural Information Processing Systems, 37:52040–52094, 2024.
+Frank F Xu, Yufan Song, Boxuan Li, Yuxuan Tang, Kritanjali Jain, Mengxue Bao, Zora Zhiruo Wang, Xuhui
+  Zhou, Zhitong Guo, Murong Cao, et al. Theagentcompany: Benchmarking llm agents on consequential real
+  world tasks. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets
+  and Benchmarks Track, 2024.
+Renjun Xu and Yang Yan. Agent skills for large language models: Architecture, acquisition, security, and the
+  path forward. arXiv preprint arXiv:2602.12430, 2026.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. React:
+  Synergizing reasoning and acting in language models. In The eleventh international conference on learning
+  representations, 2022.
+Shuyan Zhou, Frank F Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue Ou,
+  Yonatan Bisk, Daniel Fried, et al. Webarena: A realistic web environment for building autonomous agents.
+  In 12th International Conference on Learning Representations, ICLR 2024, 2024.
+
+
+
+
+                                                    15
+

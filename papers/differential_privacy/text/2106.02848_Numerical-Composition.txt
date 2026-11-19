@@ -1,0 +1,1476 @@
+                                                         Numerical Composition of Differential Privacy∗
+                                                                Sivakanth Gopi1 , Yin Tat Lee2 , and Lukas Wutschitz1
+                                                            1
+                                                                Microsoft, {sigopi,lukas.wutschitz}@microsoft.com
+                                                                     2
+                                                                       University of Washington, yintat@uw.edu
+arXiv:2106.02848v3 [cs.DS] 26 Oct 2021
+
+
+
+
+                                                                                             Abstract
+                                                We give a fast algorithm to optimally compose privacy guarantees of differentially private (DP)
+                                            algorithms to arbitrary accuracy. Our method is based on the notion of privacy loss random variables to
+                                            quantify the privacy loss of DP algorithms. The running time and memory needed for     √ our algorithm to
+                                            approximate the privacy curve of a DP algorithm composed with itself k times is Õ( k). This improves
+                                            over the best prior method by Koskela et al. [KH21] which requires Ω̃(k1.5 ) running time. We demonstrate
+                                            the utility of our algorithm by accurately computing the privacy loss of DP-SGD algorithm of Abadi et
+                                            al. [ACG+ 16] and showing that our algorithm speeds up the privacy computations by a few orders of
+                                            magnitude compared to prior work, while maintaining similar accuracy.
+
+
+
+
+                                         ∗ Author ordering is alphabetical. Code is available at https://github.com/microsoft/prv_accountant .
+
+
+
+
+                                                                                                  1
+Contents
+1 Introduction                                                                                                3
+  1.1 Our Contributions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .   5
+
+2 DP Preliminaries                                                                                            6
+
+3 Privacy Loss Random Variables (PRVs)                                                                        7
+
+4 Numerical composition of privacy curves                                                                     9
+
+5 Error analysis                                                                                              9
+
+6 Experiments                                                                                            11
+  6.1 Comparison with [KJPH21] . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+A Effect of floating point arithmetic                                                                         16
+
+B Privacy Loss Random Variables                                                                             17
+  B.1 Examples of privacy loss random variables . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+  B.2 Subsampling . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+
+C Missing Proofs in Error Analysis                                                                           21
+  C.1 Facts about Coupling Approximation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+  C.2 Bounding the error using tail bounds of PRVs . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+  C.3 Tail Bound for PRVs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+  C.4 Proof of Theorem 5.5 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+
+
+
+
+                                                       2
+1      Introduction
+Differential privacy (DP) introduced by [DMNS06] provides a provable and quantifiable guarantee of privacy
+when the results of an algorithm run on private data are made public. Formally, we can define an (ε, δ)-
+differentially private algorithm as follows.
+Definition 1.1 ((ε, δ)-DP [DMNS06, DKM+ 06]). An algorithm M is (ε, δ)-DP if for any two neighboring
+databases D, D′ differing in exactly one user and any subset S of outputs, we have Pr[M(D) ∈ S] ≤
+eε Pr[M(D′ ) ∈ S] + δ.
+   Intuitively, it says that looking at the outcome of M, we cannot tell whether it was run on D or D′ .
+Hence an adversary cannot infer the existence of any particular user in the input database, and therefore
+cannot learn any personal data of any particular user.
+   DP algorithms have an important property called composition. Suppose M1 and M2 are DP algorithms
+and say M (D) = (M1 (D), M2 (D)), i.e., M runs both the algorithms on D and outputs their results. Then
+M is also a DP algorithm.
+Proposition 1.2 (Simple composition [DKM+ 06, DL09]). If M1 is (ε1 , δ1 )-DP and M2 is (ε2 , δ2 )-DP, then
+M (D) = (M1 (D), M2 (D)) is (ε1 + ε2 , δ1 + δ2 )-DP.
+    This also holds under adaptive composition (denoted by M = M2 ◦ M1 ), where M2 can look at both the
+database and the output of M1 .1 It turns out that both compositions enjoy much better DP guarantees
+than this simple composition rule. Let M be an (ε, δ)-DP algorithm and let M ◦k denote the (adaptive)
+composition of M with itself k times. The naive composition rule shows that M ◦k is (kε, kδ)-DP. This was
+significantly improved in [DRV10].
+Proposition 1.3 (Advanced composition [DRV10, DR+ 14]). If M is (ε, δ)-DP, then M ◦k is (ε′ , kδ + δ ′)-DP
+where                                       s             
+                                       ′                    1
+                                      ε = ε 2k log              + kε(eε − 1).
+                                                            δ′
+                                          
+    Note that if ε = O √1k and δ = o k1 , then M ◦k satisfies (Oδ′ (1), δ ′ )-DP. Using simple composition
+                                                          √
+(Proposition
+    √        1.2), we can only claim that M ◦k is (O( k), o(1))-DP. Thus advanced composition often results
+in k-factor savings in privacy which is significant in practice. The optimal DP guarantees for k-fold
+composition of an (ε, δ)-DP algorithm were finally obtained by [KOV15]. For composing different algorithms,
+the situation is more complicated. If M1 , M2 , . . . , Mk are DP algorithms such that Mi is (εi , δi )-DP, then it
+is shown by [MV16] that computing the exact DP guarantees for M = M1 ◦ M2 ◦ · · · ◦ Mk is #P-complete.
+They also give an algorithm to approximate the DP guarantees of M to desired accuracy η which runs in
+                                                     3              
+                                                        k ε̄(1 + ε̄)
+                                                Õ                                                             (1)
+                                                             η
+                 Pk
+time where ε̄ = ( i=1 εi )/k.2 If each εi ≈ √1k (so that M will satisfy reasonable privacy guarantees by
+advanced composition), then the running time is Õ(k 2.5 /η).
+    In most situations, DP algorithms come with a collection of (ε, δ)-DP guarantees, i.e., for each value of
+ε, there exists δ such that the algorithm is (ε, δ)-DP.
+Definition 1.4 (Privacy curve). A DP algorithm M is said to have privacy curve δ : R → [0, 1], if for every
+ε ∈ R, M is (ε, δ(ε))-DP.
+    1 Here M (D) = (M (D), M (D, M (D))).
+                        1        2     1
+    2 ε has an additive error of η and δ has a multiplicative error of η.
+
+
+
+
+                                                                  3
+    For example the privacy curve of a Gaussian mechanism (with sensitivity 1 and noise scale σ) is given
+by δ(ε) = Φ (−εσ + 1/2σ) − eε Φ (−εσ − 1/2σ) where Φ(·) is the Gaussian CDF [BW18]. Suppose we want
+to compose several Gaussian mechanisms, which (ε, δ)-DP guarantee should we choose for each mechanism?
+Any choice will lead to suboptimal DP guarantees for the final composition. Instead, we need a way to
+compose the privacy curves directly. This was suggested through the use of privacy region in [KOV15] and
+explicitly studied in the f -DP framework of [DRS19]. f -DP is a dual way (and equivalent) to look at the
+privacy curve δ(ε).
+    Independently, an algorithm called Privacy Buckets for approximately composing privacy curves using the
+notion of was initiated in [MM18]. This algorithm depends on the notion of Privacy Loss Random Variable
+(PRV) [DR16], whose distribution is called Privacy Loss Distribution (PLD). For any DP-algorithm, one
+can associate a PRV and the privacy curve of that algorithm can be easily obtained from the PRV. The
+really useful property of PRVs is that under adaptivePcomposition, they just add up; the PRV Y of the
+                                                             k
+composition M = M1 ◦ M2 ◦ · · · ◦ Mk is given by Y = i=1 Yi where Yi is the PRV of Mi .3 Therefore, one
+can find the distribution of Y by the convolution of the distributions of Y1 , Y2 , . . . , Yk . In an important paper,
+[KJH+ 20] proposed that one can speed up the convolutions using Fast Fourier Transform (FFT). Explicit
+error bounds were obtained for the approximation obtained by their algorithm in [KJH+ 20, KJPH21, KH21].
+The running time of this algorithm was analyzed in [KH21] where it was shown that the privacy curve δM (ε)
+of M = M1 ◦ M2 ◦ · · · ◦ Mk can be computed up to an additive error of δerror in time
+                                                     3 
+                                                       k ε̄
+                                                 Õ            ,                                                   (2)
+                                                      δerror
+                                                                  Pk
+if each algorithm Mi is satisfies (εi , 0)-DP and ε̄ = k1            i=1 εi .   Assuming that each εi ≈ √1k , we get
+Õ(k 2.5 /δerror ) running time. Note that this is slightly worse than (1), where the denominator η is the
+multiplicative error in δM . When  composing  the same algorithm with itself for k times, the running time
+                                             1.5
+                             k2 ε̄
+can be improved to Õ δerror , which is Õ δerror when ε̄ = √1k .
+                                              k
+
+
+
+Moments Accountant and Renyi DP In an influential paper where they introduce Differentially Private
+Deep Learning, [ACG+ 16] proposed a method called the Moments Accountant (MA) for giving an upper
+bound the privacy curve of a composition of DP algorithms. They applied their method to bound the
+privacy loss of differentially private Stochastic Gradient Descent (DP-SGD) algorithm which they introduced.
+Analyzing the privacy loss of DP-SGD involves composing the privacy curve of each iteration of training
+with itself k times, where k is the total of number of training iterations. Typical values of k range from
+1000 to 300000 (such as when training large models like GPT3). The Moments Accountant was subsumed
+into the framework of Renyi Differential Privacy (RDP) introduced by [Mir17]. The running time of these
+accountants are independent of k, but they only give an upper bound and cannot approximate the privacy
+curve to arbitrary accuracy.
+    DP-SGD is one of the most important DP algorithms in practice, because one can use it to train neural
+networks to achieve good privacy-vs-utility tradeoffs. Therefore obtaining accurate and tight privacy guar-
+antees for DP-SGD is important. For example reducing ε from 2 to 1, can mean that one can train the
+network for 4 times more epochs while staying within the same privacy budget. Therefore DP-SGD is one
+of the main motivations for this work.
+    There are also situations when the PRVs do not have bounded moments and so Moments Accountant
+or Renyi DP cannot be applied for analyzing privacy. An example of such an algorithm is the DP-SGD-JL
+algorithm of [BGK+ 21] which uses numerical composition of PRVs to analyze privacy.
+
+GDP Accountant [DRS19, BDLS19] introduced the notion of Gaussian Differential Privacy (GDP) and
+used it to develop an accountant for DP-SGD. The accountant is based on central limit theorem and only
+   3 [KJH+ 20] only state this for non-adaptive composition. In this paper we show how to extend this to adaptive composition
+
+as well.
+
+
+
+                                                             4
+gives an approximation to the true privacy curve, where the approximation gets better with k. But as we
+show in Figure 1, GDP accountant can significantly underreport the true epsilon value.
+    Several different notions of privacy were introduced for obtaining good upper bounds on the privacy curve
+of composition of DP algorithms such as Concentrated DP (CDP) [DR16, BS16], Truncated CDP [BDRS18]
+etc. None of these methods can approximate the privacy curve of compositions to arbitrary accuracy. The
+notion of f -DP introduced by [DRS19], allows for a lossless composition theorem, but computing the privacy
+curve of composition seems computationally hard and they do not give any algorithms for doing it.
+
+1.1       Our Contributions
+The main contribution of this work is a new algorithm with an improved analysis for computing the privacy
+curve of the composition of a large number of DP algorithms.
+Theorem 1.5 (Informal version of Theorem 5.5). Suppose M1 , M2 , . . . , Mk are DP algorithms. Then the
+privacy curve δM (ε) of adaptive composition M = M1 ◦ M2 ◦ · · · ◦ Mk can be approximated in time
+                                                           q          
+                                                                  1
+                                         εupper k 1.5 log k log δerror
+                                    O                                 ,                           (3)
+                                                     εerror
+
+where εerror is the additive error in4 ε, δerror is the additive error in δ and εupper is an upper bound on
+max εM (δerror ), maxi εMi δerror
+                               k      .
+                                  
+   If each Mi satisfies √1k , o(1)
+                                k   -DP, then by advanced composition (Proposition 1.3), we can set εupper =
+                                                                              q        !
+                                                                          k1.5          1
+                                                                                  log δerror
+O(1). Therefore the running time of our algorithm in this case is Õ             εerror        . We can save a factor
+
+of k, when we compose the same algorithm with itself k times.
+Theorem 1.6. Suppose M is a DP algorithm. Then the privacy curve δM ◦k (ε) of M (adaptively) composed
+with itself k times can be approximated in time
+                                                  1
+                                                          q           
+                                                                 1
+                                          εupper k 2 log k log δerror
+                                      O                              ,                          (4)
+                                                     εerror
+
+where εerror is the additive error in ε, δerror is the additive error in δ and εupper is an upper bound on
+max εM ◦k (δerror ), εM δerror
+                           k     .
+   Thus we improve the state-of-the-art by at least a factor of k in running time. We also note that our
+algorithm improves the memory required by a factor of k. See Figure 1 for a comparison of our algorithm with
+that of [KJPH21]. Also note that RDP Accountant (equivalent to the Moments Accountant) significantly
+overestimates the true ε, while the GDP Accountant significantly underestimates the true ε. In contrast, the
+upper and lower bounds provided by our algorithm lie very close to each other.
+
+Our Techniques Our algorithm (also the prior work of [KJH+ 20]) proceeds by approximating the privacy
+loss random variables (PRVs) by truncating and discretizing them. We then use Fast Fourier Transform
+(FFT) to convolve the distributions efficiently. The main difference is in the approximation procedure and
+the error analysis. In the approximation procedure, we correct the approximation so that the expected value
+of the discretization matches with the expected value of the PRV.
+    To analyze the approximation error, we introduce the concept of coupling approximation (Definition 5.1),
+which is a variant of Wasserstein (optimal transport) distance specifically tailored to this application. We first
+  4ε
+       M (δ) is the inverse of δM (ε).
+
+
+
+                                                        5
+    0.65                                                               2.5
+                            εup Ours
+     0.6                   εlow Ours
+                      εup [KJPH21]
+    0.55             εlow [KJPH21]                                      2
+     0.5
+    0.45                                                               1.5                              Ours Upper
+     0.4                                                                                                Ours Lower
+ε
+
+
+
+
+                                                                   ε
+                                                                                                              GDP
+    0.35                                                                1                                     RDP
+
+     0.3
+    0.25                                                               0.5
+     0.2
+    0.15                                                                0
+           10   15    20      25   30    35   40   45   50                   0     500       1000          1500      2000
+                               DPSGD steps                                                DPSGD steps
+
+(a) Our algorithm gives much closer upper and                      (b) Our algorithm can improve significantly over the
+lower bounds on the true privacy curve compared                    RDP Accountant. We also see that GDP Accountant
+to [KJPH21], under the same mesh size of 4 × 10−5 .                can significantly underreport the true ε. We have set
+Our upper and lower bounds are nearly coinciding.                  εerror = 0.1, δerror = δ/1000 here.
+
+      Figure 1: Case study on DP-SGD. Sampling probability p = 10−3 , noise scale σ = 0.8, δ = 10−7 .
+
+
+show that the approximation output by our algorithm to each privacy random variable is a good coupling
+approximation. We then show that when independent coupling approximations are added, cancellation
+happens between the errors due to Hoeffding bound, producing a much better coupling approximation than
+one naively expects from the triangle inequality. This allows us to choose the mesh size in our discretization
+to be ≈ √1k , whereas [KH21] choose a mesh size of ≈ k1 . The other improvement is the truncation procedure.
+We give a tight tail bound of the PRVs (Lemma 5.4).√ This allows us to choose the domain size for in
+truncation to be ≈ Õ(1), whereas [KH21] choose ≈ Õ( k). Both ideas together saves a factor of k in the
+run time and memory.
+    For the analysis, the previous paper analyzes the discretization error by studying the stability of convo-
+lution. This leads to complicated calculations with the runtime linear in 1/δerror (see (2)). Since δerror ≪
+δ ≪ 1/N is required to give meaningful privacy guarantee (N is the number of users), this term 1/δerror is
+                                   p facts about how coupling approximation accumulates and use them to
+huge. In this paper, we show various
+give a runtime depending only on log(1/δerror ).
+
+
+2     DP Preliminaries
+Given a DP algorithm M, for each value of ε ≥ 0, there exists some δ ∈ [0, 1] such that M is (ε, δ)-DP.
+We can represent all these privacy guarantees by a function δM (ε) : R≥0 → [0, 1] and say that δM (·) is the
+privacy curve of M. This inspires the following definition of a privacy curve between two random variables.
+Definition 2.1 (Privacy curve). Given two random variables X, Y supported on some set Ω, define δ(X||Y ) :
+R → [0, 1] as:
+                              δ(X||Y )(ε) = sup Pr[Y ∈ S] − eε Pr[X ∈ S].
+                                                             S⊂Ω
+
+    Therefore an algorithm M is (ε, δ)-DP iff δ (M(D)||M(D′ )) (ε) ≤ δ for all neighboring databases D, D′ .
+Remark 2.2. Note that not all functions δ : R → [0, 1] are privacy curves. A characterization of privacy
+curves can be obtained using the f -DP framework of [DRS19]. The notion of privacy curve δ(X||Y ) and
+tradeoff function T (X||Y ) are dual to each other via convex duality [DRS19]. This implies a characterization
+of privacy curves as shown in [ZDW21].
+
+
+
+                                                                   6
+Definition 2.3 (Composition of privacy curves [DRS19]). Let δ1 ≡ δ(X1 ||Y1 ) and δ2 ≡ δ(X2 ||Y2 ) be any
+two privacy curves. The composition of the privacy curves, denoted by δ1 ⊗ δ2 , is defined as
+
+                                          δ1 ⊗ δ2 ≡ δ ((X1 , X2 )||(Y1 , Y2 ))
+
+where X1 , X2 are independently sampled and Y1 , Y2 are independently sampled.
+   Note that there can be many pairs of random variables which have the same privacy curve, but the above
+operation is well-defined. If δ(X1 ||Y1 ) ≡ δ(X1′ ||Y1′ ) and δ(X2 ||Y2 ) ≡ δ(X2′ ||Y2′ ), then it was shown by [DRS19]
+that
+                                 δ ((X1 , X2 )||(Y1 , Y2 )) = δ ((X1′ , X2′ )||(Y1′ , Y2′ )) .
+[DRS19] also show that ⊗ is a commutative and associative operation.
+    Given two DP algorithms M1 and M2 , the adaptive composition (M2 ◦ M1 )(D) is an algorithm which
+outputs (M1 (D), M2 (D, M1 (D)), i.e., M2 can look at the database D and also the output of the previous
+algorithm M1 (D). Adaptive composition of more than two algorithms is similarly defined. Suppose M1 has
+privacy curve δ1 and M2 has privacy curve δ2 (i.e., M2 (·, y) is a DP algorithm with privacy curve δ2 for any
+fixed y.). The following composition theorem shows how to get the privacy curve of M2 ◦ M1 .
+Theorem 2.4 (Composition theorem [DRS19]). Let M1 , M2 , . . . , Mk be DP algorithms with privacy curves
+given by δ1 , δ2 , . . . , δk respectively. The privacy curve of the adaptive composition Mk ◦ Mk−1 ◦ · · · ◦ M1 is
+given by δ1 ⊗ δ2 ⊗ · · · ⊗ δk .
+
+
+3     Privacy Loss Random Variables (PRVs)
+The notion of privacy loss random variables (PRVs) is a unique way to assign a pair (X, Y ) for any privacy
+curve δ such that δ ≡ δ(X||Y ). PRVs allow us to compute composition of two algorithms via summing
+random variables (Theorem 3.5) (equivalently, convolving their distributions). Thus PRVs can be thought
+of as a reparametrization of privacy curves where composition becomes convolution. In this paper, we differ
+from the usual definition of PRVs given in [DR16, KJH+ 20], which are tied to a specific algorithm. Instead we
+think of them as a reparametrization of privacy curves and study them directly. This allows us to succinctly
+prove many useful properties of PRVs.
+    Let R = R ∪ {−∞, ∞} be the extended real line where we define ∞ + x = ∞ and −∞ + x = −∞ for
+x ∈ R.
+Definition 3.1 (Privacy loss random variables (PRVs)). Given a privacy curve δ : R → [0, 1], we say that
+(X, Y ) are privacy loss random variables for δ, if they satisfy the following conditions:
+    • X, Y are supported on R,
+    • δ(X||Y ) ≡ δ,
+    • Y (t) = et X(t) for every t ∈ R and
+    • Y (−∞) = 0 and X(∞) = 0
+where X(t), Y (t) are probability density functions of X, Y respectively.
+    Mathematically, the correct way to write the condition Y (t) = et X(t) is to say that EY [φ(Y )] =
+EX [φ(X)eX ] for all test functions φ : R → [0, 1] with φ(∞) = φ(−∞) = 0. This will generalize to all
+situations where X, Y are continuous or discrete or both. For ease of exposition, we ignore this complication
+and assume that X(t), Y (t) represent the PDFs if X, Y are continuous at t, or the probability masses if they
+have point masses at t.
+    The following theorem shows that the PRVs for a privacy curve δ = δ(P ||Q) are given by the log-likelihood
+random variables of P, Q.
+
+
+                                                           7
+Theorem 3.2. Let δ : R → [0, 1] be a privacy curve given by δ ≡ δ(P ||Q) where P, Q are two random
+variables supported on Ω. The PRVs (X, Y ) for the privacy curve δ are given by5 :
+                                                    
+                                               Q(ω)
+                                   X = log             where ω ∼ P,
+                                               P (ω)
+                                                    
+                                               Q(ω)
+                                   Y = log             where ω ∼ Q.
+                                               P (ω)
+   The following theorem provides a formula for computing the privacy curve δ in terms of the PRVs and
+conversely a formula for PRVs in terms of the privacy curve. A similar statement appears in [SMM19,
+KJH+ 20].
+Theorem 3.3. The privacy curve δ can be expressed in terms of PRVs (X, Y ) as:
+                      δ(ε) = Pr[Y > ε] − eε Pr[X > ε] = EY [(1 − eε−Y )+ ] = Pr[Y ≥ ε + Z].                               (5)
+where Z is an exponential random variable.6 Conversely, given a privacy curve δ : R → [0, 1], we can
+compute the PDFs of its PRVs (X, Y ) as:
+                                  Y (t) = δ ′′ (t) − δ ′ (t) and X(t) = et (δ ′′ (t) − δ ′ (t)).                          (6)
+Remark 3.4. Theorem 3.3 shows that the PRVs X, Y do not depend on the particular P, Q used to repre-
+sent the privacy curve δ in Theorem 3.2. So we should think of the PDF of of the PRV Y (or X) as an
+equivalent reparametrization of the privacy curve δ : R → [0, 1], just as the notion of f -DP [DRS19] is a
+reparametrization of the privacy curve δ.
+   PRVs are useful in computing privacy curves because the composition of two privacy curves can be
+computed by adding the corresponding pairs of PRVs. A similar statement appears in [DR16].
+Theorem 3.5. Let δ1 , δ2 be two privacy curves with PRVs (X1 , Y1 ) and (X2 , Y2 ) respectively. Then the
+PRVs for δ1 ⊗ δ2 = δ(X1 , X2 ||Y1 , Y2 ) are given by (X1 + X2 , Y1 + Y2 ). In particular,
+                                              δ1 ⊗ δ2 = δ(X1 + X2 ||Y1 + Y2 ).
+Proof. Let (X, Y ) be the privacy random variables for δ(X1 , X2 ||Y1 , Y2 ). By Theorem 3.2,
+                                                           
+                                       (Y1 , Y2 )(t1 , t2 )
+                           X = log                            where (t1 , t2 ) ∼ (X1 , X2 )
+                                      (X1 , X2 )(t1 , t2 )
+                                                        
+                                       Y1 (t1 )Y2 (t2 )
+                              = log                          where t1 ∼ X1 , t2 ∼ X2
+                                      X1 (t1 )X2 (t2 )
+                                                           (By independence of X1 , X2 and indpendence of Y1 , Y2 )
+                                      t1    t2
+                                               
+                              = log e · e        where t1 ∼ X1 , t2 ∼ X2
+                                  = t1 + t2 where t1 ∼ X1 , t2 ∼ X2
+                                  = X1 + X2 .
+Similarly,
+                                                                     
+                                               (Y1 , Y2 )(t1 , t2 )
+                                Y = log                                   where (t1 , t2 ) ∼ (Y1 , Y2 )
+                                              (X1 , X2 )(t1 , t2 )
+                                   = t1 + t2 where t1 ∼ Y1 , t2 ∼ Y2
+                                   = Y1 + Y2 .
+
+
+    5 Here Q(ω) and P (ω) are the probability density functions of Q, P respectively. Note that the mathematically precise way
+                        Q(ω)
+is to replace the ratio P (ω) by the Radon-Nikodym derivative dQdP
+                                                                   (ω).
+    6 For x ∈ R, x = max{x, 0}.
+                  +
+
+
+
+                                                                      8
+    In Appendix B, we provide a proof of Theorems 3.2 and 3.3. We also discuss how to compute the PRVs
+for a subsampled mechanism given the PRVs for the original mechanism and give examples of PRVs for few
+standard mechanisms. These are used in our experiments to calculate the PRVs for DP-SGD.
+
+
+4     Numerical composition of privacy curves
+In this section, we present an efficient and numerically accurate method, ComposePRV (Algorithm 1), for
+composing privacy guarantees by utilizing the notion of PRVs.
+
+ Algorithm 1: ComposePRV: Composing privacy curves using PRVs
+    Input: CDFs of PRVs Y1 , Y2 , . . . , Yk , mesh size h, Truncation parameter L ∈ h2 + hZ>0
+                                                          Pk
+    Output: PDF of an approximation Ye for Y = i=1 Yi . Ye will be supported on µ + (hZ ∩ [−L, L])
+              for some µ ∈ [0, h2 ].
+    for ℓ = 1 to k do
+       Yei ← DiscretizePRV(Yi , L, h);
+    end
+    Compute PDF Of Ye = Ye1 ⊕L Ye2 ⊕L · · · ⊕L Yek by convolving PDFs of Ye1 , Ye2 , . . . , Yek using FFT;
+                                       
+                                     e
+    Compute δYe (ε) = EYe 1 − eε−Y             for all ε ∈ [0, L];
+                                          +
+    Return Ye , δYe (·)
+
+
+   In the algorithm ComposePRV, we compute the circular convolution ⊕L using Fast Fourier Transform
+(FFT). Fix some L > 0. For x ∈ R, we define x (mod 2L) = x − 2Ln where n ∈ Z is chosen such that
+x − 2Ln ∈ (−L, L]. Given x, y, we define the circular addition
+
+                                              x ⊕L y = x + y   (mod 2L).
+
+When we use FFT to compute the convolution of two discrete distributions Y1 , Y2 supported on hZ ∩ [−L, L],
+we are implicitly calculating the the distribution of Y1 ⊕L Y2 . In the appendix, we show that Ye1 ⊕L Ye2 ⊕L
+· · · ⊕L Yek is a good approximation of Y1 + Y2 + · · · + Yk .
+      The subroutine DiscretizePRV (Algorithm 2) is used to truncate and discretize PRVs. In this subroutine,
+we shift the discretized random variables such that it has the same mean as the original variables. This is
+one of main differences between our algorithm and the algorithm in [KJPH21, KH21]. We show                   √ that this
+significantly decreases the discretization error and allow us to use much coarser mesh h ≈ 1/ k instead of
+h ≈ 1/k.
+      For simplicity, throughout this paper, we will assume that the PRVs Y1 , Y2 , . . . , Yk do not have any mass
+at ∞. This is with out loss of generality. Suppose Pr[Yi = ∞] = δi for each i. Let Yi′ = Yi |Yi 6=∞ . Then
+                                        (
+                                          Y1′ + Y2′ + · · · + Yk′ w.p. (1 − δ1 )(1 − δ2 ) · · · (1 − δk )
+                 Y1 + Y2 + · · · + Yk =
+                                          ∞                       w.p. 1 − (1 − δ1 )(1 − δ2 ) · · · (1 − δk ).
+
+Therefore we can use Algorithm 1 to approximate the distribution of Y1′ + Y2′ + · · · + Yk′ , and use it to
+approximate the distribution of Y1 + Y2 + · · · + Yk .
+
+
+5     Error analysis
+To analyze the discretization error, we introduce the notion of coupling approximation, a variant of Wasser-
+stein distance. Intuitively, a good coupling approximation is a coupling where the two random variables are
+close to each other with high probability.
+
+                                                           9
+ Algorithm 2: DiscretizePRV: Discretize and truncate a PRV
+   Input: CDFY (·) of a PRV Y , mesh size h, Truncation parameter L ∈ h2 + hZ>0
+   Output: PDF of an approximation Ye supported on µ + (hZ ∩ [−L, L]) for some µ ∈ [0, h2 ].
+         L− h
+   n ← h2 ;
+   for i = −n to n do
+       qi ← CDFY (ih + h/2) − CDFY (ih − h/2);
+   end
+           Pn         
+   q ← q/      i=−n qi ;               // Normalize q to make it a probability distribution
+     L
+   Y ← Y |Y |≤L (i.e., Y conditioned on |Y | ≤ L);
+                  Pn
+   µ ← E[Y L ] − i=−n ih · qi ;
+         n
+   Ye ← ih + µ w.p. qi for − n ≤ i ≤ n ;
+   Return Ye ;
+
+
+Definition 5.1 (coupling approximation). Given two random variables Y1 , Y2 , we write |Y1 − Y2 | ≤η h if
+there exists a coupling between Y1 , Y2 such that Pr[|Y1 − Y2 | > h] ≤ η.
+    The following lemma shows that if we have a good coupling approximation Ye to a PRV Y , then the
+privacy curves δY (ε) and δYe (ε) should be close.
+Lemma 5.2. If Y and Ye are two random variables such that |Y − Ye | ≤η h, then for every ε ∈ R,
+                                     δYe (ε + h) − η ≤ δY (ε) ≤ δYe (ε − h) + η.
+Proof. By Theorem 3.2, δY (ε) = Pr[Y ≥ ε + Z] and hence
+
+                                   δY (ε) = Pr[Y − Ye + Ye ≥ ε + Z]
+                                          ≤ Pr[Y − Ye ≥ h] + Pr[Ye ≥ ε − h + Z]
+                                         ≤ η + δYe (ε − h).
+Similarly, we have δYe (ε) ≤ η + δY (ε − h) for all ε ∈ R.
+    Therefore the goal ofP our analysis is to show that the ComposePRV algorithm finds a good coupling
+approximation Ye to Y = ki=1 Yi . We first show that the DiscretizePRV algorithm computes a good coupling
+approximation to the PRVs and crucially, it preserves the expected value after truncation. Lemma C.5
+shows that |Ye − Y L | ≤0 h where Ye is the approximation of a PRV Y output by Algorithm 2 and Y L is the
+truncation of Y to [−L, L].
+    We then use the following key lemma which shows that when we add independent coupling approxima-
+tions (where expected values match), we get a much better coupling approximation than what the triangle
+inequality predicts.
+Lemma 5.3. Suppose Y1 , Y2 , . . . , Yk and Ye1 , Ye2 , . . . , Yek are two collections of independent random variables
+such that |Yi − Yei | ≤0 h and E[Yi ] = E[Yei ] for all i, then
+                                            k          k               r
+                                         X           X                          2
+                                                Yi −         e
+                                                            Yi ≤η h 2k log .
+                                          i=1        i=1
+                                                                                η
+
+Proof. Let Xi = Yi − Yei where (Yi , Yei ) are coupled such that |Yi − Yei | ≤ h w.p. 1. Then Xi ∈ [−h, h] w.p. 1.
+Note that X1 , X2 , . . . , Xk are independent of each other. By Hoeffding’s inequality,
+                                         "           #                     
+                                           X                         2t2
+                                      Pr     Xi ≥ t ≤ 2 exp −                 =η
+                                           i
+                                                                  k(2h)2
+
+
+                                                          10
+               q
+if we set t = h 2k log η2 .
+                                                                   √                              √
+   This lemma shows that the error of k times composition is around k · h and hence setting h ≈ 1/ k
+        √ enough error. Next, we bound the domain size L. Naively, the domain size L should be of the
+gives small
+order of k because Y is the sum of k independent random variables with each bounded by a constant. In
+the appendix, we give a tighter tail bound of Y .
+Lemma 5.4. Let (X, Y ) be the privacy random variables for a (ε, δ)-DP algorithm, then for any t ≥ 0, we
+have
+                                                      δ (1 + e−ε−t )
+                                   Pr[|Y | ≥ ε + t] ≤                .
+                                                         1 − e−t
+   This shows that Pr[|Y | ≥ ε + 2] ≤ 34 δ and hence truncating the domain with L = 2 + ε only introduces
+an additive δ error in the privacy curve. Therefore, if the composition satisfies a good privacy guarantee
+               √ for small enough√δ), we can truncate the domain at L = Θ(1). Together with the fact that
+(namely ε = O(1)
+mesh size is 1/ k, this gives a O( k)-time algorithm for computing the privacy curve when we compose the
+same mechanism with itself k times. The following theorem gives a formal statement of the error bounds of
+our algorithm, it is proved in Appendix 5.
+Theorem 5.5. Let εerror , δerror > 0 be some fixed error terms. Let M1 , M2 , . . . , Mk be DP algorithms with
+privacy curves δMi (ε). Let Yi be the PRV corresponding to Mi such that δMi (ε) = δYi (ε) for ε ≥ 0. Let
+M be the (adaptive) composition of M1 , M2 , . . . , Mk and let δM (ε) be its privacy curve. Set L ≥ 2 + εerror
+sufficiently large such that
+                              k
+                              X                     δerror                            δerror
+                                    δMi (L − 2) ≤          and δM (L − 2 − εerror ) ≤        .             (7)
+                              i=1
+                                                      8                                 4
+                                          Pk
+Let Ye be the approximation of Y =          i=1 Yi produced by ComposePRV algorithm with mesh size
+
+                                                              εerror
+                                                     h= q                   .
+                                                             k       12
+                                                             2 log δerror
+
+Then
+                       δYe (ε + εerror ) − δerror ≤ δY (ε) = δM (ε) ≤ δYe (ε − εerror ) + δerror . (8)
+                                            L      L
+                                                     
+Furthermore, our algorithm takes O b h log h time where b is the number of distinct algorithms among
+M1 , M2 , . . . , Mk .
+Remark 5.6. A simple way to set L such that the condition (7) holds is by choosing an L such that:
+                                                                          
+                                                  δerror               δerror
+                     L ≥ 2 + max εerror + εM               , max εMi                                       (9)
+                                                    4        i∈[k]      8k
+
+where εA (δ) is the inverse of δA (ε). To set the value of L, we do not need the exact value of εM (or εMi ).
+We only need an upper bound on εM , which can often by obtained by using the RDP Accountant or any other
+method to derive upper bounds on privacy.
+
+
+6      Experiments
+In this section, we demonstrate the utility of our composition method by computing the privacy curves for
+the DP-SGD algorithm which is one of the most important algorithms in differential privacy.
+    The DP-SGD algorithm [ACG+ 16] is a variant of stochastic gradient descent with k steps. In each step,
+the algorithm selects a p fraction of training examples uniformly at random. The algorithm adds a Gaussian
+
+                                                             11
+vector with variance ∝ σ 2 to the clipped gradient of the selected batch. Then it performs a gradient step
+(or any other iterative methods) using the noisy gradient computed. The privacy loss of DP-SGD involves
+composing the privacy curve of each iteration with itself k times. The PRVs for each iteration have a closed
+form and depend only p, σ (see Appendix). Our algorithms use this closed form of PRVs.
+    See Figure 1(b) for the comparison between our algorithm and the GDP and RDP Accountant. Our
+method provides a lower and upper bound of the privacy curve according to (8). In Figure 1(a), we compare
+our algorithm with [KJPH21] (implemented in [KP21]). Under the same mesh size, our algorithm computes
+a much closer upper and lower bound.
+    We validate our program for the case p = 1. When p = 1, we have an exact formula for
+                                                                      
+                                               ε   µ        ε      ε   µ
+                                  δ(ε) = Φ − +          −e Φ − −                                        (10)
+                                              µ     2              µ   2
+           √
+where µ = σk . In Figure 2, we show that the true privacy curve is indeed sandwiched between the bounds we
+compute and that the vertical distance between our bounds is indeed 2εerror with a neglible δerror of 10−10 .
+
+                               5
+                             4.5
+                               4
+                             3.5
+                               3
+                             2.5
+                         ε
+
+
+
+
+                               2
+                                                           εexact
+                             1.5              εup , εshift = 0.1
+                                             εlow , εshift = 0.1
+                               1              εup , εshift = 0.5
+                                             εlow , εshift = 0.5
+                             0.5              εup , εshift = 1.0
+                                             εlow , εshift = 1.0
+                               0
+                                   10−8   10−7   10−6     10−5       10−4   10−3   10−2   10−1
+                                                                    δ
+
+                   Figure 2: Setting p = 1 and comparing to the analytical solution (10).
+
+
+Floating point errors Note that our error analysis in Section 5 ignores floating point errors. This is
+because they are negligible compared to the discretization and truncation errors we analyzed in Section 5
+for the range of δ we are interested in. Our implementation uses long double floating point format which
+is platform dependent, however, it guarantees a precision at least as good as double precision which has
+a resolution of 10−15 . Computations involving δ of these orders of magnitude suffer from floating point
+inaccuracies. Our implementation therefore only allows δ values which are greater than 10−10 which sufficies
+for practical use cases. See Appendix A for more details.
+
+6.1    Comparison with [KJPH21]
+In this section, we provide more results demonstrating the practical use of our algorithm. We compare run-
+times of our algorithm with [KJPH21], which is the state-of-the-art, for typical values of privacy parameters
+(σ = 0.8, p = 4 × 10−3 , ε = 1.5).
+    See Figure 3 for the effect of the number of discretisation points n on the accuracy of δ. Our algorithm
+requires about a few orders of magnitude smaller number of discretization points to converge compared
+  7 We are using the implementation of [KJPH21] from [KP21].
+
+
+
+
+                                                             12
+                            10−3
+
+                            10−4
+
+                            10−5
+
+                            10−6
+
+                        δ   10−7
+
+                            10−8
+                                                               δup [KJPH21]
+                            10−9                              δlow [KJPH21]
+                                                                     δup Ours
+                                                                    δlow Ours
+                            10−10
+                                 103    104     105      106      107      108   109
+                                                Discretisation points
+
+Figure 3: Comparison of error bounds of δ with varying number of discretisation points for p = 4 × 10−3 , σ =
+0.8, ε = 1.5, k = 1000.
+
+
+to the algorithm of [KJPH21]. A similar picture can be seen in Figure 4. While for a small number of
+compositions, the algorithm of [KJPH21] gives reasonable estimates, for a large number of compositions,
+their error bounds worsen quickly.
+    We note that runtimes are directly proportional to the memory required by the algorithms and so a
+separate memory analysis is not required; the runtime and memory are dominated by the number of points
+in the discretization of PRV. All experiments are performed on a Intel Xeon W-2155 CPU with 3.30GHz
+with 128GB of memory.
+    In order to compare runtimes, we align the accuracy of both FFT algorithms. We find sets of numerical
+parameters (number of discretization bins and domain length) such that both algorithms give similarly
+accurate bounds and verify it visually (see Figure 5 (b)). Figure 5 illustrates the runtimes for varying
+numbers of DPSGD steps. We observe a significant reduction in the runtime using our algorithms.
+
+Acknowledgements
+We would like to thank Janardhan Kulkarni and Sergey Yekhanin for several useful discussions and encour-
+aging us to work on this problem. L.W. would like to thank Daniel Jones and Victor Rühle for fruitful
+discussions and helpful guidance.
+
+
+
+
+                                                     13
+         2                                                   4                                             5
+                                     εup [KJPH21]
+                                    εlow [KJPH21]
+                                          εup Ours                                                         4
+1.5                                      εlow Ours           3
+                                                                                                           3
+         1                                                   2
+                                                                                                           2
+0.5                                                          1
+                                                                                                           1
+
+         0                                                0                                                0
+                   −9              −6           −3
+              10             10            10           1 10−9         10   −6
+                                                                                         10   −3
+                                                                                                         1 10−9      10−6       10−3             1
+                                    δ vs ε                                          δ vs ε                                δ vs ε
+                             (a) k = 10                                (b) k = 100                                  (c) k = 1000
+
+Figure 4: Comparing different error bounds using the same mesh size 8 × 10−4 under different number of
+steps k = 10, 100, 1000. (With p = 10−2 , σ = 0.8.)
+
+
+
+
+              12                                                 100                          10−4
+                            Ours
+                         KJPH21                                  90
+              10        Speed up
+                                                                 80
+                                                                                              10−5
+                                                                 70
+               8
+                                                                       × Speed up
+Runtime [s]
+
+
+
+
+                                                                 60
+               6                                                 50                           10−6
+                                                                                         δ
+
+
+
+
+                                                                 40
+               4
+                                                                 30
+                                                                                              10−7
+                                                                 20                                                        Ours, Upper
+               2                                                                                                            Ours, Lower
+                                                                 10                                                      KJPH21, Upper
+                                                                                                                         KJPH21, Lower
+               0                                                 0                            10−8
+                100                                   1000                                           0     500     1000       1500        2000
+                                        DPSGD steps                                                               DPSGD steps
+
+Figure 5: (a) Comparing runtimes for our algorithm with that of [KJPH21] when aligned on accuracy for
+σ = 0.8, p = 4 × 10−3 . We can see a significant reduction in runtime in particular for large number of
+DPSGD steps. We were not able to run the algorithm of [KJPH21] beyond 2,000 steps, since it becomes
+unstable beyond that point.7 . We also plot the speed up directly on the secondary y-axis. (b) Verification
+of the alignment of the error bounds of both algorithms at ε = 1.5.
+
+
+
+
+                                                                                    14
+References
+[ACG+ 16] Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar,
+          and Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC
+          Conference on Computer and Communications Security, pages 308–318, 2016.
+[BDLS19] Zhiqi Bu, Jinshuo Dong, Qi Long, and Weijie J. Su. Deep learning with gaussian differential
+         privacy, 2019.
+[BDRS18] Mark Bun, Cynthia Dwork, Guy N Rothblum, and Thomas Steinke. Composable and versatile
+         privacy via truncated cdp. In Proceedings of the 50th Annual ACM SIGACT Symposium on
+         Theory of Computing, pages 74–86, 2018.
+[BGK+ 21] Zhiqi Bu, Sivakanth Gopi, Janardhan Kulkarni, Yin Tat Lee, Judy Hanwen Shen, and Uthaipon
+          Tantipongpipat. Fast and memory efficient differentially private-sgd via jl projections. arXiv
+          preprint arXiv:2102.03013, 2021.
+[BS16]     Mark Bun and Thomas Steinke. Concentrated differential privacy: Simplifications, extensions,
+           and lower bounds. In Theory of Cryptography Conference, pages 635–658. Springer, 2016.
+[BW18]     Borja Balle and Yu-Xiang Wang. Improving the gaussian mechanism for differential privacy:
+           Analytical calibration and optimal denoising. In International Conference on Machine Learning,
+           pages 403–412, 2018.
+[DKM+ 06] Cynthia Dwork, Krishnaram Kenthapadi, Frank McSherry, Ilya Mironov, and Moni Naor. Our
+          data, ourselves: Privacy via distributed noise generation. In Annual International Conference
+          on the Theory and Applications of Cryptographic Techniques, pages 486–503. Springer, 2006.
+[DL09]     Cynthia Dwork and Jing Lei. Differential privacy and robust statistics. In Proceedings of the
+           forty-first annual ACM symposium on Theory of computing, pages 371–380, 2009.
+[DMNS06] Cynthia Dwork, Frank McSherry, Kobbi Nissim, and Adam Smith. Calibrating noise to sensi-
+         tivity in private data analysis. In Theory of Cryptography Conference, pages 265–284. Springer,
+         2006.
+[DR+ 14]   Cynthia Dwork, Aaron Roth, et al. The algorithmic foundations of differential privacy. Founda-
+           tions and Trends® in Theoretical Computer Science, 9(3–4):211–407, 2014.
+[DR16]     Cynthia Dwork and Guy N Rothblum.            Concentrated differential privacy.   arXiv preprint
+           arXiv:1603.01887, 2016.
+[DRS19]    Jinshuo Dong, Aaron Roth, and Weijie J. Su. Gaussian differential privacy, 2019.
+[DRV10]    Cynthia Dwork, Guy N Rothblum, and Salil Vadhan. Boosting and differential privacy. In 2010
+           IEEE 51st Annual Symposium on Foundations of Computer Science, pages 51–60. IEEE, 2010.
+[KH21]     Antti Koskela and Antti Honkela. Computing differential privacy guarantees for heterogeneous
+           compositions using fft. arXiv preprint arXiv:2102.12412, 2021.
+[KJH+ 20] Antti Koskela, Joonas Jälkö, Antti Honkela, et al. Computing tight differential privacy guar-
+          antees using fft. In Proceedings of the Twenty Third International Conference on Artificial
+          Intelligence and Statistics. AISTATS, 2020.
+[KJPH21] Antti Koskela, Joonas Jälkö, Lukas Prediger, and Antti Honkela. Tight differential privacy for
+         discrete-valued mechanisms and for the subsampled gaussian mechanism using fft. In Arindam
+         Banerjee and Kenji Fukumizu, editors, Proceedings of The 24th International Conference on
+         Artificial Intelligence and Statistics, volume 130 of Proceedings of Machine Learning Research,
+         pages 3358–3366. PMLR, 13–15 Apr 2021.
+
+                                                   15
+[KOV15]     Peter Kairouz, Sewoong Oh, and Pramod Viswanath. The composition theorem for differential
+            privacy. In International conference on machine learning, pages 1376–1385. PMLR, 2015.
+[KP21]      Antti Koskela and Lukas Prediger.       Github repository                        for   fourier   accountant.
+            https://github.com/DPBayes/PLD-Accountant, 2021.
+[Mir17]     Ilya Mironov. Rényi differential privacy. In 2017 IEEE 30th Computer Security Foundations
+            Symposium (CSF), pages 263–275. IEEE, 2017.
+[MM18]     Sebastian Meiser and Esfandiar Mohammadi. Tight on budget? tight bounds for r-fold approx-
+           imate differential privacy. In Proceedings of the 2018 ACM SIGSAC Conference on Computer
+           and Communications Security, pages 247–264, 2018.
+[MV16]      Jack Murtagh and Salil Vadhan. The complexity of computing the optimal composition of
+            differential privacy. In Theory of Cryptography Conference, pages 157–175. Springer, 2016.
+[SMM19]     David M Sommer, Sebastian Meiser, and Esfandiar Mohammadi. Privacy loss classes: The
+            central limit theorem in differential privacy. Proceedings on privacy enhancing technologies,
+            2019(2):245–269, 2019.
+[ZDW21]     Yuqing Zhu, Jinshuo Dong, and Yu-Xiang Wang. Optimal accounting of differential privacy via
+            characteristic function. arXiv preprint arXiv:2106.08567, 2021.
+
+
+A     Effect of floating point arithmetic
+In this section, we demonstrate the effect of floating point inaccuracies on the computed privacy parameters.
+Figure 6 compares lower and upper bounds of the privacy curve with the analytical solution for small values
+of δ. As mentioned in section 6, we use a floating point representation with a resolution of at least 10−15 .
+The number of discretization points in this examples are on the order of 104 . Consequently, we expect
+floating point inaccuracies to become dominant for values on the order of 10−11 . This can be also seen in
+the illustration, where the lower and upper bound fail to produce meaningful results for δ < 2 × 10−11 .
+
+                             8
+                                                                             εexact
+                                                                εup , εshift = 0.1
+                                                               εlow , εshift = 0.1
+                            7.5                                 εup , εshift = 0.5
+                                                               εlow , εshift = 0.5
+                                                                εup , εshift = 1.0
+                                                               εlow , εshift = 1.0
+                             7
+                        ε
+
+
+
+
+                            6.5
+
+
+                             6
+
+
+                            5.5
+                              10−13     10−11       10−9           10−7               10−5
+                                                           δ
+
+Figure 6: Setting p = 1 and comparing to the analytical solution (10) for values of δ beyond expected floating
+point accuracy.
+
+
+
+
+                                                     16
+B       Privacy Loss Random Variables
+In this section, we continue the discussion on privacy random variables in Section 3. First, we give the proof
+of the formula for PRVs of δ(P ||Q) and the formula for a privacy curve given its PRVs (Theorem 3.2).
+Theorem 3.2. Let δ : R → [0, 1] be a privacy curve given by δ ≡ δ(P ||Q) where P, Q are two random
+variables supported on Ω. The PRVs (X, Y ) for the privacy curve δ are given by:
+                                                    
+                                               Q(ω)
+                                   X = log             where ω ∼ P,
+                                               P (ω)
+                                                    
+                                               Q(ω)
+                                   Y = log             where ω ∼ Q.
+                                               P (ω)
+Proof. We will first verify that Y (t) = et X(t). This is equivalent to proving that EY [φ(Y )] = EX [φ(X)eX ]
+for any test function φ : R → [0, 1]. This is true since
+                                                                  
+                                                               Q(ω)
+                                 EY [φ(Y )] = Eω∼Q φ log
+                                                               P (ω)
+                                                                         
+                                                               Q(ω)     Q(ω)
+                                            = Eω∼P φ log
+                                                               P (ω)    P (ω)
+                                              = EX [φ(X)eX ].
+
+We will now prove that δ(X||Y ) = δ(P ||Q). We have
+
+                                    δ(P ||Q)(ε) = sup Pr[Q ∈ S] − eε Pr[P ∈ S]
+                                                    S⊂Ω
+                                                 = Pr[Q ∈ Sε ] − eε Pr[P ∈ Sε ]
+
+where                                                                              
+                                        Q(ω)                                  Q(ω)
+                        Sε =       ω∈Ω:       > eε            = ω ∈ Ω : log           >ε .
+                                        P (ω)                                 P (ω)
+Therefore Pr[Q ∈ Sε ] = Pr[Y > ε] and Pr[P ∈ Sε ] = Pr[X > ε]. To complete the proof, note that
+
+                                   δ(X||Y )(ε) = sup Pr[Y ∈ T ] − eε Pr[X ∈ T ]
+                                                   T ⊂R
+                                                = Pr[Y ∈ Tε ] − eε Pr[X ∈ Tε ]
+
+where                                            
+                                       Y (t)        
+                          Tε = t ∈ R :       > e = t ∈ R : et > eε = (ε, ∞].
+                                                ε
+                                       X(t)
+Putting it all together, we have:
+
+                             δ(P ||Q)(ε) = Pr[Y > ε] − eε Pr[X > ε] = δ(X||Y ).
+
+
+
+Theorem 3.3. The privacy curve δ can be expressed in terms of PRVs (X, Y ) as:
+
+                   δ(ε) = Pr[Y > ε] − eε Pr[X > ε] = EY [(1 − eε−Y )+ ] = Pr[Y ≥ ε + Z].                   (5)
+
+where Z is an exponential random variable. Conversely, given a privacy curve δ : R → [0, 1], we can compute
+the PDFs of its PRVs (X, Y ) as:
+
+                               Y (t) = δ ′′ (t) − δ ′ (t) and X(t) = et (δ ′′ (t) − δ ′ (t)).              (6)
+
+                                                              17
+Proof. Since the PDFs of PRVs (X, Y ) satisfy the relation Y (t) = et X(t), we can rewrite the equation 5 in
+terms of just Y or just X.
+
+                          δ(ε) = Pr[Y ≥ ε] − eε Pr[X ≥ ε]
+                                 Z ∞            Z ∞
+                               =      Y (t)dt −      eε X(t)dt
+                                  ε              ε
+                                 Z ∞            Z ∞
+                               =      Y (t)dt −      eε−t Y (t)dt                         (Since Y (t) = et X(t))
+                                 Zε ∞            ε
+
+                                                 ε−t
+                               =      Y (t)(1 − e )dt
+                                  ε
+                                 Z ∞
+                               =      Y (t)(1 − eε−t )+ dt
+                                    −∞
+                                = EY [(1 − eε−Y )+ ]
+
+To get the other form for δ(ε), we use the integration by parts formula.
+                           Z ∞
+                    δ(ε) =      Y (t)(1 − eε−t )dt
+                           Zε ∞           Z ∞
+                         =      Y (t)dt +      (−Y (t)) eε−t dt
+                             ε             ε
+                                                               Z ∞                    
+                                                          ∞                        
+                         = Pr[Y ≥ ε] + Pr[Y ≥ t]eε−t −              Pr[Y ≥ t] −eε−t dt
+                                                          ε      ε
+                                                     Z ∞
+                         = Pr[Y ≥ ε] − Pr[Y ≥ ε] +          Pr[Y ≥ t]eε−t dt
+                                                       ε
+                           Z ∞
+                         =      eε−t Pr[Y ≥ t]dt
+                             ε
+                           Z ∞
+                         =      e−z Pr[Y ≥ ε + z]dz                                  (Substituting z = t − ε)
+                               0
+                          = Pr[Y ≥ ε + Z].                          (where Z is an exponential random variable)
+
+We now prove the converse relation by differentiating the expression for δ(ε) twice. We have:
+                          Z ∞               Z ∞
+                  δ(ε) =      Y (t)dt − e ε
+                                                 e−t Y (t)dt
+                           ε                 ε
+                                                          Z ∞                     Z ∞
+              =⇒ δ ′ (ε) = −Y (ε) + eε · e−ε Y (ε) − eε ·     e−t Y (t)dt = −eε ·     e−t Y (t)dt
+                                                           ε                       ε
+                                Z ∞
+                   −ε ′               −t
+              =⇒ e δ (ε) = −         e Y (t)dt
+                                      ε
+                =⇒ e−ε δ ′′ (ε) − e−ε δ ′ (ε) = e−ε Y (ε)
+                =⇒ Y (ε) = δ ′′ (ε) − δ ′ (ε).
+
+
+
+B.1     Examples of privacy loss random variables
+In this section, we state the PRVs for a few standard mechanisms.
+Proposition B.1 (Gaussian Mechanism). The PRVs for δ(N (µ, 1)||N (0, 1)) are:
+
+                                    X = N (−µ2 /2, µ2 ) and Y = N (µ2 /2, µ2 ).
+
+                                                            18
+Proof. Let P = N (µ, 1) and Q = N (0, 1). By Theorem 3.2,
+                                             
+                                        Q(t)
+                              Y ∼ log            where t ∼ Q
+                                        P (t)
+                                                         
+                                           exp(−t2 /2)
+                                ∼ log                        where t ∼ N (0, 1)
+                                        exp(−(t − µ)2 /2)
+                                  (t − µ)2     t2
+                                ∼           −     where t ∼ N (0, 1)
+                                      2         2
+                                  µ2
+                                ∼     − µt where t ∼ N (0, 1)
+                                   2         
+                                       µ2 2
+                                =N        ,µ .
+                                        2
+                                          2       
+A similar calculation shows that X = N − µ2 , µ2
+
+Proposition B.2 (Laplace Mechanism). The PRVs for the privacy curve δ (Lap (µ, 1) ||Lap (0, 1)) are:
+
+                                  X = |Z| − |Z − µ| and Y = |Z − µ| − |Z|
+
+where Z ∼ Lap(0, 1).
+Proof. Let P = Lap(µ, 1) and Q = Lap(0, 1). By Theorem 3.2,
+                                             
+                                        Q(t)
+                              Y ∼ log           where t ∼ Q
+                                        P (t)
+                                                    
+                                          exp(−|t|)
+                                ∼ log                   where t ∼ Lap(0, 1)
+                                        exp(−|t − µ|
+                                   ∼ |t − µ| − |t| where t ∼ Lap(0, 1)
+                                   = |Z − µ| − |Z| where Z ∼ Lap(0, 1).
+
+A similar calculation shows that X = |Z| − |Z − µ| where Z ∼ Lap(0, 1).
+Proposition B.3 ((ε, δ)-DP). The PRVs for the privacy curve of a (ε, δ)-DP algorithm are
+                                         
+                                         −∞ w.p. δ
+                                         
+                                                               ε
+                                    X = −ε        w.p. (1−δ)e
+                                                         eε +1
+                                         
+                                         
+                                            ε     w.p. e1−δ
+                                                        ε +1 ,
+
+                                              
+                                              −ε
+                                                       w.p. e1−δ
+                                                              ε +1
+                                                                     ε
+                                           Y = ε        w.p. (1−δ)e
+                                                               eε +1
+                                              
+                                              
+                                                ∞       w.p. δ.
+
+Proof. It is easy to verify that Y (t) = et X(t) for all t ∈ R. We can also verify that
+
+                                     δ(ε) = Pr[Y > ε] − eε Pr[X > ε] = δ.
+
+Morever X = −Y , therefore the privacy curve δ(X||Y ) is symmetric by Proposition C.9, i.e., δ(X||Y ) =
+δ(Y ||X). These conditions together imply that X, Y are PRVs for the (ε, δ)-DP curve.
+   Note that in the all the above examples, we have X = −Y as the privacy curves are symmetric.
+
+
+
+                                                       19
+B.2     Subsampling
+In this section, we calculate the PRVs for a subsampled mechanism given the PRVs for the original mechanism.
+Given two random variables P, Q and a sampling probability p ∈ [0, 1], p · P + (1 − p) · Q denotes the mixture
+where we sample P w.p. p and Q w.p. 1 − p.
+Proposition B.4. Let (X, Y ) be the PRVs for a privacy curve δ(P ||Q). Let (Xp , Yp ) be the PRVs for
+δp = δ(P || p · P + (1 − p) · Q). Then
+
+                                  Xp = log(1 + p(eX − 1)),
+                                       (
+                                         log(1 + p(eY − 1)) w.p. p
+                                  Yp =
+                                         log(1 + p(eX − 1)) w.p. 1 − p.
+
+The CDFs of Xp and Yp are given by:
+                 (          t       
+                   CDFX log e −(1−p)
+                                  p         if t ≥ log(1 − p)
+    CDFXp (t) =
+                   0                        if t < log(1 − p)
+                 (           t                               t         
+                   p · CDFY log e −(1−p)
+                                    p       +  (1 − p) · CDF X  log e −(1−p)
+                                                                        p              if t ≥ log(1 − p)
+     CDFYp (t) =
+                   0                                                                   if t < log(1 − p).
+
+Proof. By Theorem 3.2,
+                                                            
+                                        pY (t) + (1 − p)X(t)
+                              Xp = log                         where t ∼ X
+                                                X(t)
+                                                   
+                                 = log pet + 1 − p where t ∼ X
+                                                    
+                                 = log peX + 1 − p .
+
+Similarly,
+                                                        
+                                    pY (t) + (1 − p)X(t)
+                         Yp = log                          where t ∼ pY + (1 − p)X
+                                            X(t)
+                                               
+                            = log pet + 1 − p where t ∼ pY + (1 − p)X
+                              (
+                                log(1 + p(eY − 1)) w.p. p
+                            =
+                                log(1 + p(eX − 1)) w.p. 1 − p.
+
+The CDF of Xp is given by:
+                                                                   
+                                 Pr[Xp ≤ t] = Pr log peX + 1 − p ≤ t
+                                                         t           
+                                                          e − (1 − p)
+                                            = Pr X ≤ log
+                                                                p
+
+The CDF of Yp is given by:
+                                                                               
+             Pr[Yp ≤ t] = p Pr log peY + 1 − p ≤ t + (1 − p) Pr log peX + 1 − p ≤ t
+                                       t                                t          
+                                        e − (1 − p)                          e − (1 − p)
+                        = p Pr Y ≤ log                 + (1 − p) Pr X ≤ log                 .
+                                              p                                   p
+
+
+
+
+                                                     20
+C       Missing Proofs in Error Analysis
+C.1     Facts about Coupling Approximation
+Here we collect some useful properties of coupling approximations. The following lemma shows that the
+coupling approximations satisfy a triangle inequality.
+Lemma C.1 (Triangle inequality for couplings). Suppose X, Y, Z are random variables such that |X −Y | ≤η1
+h1 and |Y − Z| ≤η2 h2 . Then |X − Z| ≤η1 +η2 h1 + h2 .
+Proof. There exists couplings (X, Y ) and (Y, Z) such that
+
+                             Pr[|X − Y | ≥ h1 ] ≤ η1 and Pr[|Y − Z| ≥ h2 ] ≤ η2 .
+
+From these two couplings, we can construct a coupling between (X, Z): sample X, sample Y from Y |X
+(given by coupling (X, Y )) and finally sample Z from Z|Y (given by coupling (Y, Z)). Therefore for this
+coupling, we have:
+
+                       Pr[|X − Z| ≥ h1 + h2 ] ≤ Pr[|(X − Y ) + (Y − Z)| ≥ h1 + h2 ]
+                                                     ≤ Pr[|X − Y | + |Y − Z| ≥ h1 + h2 ]
+                                                     ≤ Pr[|X − Y | ≥ h1 ] + Pr[|Y − Z| ≥ h2 ]
+                                                     ≤ η1 + η2 .
+
+
+
+    The following lemma shows that small total variation distance implies good coupling approximation.
+Lemma C.2. If the total variation distance dT V (X, Y ) ≤ η, then |X − Y | ≤η 0.
+Proof. It is well known that for any two random variables X, Y , there exists a coupling such that dT V (X, Y ) =
+Pr[X 6= Y ]. This immediately implies what we want.
+
+C.2     Bounding the error using tail bounds of PRVs
+The goal of this section is to bound the error of ComposePRV in terms of the tail bounds of the underlying
+PRVs.
+Theorem C.3. Let Y1 , Y2 , . . . , YP                 e
+                                    k be PRVs and let Y be the approximation produced by the ComposePRV
+                                      k
+algorithm (Algorithm 1) for Y = i=1 Yi with truncation parameter L and mesh size
+                                                             εerror
+                                                      h= q              .
+                                                             k     2
+                                                             2 log η0
+
+
+Then
+                            δYe (ε + εerror ) − δerror ≤ δY (ε) ≤ δYe (ε − εerror ) + δerror
+where
+                                       "   k
+                                                       #  k
+                                           X              X
+                         δerror = Pr             e
+                                                 Yi ≥ L +   Pr[|Yi | ≥ L] + η0
+                                           i=1              i=1
+                                       "   k
+                                                                   #        k
+                                           X                                X
+                               ≤ Pr              Yi ≥ L − εerror + 2              Pr[|Yi | ≥ L] + 2η0 .
+                                           i=1                              i=1
+
+
+
+
+                                                            21
+                                                         hP                i
+                                                            k   e
+Remark C.4. We can directly bound Pr                        i=1 Yi      ≥ L using moment generating functions as
+                          "   k
+                                             #            Qk                                 Qk
+                              X                                                  e                                e
+                                                              i=1 E[exp(λYi )]                   i=1 E[exp(−λYi )]
+                     Pr             Yei ≥ L ≤ inf                              + inf                               .
+                              i=1
+                                                    λ>0            eλL           λ>0                   eλL
+                                                                             P
+Sometimes, if we already have good upper bound for Pr [|                      i Yi | ≥ L], then the second bound on δerror is useful.
+
+   The following key lemma shows that the DiscretizePRV algorithm (Algorithm 2) produces a good coupling
+approximation to the PRV and preserves the mean.
+Lemma C.5. Given a PRV Y , let Y L = Y |Y |≤L be its truncation. The approximation Ye returned by
+DiscretizePRV satisfies E[Ye ] = E[Y L ] and |Y L − (Ye − µ)| ≤0 h2 for some µ where h is the mesh size. We
+also have |Y L − Y | ≤η 0 where η = Pr[|Y | ≥ L].
+Proof. Since dT V (Y, Y L ) ≤ Pr[|Y | ≥ L] = η, by Lemma C.2, |Y − Y L | ≤η 0. It is clear that by construction
+E[Ye ] = E[Y L ],
+                                  n                      n
+                                                                   !     n
+                                 X                      X               X
+                      e
+                   E[Y ] = µ +                      L
+                                      ih · qi = E[Y ] −     ih · qi +       ih · qi = E[Y L ].
+                                     i=−n                                i=−n                i=−n
+
+
+We will now construct the coupling between (Y L , Ye ) such that |Y L − (Ye − µ)| ≤ h2 . The coupling is as
+follows: First sample y ∼ Y L . Suppose y ∈ (ih − h2 , ih + h2 ] for some integer i such that −n ≤ i ≤ n, then
+return ye = µ + ih. Clearly, the distribution of ye matches with Ye and |y − (ey − µ)| = |y − ih| ≤ h2 .
+
+
+   Since our error bound on Ye is slightly different from the assumption in Lemma 5.3, we need the following
+generalization using the same proof.
+Lemma C.6. Suppose Y1 , Y2 , . . . , Yk and Ye1 , Ye2 , . . . , Yek are two collections of independent random variables
+such that |Yi − (Yei − µi )| ≤0 h for some µi and E[Yi ] = E[Yei ] for all i, then
+                                                   k            k                r
+                                                   X            X                       2
+                                                         Yi −         Yei ≤η h    2k log .
+                                                   i=1          i=1
+                                                                                        η
+
+    In the algorithm, we only calculate the distribution of Y1 ⊕ Y2 ⊕ · · · ⊕ Yk insteadPof Y1 + Y2 + · · · + Yk . The
+following simple lemma shows that this is still a good approximation as long as i Yi stays within [−L, L]
+with high probability.
+Lemma C.7. Let Y1 , Y2 , . . . , Yk be random variables supported on (−L, L]. Then
+                                             k
+                                             X
+                                                   Yi − (Y1 ⊕L Y2 ⊕L · · · ⊕L Yk ) ≤η 0
+                                             i=1
+
+where                                                             "                      #
+                                                                      k
+                                                                      X
+                                                         η = Pr              Yi ≥ L .
+                                                                       i=1
+
+Proof.                             " k                                               #       "               #
+                                    X                                                            k
+                                                                                                 X
+                              Pr          Yi 6= (Y1 ⊕L Y2 ⊕L · · · ⊕L Yk ) ≤ Pr                        Yi ≥ L .
+                                    i=1                                                          i=1
+
+This clearly implies what we want.
+
+                                                                       22
+   Combining all the above lemmas, we get the following corollary.
+Corollary C.8. Let Y1 , Y2 , . . . , Yk be random variables supported on and let Yei be the discretization of Yi
+produced by DiscretizePRV algorithm with mesh size h = q k h0 2 and truncation parameter L. Then
+                                                                                              2 log η0
+
+
+
+                                         (Y1 + Y2 + · · · + Yk ) − (Ye1 ⊕ Ye2 ⊕ · · · ⊕ Yek ) ≤η h0
+
+where                                                  "               #
+                                                           k
+                                                           X              k
+                                                                          X
+                                             η = Pr              e
+                                                                 Yi ≥ L +   Pr[|Yi | ≥ L] + η0 .
+                                                           i=1                          i=1
+Furthermore, we can bound
+                      " k        #     " k            #  k
+                       X                X                X
+                   Pr     Yei ≥ L ≤ Pr     Yi ≥ L − h0 +   Pr[|Yi | ≥ L] + η0 .
+                                  i=1                                i=1                                 i=1
+
+Proof. Let Y L ≡ Yi |Yi |≤L be the truncation of Yi . By Lemma C.5, |YiL − (Yei − µi )| ≤0 h2 for some µi and
+|YiL − Yi |ξi ≤ 0 where ξi = Pr[|Yi | ≥ L]. Now applying the triangle inequality for coupling approximations
+(Lemma C.1), we have
+                                             X       X
+                                                Yi −    YiL ≤η1 0
+                                                                 i                 i
+               P            P
+where η1 =         i ξi =       i Pr[|Yi | ≥ L]. By Lemma C.6, we have
+                                                            r              s
+                                    X          X          h          2       k     2
+                                           L
+                                        Yi −       Yei ≤η0 · 2k log     =h     log    = h0 .
+                                     i           i
+                                                          2         η 0      2     η0
+
+By Lemma C.7,
+                                                 k
+                                                 X                                    
+                                                       Yei − Ye1 ⊕L Ye2 ⊕L · · · ⊕L Yek ≤η2 0
+                                                 i=1
+                   hP                    i
+                        k   e
+where η2 = Pr           i=1 Yi     ≥ L . Finally applying triangle inequality (Lemma C.1) once again, we get:
+
+                          (Y1 + Y2 + · · · + Yk ) − (Ye1 ⊕L Ye2 ⊕L · · · ⊕L Yek ) ≤η h0
+                                            hP               i
+                                                 k   e
+where η = η0 + η1 + η2 . We can bound Pr         i=1 Yi ≥ L as:
+       "            #      "                                                   #
+         X                   X                 X                 X
+    Pr      Yei ≥ L = Pr        (Yei − Y L ) +     (Y L − Yi ) +
+                                                           i          Yi ≥ L   i
+           i                                 i                        i                            i
+                                     "                                                                                              #
+                                         X                            X                                X
+                            ≤ Pr                 (Yei − YiL ) +                (YiL − Yi )        +          Yi ≥ h0 + 0 + L − h0
+                                             i                            i                              i
+                                     "                                     #            "                           #     "                     #
+                                         X                                                  X                                 X
+                            ≤ Pr                 (Yei − YiL ) > h0 + Pr                           (YiL − Yi ) > 0 + Pr            Yi ≥ L − h0
+                                             i                                                i                               i
+                                                       "   k
+                                                                                        #
+                                                           X
+                            ≤ η0 + η1 + Pr                       Yi ≥ L − h0 .
+                                                           i=1
+
+
+
+Proof of Theorem C.3. Combining Corollary C.8 (with h0 = εerror ) and Lemma 5.2, we have Theorem C.3.
+
+
+
+                                                                                   23
+C.3    Tail Bound for PRVs
+To finish the proof of our main theorem (Theorem 5.5, we need a tail bound on PRVs in terms of their
+privacy curves. First, we need a lemma relating the PRVs of a privacy curve δ(P ||Q) with the PRVs of
+δ(Q||P ).
+Proposition C.9. Let (X, Y ) be the PRVs for a privacy curve δ(P ||Q). Then the PRVs for the privacy
+curve δ(Q||P ) are (−Y, −X).
+            e Ye ) be the PRVs for δ(Q||P ). We know that δ(P ||Q) = δ(X||Y ). So δ(Q||P ) = δ(Y ||X).
+Proof. Let (X,
+Then by Theorem 3.2,
+                                                    
+                                     e         X(t)
+                                     X = log           where t ∼ Y
+                                               Y (t)
+                                                 
+                                       = log e−t where t ∼ Y
+                                       = −Y.
+
+                                                    
+                                               X(t)
+                                      Ye = log         where t ∼ X
+                                               Y (t)
+                                                 
+                                        = log e−t where t ∼ X
+                                        = −X.
+
+
+
+   Now, we show our tail bound, which shows the PRVs (X, Y ) for a (ε, δ)-DP algorithm satisfies roughly
+that Pr(|Y | ≥ ε + 2) ≤ 2δ.
+Lemma 5.4. Let (X, Y ) be the privacy random variables for a (ε, δ)-DP algorithm, then for any t ≥ 0, we
+have
+                                                      δ (1 + e−ε−t )
+                                   Pr[|Y | ≥ ε + t] ≤                .
+                                                         1 − e−t
+Proof. We have δ(X||Y ) ≤ fε,δ and δ(Y ||X) ≤ fε,δ where fε,δ is the privacy curve of a (ε, δ)-DP algorithm.
+By Theorem 3.2, we have
+                                           Z ∞
+                                      δ≥        Pr[Y ≥ ε + s]e−s ds
+                                            0
+                                           Z t
+                                         ≥     Pr[Y ≥ ε + s]e−s ds
+                                            0
+                                                         Z t
+                                         ≥ Pr[Y ≥ ε + t]     e−s ds
+                                                          0
+                                         ≥ Pr[Y ≥ ε + t](1 − e−t ).
+
+   By Proposition C.9, the PRVs for δ(Y ||X) are (−Y, −X). Therefore by a similar argument, we have
+
+                                                                         δ
+                               Pr[X ≤ −ε − t] = Pr[−X ≥ ε + t] ≤              .
+                                                                      1 − e−t
+Finally, note that Y (s) = es X(s) for all s ∈ R and Y (−∞) = 0 by the definition of PRVs. Therefore
+
+                                 Pr[Y ≤ −ε − t] ≤ e−ε−t Pr[X ≤ −ε − t].
+
+
+
+
+                                                     24
+Therefore we have:
+
+                           Pr[|Y | ≥ ε + t] = Pr[Y ≥ ε + t] + Pr[Y ≤ −ε − t]
+                                           ≤ Pr[Y ≥ ε + t] + e−ε−t Pr[X ≤ −ε − t]
+                                                           δ
+                                           ≤ 1 + e−ε−t           .
+                                                         1 − e−t
+
+
+
+C.4     Proof of Theorem 5.5
+Now, we can prove our main theorem.
+Theorem 5.5. Let εerror , δerror > 0 be some fixed error terms. Let M1 , M2 , . . . , Mk be DP algorithms with
+privacy curves δMi (ε). Let Yi be the PRV corresponding to Mi such that δMi (ε) = δYi (ε) for ε ≥ 0. Let
+M be the (adaptive) composition of M1 , M2 , . . . , Mk and let δM (ε) be its privacy curve. Set L ≥ 2 + εerror
+sufficiently large such that
+                          k
+                          X                     δerror                            δerror
+                                δMi (L − 2) ≤          and δM (L − 2 − εerror ) ≤        .                  (7)
+                          i=1
+                                                  8                                 4
+                                      Pk
+Let Ye be the approximation of Y =      i=1 Yi produced by ComposePRV algorithm with mesh size
+
+                                                            εerror
+                                                 h= q                     .
+                                                           k       12
+                                                           2 log δerror
+
+Then
+                       δYe (ε + εerror ) − δerror ≤ δY (ε) = δM (ε) ≤ δYe (ε − εerror ) + δerror .           (8)
+                                                     
+Furthermore, our algorithm takes O b L      h log h
+                                                   L
+                                                        time where b is the number of distinct algorithms among
+M1 , M2 , . . . , Mk .
+Proof. By Lemma 5.4,
+
+                                      Pr[|Yi | ≥ L] = Pr[|Yi | ≥ L − 2 + 2]
+                                                                        1 + e−L
+                                                        ≤ δYi (L − 2) ·
+                                                                        1 − e−2
+                                                                        1 + e−2
+                                                        ≤ δYi (L − 2) ·
+                                                                        1 − e−2
+                                                                        4
+                                                        ≤ δYi (L − 2) · .
+                                                                        3
+Therefore we have
+                           k
+                           X                        k
+                                               4X                 4 δerror   δerror
+                               Pr[|Yi | ≥ L] ≤       δYi (L − 2) ≤ ·       =        .
+                           i=1
+                                               3 i=1
+                                                                  3   8        6
+Similarly
+                                                          4                        δerror
+                             Pr[|Y | ≥ L − εerror ] ≤       δY (L − 2 − εerror ) ≤        .
+                                                          3                          3
+Therefore by Theorem C.3, setting η0 = δerror
+                                          6 , we get the desired result.
+   For the runtime, we note that the bottleneck of our algorithm is to compute the convolution, which can
+be done using FFT. In total, we need to compute b + 1 many FFT for b distinct algorithms, one for each
+
+
+                                                            25
+for computing the Fourier transform and one of computing the inverse Fourier transform. Since the length
+of the array for the FFT is bounded by O(L/h), this costs O(bL/h log(L/h)) in total.
+                                    
+                                   e
+    The step δYe (ε) = EYe 1 − eε−Y       can be computed in linear time by first computing the CDF of Ye
+                                      +
+                           h    i
+                              e
+and the prefix sum EYe ≤α e−Y for all α.
+
+
+
+
+                                                   26
+

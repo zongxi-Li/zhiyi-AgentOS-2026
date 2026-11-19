@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-18",
+  "topics": [
+    "differential_privacy",
+    "leading_models_intent_and_prefix",
+    "self_evolution_graph_and_skills"
+  ],
+  "slides": [
+    {
+      "part": "ppt/slides/slide1.xml",
+      "editable_shapes": 19,
+      "native_connectors": 7
+    },
+    {
+      "part": "ppt/slides/slide2.xml",
+      "editable_shapes": 18,
+      "native_connectors": 12
+    },
+    {
+      "part": "ppt/slides/slide3.xml",
+      "editable_shapes": 15,
+      "native_connectors": 9
+    }
+  ],
+  "layout": [
+    {
+      "slide": 1,
+      "elements": 26,
+      "all_elements_inside_canvas": true,
+      "visually_reviewed": true
+    },
+    {
+      "slide": 2,
+      "elements": 30,
+      "all_elements_inside_canvas": true,
+      "visually_reviewed": true
+    },
+    {
+      "slide": 3,
+      "elements": 24,
+      "all_elements_inside_canvas": true,
+      "visually_reviewed": true
+    }
+  ],
+  "assets": {
+    "01_差分隐私.png": {
+      "bytes": 127744,
+      "sha256": "e79f12e150279c0b5d47ba8eca151a97d35f6f5fabfd081ef605b9691e2b640e"
+    },
+    "02_前导模型.png": {
+      "bytes": 120714,
+      "sha256": "f0bdbdb6609d5865cb1ab256e2f75b5940b55a740cd922c5b599a4ea3f80d3f3"
+    },
+    "03_自进化.png": {
+      "bytes": 117241,
+      "sha256": "340cc8af3bbf693d8d72f6362e05fd4df0eb2a4402f4ce08f52699dac5bc9d95"
+    },
+    "Kinlin_Architecture_Three_Modules.pptx": {
+      "bytes": 37261,
+      "sha256": "50e620704e10252fa8bf2c45675e222f8879dce09810e0980ddff7fd32c92674"
+    }
+  },
+  "source_notes_present": true,
+  "broken_local_links": [],
+  "package_validator": "passed_python_utf8_mode",
+  "native_powerpoint_open_test": "not_run",
+  "production_code_changed": false
+}

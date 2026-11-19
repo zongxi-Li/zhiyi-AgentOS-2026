@@ -1,0 +1,839 @@
+                                                     Differentially Private Retrieval-Augmented Generation
+                                                                        Tingting Tang                                                                  James Flemings
+                                                             University of Southern California                                            University of Southern California
+                                                               Los Angeles, California, USA                                                 Los Angeles, California, USA
+                                                                    tangting@usc.edu                                                             jamesf17@usc.edu
+
+                                                                       Yongqin Wang                                                               Murali Annavaram
+                                                             University of Southern California                                            University of Southern California
+                                                               Los Angeles, California, USA                                                 Los Angeles, California, USA
+                                                                    yongqin@usc.edu                                                              annavara@usc.edu
+arXiv:2602.14374v1 [cs.CR] 16 Feb 2026
+
+
+
+
+                                         Abstract                                                                            RAG                                    Adversarial
+                                                                                                                                                                    bound
+                                         Retrieval-augmented generation (RAG) is a widely used framework
+                                         for reducing hallucinations in large language models (LLMs) on
+                                         domain-specific tasks by retrieving relevant documents from a data-                               Retriever                    Query 𝒙
+                                                                                                                                           Model 𝑅
+                                         base to support accurate responses. However, when the database
+                                         contains sensitive corpora, such as medical records or legal doc-
+                                         uments, RAG poses serious privacy risks by potentially exposing               Private External                Retrieved    Response 𝒚
+                                         private information through its outputs. Prior work has demon-                Database 𝐷                      Documents                         Pre-training
+                                         strated that one can practically craft adversarial prompts that force
+                                         an LLM to regurgitate the augmented contexts. A promising di-
+                                         rection is to integrate differential privacy (DP), a privacy notion                                      Generator
+                                                                                                                                                                         Generator   Pre-training
+                                                                                                                                                  Model 𝐹
+                                         that offers strong formal guarantees, into RAG systems. However,                                                                Model 𝐹     Data
+                                         naively applying DP mechanisms into existing systems often leads
+                                         to significant utility degradation. Particularly for RAG systems,
+                                         DP can reduce the usefulness of the augmented contexts lead-                 Figure 1: Overview of the DP RAG problem setting. The ad-
+                                         ing to increase risk of hallucination from the LLMs. Motivated               versarial bound illustrates what capabilities the adversary
+                                         by these challenges, we present DP-KSA, a novel privacy-preserving           has. In this case, the adversary can only query the RAG sys-
+                                         RAG algorithm that integrates DP using the propose-test-release              tem and access the answer. The generator model has been
+                                         (PTR) paradigm. DP-KSA follows from a key observation that most              pre-trained on publicly available data, which the adversary
+                                         question-answering (QA) queries can be sufficiently answered with            has access to. However, we are not concerned about preserv-
+                                         a few keywords. Hence, DP-KSA first obtains an ensemble of rele-             ing the privacy of the pre-training data.
+                                         vant contexts, each of which will be used to generate a response
+                                         from an LLM. We utilize these responses to obtain the most frequent
+                                         keywords in a differentially private manner. Lastly, the keywords            1     Introduction
+                                         are augmented into the prompt for the final output. This approach            Large language models (LLMs) encode copious factual knowledge
+                                         effectively compresses the semantic space while preserving both              in their parameters through pre-training on internet-scale data [6].
+                                         utility and privacy. We formally show that DP-KSA provides formal            Hence, LLMs leverage its knowledge when prompted to accurately
+                                         DP guarantees on the generated output with respect to the RAG                answer queries [28, 30]. However, the knowledge that the LLM was
+                                         database. We evaluate DP-KSA on two QA benchmarks using three                pre-trained on (1) may not be precisely accessed and utilized and
+                                         instruction-tuned LLMs, and our empirical results demonstrate that           (2) can eventually become outdated. This can lead to discrepancies
+                                         DP-KSA achieves a strong privacy-utility tradeoff.                           between generated content by the LLM and verifiable real-world
+                                                                                                                      facts, known as factuality hallucinations [16].
+                                         Keywords                                                                        A widely-adopted approach to mitigate hallucinations is to up-
+                                                                                                                      date the LLMs’ knowledge base by augmenting prompts with ex-
+                                         Differential Privacy, Retrieval-Augmented Generation, Large Lan-             ternal knowledge retrieved from a database, known as retrieval-
+                                         guage Models, Data Privacy                                                   augmented generation (RAG) [2, 22]. This involves retrieving the
+                                                                                                                      top documents from an external database that are semantically rele-
+                                                                                                                      vant (similar) to a user query. However, a major concern is that the
+                                                                                                                      external database can contain highly-sensitive information, such as
+                                         This work is licensed under the Creative Commons Attribu-
+                                         tion 4.0 International License. To view a copy of this license               Personable Identifiable Information (PII). For example, healthcare
+                                         visit https://creativecommons.org/licenses/by/4.0/ or send a                 providers can leverage internal medical records to offer accurate
+                                         letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+                                                                                                                      diagnoses and tailored care recommendations, while law firms may
+                                         Proceedings on Privacy Enhancing Technologies YYYY(X), 1–15
+                                         © YYYY Copyright held by the owner/author(s).                                rely on their legal case repositories to support clients in conducting
+                                         https://doi.org/XXXXXXX.XXXXXXX                                              legal research and preparing documentation. Several have found
+                                                                                                                  1
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                        Tang et al.
+
+
+that RAG on a sensitive corpus can leak private information about               keywords in the responses via the propose-test-release paradigm.
+individual documents in the corpus [17, 29, 36]. An attacker can                Finally, the privately obtained keywords are augmented to a prompt
+design a specific prompt to a RAG system and use the output to                  containing just the query, which is then fed to the LLM to generate
+reveal the information retrieved from the sensitive database.                   the final output.
+    In this work, we focus on preserving the privacy of the external               We summarize the contributions of our work as follows:
+dataset with the following problem setup shown in Figure 1. A                      (1) We introduce DP-KSA, a simple RAG framework that pre-
+RAG system receives a query x. Our RAG system contains a private                       serves the privacy of the external database by generating a
+external dataset 𝐷, a retriever model 𝑅 that will retrieve the top                     response for each of the retrieved documents from the re-
+documents relevant to the query x, and a generator model 𝐹 that                        triever model, then extracting a small set of keywords from
+will use the top retrieved documents and the query to generate                         the ensemble of responses.
+a response y. Our setup assumes the adversary only has query                       (2) We formally show that the final outputs generated by DP-KSA
+access to the RAG system to obtain responses. Hence, because the                       can achieve differential privacy, a strong privacy notion that
+response can contain information about the retrieved documents,                        gives a probable guarantee of the privacy leakage of the
+the adversary can adversarially craft prompts such that the response                   external database.
+reveals information about the external database. Therefore, our goal               (3) We experimentally demonstrate that DP-KSA can achieve
+is to design a privacy-preserving RAG system to protect private,                       strong privacy guarantees while preserving utility. In partic-
+sensitive information against such attacks.                                            ular, we experimentally evaluated DP-KSA on two standard
+    One promising privacy notion is Differential Privacy (DP) [11],                    benchmarking question-answering datasets with modern
+which provides a mathematical guarantee that each individual in a                      instruction-tuned LLMs, Qwen 2.5 [34] and Llama 3 [13].
+database has limited affect on the outcome of a randomized algo-                   (4) We provide comprehensive ablation studies for important
+rithm. In the context of RAG, each document in the RAG database                        hyperparameters of DP-KSA to demonstrate the robustness
+has limited influence on the output of the LLM. Although DP is the                     of DP-KSA as well as provide insights into the inner workings
+standard privacy safeguard for applications utilizing information-                     of DP-KSA.
+sensitive data, it tends to result in substantial utility degradation.
+To highlight the challenges that privately generating text presents,            2 Preliminary
+note that the response from the generator model 𝐹 iteratively sam-
+ples the next token 𝑦𝑡 until a stop criteria is met, such as maximum            2.1 Retrieval-Augmented Generation
+token length reached. Hence, the range of possible values that 𝑦𝑡               Retrieval-Augmented Generation (RAG) is a hybrid architecture
+can take is equal to the vocabulary of the generator’s tokenizer,               that augments a large language model (LLM) with an external
+which can be upwards of 50, 000. And if the maximum token length                retrieval mechanism to improve its performance on knowledge-
+is 10, then the output space of possible responses is at most 50, 00010 .       intensive tasks. Given a user query x, a retriever model 𝑅 is first
+Hence, naively applying standard DP mechanisms, such as addi-                   used to fetch the top-𝑁 most relevant documents from a private
+tive Gaussian noise, at every token generation could destroy any                corpus 𝐷. Formally, the retriever returns a set of documents
+meaningful utility from the generated tokens.
+                                                                                                     𝐷 1x, . . . , 𝐷 𝑁x ← 𝑅(x, 𝐷; 𝑁 )               (1)
+    Thus, the goal our work is the following:
+                                                                                   where each 𝐷𝑖x ∈ 𝐷 is deemed semantically similar to the query x.
+       How can we integrate differential privacy into practical
+                                                                                Semantic similarity is typically assessed by computing the distance
+       RAG systems while preserving their utility?
+                                                                                between the vector representations of a query and a document.
+    To address the above question, we propose DP-KSA, a privacy-                Commonly used distance functions include the dot product and
+preserving algorithm based on the propose-test-release (PTR) [12]               cosine similarity. Each document 𝐷𝑖x is then paired with the query
+and subsample-and-aggregate [27] paradigm for private text gen-                 and passed into a generator model 𝐹 , which synthesizes a response:
+eration illustrated in Figure 2. DP-KSA derives from a key observa-
+                                                                                                           𝑦𝑖 ← 𝐹 (𝐷𝑖x, x)                          (2)
+tion that most queries from question-answering datasets can be
+answered sufficiently with just a few keywords. Hence, we con-                  The outputs 𝑦𝑖 are natural language responses that reflect the LLM’s
+vert the output space of responses for question-answering tasks                 understanding conditioned on both the query and the retrieved
+into a keyword subspace, then perform differentially privacy to                 document.
+extract the keywords. This keyword subspace mostly preserves                       RAG offers several advantages over standalone language mod-
+the relative semantic representation of the original response space,            eling. By retrieving top-𝑁 relevant documents 𝐷 1x, . . . , 𝐷 𝑁x from a
+i.e. it maintains the utility of the LLM while operating in a low-              corpus 𝐷 using a retriever 𝑅, and conditioning generation on these
+dimensional approximation of the entire sentence space. To achieve              documents, RAG enables dynamic grounding without retraining
+this, a retriever model will first retrieve the top-𝑁 documents that            the generator 𝐹 . This allows models to incorporate up-to-date or
+are most relevant to the query. Next, we partition the documents                domain-specific information at inference time, which is especially
+into prompts, each prompt containing a retrieved document with                  valuable when 𝐷 is frequently updated or too large to encode di-
+the corresponding query, and feed these prompts into the generator              rectly into model parameters. A key benefit of RAG is its ability to
+model to obtain an ensemble of responses. Then DP-KSA transforms                reduce hallucinations. Since outputs 𝑦𝑖 = 𝐹 (𝐷𝑖x, x) are generated
+the generated model responses into keywords that preserve relative              with direct reference to retrieved content, responses are more likely
+semantic meaning and privately extracts the frequently occurring                to be factually accurate. RAG is also modular as 𝑅 and 𝐹 can be
+                                                                            2
+Differentially Private RAG                                                                          Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+
+
+Figure 2: The proposed DP-KSA framework consists of three steps. First, it retrieves the top-𝑁 documents most relevant to the
+query x from the private database 𝐷. Each retrieved document 𝐷𝑖x is paired with query x and passed to the generator model 𝐹 to
+produce responses. Next, DP-KSA applies a differentially private mechanism to extract the most frequent keywords from the
+ensemble of responses. Finally, the selected keywords are combined with query x and fed back into the generator 𝐹 to produce
+the final output y.
+
+
+trained or fine-tuned independently, enabling flexible adaptation              [8, 31, 33], such as adding Gaussian noise to the aggregation. The
+across domains.                                                                reason for using the sample-and-aggregate framework is that it
+                                                                               helps with calculating the global sensitivity, which is an important
+2.2     Differential Privacy                                                   property needed for DP mechanisms. If we have two neighboring
+Differential privacy (DP) is the gold standard for reasoning about             datasets 𝐷 and 𝐷 ′ that differ by one document 𝑑𝑖 , then at most one
+the privacy of machine learning algorithms.                                    subset will differ since the document can only be contained in at
+                                                                               most one subset (due to the pairwise disjoint property of sample-
+Definition 2.1 ((𝜖, 𝛿)-DP [11]). For 𝜖 ≥ 0, 𝛿 ∈ [0, 1], a randomized           and-aggregate). Hence, changing one document changes at most
+algorithm 𝑀 is (𝜖, 𝛿)-differentially private if for any pair of adjacent       one response, which we can then use to argue the global sensitivity.
+datasets 𝐷 and 𝐷 ′ that differ in only one data point, it holds that
+𝑃𝑟 [𝑀 (𝐷) ∈ 𝐸] ≤ 𝑒 𝜖 · 𝑃𝑟 [𝑀 (𝐷 ′ ) ∈ 𝐸] + 𝛿                                   2.2.2 Private top-𝑘 selection. The private top-𝑘 selection problem
+                                                                               is one of the most fundamental problems in privacy-preserving
+   The above definition indicates that if two datasets are similar, a          data analysis. The problem is given a set of candidates with corre-
+DP algorithm should produce similar output 𝐸 with a high proba-                sponding counts, return the top-𝑘 candidates based on the counts
+bility so that attackers cannot infer the difference between them.             in a privacy-preserving way [25]. In this work, we adopt an adap-
+In our case, 𝑀 functions as a RAG algorithm, producing answers to              tive top-𝑘 selection algorithm from Zhu and Wang [39], which is
+queries by utilizing private retrieved document as context. If this            based on the widely-known propose-test-release (PTR) framework
+RAG algorithm adheres to differential privacy, it should generate              [12]. The idea is that as long as the count difference between the
+similar outputs even when the retrieved documents vary. Conse-                 𝑘-th and the (𝑘 + 1)-th highest candidates is larger than 2, we can
+quently, this prohibits the generation of private information, such            non-privately release the top-𝑘 candidates.
+as replicating the retrieved context.
+2.2.1 Private Generation via Sample-and-Aggregate. There has been              3   Problem Settings
+a body of work on generating token sequences from an LLM with                  In this section, we describe our problem settings and the threat
+DP, all of which rely on the idea of the sample-and-aggregate frame-           model.
+work in DP [27]. In this framework, the sensitive dataset is parti-               Problem Settings. Following the problem setting in Figure
+tioned into pairwise disjoint subsets. Then, the model will perform            1, suppose a RAG system receives an input query x and wants to
+inference on each subset to generate a response. Lastly, the re-               generate a response using a generator model 𝐹 . Typically 𝐹 is a
+sponses are privately aggregated together using a DP mechanism                 decoder-only model such as LLaMA or Qwen. Also suppose the
+                                                                           3
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                     Tang et al.
+
+
+                                                                            𝐹 (𝑦𝑡 +1 |𝑐, 𝑦1, ..., 𝑦𝑡 ). Then we feed 𝑦𝑡 +1 back to the model to sam-
+                                                                            ple the next token until the desired stop criteria is met (either max
+                                                                            token length reached or eos token sampled). However, the number
+                                                                            of possible tokens that 𝑦𝑡 +1 can realize is equal to the vocabulary
+                                                                            space of the generator model’s tokenizer, which could be upwards
+                                                                            to 50, 000. If the max generation length of the response y is 10, then
+                                                                            the output space of possible responses is 50, 00010 . Hence, naively
+                                                                            applying DP noise each time we are generating the next token
+                                                                            results in a large magnitude of noise, which can have a deleterious
+                                                                            effect on the generated tokens and quickly destroy the utility.
+                                                                               To overcome the large dimensionality of private text generation,
+Figure 3: Histogram of token lengths of ground truth answers                the design of DP-KSA derives from a key observation that most
+in NQ dataset.                                                              question-answering datasets can be answered sufficiently with just
+                                                                            a few keywords. To illustrate this, consider the following question-
+                                                                            answering example from the Natural Question (NQ) dataset [21], a
+                                                                            widely-used RAG benchmarking dataset:
+
+
+                                                                                  Question: who lives in the imperial palace in tokyo?
+                                                                                  Ground Truth Answer: the Imperial Family
+
+
+                                                                               From this example, we see that the ground truth only contains
+                                                                            three words (i.e., three tokens). Hence, extracting the keywords
+                                                                            "Imperial" and "Family" would completely preserve the semantic
+                                                                            meaning of the ground truth answer. To demonstrate that this
+                                                                            observation holds more generally, Figure 3 and Figure 4 show the
+Figure 4: Histogram of token lengths of ground truth answers
+                                                                            histograms of token lengths of ground truth answers in NQ dataset
+in TQA dataset.
+                                                                            and Trivia Question-Answering (TQA) dataset [18], respectively.
+                                                                            As we can see, the histograms are rightly skewed where most of
+system has access to private external database 𝐷 to assist with             the ground-truth answers contain only one to four tokens. The
+answering the query. The goal is to generate the response y such            main takeaway here is that we can convert the task of accurately
+that it is (𝜖, 𝛿)-DP (definition 2.1) with respect to a private RAG         answering these questions into obtaining only a small set of correct
+database 𝐷.                                                                 tokens. Such a conversion effectively converts the QA task into
+   Threat Model. Additionally, our work assumes a realistic setup           a keyword space which can be considered as a low-dimensional
+where an adversary can only query the RAG system with any                   approximation of the entire sequence space of correct answers.
+prompt x. The adversary has access only to (1) the response y               Consequently, operating in this lower dimensional space will help
+and (2) the generator model 𝐹 . Consequently, the adversary does            us preserve the utility as we integrate differential privacy into this
+not have access to the external database 𝐷. We can assume the               space.
+adversary has access to the generator model, as this is usually
+publicly available to download from the internet. That is, the pre-         4.2     DP-KSA
+training (and fine-tuning) data used to pre-train (and fine-tune)
+                                                                            As shown in Figure 2, at a high level, our algorithm proceeds in three
+the generator LLM model is considered public and we are only
+                                                                            steps: (1) retrieval and partitioning, (2) DP keyword extraction, and
+concerned about preserving the privacy of the RAG database 𝐷.
+                                                                            (3) zero-shot with DP information inference. Algorithm 1 succinctly
+                                                                            describes DP-KSA and we go through the details below.
+4     Methodology                                                              Retrieval and partitioning. First, we use a retriever model 𝑅
+In this section, we introduce DP-KSA, a DP RAG framework. We                to obtain the top 𝑁 documents from the private database 𝐷 that are
+begin by discussing the motivation behind the design of DP-KSA              most relevant to the query x (line 1). Specifically, each document in
+in Section 4.1. Then we will go through DP-KSA in more detail in            the database is encoded into a dense vector representation by the
+Section 4.2.                                                                retriever 𝑅. At query time, the retriever encodes the input query
+                                                                            into its own dense vector and ranks documents based on a similarity
+4.1    Motivation                                                           measure, typically the dot product or cosine similarity, between the
+The challenge of generating differentially private text lies in the         query and document vectors. This process identifies the documents
+high dimensionality of the output space. The generator model                most semantically similar to the query.
+𝐹 typically generates text autoregressively, i.e. it iteratively sam-          Then, for each retrieved document 𝐷𝑖x , we partition them into
+ples the next token 𝑦𝑡 +1 from 𝐹 by using the previously sampled            chunks with each chunk containing a retrieved document and the
+tokens 𝑦1, ..., 𝑦𝑡 plus some provided context 𝑐 to obtain 𝑦𝑡 +1 ∼           input query. The document is augmented with the user query to
+                                                                        4
+Differentially Private RAG                                                                         Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+Algorithm 1 DP-KSA                                                           once to obtain the top-𝑘ˆ by testing if H (𝑘 ) − H (𝑘+1) > 2. If the test
+Require: Generator model 𝐹 , retriever model 𝑅, private database             holds, then the top-𝑘 indices are exactly the same for all the neigh-
+    𝐷, number of top documents 𝑁 , user query x, max number of               boring datasets, so we can release the exact top-𝑘 indices without
+    generated tokens 𝑇max                                                    any privatization. However, the test H (𝑘 ) − H (𝑘+1) > 2 must be
+Ensure: Generated response y                                                 performed in a differentially private way, which is done with PTR
+                  x ← 𝑅(x, 𝐷; 𝑁 ) Retrieve 𝑁 most relevant documents
+ 1: 𝐷 1x , ..., 𝐷 𝑁                                                          (Algorithm 2). If the test fails, then no tokens can be release and
+    for query x                                                              hence the final prompt will resort to zero-shot.
+ 2: for 1 ≤ 𝑖 ≤ 𝑁 do                                                            Moreover, the utility of TopKWithPTR is highest when 𝑘 is chosen
+ 3:        y𝑖 ← 𝐹 (𝐷𝑖x, x)                                                   to maximize H (𝑘 ) −H (𝑘+1) . Hence, 𝑘ˆ is estimated in a data-dependent
+ 4: end for                                                                  way by releasing argmax𝑘 H (𝑘 ) − H (𝑘+1) using EM (Algorithm 3).
+ 5: Form histogram H by counting the number of responses y𝑖 that             Here, 𝑟 (𝑘) is a regularizer independent of the dataset, e.g., we can
+    contain each token.                                                      set 𝑟 (𝑘) = −∞ for any 𝑘 > 30 and 𝑘 < 15, if we don’t want to
+ 6: 𝑘ˆ = FindBestK(H) select optimal number of keywords                      return more than 30 or less than 15 tokens.
+ 7: 𝑤 1 , ..., 𝑤 𝑘ˆ ← TopKWithPTR(𝑘, ˆ H) obtain keywords                       Zero-shot + DP info inference. Lastly, we use the DP released
+                       ˆ                                                     top-𝑘ˆ tokens along with the user query x to generate the final
+  8: y ← 𝐹 (x, {𝑤 𝑖 }𝑘𝑖=1 ) zero-shot with keywords inference                                                                             ˆ
+  9: Return y                                                                response from the generator model y ← 𝐹 (x, {𝑤𝑖 }𝑘𝑖=1 ) (line 9).
+                                                                             Note that the final response does not explicitly use the retrieved
+                                                                             documents for the final response, only the extracted keywords. If
+Algorithm 2 TopKWithPTR                                                      the test in the TopKWithPTR fails, then the final response will not
+Require: 𝑘 – the number of top counted tokens to release; H –                contain any information from the external database.
+    histogram for the counts of each token; 𝛿 – failure probability
+ 1: Set 𝑑𝑘 := H (𝑘 ) − H (𝑘+1) .                                             5    Privacy Analysis
+ 2: Set 𝑑b𝑘 := max(2, 𝑑𝑘 ) + N (0, 4𝜎 2 ) − Φ(1 − 𝛿; 0, 2𝜎).                 We now provide a formal guarantee of DP-KSA, in particular that it
+ 3: If 𝑑b𝑘 > 2, Return the exact top-𝑘 tokens.                               achieves (𝜖, 𝛿)-DP. We provide a proof sketch below and defer the
+ 4: Else Terminate with no keywords.                                         exact details in Appendix A.
+
+                                                                             Theorem 5.1. Let x be a query received. Suppose we generate a
+Algorithm 3 FindBestK                                                        response to x, denoted as y, using DP-KSA (Algorithm 1) with 𝐹 as
+Require: H – histogram for the counts of each token                          the generator model, 𝑅 as the retrieval model, and 𝐷 as the private
+ 1: Compute histogram gap 𝑑𝑘 := H (𝑘 ) − H (𝑘+1) for each 𝑘 =                database. Then DP-KSA satisfies (𝜖, 𝛿)-DP with respect to 𝐷.
+    1 . . . 𝑁 − 1.
+ 2: Return argmax𝑘 {𝑑𝑘 + 𝑟 (𝑘) + Gumbel(2/𝜖)}                                   Proof sketch. The high-level idea of the privacy analysis is that the
+                                                                             final response y is a function of the extracted keywords 𝑤 1, ..., 𝑤𝑘ˆ .
+                                                                             The keywords were obtained from the ensemble of responses, which
+produce a prompt, which is fed to the generator model 𝐹 to generate          depend on the retrieved documents from the private dataset, and
+a response (line 3). Afterwards, we will obtain 𝑁 responses.                 an estimate for the number of keywords 𝑘,       ˆ which also depends
+    DP keyword extraction. Next, we extract keywords from the                on the responses. Hence, it suffices to show that (1) FindBestK re-
+ensemble of responses y𝑖 ∀𝑖 to be used for the final prompt. The             turn 𝑘ˆ that is differentially private with respect to 𝐷, then show (2)
+intuition behind this approach is that the answers for QA datasets           TopKWithPTR is differentially private with respect to 𝐷. In regards
+typically contain a few "correct" tokens. Hence, if the retrieved            to (1), we use the exponential mechanism to achieve differential
+documents are relevant to the query, it is likely that the correct           privacy on 𝑘. ˆ And (2) achieves differential privacy using standard
+tokens are contained in the ensemble of responses generated based            analysis of PTR framework. For both (1) and (2), the global sensitiv-
+on different disjoint retrieved documents. This is inspired from             ity of the utility function 𝑑𝑘 is 2 because that for two neighboring
+prior work’s use of PTR for DP text generation [33].                         external datasets 𝐷 and 𝐷 ′ they differ by one document. Subse-
+    The key idea is that we convert keyword extraction into a private        quently, they will differ by one retrieved document, say the 𝑖-th
+top-𝑘 selection problem, then use existing solutions in this space.          𝐷𝑖x ≠ 𝐷𝑖′x . Hence the sensitivity of the utility function 𝑑𝑘 is 2. Once
+To this end, we form a histogram H by counting the frequency                 we prove these two claims, then we can invoke the post-processing
+of each word token among the responses based on the individual               theorem of DP– stating that a DP quantity does not leak additional
+retrieved documents. Then we use the histogram to obtain and                 privacy about the dataset– to argue that the final response is DP.
+release the top-𝑘 tokens with the highest counts in a DP-manner.
+Specifically, first we adaptively estimate the optimal 𝑘ˆ to use (line       Remark 5.2. The formal proof from Appendix A is relatively straight-
+6), then extract the top-𝑘ˆ keywords using TopKWithPTR (line 7).             forward, as it relies on mostly well-established properties and theo-
+    One subtle limitation is that applying a private selection algo-         rems. However, we utilize Renyi Differential Privacy (RDP) [26] to
+rithm, such as the exponential mechanism (EM) [25], for every                perform our privacy analysis. Hence, we formally introduce and
+keyword will require applying the EM 𝑘 times, which will decay               define these properties in terms of RDP in the Appendix due to
+the privacy loss 𝜖. Hence, TopKWithPTR only needs to be applied              spatial constraints.
+                                                                         5
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                      Tang et al.
+
+
+6 Experiments                                                                   Settings. We follow previous work [20] and set 𝛿 = 10−4 . We
+                                                                            select 𝜖 = {1, 2, 3, 5, 8} to achieve different levels of privacy. We set
+6.1 Experimental Setup
+                                                                            the number of ensembles to 80 for our method DP-KSA and non-
+Dataset. To evaluate the effectiveness of our proposed method, we           private KSA method, which is found to be the optimal number of
+conduct experiments on two widely used benchmark datasets in the            ensembles and detailed later in the ablation studies in section 6.3.2 .
+RAG literature, Natural Questions (NQ) [21] and Trivia Question                 Metrics. Following prior works [32, 33], we adopt four widely
+Answering (TQA) [18]. Both datasets are designed for open-domain            used evaluation metrics, F1, ROUGE-1, ROUGE-L and normalized
+question answering and consist of a diverse set of real-world ques-         Levenshitein similarity. These metrics collectively capture both lexi-
+tions, each associated with multiple reference answers. Following           cal overlap and semantic alignment between generated outputs and
+standard RAG evaluations [5, 15, 22], we use the Wikipedia corpus           ground-truth references. The F1 score computes the harmonic mean
+as our external knowledge source for retrieval. Due to practical            of precision and recall, and is particularly well-suited for QA tasks
+constraints in computational resources, we follow prior work [20]           where partial correctness is meaningful. It reflects how well the
+and use a subset of 100 questions from each dataset. Note that we           predicted answer tokens align with those in the reference, reward-
+filter out questions with empty ground-truth references in both             ing both completeness and accuracy. ROUGE-1 measures unigram
+datasets in order to correctly compute the evaluation metrics.              (i.e., single word) overlap between the prediction and the reference
+    Model Architectures. Our system follows a standard retrieval-           text. This provides a straightforward measure of lexical similarity.
+augmented generation (RAG) pipeline, composed of a retriever and            ROUGE-L, on the other hand, incorporates the sequential nature of
+a generator. For the retriever component, we adopt the Dense Pas-           language by computing the longest common subsequence (LCS),
+sage Retriever (DPR) [19], a widely used dual-encoder architecture          thus capturing not only which words are shared, but also whether
+built on top of BERT [6]. DPR encodes both the input question               they appear in a similar order, which is an important indicator
+and the candidate passages into dense vector embeddings and re-             of fluency and coherence in natural language generation. Leven-
+trieves the most relevant documents by measuring similarity in              shtein similarity is derived from the Levenshtein distance, which
+the embedding space. In our experiment, we use the inner prod-              quantifies the number of single-character insertions, deletions, or
+uct as the similarity metric. In addition, given the large size of          substitutions required to transform one string into another. By nor-
+the Wikipedia corpus (21 million passages), we use FAISS [7] to             malizing this value, we obtain a score that reflects how closely the
+accelerate retrieval. FAISS leverages approximate nearest neigh-            predicted answer resembles the reference at the character level,
+bor algorithms for efficient similarity search in high-dimensional          offering a fine-grained perspective on textual similarity. Across all
+embedding spaces.                                                           four metrics, higher scores indicate better alignment between the
+    For the generator, we compare several state-of-the-art large            generated and ground-truth answers, and thus better performance.
+language models that have been instruction-tuned to follow user
+prompts. Specifically, we evaluate Qwen 2.5 (3B) [34], Llama 3.2            6.2    Privacy-Utility Tradeoff of DP-KSA
+(3B), and Llama 3.1 (8B) [13]. The instruction-tuned versions of
+these models are particularly appropriate for QA tasks, as they are         We show the privacy-utility tradeoff of DP-KSA across four evalu-
+optimized to respond effectively to task-specific prompts.                  ation metrics and three different LLMs on NQ and TQA datasets.
+    Baselines. We evaluate the effectiveness of DP-KSA (Algorithm           We evaluate DP-KSA with different privacy budget 𝜖, ranging from
+1) by comparing it against three representative baselines, each             1 to 8. Smaller 𝜖 indicates stronger privacy constraints. We also
+reflecting a different level of privacy and retrieval capability.           compare our method with the non-RAG (𝜖 = 0), non-private KSA
+    The first baseline, denoted as non-RAG (𝝐 = 0), represents a            (𝜖 = ∞) and non-private RAG (𝜖 = ∞) baselines.
+strictly private setup where only the question is provided to the           6.2.1 Performance on NQ dataset. Figure 5 presents the perfor-
+language model, without any access to external documents. Since no          mance of DP-KSA on the NQ dataset. Across all models and metrics,
+retrieval is involved, this configuration guarantees inherent privacy       we observe a consistent performance improvement as the privacy
+and serves as a minimal baseline. For DP-KSA to be considered               budget 𝜖 increases from 1 to 8, confirming that DP-KSA effectively
+practically useful, it must achieve better performance than this            trades off privacy for utility. Notably, at moderate privacy levels
+no-retrieval baseline under reasonable privacy budgets.                     (e.g. 𝜖 = 3 or 5), DP-KSA substantially outperforms the strictly pri-
+    The second baseline, labeled as KSA (𝝐 = ∞), performs the same          vate non-RAG baseline, demonstrating its ability to retain useful
+keyword extraction as DP-KSA but releases the top-𝐾 keywords                keywords even under noise. For instance, with Llama 3.2 (3B) as the
+without introducing any noise. This non-private variant effectively         generator, the F1 score improves from 21.67 at 𝜖 = 0 to 22.55 at 𝜖 = 2,
+removes the privacy constraints while preserving the aggregation            and further to 25.18 at 𝜖 = 8, highlighting a strong privacy-utility
+structure of our method, making it a strong upper bound for our             tradeoff. However, at 𝜖 = 1, performance tends to drop below or re-
+privacy-preserving approach.                                                main comparable to the non-RAG baseline (𝜖 = 0). This is likely due
+    The third baseline is the standard retrieval-augmented genera-          to the higher noise level required under strong privacy constraints,
+tion pipeline, denoted as RAG (𝝐 = ∞). In this setting, the ques-           which hampers the success of the propose-test-release (PTR) con-
+tion is paired with the top-2 retrieved documents from the external         dition H (𝑘 ) − H (𝑘+1) > 2, resulting in fewer or no keywords being
+knowledge base, and the full documents are fed directly into the            released to support final response generation.
+language model without any privacy protection. This setting repre-             We find that DP-KSA often matches or even surpasses the perfor-
+sents a theoretical upper bound in terms of utility, as it leverages        mance of the non-private KSA (𝜖 = ∞) baseline, despite the presence
+full retrieval with no noise or low-dimensional approximation.              of differential privacy noise. For example, using Qwen 2.5 (3B) as
+                                                                        6
+Differentially Private RAG                                                                     Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+
+
+Figure 5: Results of DP-KSA on NQ dataset with different generator LLMs: Qwen 2.5 (3B), Llama 3.2 (3B), and Llama 3.1 (8B). We
+use three baselines including non-RAG (𝜖 = 0), non-private RAG with top-2 retrieved documents (𝜖 = ∞), and non-private KSA
+(𝜖 = ∞).
+
+
+the generator, DP-KSA achieves ROUGE-1 and ROUGE-L scores at              runs, which may help reduce overfitting to overly dominant but po-
+a moderate privacy budget (𝜖 = 5) that are comparable to or exceed        tentially less informative tokens. Overall, these findings underscore
+those of non-private KSA. This suggests that a noisy histogram,           that controlled randomness applied over an ensemble of semanti-
+constructed across ensembles of multiple responses, effectively           cally coherent outputs enables strong utility-privacy tradeoffs.
+preserves key semantic contents even in the presence of differ-              It is also worth noting that the non-private KSA baseline gen-
+ential privacy noise. Additionally, unlike non-private KSA which          erally falls short of the upper bound set by the non-private RAG
+deterministically selects the most frequent keywords, DP-KSA’s sto-       (𝜖 = ∞) baseline. This performance gap is likely stems from the
+chastic keyword release mechanism introduces variation across             information loss inherent in compressing an ensemble of responses
+                                                                          into a fixed set of keywords. Exploring more effective strategies
+                                                                      7
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                Tang et al.
+
+
+
+
+Figure 6: Results of DP-KSA on TQA dataset with different generator LLMs: Qwen 2.5 (3B), Llama 3.2 (3B), and Llama 3.1 (8B). We
+use three baselines including non-RAG (𝜖 = 0), non-private RAG with top-2 retrieved documents (𝜖 = ∞), and non-private KSA
+(𝜖 = ∞).
+
+
+for utilizing these extracted keywords to further narrow the perfor-       or compressed prompts, making them especially well-suited for
+mance gap remains as an important direction for future work.               privacy-preserving QA systems.
+   Interestingly, we observe that stronger generator models benefit           Finally, although all four evaluation metrics follow consistent
+more from DP-KSA. As we move from Qwen 2.5 (3B) to Llama                   upward trends as 𝜖 increases, the degree of improvement varies.
+3.1 (8B), not only do we observe higher absolute scores, but also          Levenshtein similarity, which captures fine-grained character-level
+greater robustness to DP noise. This supports the intuition that           differences, improves more noticeably, suggesting that the gener-
+larger models or certain model families are better equipped to infer       ated responses become semantically closer to the references as
+context and generate meaningful outputs from partially informative
+
+                                                                       8
+Differentially Private RAG                                                                       Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+privacy budget increases. ROUGE-L and F1 also show steady im-               answer structure and the higher redundancy in supporting con-
+provements, confirming the DP-KSA yields gains across both string           text, which together make it easier for DP-KSA to preserve relevant
+similarity and task-specific QA measures.                                   information even under privacy constraints.
+
+6.2.2 Performance on TQA dataset. Figure 6 shows the perfor-
+mance of DP-KSA on the TQA dataset. Similar to the trends ob-
+served on NQ, we see consistent performance gains as the privacy
+parameter 𝜖 increases from 1 to 8, illustrating DP-KSA’s ability to
+effectively trade privacy for utility. Beginning at a privacy budget
+of 𝜖 = 2, DP-KSA consistently outperforms the strictly private non-
+RAG (𝜖 = 0) baseline, demonstrating that even under strong privacy
+constraints, meaningful keywords can still be preserved. One ex-
+ample is when using Llama 3.2 (3B) as the generator, the F1 score
+improves from 55.12 at 𝜖 = 0 to 56.92 at 𝜖 = 5, indicating a strong
+privacy-utility tradeoff. Notably, unlike on NQ where performance
+at lower 𝜖 values occasionally regresses, DP-KSA on TQA exhibits
+smoother and more stable improvements even under tight privacy
+budgets.
+   A particular interesting finding is that DP-KSA performs com-
+                                                                                                           (a) NQ
+petitively against the non-private RAG (𝜖 = ∞) baseline in some
+cases. For instance, with Qwen 2.5 (3B), the ROUGE-1, ROUGE-L,
+and Levenshtein similarity scores at 𝜖 = 5 exceed those of the non-
+private RAG baseline, despite the added differential privacy noise.
+This suggests that using keywords from a noisy histogram formed
+across an ensemble of responses can yield final responses that are
+semantically rich as those generated with full document contexts,
+particularly when the retrieved context is noisy or contains more
+redundancy.
+   Digging deeper into the baselines, we observe that the non-
+private KSA baseline actually outperforms non-private RAG in
+smaller models such as Qwen 2.5 (3B) and Llama 3.2 (3B), while the
+trend reverses for larger models like Llama 3.1 (8B). This difference
+can be attributed to the relative contributions of two information
+sources, namely the consensus of keywords captured by keyword
+frequency across the ensemble of 80 responses, and the parametric                                         (b) TQA
+knowledge embedded in the generator LLM. For smaller models,
+the ensemble-driven signal dominates, giving KSA an advantage.              Figure 7: Propose-test-release (PTR) test pass rate of DP-KSA
+However, as the generator becomes more powerful, its internal               with varying privacy parameters 𝜖 on NQ and TQA datasets.
+knowledge plays a larger role in improving generation quality and           We report the results with three different LLMs: Qwen 2.5
+thus shifting the advantage toward full-context RAG.                        (3B), Llama 3.2 (3B), and Llama 3.1 (8B).
+   In line with these observations, DP-KSA shows greater benefits
+with stronger generator models. Moving from Qwen 2.5 (3B) to
+Llama 3.1 (8B), we see not only higher absolute performance but             6.2.3 PTR test pass rate. We analyze the effect of various privacy
+also improved stability across different privacy budgets. This rein-        constraints of DP-KSA on PTR test pass rates on both NQ and TQA
+forces our earlier conclusion from the NQ results that larger and           datasets. Following the description of our method DP-KSA in sec-
+more capable models are better suited to generalize from sparse or          tion 4.2, the propose-test-release (PTR) test checks if the condition
+compressed prompts, making them strong candidates for privacy-              H (𝑘 ) − H (𝑘+1) > 2 holds. Figure 7 shows the pass rate changes for
+preserving RAG.                                                             different privacy parameters 𝜖, ranging from 1 to 8, across three
+   Lastly, all four metrics display consistent improvement as 𝜖 in-         different generator LLMs. Across both datasets, we observe a clear
+creases, but the extent of gains varies. Levenshtein similarity and         and consistent trend that the PTR test pass rate increases steadily
+ROUGE-L tend to improve more steeply, indicating that as more               as 𝜖 increases. This indicates that relaxing the privacy constraint
+keywords are released, the generated final responses become se-             reduces the amount of DP noise added, enabling more privately
+mantically and structurally closer to the reference answers. F1 and         selected keywords to pass the PTR test and being released to aid
+ROUGE-1 also improve steadily, confirming that DP-KSA remains               the final model outputs. In other words, lower noise leads to more
+effective across both QA-style metrics and surface-level lexical            stable test outcomes and thus higher pass rates. This observation
+overlap. Compared to NQ, DP-KSA on TQA dataset achieves sig-                also supports our discussion earlier in the privacy-utility tradeoff
+nificantly higher absolute scores, likely due to its more extractive        performance on both datasets.
+                                                                        9
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                   Tang et al.
+
+
+   When comparing across models, we find that Qwen 2.5 (3B) trails
+slightly behind both Llama models on NQ and TQA. The Llama
+3.2 (3B) model generally achieves the highest pass rates on the NQ
+dataset, especially showing steep gains between 𝜖 = 1 and 𝜖 = 5.
+In contrast, on the TQA dataset, the Llama 3.1 (8B) model slightly
+outperforms the others at higher privacy budgets (𝜖 = 5 and 8),
+suggesting that its larger capacity helps identify consistent keyword
+patterns even under significant DP noise. These trends highlight
+that stronger models, particularly those in the Llama family, exhibit
+better resilience to DP noise and are more effective at preserving
+semantic signals necessary for keyword extraction.
+   In terms of dataset differences, we observe that the TQA dataset
+consistently achieves higher PTR pass rates than NQ across all
+models and 𝜖 values. Even at 𝑒𝑝𝑠𝑖𝑙𝑜𝑛 = 1, models on TQA start
+from a noticeably higher baseline. This discrepancy likely stems
+from differences in dataset structure. TQA answers tend to be more
+extractive and contextually redundant, which helps generate more
+consistent keyword distributions across ensembles. As a result,
+keywords in TQA are easier to identify under the added DP noise.
+
+6.3    Ablation Studies
+We also conduct ablation studies with varying model sizes and
+number of ensembles on NQ dataset to investigate how these hyper-
+parameters affect the performance of our proposed method DP-KSA.
+                                                                             Figure 8: Ablation studies on model sizes with Qwen 2.5
+6.3.1 Effect of Model Size. Figure 8 illustrates the impact of model         model family on NQ dataset. Model size axis is in log scale.
+size on the performance of DP-KSA across all four metrics, F1,
+ROUGE-1, ROUGE-L and Levenshtein similarity, under a fixed pri-
+vacy budget of 𝜖 = 3, along with non-private baselines for compar-
+ison. In this experiment, we evaluate the Qwen 2.5 model family
+at four scales, 1.5B , 3B, 7B and 32B. To accommodate hardware                  At the other end of the scale, the smallest model size (1.5B) re-
+memory limitations, we use 4-bit quantization to the 32B model               veals an unusual pattern. The non-RAG baseline (𝜖 = 0), where only
+weights, ensuring that all models can be evaluated under the same            the question is given without any retrieved context, outperforms
+computational constraints.                                                   both the non-private KSA and DP-KSA (𝜖 = 3) settings. This can
+    As expected, larger models consistently achieve better perfor-           be explained by the weaker instruction-following capabilities of
+mance across most metrics. As model size increases, we observe               smaller models. When provided with prompts using keyword-only
+steady gains in F1 and ROUGE scores under the privacy-preserving             context, whether deterministic (KSA) or noisy (DP-KSA), these mod-
+setting, indicating that more expressive LLMs are more capable               els struggle to interpret and integrate sparse cues into coherent
+of compensating for the restricted input caused by providing only            answers. In contrast, the non-RAG setting, which presents only the
+keywords as context in the prompts. Notably, even under a mod-               raw question, may align better with the pretraining distribution of
+erate privacy constraint of 𝜖 = 3, the 32B model nearly matches              small models and avoid potential confusion from prompts with in-
+the performance of the fully non-private RAG baseline (𝜖 = ∞),               complete or overly narrow keywords as context. Consequently, the
+demonstrating that DP-KSA benefits substantially from scaling to             model relies more heavily on its parametric knowledge, sometimes
+larger model capacities.                                                     yielding better outputs than poorly constructed context.
+    Interestingly, however, we observe a decline in Levenshtein sim-            Moreover, between KSA and DP-KSA (𝜖 = 3) at 1.5B, the latter
+ilarity as model size increases to 32B. This seemingly counterintu-          surprisingly performs better. One possible reason is that the sto-
+itive trend can be explained by the generative behavior of larger            chastic nature of DP-KSA introduces diversity into the prompts,
+models. Bigger LLMs, such as Qwen 2.5 (32B), are more likely to              occasionally surfacing less frequent but semantically useful tokens.
+paraphrase reference answers with greater fluency and lexical diver-         This noise-driven variation can act as a form of regularization that
+sity. While these outputs may be semantically accurate, they diverge         prevents the model from overfitting to dominant but uninformative
+more from the reference at the character level, which directly low-          keywords and this is a vulnerability particularly pronounced in
+ers Levenshtein similarity. Larger models may also produce longer            smaller models.
+or more elaborative responses, introducing more edits even if se-               Overall, these findings underscores that larger models are not
+mantically valid, while smaller models are more conservative and             only more effective at leveraging prompts with sparse context but
+literal in their generations. Therefore, the drop in Levenshtein sim-        also more robust to the limitations imposed by differential privacy.
+ilarity should be interpreted not as a sign of degraded quality, but         They suggest that DP-KSA is best paired with instruction-following-
+rather as a side effect of more fluent and paraphrastic generation.          capable LLMs to achieve strong privacy-utility tradeoffs.
+                                                                        10
+Differentially Private RAG                                                                         Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+                                                                              size becomes large enough to establish a stable token distribution,
+                                                                              adding more documents does little to improve and may even slightly
+                                                                              degrade the quality of the extracted keywords due to the introduc-
+                                                                              tion of irrelevant or noisy content. This highlights the need for more
+                                                                              strategic methods for selecting the number of ensembles to further
+                                                                              boost performance without compromising the privacy guarantee.
+
+                                                                              7 Related Work
+                                                                              7.1 Privacy Attacks on Large Language Models
+                                                                              Prior work has shown that large language models (LLMs) are vulner-
+                                                                              able to privacy breaches through a variety of attack vectors. Carlini
+                                                                              et al. [4] demonstrated that adversaries can extract memorized
+                                                                              training examples, such as email addresses, phone numbers, and
+Figure 9: Ablation studies on number of ensembles with                        other sensitive content, by carefully crafting input prompts. These
+Llama 3.2 (3B) model and 𝜖 = 3 on NQ dataset.                                 training data extraction attacks reveal that even models trained on
+                                                                              supposedly de-identified datasets can still memorize and regurgitate
+                                                                              specific private data points. Prompt extraction attacks [9, 24, 38]
+6.3.2 Effect of Number of Ensembles. Figure 9 shows how the num-              have also received significant attention. These attacks target de-
+ber of retrieval ensembles impacts the performance of DP-KSA. In              ployed systems where users provide prompts that encode propri-
+this experiment, we use the Llama 3.2 (3B) generator model and                etary logic, credentials, or task-specific templates. Adversaries can
+fix the privacy budget at 𝜖 = 3, while varying the number of en-              use model inversion, gradient leakage, or black-box probing to in-
+sembles from 10 to 100. The number of ensembles reflects how                  fer the original prompts, threatening the confidentiality of model
+many top-ranked documents are used from retrieval. For instance,              customization and user inputs in commercial APIs.
+an ensemble size of 10 uses the top 10 retrieved documents, while                In the context of retrieval-augmented generation (RAG), recent
+a size of 50 incorporates the top 50. Each ensemble corresponds               work has highlighted privacy risks stemming from both the retrieval
+to a different retrieved document used to prompt the generator,               and generation components. Huang et al. [17] analyzed 𝑘NN-LMs
+and their aggregated responses are used to construct a noisy token            and showed that retrieved neighbors from the training corpus can
+histogram for differentially private keyword selection.                       expose private information, especially when the distance function
+   We observe a clear progression in performance trends across all            reveals document structure or content characteristics. Zeng et al.
+four evaluation metrics as the number of ensembles increases.                 [36] conducted a systematic investigation into open-source RAG
+   When using between 10 and 40 ensembles, performance remains                pipelines and found that sensitive data in the retrieval corpus can
+relatively stable. This indicates that aggregating a limited number of        propagate into generated responses without explicit prompts, par-
+ensembles does not provide sufficient signal strength to overcome             ticularly when the retriever ranks memorized or high-sensitivity
+the DP noise introduced. With few ensembles, informative tokens               content highly. Qi et al. [29] extended these findings to commer-
+may appear sporadically across responses, leading to sparse or                cial production-level RAG systems, showing that the configuration
+inconsistent histograms where the DP mechanism struggles to                   of RAG, including retrieval granularity, document ranking, and
+identify high-frequency keywords reliably.                                    prompt construction, can significantly influence the model’s sus-
+   As the number of ensembles increases from 40 to 80, performance            ceptibility to data leakage. Together, these studies underline the
+improves steadily. The addition of more ensembles enriches the                importance of privacy-aware design to mitigate the growing threat
+token histogram, making it more representative and resilient to DP            of information leakage in retrieval-augmented language generation.
+noise. Recurrent tokens consistently appearing across semantically
+relevant responses emerge more clearly, enabling the stochastic               7.2    Privacy-Preserving Large Language Models
+keyword release mechanism to retain more meaningful and infor-                Differential privacy has been studied in many tasks in large lan-
+mative content. The growing diversity of responses within this                guage models. The differentially private pretraining and finetuning
+range plays a key role in stabilizing the keyword selection process           of LLMs have been studied to address the privacy concern in the
+under DP constraints.                                                         training data by deploying DP-SGD [1]. In this paradigm, noise
+   Between 80 and 100 ensembles, performance begins to plateau.               is introduced to the gradient during the model’s training to en-
+While more ensembles continue to be aggregated, the marginal                  sure privacy. However, as the scale of the large language models
+gains diminish. Additional documents may contribute less relevant             significantly increased, memory becomes a large bottleneck and
+or redundant information, increasing the presence of low-utility              makes this approach more challenging in practice. Although recent
+or noisy tokens in the histogram. This can dilute the quality of the          methods have been proposed for efficient per-example gradient
+extracted keywords and limit further improvements in the final                clipping [23] and parameter-efficient fine-tuning [35], it remains a
+output quality.                                                               topic of ongoing research in order to address the engineering and
+   These findings indicate that while increasing the number of en-            optimization problems introduced by DP-SGD. In-context learning
+sembles can significantly enhance performance under DP, there                 adapts to different tasks by illustrating some examples in the con-
+are diminishing returns beyond a certain point. Once the ensemble             text as the task description. DP in-context learning considers the
+                                                                         11
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                                                     Tang et al.
+
+
+situation when the examples are picked from any private dataset.                                  Springer, 635–658.
+[31] tackles this problem by generating synthetic examples with                               [4] Nicholas Carlini, Florian Tramer, Eric Wallace, Matthew Jagielski, Ariel Herbert-
+                                                                                                  Voss, Katherine Lee, Adam Roberts, Tom Brown, Dawn Song, Ulfar Erlingsson,
+DP. [33] instead uses a sample-and-aggregate algorithm to generate                                et al. 2021. Extracting training data from large language models. In 30th USENIX
+DP responses.                                                                                     security symposium (USENIX Security 21). 2633–2650.
+                                                                                              [5] Danqi Chen, Adam Fisch, Jason Weston, and Antoine Bordes. 2017. Reading
+   To mitigate privacy risks in RAG systems, [37] proposed an                                     Wikipedia to Answer Open-Domain Questions. In Proceedings of the 55th Annual
+empirical privacy-preserving algorithm for RAG through the syn-                                   Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+thetic data generation, while our work studies privacy-preserving                                 Regina Barzilay and Min-Yen Kan (Eds.). Association for Computational Linguis-
+                                                                                                  tics, Vancouver, Canada, 1870–1879. https://doi.org/10.18653/v1/P17-1171
+RAG in the framework of differential privacy, which protects the                              [6] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT:
+privacy of each individual document with the theoretical guaran-                                  Pre-training of Deep Bidirectional Transformers for Language Understanding. In
+tee. Closely-related prior works have proposed DP solutions in                                    Proceedings of the 2019 Conference of the North American Chapter of the Association
+                                                                                                  for Computational Linguistics: Human Language Technologies, Volume 1 (Long and
+the RAG setting by applying DP at every token generation of the                                   Short Papers), Jill Burstein, Christy Doran, and Thamar Solorio (Eds.). Association
+LLM [14, 20] after retrieving relevant documents. While they offer                                for Computational Linguistics, Minneapolis, Minnesota, 4171–4186. https://doi.
+                                                                                                  org/10.18653/v1/N19-1423
+privacy protection for RAG systems, they come with noticeable                                 [7] Matthijs Douze, Alexandr Guzhva, Chengqi Deng, Jeff Johnson, Gergely Szilvasy,
+limitations. Per-iteration private voting requires composing the                                  Pierre-Emmanuel Mazaré, Maria Lomeli, Lucas Hosseini, and Hervé Jégou. 2025.
+privacy loss over the number of tokens being generated, which                                     The Faiss library. arXiv:2401.08281 [cs.LG] https://arxiv.org/abs/2401.08281
+                                                                                              [8] Haonan Duan, Adam Dziedzic, Nicolas Papernot, and Franziska Boenisch. 2023.
+quickly destroys the privacy-utility tradeoff.                                                    Flocks of stochastic parrots: Differentially private prompt learning for large
+                                                                                                  language models. Advances in Neural Information Processing Systems 36 (2023),
+8    Conclusion                                                                                   76852–76871.
+                                                                                              [9] Haonan Duan, Adam Dziedzic, Mohammad Yaghini, Nicolas Papernot, and
+In this paper, we presented DP-KSA, a novel privacy-preserving al-                                Franziska Boenisch. 2023. On the privacy risk of in-context learning. In The 61st
+                                                                                                  Annual Meeting Of The Association For Computational Linguistics.
+gorithm that ensures differential privacy for sensitive external data                        [10] David Durfee and Ryan M Rogers. 2019. Practical differentially private top-k
+source in the RAG system, enabling us to enhance LLMs by domain-                                  selection with pay-what-you-get composition. Advances in Neural Information
+specific but sensitive external data source. DP-KSA privatizes RAG                                Processing Systems 32 (2019).
+                                                                                             [11] Cynthia Dwork. 2006. Differential privacy. In International colloquium on au-
+by extracting the most frequent keywords based on the "propose-                                   tomata, languages, and programming. Springer, 1–12.
+test-release" paradigm and augmenting them into the prompt to                                [12] Cynthia Dwork and Jing Lei. 2009. Differential privacy and robust statistics. In
+                                                                                                  Proceedings of the Forty-First Annual ACM Symposium on Theory of Computing
+generate the final output. The privately extracted keywords ef-                                   (Bethesda, MD, USA) (STOC ’09). Association for Computing Machinery, New
+fectively compresses the semantic space while still retaining key                                 York, NY, USA, 371–380. https://doi.org/10.1145/1536414.1536466
+information pertaining to the retrieved contexts for better utility.                         [13] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek
+                                                                                                  Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex
+The experiments on QA benchmarking datasets show that our algo-                                   Vaughan, et al. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783
+rithm outperforms the non-RAG method under moderate privacy                                       (2024).
+budgets across different models, demonstrating its effectiveness                             [14] Nicolas Grislain. 2025. RAG with Differential Privacy. arXiv:2412.19291 [cs.LG]
+                                                                                                  https://arxiv.org/abs/2412.19291
+for maintaining high generation quality while providing formal                               [15] Jennifer Hsia, Afreen Shaikh, Zhiruo Wang, and Graham Neubig. 2024. Ragged:
+privacy guarantees. We also explored and evaluated the impact of                                  Towards informed design of retrieval augmented generation systems. arXiv
+                                                                                                  preprint arXiv:2403.09040 (2024).
+generator model sizes and number of ensembles on our method.                                 [16] Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian
+   In future work, we will consider a more adaptive scheme for                                    Wang, Qianglong Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, et al. 2025. A
+selecting the number of ensembles to further improve privacy-                                     survey on hallucination in large language models: Principles, taxonomy, chal-
+                                                                                                  lenges, and open questions. ACM Transactions on Information Systems 43, 2 (2025),
+utility tradeoffs across different generator model families and sizes.                            1–55.
+While DP-KSA targets scenarios where the external retrieval corpus                           [17] Yangsibo Huang, Samyak Gupta, Zexuan Zhong, Kai Li, and Danqi Chen. 2023.
+is private and the generator LLM is trained on publicly available                                 Privacy Implications of Retrieval-Based Language Models. In EMNLP.
+                                                                                             [18] Mandar Joshi, Eunsol Choi, Daniel Weld, and Luke Zettlemoyer. 2017. TriviaQA: A
+data, commonly seen in real-world RAG systems using open-source                                   Large Scale Distantly Supervised Challenge Dataset for Reading Comprehension.
+models, it is also worth investigating how DP-KSA affects the train-                              In Proceedings of the 55th Annual Meeting of the Association for Computational
+                                                                                                  Linguistics (Volume 1: Long Papers), Regina Barzilay and Min-Yen Kan (Eds.).
+ing data leakage risks when the generator LLM is pre-trained or                                   Association for Computational Linguistics, Vancouver, Canada, 1601–1611. https:
+fine-tuned on private datasets.                                                                   //doi.org/10.18653/v1/P17-1147
+                                                                                             [19] Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey
+                                                                                                  Edunov, Danqi Chen, and Wen-tau Yih. 2020. Dense Passage Retrieval for Open-
+Acknowledgment                                                                                    Domain Question Answering. In Proceedings of the 2020 Conference on Empirical
+The authors used Grammarly and ChatGPT4.o to detect and correct                                   Methods in Natural Language Processing (EMNLP), Bonnie Webber, Trevor Cohn,
+                                                                                                  Yulan He, and Yang Liu (Eds.). Association for Computational Linguistics, Online,
+grammatical errors in this paper.                                                                 6769–6781. https://doi.org/10.18653/v1/2020.emnlp-main.550
+                                                                                             [20] Tatsuki Koga, Ruihan Wu, and Kamalika Chaudhuri. 2025.                     Privacy-
+                                                                                                  Preserving Retrieval-Augmented Generation with Differential Privacy.
+References                                                                                        arXiv:2412.04697 [cs.CR] https://arxiv.org/abs/2412.04697
+ [1] Martin Abadi, Andy Chu, Ian Goodfellow, H. Brendan McMahan, Ilya Mironov,               [21] Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redfield, Michael Collins, Ankur
+     Kunal Talwar, and Li Zhang. 2016. Deep Learning with Differential Privacy. In                Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Kenton Lee,
+     Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications                 Kristina Toutanova, Llion Jones, Matthew Kelcey, Ming-Wei Chang, Andrew M.
+     Security (Vienna, Austria) (CCS ’16). Association for Computing Machinery, New               Dai, Jakob Uszkoreit, Quoc Le, and Slav Petrov. 2019. Natural Questions: A
+     York, NY, USA, 308–318. https://doi.org/10.1145/2976749.2978318                              Benchmark for Question Answering Research. Transactions of the Association for
+ [2] Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and Hannaneh Hajishirzi.                     Computational Linguistics 7 (2019), 452–466. https://doi.org/10.1162/tacl_a_00276
+     2024. Self-RAG: Learning to Retrieve, Generate, and Critique through Self-              [22] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin,
+     Reflection. In The Twelfth International Conference on Learning Representations.             Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel,
+     https://openreview.net/forum?id=hSyW5go0v8                                                   Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-augmented generation for
+ [3] Mark Bun and Thomas Steinke. 2016. Concentrated differential privacy: Simpli-                knowledge-intensive NLP tasks. In Proceedings of the 34th International Conference
+     fications, extensions, and lower bounds. In Theory of cryptography conference.               on Neural Information Processing Systems (Vancouver, BC, Canada) (NIPS ’20).
+                                                                                        12
+Differentially Private RAG                                                                      Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+     Curran Associates Inc., Red Hook, NY, USA, Article 793, 16 pages.
+[23] Xuechen Li, Florian Tramèr, Percy Liang, and Tatsunori Hashimoto. 2022. Large
+     Language Models Can Be Strong Differentially Private Learners. arXiv preprint
+     arXiv:2110.05679. In International Conference on Learning Representations (ICLR).
+     https://arxiv.org/abs/2110.05679
+[24] Yi Liu, Gelei Deng, Yuekang Li, Kailong Wang, Zihao Wang, Xiaofeng Wang,
+     Tianwei Zhang, Yepang Liu, Haoyu Wang, Yan Zheng, et al. 2023. Prompt Injec-
+     tion attack against LLM-integrated Applications. arXiv preprint arXiv:2306.05499
+     (2023).
+[25] Frank McSherry and Kunal Talwar. 2007. Mechanism design via differential
+     privacy. In 48th Annual IEEE Symposium on Foundations of Computer Science
+     (FOCS’07). IEEE, 94–103.
+[26] Ilya Mironov. 2017. Rényi differential privacy. In 2017 IEEE 30th computer security
+     foundations symposium (CSF). IEEE, 263–275.
+[27] Kobbi Nissim, Sofya Raskhodnikova, and Adam Smith. 2007. Smooth sensitivity
+     and sampling in private data analysis. In Proceedings of the Thirty-Ninth Annual
+     ACM Symposium on Theory of Computing (San Diego, California, USA) (STOC
+     ’07). Association for Computing Machinery, New York, NY, USA, 75–84. https:
+     //doi.org/10.1145/1250790.1250803
+[28] Fabio Petroni, Tim Rocktäschel, Patrick Lewis, Anton Bakhtin, Yuxiang Wu,
+     Alexander H Miller, and Sebastian Riedel. 2019. Language models as knowledge
+     bases? arXiv preprint arXiv:1909.01066 (2019).
+[29] Zhenting Qi, Hanlin Zhang, Eric P. Xing, Sham M. Kakade, and Himabindu
+     Lakkaraju. 2025. Follow My Instruction and Spill the Beans: Scalable Data
+     Extraction from Retrieval-Augmented Generation Systems. In The Thirteenth
+     International Conference on Learning Representations. https://openreview.net/
+     forum?id=Y4aWwRh25b
+[30] Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever,
+     et al. 2019. Language models are unsupervised multitask learners. OpenAI blog
+     1, 8 (2019), 9.
+[31] Xinyu Tang, Richard Shin, Huseyin A Inan, Andre Manoel, Fatemehsadat
+     Mireshghallah, Zinan Lin, Sivakanth Gopi, Janardhan Kulkarni, and Robert Sim.
+     2024. Privacy-Preserving In-Context Learning with Differentially Private Few-
+     Shot Generation. In The Twelfth International Conference on Learning Representa-
+     tions. https://openreview.net/forum?id=oZtt0pRnOl
+[32] Yuhao Wang, Ruiyang Ren, Junyi Li, Wayne Xin Zhao, Jing Liu, and Ji-Rong
+     Wen. 2024. REAR: A Relevance-Aware Retrieval-Augmented Framework for
+     Open-Domain Question Answering. arXiv preprint arXiv:2402.17497 (2024).
+[33] Tong Wu, Ashwinee Panda, Jiachen T Wang, and Prateek Mittal. 2023. Privacy-
+     preserving in-context learning for large language models. arXiv preprint
+     arXiv:2305.01639 (2023).
+[34] An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu,
+     Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang,
+     Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang
+     Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue,
+     Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia,
+     Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan,
+     Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. 2025. Qwen2.5 Technical
+     Report. arXiv:2412.15115 [cs.CL] https://arxiv.org/abs/2412.15115
+[35] Da Yu, Saurabh Naik, Arturs Backurs, Sivakanth Gopi, Huseyin A Inan, Gautam
+     Kamath, Janardhan Kulkarni, Yin Tat Lee, Andre Manoel, Lukas Wutschitz, et al.
+     2022. Differentially private fine-tuning of language models. In International
+     Conference on Learning Representations (ICLR).
+[36] Shenglai Zeng, Jiankun Zhang, Pengfei He, Yiding Liu, Yue Xing, Han Xu, Jie Ren,
+     Yi Chang, Shuaiqiang Wang, Dawei Yin, and Jiliang Tang. 2024. The Good and
+     The Bad: Exploring Privacy Issues in Retrieval-Augmented Generation (RAG).
+     In Findings of the Association for Computational Linguistics: ACL 2024, Lun-Wei
+     Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational
+     Linguistics, Bangkok, Thailand, 4505–4524. https://doi.org/10.18653/v1/2024.
+     findings-acl.267
+[37] Shenglai Zeng, Jiankun Zhang, Pengfei He, Jie Ren, Tianqi Zheng, Hanqing
+     Lu, Han Xu, Hui Liu, Yue Xing, and Jiliang Tang. 2025. Mitigating the Pri-
+     vacy Issues in Retrieval-Augmented Generation (RAG) via Pure Synthetic Data.
+     arXiv:2406.14773 [cs.CR] https://arxiv.org/abs/2406.14773
+[38] Yiming Zhang, Nicholas Carlini, and Daphne Ippolito. 2023. Effective prompt
+     extraction from language models. arXiv preprint arXiv:2307.06865 (2023).
+[39] Yuqing Zhu and Yu-Xiang Wang. 2022. Adaptive private-k-selection with adaptive
+     k and application to multi-label pate. In International Conference on Artificial
+     Intelligence and Statistics. PMLR, 5622–5635.
+
+
+
+
+                                                                                           13
+Proceedings on Privacy Enhancing Technologies YYYY(X)                                                                                       Tang et al.
+
+
+A     Privacy Analysis of DP-KSA                                                 Lastly, we introduce a fundamental DP mechanism, called the
+We now provide technical details behind the privacy analysis of                exponential mechanism [25], which the FindBestK is based on.
+DP-KSA. We first introduce some definitions and theorems to help               Given some utility function over outputs, the exponential mech-
+with the analysis.                                                             anism samples high-utility outputs with higher probability than
+                                                                               low-utility outputs.
+A.1     Relevant Properties                                                    Definition A.7 (Exponential Mechanism [25]). Given a utility func-
+In the main text, we introduced (𝜖, 𝛿)-DP (Definition 2.1). Addition-          tion 𝑞 : X ∗ ×O → R with ℓ1 sensitivity Δ(𝑞) = max𝐷∼𝐷 ′ ,𝑜 ∈𝑂 |𝑞(𝐷, 𝑜)−
+ally, we will introduce Rényi Differential Privacy (RDP), a variant            𝑞(𝐷 ′, 𝑜)|, the exponential mechanism 𝑀 has output distribution
+of (𝜖, 𝛿)-DP that uses Rényi divergence to measure the difference                                                      
+                                                                                                                         𝜖𝑞(𝐷, 𝑜)
+                                                                                                                                  
+between 𝑀 (𝐷) and 𝑀 (𝐷 ′ ).                                                                      Pr[𝑀 (𝐷) = 𝑜] ∝ exp                .
+                                                                                                                          2Δ(𝑞)
+Definition A.1 (Rényi Divergence). For two probability distribu-               where ∝ elides the normalization factor.
+tions 𝑃 and 𝑄 defined over R, the Rényi divergence of order 𝛼 > 1
+is                                                                               Given the above definition, one can show that the exponential
+                                                                               mechanism satisfies (𝜖, 0)-DP.
+                                               𝛼 
+                            1              𝑃 (𝑥)
+             𝐷𝛼 (𝑃 ||𝑄) =      log E𝑥∼𝑄               .
+                          𝛼 −1             𝑄 (𝑥)                               Lemma A.8 ([25]). The exponential mechanism is (𝜖, 0)-DP.
+Definition A.2. ((𝛼, 𝜖 (𝛼))-RDP [26]) A randomized algorithm                      Since we want to compose the privacy loss of the exponential
+𝑀 : D → R is (𝜖 (𝛼), 𝛼)-RDP if for any adjacent datasets 𝐷, 𝐷 ′ ∈ D            mechanism and report the loss in terms of (𝜖, 𝛿)-DP, we use the
+it holds that 𝐷𝛼 (𝑀 (𝐷)||𝑀 (𝐷 ′ )) ≤ 𝜖 (𝛼).                                    following property to convert from 𝜖-DP to (𝛼, 𝜖 (𝛼))-RDP.
+   An advantage of RDP is its convenient composition properties,               Theorem A.9 ([3]). The 𝑀 is 𝜖-DP then it is (𝛼, 𝜖EM (𝛼))-RDP where
+which states that the privacy loss of the composition of multiple                                                                         
+                                                                                                𝛼     1          sinh(𝛼𝜖) − sinh((𝛼 − 1)𝜖)
+RDP algorithms is simply the sum of each RDP algorithm. We state                𝜖EM (𝛼) := min 𝜖 2,        log                                 .
+this more formally below.                                                                       2   𝛼 −1                   sinh(𝜖)
+
+Theorem A.3 (Composition [26]). Let 𝐴1, ..., 𝐴𝑘 be a sequence of               A.2     Privacy Analysis
+(𝛼, 𝜖 (𝛼))-RDP algorithms. Then the composition 𝐴𝑘 ◦ 𝐴𝑘 −1 ◦ ... ◦ 𝐴1          Now we will prove that DP-KSA satisfies (𝜖, 𝛿)-DP. First, we obtain
+is (𝛼, 𝑘𝜖 (𝛼))-RDP.                                                            a privacy guarantee for TopKWithPTR and FindBestK.
+    Another important property of RDP, and more generally DP,                  Theorem A.10. TopKWithPTR (Algorithm 2) is 𝛿-approximate 2𝜎𝛼 2 -
+is that any further operations on the output of an RDP algorithm               RDP.
+does not leak additional information, called the post-processing
+property.                                                                         Proof. The privacy analysis mostly follows from Zhu and Wang
+                                                                               [39]. Releasing the noisy threshold 𝑑b𝑘 is 2𝜎𝛼 2 -RDP.
+Theorem A.4 (Post-Processing [26]). Let 𝐴 : D → R be (𝛼, 𝜖 (𝛼))-
+                                                                                  If 𝑑𝑘 > 2, then releasing the exact top-𝑘 tokens has no privacy
+RDP, and let 𝐹 : R → Z be an arbitrary randomized mapping. Then
+                                                                               cost, as its local sensitivity is 0.
+𝐹 ◦ 𝑀 is (𝛼, 𝜖 (𝛼))-RDP.
+                                                                                  If 𝑑𝑘 ≤ 2, then if 𝑑b𝑘 ≤ 2, the program terminates and there’s no
+  Another useful relaxation of the RDP definition is approximate               privacy cost.
+RDP.                                                                              If 𝑑𝑘 ≤ 2, the failure probability
+Definition A.5 (Approximate RDP [3, 39]). We say a randomized                    Pr[𝑑b𝑘 > 2] = Pr[max(2, 𝑑𝑘 ) + N (0, 4𝜎 2 ) − Φ(1 − 𝛿; 0, 2𝜎) > 2]
+algorithm 𝑀 is 𝛿-approximately (𝛼, 𝜖𝑀 (𝛼))-RDP with order 𝛼 ≥ 1,                             = Pr[2 + N (0, 4𝜎 2 ) − Φ(1 − 𝛿; 0, 2𝜎) > 2]
+if for all neighboring dataset 𝐷, 𝐷 ′ , there exist events 𝐸 (depending
+on 𝑀 (𝐷)) and 𝐸 ′ (depending on 𝑀 (𝐷 ′ )) such that Pr[𝐸] ≥ 1 − 𝛿                            = Pr[N (0, 4𝜎 2 ) − Φ(1 − 𝛿; 0, 2𝜎) > 0]
+and Pr[𝐸 ′ ] ≥ 1 − 𝛿, and ∀𝛼 ≥ 1, we have                                                    =𝛿
+                                         ′    ′
+                 𝐷𝛼 (𝑀 (𝐷)|𝐸 ∥ 𝑀 (𝐷 ) |𝐸 ) ≤ 𝜖𝑀 (𝛼)                 (3)                                                                               □
+   Note that when 𝛿 = 0, then 0-approximate (𝛼, 𝜖 (𝛼))-RDP is sim-             Theorem A.11. FindBestK (Algorithm 3) satisfies (𝛼, 𝜖EM (𝛼))-
+ply (𝛼, 𝜖 (𝑎𝑙𝑝ℎ𝑎))-RDP. Finally, we can convert between (𝛼, 𝜖 (𝛼))             RDP.
+and (𝜖, 𝛿)-DP, which is shown below.
+                                                                                  Proof. Note that adding Gumbel noise to each output’s utility
+Theorem A.6 (Conversion from approximate RDP to Approximate                    and releasing the output with the highest noisy utility score is equiv-
+DP [39]). If an algorithm 𝐴 satisfies 𝛿 1 -approximate (𝛼, 𝜖 (𝛼))-RDP,         alent to using the exponential mechanism [10]. Hence, FindBestK
+                   log(1/𝛿 )
+then it is (𝜖 (𝛼) + 𝛼 −1 , 𝛿 + 𝛿 1 )-DP for any 0 < 𝛿 < 1.                     is an EM where the utility function is 𝑑𝑘 = H (𝑘 ) − H (𝑘+1) with
+                                                                               the sensitivity Δ(𝑑𝑘 ) = 2 (this arguement derives from Zhu and
+  We use approximate RDP for a tighter measure of the privacy                  Wang [39]). Therefore, the privacy guarantee follows from Theorem
+cost under composition. After we obtain the (approximate) RDP                  A.9.                                                                 □
+guarantee for the overall algorithm, we can then convert the privacy
+guarantee back into the standard DP definition (Theorem A.6).                  Theorem A.12. DP-KSA (Algorithm 1) satisfies (𝜖, 𝛿)-DP.
+                                                                          14
+Differentially Private RAG                                                     Proceedings on Privacy Enhancing Technologies YYYY(X)
+
+
+   Proof. Let 𝐷, 𝐷 ′ be two adjacent datasets the differ by one doc-
+ument. Hence, after retrieving the 𝑁 most relevant documents for a
+query x, 𝑅(x, 𝐷; 𝑁 ) and 𝑅(x, 𝐷 ′ ; 𝑁 ) differ by at most one document.
+Suppose it is the 𝑖-th document. More precisely, 𝐷 x𝑗 = 𝐷 ′x   𝑗 ∀𝑗 ≠ 𝑖
+and 𝐷𝑖x ≠ 𝐷𝑖′x . Then we obtain the corresponding histograms H
+and H′ , which differ by one response y𝑖 ≠ y𝑖′ . Hence by Theo-
+rem A.11 𝑘ˆ is (𝛼, 𝜖EM (𝛼))-RDP. Then using 𝑘ˆ we have 𝑤 1, ..., 𝑤𝑘ˆ ,
+which are 𝛿 1 -approximate 2𝜎𝛼 2 -RDP by Theorem A.10. Then by
+composition (Theorem A.3) the total privacy loss is 𝛿 1 -approximate
+(𝛼, 𝜖EM (𝛼) + 2𝜎𝛼 2 )-RDP. Moreover, because 𝑤 1, ..., 𝑤𝑘ˆ are RDP, any
+further operations on them do not leak additional privacy by post-
+processing (Theorem A.4). Hence, using 𝑤 1, ..., 𝑤𝑘ˆ for obtaining the
+                             ˆ
+final output y ← 𝐹 (x, {𝑤𝑖 }𝑘𝑖=1 ) is DP. Finally we convert the final
+privacy loss back to (𝜖, 𝛿)-DP using Theorem A.6.                   □
+
+
+
+
+                                                                          15
+

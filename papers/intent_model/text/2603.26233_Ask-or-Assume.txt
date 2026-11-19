@@ -1,0 +1,1079 @@
+                                        Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents
+
+                                                                     Nicholas Edwards1,2           Sebastian Schuster1
+                                                        1
+                                                         Faculty of Computer Science, University of Vienna, Vienna, Austria
+                                               2
+                                                   UniVie Doctoral School Computer Science, University of Vienna, Vienna, Austria
+                                                           {nicholas.edwards, sebastian.schuster}@univie.ac.at
+
+
+
+                                                              Abstract                            settings involve static or single-turn interactions
+                                            As Large Language Model (LLM) agents are              over bounded contexts.
+                                                                                                     In contrast, modern AI agents are increasingly
+arXiv:2603.26233v3 [cs.CL] 7 Sep 2026
+
+
+
+
+                                            increasingly deployed in open-ended domains
+                                            like software engineering, they frequently en-        deployed in more naturalistic, open-ended domains
+                                            counter underspecified instructions that lack         such as software engineering. For instance, fixing
+                                            crucial context. While human developers natu-         real-world GitHub issues (Jimenez et al., 2024) re-
+                                            rally resolve underspecification by asking clari-     quires exploring, understanding, and editing large-
+                                            fying questions, current agents are largely opti-
+                                                                                                  scale repositories often containing hundreds of files
+                                            mized for autonomous execution. In this work,
+                                            we systematically evaluate the clarification-         and thousands of lines of code, while remaining
+                                            seeking abilities of LLM agents on an under-          aligned with implicit developer intentions. Existing
+                                            specified variant of SWE-bench Verified. We           agents are optimized for autonomous completion
+                                            propose an uncertainty-aware multi-agent scaf-        rather than interactive collaboration, creating a crit-
+                                            fold that decouples underspecification detec-         ical gap between user intent and agent execution
+                                            tion from code execution. Across both pro-            (METR, 2025; Shen et al., 2026; Wang et al., 2026).
+                                            prietary and open-weight frontier LLMs, our
+                                                                                                     Given these constraints, we investigate the abili-
+                                            scaffold achieves a 69.40% task resolve rate,
+                                            significantly outperforming a standard single-
+                                                                                                  ties of LLMs to assess uncertainty and determine
+                                            agent setup and closing the performance gap           how and when to seek information. Specifically, we
+                                            with agents operating on fully specified instruc-     consider how models handle external uncertainty:
+                                            tions. Furthermore, we find that the multi-agent      uncertainty arising from ambiguous or underspeci-
+                                            system exhibits well-calibrated information-          fied task inputs, as opposed to internal uncertainty
+                                            seeking behavior, conserving queries on simple        inherent to the model itself (Li et al., 2026b). While
+                                            tasks while proactively seeking information on        LLMs can exhibit sensitivity to uncertainty (Kada-
+                                            more complex issues. These findings indicate
+                                                                                                  vath et al., 2022), this is not always robust (An-
+                                            that current models can be turned into proactive
+                                            collaborators, where agents independently rec-        dukuri et al., 2024; Kapoor et al., 2024). Beyond
+                                            ognize when to ask questions to elicit missing        simply detecting external uncertainty, a true agentic
+                                            information in real-world, underspecified tasks.      collaborator must be able to continuously monitor
+                                                                                                  for such uncertainty and proactively initiate dia-
+                                        1   Introduction
+                                                                                                  logue to elicit missing information. We define such
+                                        A core property of a good collaborator is the ability     a system as uncertainty-aware. Importantly, we
+                                        to establish and maintain a shared understanding of       use this term in a behavioral rather than formalized
+                                        a goal (Clark and Wilkes-Gibbs, 1986). In human           mathematical sense, evaluating how effectively an
+                                        communication, this is rarely achieved through a          agent modulates its information-seeking behavior
+                                        single perfectly specified instruction; instead, inter-   based on the severity of underspecification.
+                                        locutors infer missing context and explicitly signal         We systematically evaluate the clarification-
+                                        uncertainty, such as by asking clarification ques-        seeking abilities of LLM agents within a dynamic,
+                                        tions (Clark, 1996; Hawkins et al., 2015).                multi-turn software engineering framework. We
+                                           While information gathering in response to un-         conduct our evaluation using an underspecified
+                                        derspecification has been studied in the NLP do-          variant of SWE-bench Verified (Chowdhury et al.,
+                                        main, such as in question answering and conver-           2024; Vijayvargiya et al., 2026b), where informa-
+                                        sational search (Rao and Daumé III, 2018; Alian-          tion is removed from the dataset’s original GitHub
+                                        nejadi et al., 2019; Zhang and Choi, 2025), these         issues. To assess the capabilities of agents to act
+as question-asking collaborators, we design agent        Agentic Systems for Ambiguous Code Genera-
+scaffolds where models must rely on their own cal-       tion As LLM agents are increasingly deployed
+ibration of external uncertainty to decide when to       in software engineering, robustly handling ambigu-
+query a user.                                            ous or underspecified instructions presents a major
+                                                         challenge. Existing coding environments used to
+Contributions We develop and test both single-           evaluate clarification-seeking behaviors often focus
+and multi-agent frameworks using frontier LLMs           on tasks targeting edits to isolated functions, typi-
+(Claude Sonnet 4.5 and Kimi K2.6) to assess how          cally allowing only a single, predetermined round
+agents handle uncertainty arising from underspec-        of clarification or short, constrained exchanges (Li
+ified inputs. We find that interactive agents can        et al., 2023; Mu et al., 2024; Wu and Fard, 2025;
+successfully identify and retrieve missing infor-        Li et al., 2026a).
+mation, obtaining a resolve rate comparable to              To improve the clarification-seeking behavior
+an autonomous agent provided with a fully spec-          of agents in dynamic, multi-turn coding settings,
+ified issue. Our results provide evidence that           recent literature has introduced training pipelines
+some models exhibit well-calibrated clarification-       leveraging reinforcement learning (Sun et al., 2026)
+seeking behavior, accurately recognizing when an         and contrastive training (Chen et al., 2025) tech-
+issue is already resolvable and refraining from un-      niques. However, these frameworks often impose
+necessary interaction. Our code is available at          rigid interaction structures. For example, both Vi-
+https://github.com/nedwards99/ask-or-assume.             jayvargiya et al. (2026a) and Darji and Lutellier
+                                                         (2025) strictly constrain question-asking to the very
+                                                         beginning of the trajectory, deferring all code exe-
+2   Related Work                                         cution until the initial prompt is disambiguated.
+                                                            In practice, relevant missing information may
+Proactive Dialogue Agents In human commu-                only become apparent after initial exploration of a
+nication, interlocutors use clarification requests to    codebase. Most closely related to our evaluation
+establish shared understanding and resolve ambigu-       setting, Vijayvargiya et al. (2026b) analyze how
+ity (Clark and Wilkes-Gibbs, 1986). Recent work          LLM agents handle underspecification in software
+in the NLP domain has considered clarification-          engineering tasks. In our work, we demonstrate
+seeking behavior in the context of dialogue-based        that a specialized multi-agent scaffold that decou-
+tasks like open-domain question-answering, con-          ples underspecification detection from code execu-
+versational search and preference elicitation (Rao       tion enables agents to navigate underspecified tasks
+and Daumé III, 2018; Aliannejadi et al., 2019; Kim       and actively ask questions throughout a trajectory.
+et al., 2024; Li et al., 2025; Zhang and Choi, 2025;
+Zhang et al., 2025).                                     Uncertainty Detection in LLMs A prerequisite
+   To elicit these proactive clarification-seeking be-   for proactive clarification is an agent’s ability to
+haviors, prior work has explored various method-         accurately gauge its own uncertainty. Foundational
+ological approaches. For instance, Zhang et al.          work demonstrates that base LLMs exhibit a degree
+(2025) propose modeling the utility of future con-       of internal calibration, enabling them to estimate
+versation trajectories to teach LLMs when a ques-        the likelihood of their correctness or express their
+tion is necessary; Andukuri et al. (2024) utilize sim-   confidence in natural language (Kadavath et al.,
+ulated self-play to iteratively improve the model’s      2022; Lin et al., 2022). However, this calibration is
+clarification skills; and Testoni and Fernández          not always robust out of the box (Kapoor et al.,
+(2024) introduce an uncertainty-guided approach,         2024; Andukuri et al., 2024), as standard post-
+demonstrating that leveraging a model’s own un-          training alignment techniques, such as RLHF, can
+certainty (operationalized as predictive entropy) to     inadvertently degrade calibration and encourage
+trigger questions is more effective than imitating       model overconfidence (Zhou et al., 2024). Further-
+human clarification-seeking behavior. While these        more, effective interaction requires distinguishing
+methods have proven effective in bounded conver-         between different sources of uncertainty. For in-
+sational settings, our work extends this paradigm        stance, recent work has highlighted the difference
+by evaluating how agents dynamically elicit miss-        between uncertainty caused by a model’s lack of
+ing information in open-ended, multi-step software       parametric knowledge versus input underspecifi-
+engineering environments.                                cation or ambiguity (Hou et al., 2024; Zhang and
+Choi, 2025). Formally quantifying this distinction,                   my date conversion code isn't working, fix it.     Codebase
+Li et al. (2026b) distinguish internal uncertainty
+(inherent to the model) from external uncertainty                        Main Agent                            Intent Agent
+(arising from ambiguous or underspecified inputs).            Thought: I should debug the code.
+                                                               Tool: Read file (date_convert.py )          Underspecification
+Our work specifically investigates how agents han-                          Ask User                          detected
+
+dle external uncertainty. Rather than considering
+a formalized measure of confidence (e.g., a prob-                       1. Which file are you using to run the code?
+ability), our work evaluates uncertainty detection                      2. What's the error you're currently seeing?
+
+behaviorally. That is, we assess whether agents                            It's date_parse.py. Doesn't work with DD/MM/YYYY.
+can reliably identify missing context and resolve it
+through asking the user for clarification.                                Main Agent                            Intent Agent
+                                                              Thought: I will update date_parse.py
+                                                                                                                  No
+3     Method                                                        to handle DD/MM/YYYY.
+                                                                                                           Underspecification
+                                                                Tool: Read & Edit (date_parse.py)
+
+3.1   Dataset and Evaluation Framework
+                                                                              Finished! I've made changes to
+We closely follow and adapt the interactive eval-                         date_parse.py to handle DD/MM/YYYY.
+uation setting introduced by Vijayvargiya et al.
+(2026b). We use their dataset (CMU LTI, 2024),          Figure 1: Illustration of the uncertainty-aware multi-
+which is an underspecified variant of SWE-bench         agent scaffold. The Intent Agent monitors the state
+Verified (Chowdhury et al., 2024), a human-             history at each turn, halting execution to query the user
+annotated subset of 500 GitHub issues derived from      if missing information is required.
+the original SWE-bench dataset (Jimenez et al.,
+2024). To construct their dataset, the authors uti-
+                                                        et al., 2025; Zhou et al., 2025), we employ GPT-
+lized GPT-4o (Hurst et al., 2024) to summarize is-      5.1 (OpenAI, 2025) as the simulated user for all
+sues into underspecified variants, removing impor-      interactive agent configurations. We select this
+tant details while preserving repository terminol-      model to maintain consistency with the interac-
+ogy. Given the automatic nature of the construction     tive SWE-bench setting introduced by Vijayvargiya
+process, we performed an additional spot-check          et al. (2026b). The simulated user is provided with
+analysis to verify dataset validity (Appendix A);       the original, fully specified issue and is constrained
+concrete examples are provided in Appendix D.           to answer queries from the coding agent using only
+3.2   Agent Design                                      this withheld context. The user simulator prompt
+                                                        and all additional agent and task prompts are de-
+Agent Framework We use the OpenHands                    tailed in Appendices B.1–B.3.
+(Wang et al., 2025) agent framework for all ex-
+periments. This framework enables an LLM to             3.3      Task Design
+iteratively write, execute, and debug code within       3.3.1 Baselines
+a secure sandbox environment, using tools for
+                                                        Following Vijayvargiya et al. (2026b), we evaluate
+navigating codebases, editing files and executing
+                                                        our approach on the SWE-bench Verified dataset
+Bash/Python scripts. To ensure comparability with
+                                                        against three distinct baseline configurations.
+Vijayvargiya et al. (2026b), all agent setups are
+provided with a maximum of 100 iterations.              F ULL This is the standard SWE-bench setting,
+                                                        where the agent is provided with a fully specified
+Agent Backbones We evaluate two frontier back-
+                                                        version of the GitHub issue. The agent is prohibited
+bone LLMs: Claude Sonnet 4.5 (Anthropic, 2025),
+                                                        from interacting with a user, representing default
+a proprietary model, and Kimi K2.6 (Moonshot
+                                                        fully autonomous agent behavior.
+AI, 2026), an open-weight model. Both perform
+competitively in many coding benchmarks, serving        H IDDEN In this configuration, the agent is pro-
+as strong proxies for current agentic capabilities in   vided with an underspecified version of the GitHub
+interactive software engineering settings.              issue where details are missing. As in the F ULL
+                                                        baseline, the agent cannot interact with a user.
+User Simulator Following recent interactive en-
+vironments that utilize “oracle” user simulators        I NTERACTIVE BASELINE The agent receives
+with access to complete information (e.g., Yao          an underspecified version of the GitHub issue (as
+with the H IDDEN baseline) but can interact with                                                   Claude 4.5 Sonnet           Kimi K2.6
+                                                                            80     70.8 72.8                     70.4                         69.4 69.4
+a simulated user who possesses the fully specified                                                                                61.2 61.6
+                                                                                               54.8 55.4
+
+
+
+
+                                                         Resolve Rate (%)
+                                                                            60
+issue. Importantly, the task prompt is modified to                                                                      47.2
+explicitly inform the agent that the issue description                      40
+is incomplete, making it compulsory to query the
+                                                                            20
+user before proceeding with any execution. Con-
+sequently, this hardcoded instruction forces a pre-                          0
+                                                                                     Full       Hidden          Interactive       UA-Single   UA-Multi
+determined conversational turn with the user rather                                                              Baseline
+
+than evaluating independent information-seeking
+                                                         Figure 2: Task resolve rates (%) across evaluation set-
+behavior.
+                                                         tings for Claude Sonnet 4.5 (solid) and Kimi K2.6
+3.3.2   Uncertainty-Aware Agents                         (hatched), with 95% confidence intervals.
+
+To investigate how agents can independently detect
+and resolve underspecification, we propose two           share the same LLM backbone. We refer to the
+scaffolds. We refer to these as “uncertainty-aware”      agent hereafter as UA-M ULTI.
+since they are designed to adapt their information-
+seeking behavior based on the extent of missing          4                       Results and Discussion
+context. While these agents can query the same
+simulated user as the I NTERACTIVE BASELINE,             Figure 2 presents the overall resolve rates.1 For
+they do not rely on a hardcoded interaction prompt,      Claude Sonnet 4.5, UA-S INGLE outperforms the
+instead using the default SWE-bench task prompt.         H IDDEN baseline (61.20% vs. 54.80%) but falls
+Because they receive no prior warning that the issue     short of the prompted I NTERACTIVE BASELINE
+is underspecified, they must independently identify      (70.40%). However, separating underspecifica-
+missing context and query the simulated user only        tion detection and code execution in UA-M ULTI
+when they determine it is necessary.                     substantially improves performance. It achieves
+                                                         a 69.40% resolve rate, yielding a significant im-
+U NCERTAINTY-AWARE (S INGLE ) In this con-               provement over UA-S INGLE (p < 0.001) and
+figuration, a single coding agent is prompted at         closing the gap with the I NTERACTIVE BASELINE
+each turn to check for underspecification and, if        (p = 0.621) and F ULL (p = 0.458) configurations.
+detected, to query the user. We refer to the agent          For Kimi K2.6, we observe similar trends, with
+hereafter as UA-S INGLE.                                 UA-M ULTI also achieving a 69.40% resolve rate,
+                                                         significantly improving over UA-S INGLE (61.60%,
+U NCERTAINTY-AWARE (M ULTI ) We investi-
+                                                         p < 0.001), and approaching the performance of
+gate whether leveraging a multi-agent scaffold can
+                                                         F ULL, although a significant gap remains (p <
+improve underspecification detection. By assign-
+                                                         0.05). A notable exception is the I NTERACTIVE
+ing specialized roles to multiple LLMs, multi-agent
+                                                         BASELINE, which achieves the lowest resolve rate
+systems can tackle increasingly complex tasks
+                                                         of 47.20%. This is largely driven by instruction-
+(Hong et al., 2024; Qian et al., 2024; Park et al.,
+                                                         following failures, where the model erroneously
+2023). As illustrated in Figure 1, to decouple code
+                                                         used the task completion tool to ask questions, high-
+execution from underspecification detection, we
+                                                         lighting the brittleness of hardcoded prompts and
+design a multi-agent scaffold consisting of two
+                                                         reliance on underlying model capability.
+agents. The Main Agent is equipped with stan-
+dard tools to navigate repositories, edit files, and     Agent Uncertainty is Calibrated to Task Diffi-
+execute code. The Intent Agent monitors the state        culty The success of UA-M ULTI can be largely
+history at each turn to determine if the user’s intent   attributed to its ability to discern when to ask ques-
+or repository context contains missing information.      tions. For Claude Sonnet 4.5, while it queried
+The Intent Agent is provided with its own dedi-          the user at least once in fewer overall tasks than
+cated system prompt (detailed in Appendix B.2)               1
+                                                               Our reported resolve rates for the F ULL baselines are
+and has access to a single tool that outputs a binary    slightly lower than the official OpenHands results (Claude
+decision indicating whether clarification is required.   Sonnet 4.5: 70.80% vs. 74.20%; Kimi K2.6: 72.80% vs.
+Whenever the Intent Agent detects underspecifica-        74.60%). This is likely due to a combination of running for a
+                                                         maximum of 100 iterations instead of 500, as well as minor
+tion, the Main Agent’s next action is constrained        system prompt differences. Additionally, all reported p-values
+to query the user. In our experiments, both agents       are computed via non-parametric permutation tests.
+                                   Resolve Rate (%)      detection role improved how the agent interacted.
+ Evaluation Setting             Asked     Did Not Ask    For Claude Sonnet 4.5, UA-M ULTI interrogated
+ Claude Sonnet 4.5 (Nask = 344, Nnot = 156)              the user more iteratively, averaging 3.06 queries
+   UA-Multi                      65.99        76.92      per task compared to 1.84 for UA-S INGLE, and
+   Full                          66.57        80.13      distributed its queries across the early and middle
+   Hidden                        44.48        77.56
+   UA-Single                     55.81        73.08      stages of execution. For Kimi K2.6, UA-M ULTI
+   Interactive Baseline          66.57        78.85      exhibits a much higher query rate, averaging 8.71
+ Kimi K2.6 (Nask = 435, Nnot = 65)                       queries per task, with queries mainly concentrated
+   UA-Multi                      68.51        75.38      in the middle stage of execution, suggesting poorer
+   Full                          71.95        78.46
+   Hidden                        52.18        76.92
+                                                         calibration relative to Claude Sonnet 4.5. A more
+   UA-Single                     60.46        69.23      detailed analysis is provided in Appendix C.1,
+   Interactive Baseline          45.29        60.00      along with qualitative trajectory comparisons in
+                                                         Appendix C.4.
+Table 1: Resolve rates (%) conditioned on whether the
+UA-M ULTI agent queried the user at least once in a
+                                                         5   Conclusion
+task. Best performing settings per subset are in bold.
+                                                         We investigated the abilities of LLM agents to act
+                                                         as collaborators by independently identifying miss-
+UA-S INGLE (Nask =344 vs. Nask =369), its inter-
+                                                         ing information and seeking clarification in under-
+ventions were substantially more effective, resolv-
+                                                         specified software engineering tasks. We intro-
+ing 65.99% of queried tasks compared to UA-
+                                                         duced an uncertainty-aware multi-agent scaffold
+S INGLE’s 55.81% and the H IDDEN baseline’s
+                                                         that isolates the role of underspecification detection.
+44.48%, while closely matching the I NTERAC -
+                                                         Evaluated on an underspecified variant of SWE-
+TIVE BASELINE and F ULL settings (both 66.57%).
+                                                         bench Verified, this system achieved a 69.40% re-
+Crucially, the I NTERACTIVE BASELINE achieves
+                                                         solve rate across both proprietary and open-weight
+its high resolve rate at the cost of overclarifica-
+                                                         LLM backbones that effectively closed the perfor-
+tion, asking questions in nearly every instance re-
+                                                         mance gap with an autonomous agent operating on
+gardless of necessity. In contrast, UA-M ULTI is
+                                                         a fully specified issue.
+highly selective in its interaction. For the 156 tasks
+                                                            Our results show that the multi-agent scaffold
+where UA-M ULTI refrained from asking, it still
+                                                         exhibits well-calibrated information-seeking behav-
+achieved a 76.92% resolve rate, closely matching
+                                                         ior, accurately recognizing when an issue was al-
+the H IDDEN baseline (77.56%). Conversely, UA-
+                                                         ready resolvable and refraining from unnecessary
+M ULTI with Kimi K2.6 queries more than UA-
+                                                         interaction on simpler tasks. Our results also reveal
+S INGLE (Nask =435 vs. Nask =167), but neverthe-
+                                                         that underlying model capability shapes clarifica-
+less achieves a competitive resolve rate on tasks
+                                                         tion behavior: while both LLM backbones benefit
+where it refrains from asking (75.38%).
+                                                         from the multi-agent scaffold, Kimi K2.6 exhibits
+   Appendix C.2 further validates query rate cali-       higher query rates and poorer calibration, suggest-
+bration across human-annotated task difficulty lev-      ing that robust uncertainty-aware interaction may
+els for SWE-bench Verified (Chowdhury et al.,            require targeted training beyond architectural de-
+2024), showing that UA-M ULTI demonstrates               sign alone. These findings present a promising step
+an improved ability to distinguish when to ask           towards deploying agents not only as autonomous
+based on task complexity. For Claude Sonnet 4.5,         coding assistants, but as proactive collaborators
+UA-M ULTI exhibits a 9.28% higher ask rate for           capable of detecting and resolving external uncer-
+medium (“15 min – 1 hour”) tasks than easy (“<15         tainty arising from real-world underspecification.
+min”) tasks, compared to only a 2.43% increase
+for UA-S INGLE. For Kimi K2.6, both agents show          Limitations
+similar easy-to-medium query rate increases, al-
+though UA-S INGLE’s ask rate declines for harder         User Simulator Our evaluation relies on an
+tasks, suggesting its query decisions do not reliably    LLM-based user simulator to provide withheld in-
+track task difficulty.                                   formation. While we implemented strict guardrails
+                                                         to prevent unintended leakage and generally ob-
+Proactive Information Seeking Beyond know-               served reasonable simulator responses, recent stud-
+ing when to ask, explicitly isolating the intent-        ies highlight that LLM-simulated users can be un-
+reliable proxies for human behavior, often being        down (Appendix E), the increased inference over-
+unnaturally cooperative and failing to reflect the      head in multi-agent systems is a trade-off that must
+nuance and variance of real human users (Naous          be weighed against the gains in developer produc-
+et al., 2026; Seshadri et al., 2026). Results may       tivity.
+therefore vary if real human users interact with the
+                                                        AI Use. We used an AI assistant to assist with
+agents that we presented in this work.
+                                                        experimental code generation, and help improve
+Prompting and Training While our most suc-              the clarity and flow of the writing while revising
+cessful approach relies on a multi-agent scaffold       the paper. However, all original writing, research
+with tailored prompts for each agent, it demon-         conceptualization, methods, experiments, and anal-
+strates that frontier models possess the latent ca-     yses were performed by the authors, and any AI
+pacity to monitor their own uncertainty and proac-      outputs were carefully verified.
+tively seek clarification out of the box. Rather
+than relying on prompting specialized agents, fu-       Acknowledgments
+ture work could explore utilizing these success-        This work was supported by funding from the
+ful interaction trajectories to train single models     Vienna Science and Technology Fund (WWTF)
+with standard finetuning or reinforcement learning      through the project “Understanding Language in
+(RL) techniques to natively exhibit this calibrated,    Context” (WWTF Vienna Research Group VRG23-
+information-seeking behavior (e.g., Andukuri et al.,    007).
+2024; Bhargava et al., 2024; Sun et al., 2026).
+
+Model Generalization and Cost Our experi-               References
+ments were conducted using both a proprietary
+                                                        Mohammad Aliannejadi, Hamed Zamani, Fabio
+model (Claude Sonnet 4.5) and an open-weight             Crestani, and W. Bruce Croft. 2019. Asking clar-
+model (Kimi K2.6), demonstrating that our multi-         ifying questions in open-domain information-seeking
+agent scaffold generalizes across model families.        conversations. In Proceedings of the 42nd Interna-
+By relying on frontier models, our evaluation in-        tional ACM SIGIR Conference on Research and De-
+                                                         velopment in Information Retrieval, pages 475–484.
+curred a non-trivial financial cost (detailed in Ap-
+pendix E). Furthermore, previous studies indicate       Chinmaya Andukuri, Jan-Philipp Fränken, Tobias Ger-
+that smaller open-weight models severely lack the         stenberg, and Noah Goodman. 2024. STaR-GATE:
+calibration required for interactive underspecifica-      Teaching language models to ask clarifying questions.
+                                                          In First Conference on Language Modeling (COLM).
+tion (Vijayvargiya et al., 2026b), even with explicit
+prompting. The current findings may therefore be        Anthropic. 2025. Introducing Claude Sonnet 4.5. Ac-
+limited to frontier models and may not directly           cessed: 2026-03-15.
+translate to smaller open-source models.                Aman Bhargava, Cameron Witkowski, Alexander De-
+                                                         tkov, and Matt Thomson. 2024. Prompt baking.
+Ethical Considerations                                   arXiv preprint arXiv:2409.13697.
+
+Our work investigated the ability of LLM agents to      Maximillian Chen, Ruoxi Sun, Tomas Pfister, and
+detect external uncertainty and seek clarification on    Sercan O Arik. 2025. Learning to clarify: Multi-
+                                                         turn conversations with action-based contrastive self-
+underspecified software engineering tasks. While         training. In The Thirteenth International Conference
+our results demonstrate that uncertainty-aware scaf-     on Learning Representations.
+folds can effectively resolve underspecified GitHub
+                                                        Neil Chowdhury, James Aung, Chan Jun Shern, Oliver
+issues, SWE-bench Verified represents only a sub-         Jaffe, Dane Sherburn, Giulio Starace, Evan Mays,
+set of software engineering tasks. As such, our           Rachel Dias, Marwan Aljubeh, Mia Glaese, Carlos E.
+empirical findings should not be extrapolated to          Jimenez, John Yang, Leyton Ho, Tejal Patwardhan,
+suggest that agents will reliably detect missing in-      Kevin Liu, and Aleksander Madry. 2024. Introducing
+                                                          SWE-bench Verified. Accessed: 2026-03-15.
+formation in other, often high-stakes environments,
+such as security-critical applications without fur-     Herbert H. Clark. 1996. Using Language. Cambridge
+ther experimentation.                                     University Press.
+   We also acknowledge the environmental and fi-        Herbert H Clark and Deanna Wilkes-Gibbs. 1986. Re-
+nancial costs associated with the deployment of           ferring as a collaborative process. Cognition, 22(1):1–
+multi-agent systems. As detailed in our cost break-       39.
+CMU LTI. 2024.       Interactive SWE-bench: A             Belinda Z. Li, Alex Tamkin, Noah Goodman, and Jacob
+ dataset for software engineering issue resolution.         Andreas. 2025. Eliciting human preferences with
+ https://huggingface.co/datasets/cmu-lti/                   language models. In The Thirteenth International
+ interactive-swe.                                           Conference on Learning Representations.
+Harsh Darji and Thibaud Lutellier. 2025. Curiosity by     Haau-Sing (Xiaocheng) Li, Mohsen Mesgar, André Mar-
+  design: An LLM-based coding assistant asking clari-       tins, and Iryna Gurevych. 2023. Python code genera-
+  fication questions. arXiv preprint arXiv:2507.21285.      tion by asking clarification questions. In Proceedings
+                                                            of the 61st Annual Meeting of the Association for
+Robert X.D. Hawkins, Andreas Stuhlmuller, Judith De-        Computational Linguistics (Volume 1: Long Papers),
+  gen, and Noah D. Goodman. 2015. Why do you ask?           pages 14287–14306, Toronto, Canada. Association
+  Good questions provoke informative answers. In Pro-       for Computational Linguistics.
+  ceedings of the 37th Annual Meeting of the Cognitive
+  Science Society.                                        Jialin Li, Yuan Wu, and Yi Chang. 2026a. ClarEval: A
+                                                             benchmark for evaluating clarification skills of code
+Sirui Hong, Mingchen Zhuge, Jonathan Chen, Xiawu             agents under ambiguous instructions. arXiv preprint
+   Zheng, Yuheng Cheng, Jinlin Wang, Ceyao Zhang,            arXiv:2603.00187.
+   Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang
+   Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu,          Xiaomin Li, Zhou Yu, Ziji Zhang, Yingying Zhuang,
+   and Jürgen Schmidhuber. 2024. MetaGPT: Meta pro-         Swair Shah, Narayanan Sadagopan, and Anurag Beni-
+   gramming for a multi-agent collaborative framework.      wal. 2026b. Semantic volume: Quantifying and
+   In The Twelfth International Conference on Learning      detecting both external and internal uncertainty in
+   Representations.                                         LLMs. Proceedings of the AAAI Conference on Arti-
+                                                            ficial Intelligence, 40(37):31751–31759.
+Bairu Hou, Yujian Liu, Kaizhi Qian, Jacob Andreas,
+  Shiyu Chang, and Yang Zhang. 2024. Decompos-            Stephanie Lin, Jacob Hilton, and Owain Evans. 2022.
+  ing uncertainty for large language models through         Teaching models to express their uncertainty in
+  input clarification ensembling. In Proceedings of the     words. Transactions on Machine Learning Research.
+  41st International Conference on Machine Learning,
+                                                          METR. 2025. Research update: Algorithmic vs. holistic
+  ICML’24. JMLR.org.
+                                                           evaluation. Accessed: 2026-03-15.
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam
+                                                          Moonshot AI. 2026. Kimi K2.6: Advancing open-
+  Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow,
+                                                           source coding. Accessed: 2026-05-20.
+  Akila Welihinda, Alan Hayes, Alec Radford, and 1
+  others. 2024. GPT-4o system card. arXiv preprint        Fangwen Mu, Lin Shi, Song Wang, Zhuohao Yu, Bin-
+  arXiv:2410.21276.                                         quan Zhang, ChenXue Wang, Shichao Liu, and Qing
+                                                            Wang. 2024. ClarifyGPT: A framework for enhanc-
+Carlos E. Jimenez, John Yang, Alexander Wettig,             ing LLM-based code generation via requirements
+  Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R.         clarification. Proceedings of the ACM on Software
+  Narasimhan. 2024. SWE-bench: Can language mod-            Engineering, 1(FSE):2332–2354.
+  els resolve real-world github issues? In The Twelfth
+  International Conference on Learning Representa-        Tarek Naous, Philippe Laban, Wei Xu, and Jennifer
+  tions.                                                    Neville. 2026. Flipping the dialogue: Training and
+                                                            evaluating user language models. In The Fourteenth
+Saurav Kadavath, Tom Conerly, Amanda Askell, Tom            International Conference on Learning Representa-
+  Henighan, Dawn Drain, Ethan Perez, Nicholas               tions.
+  Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli
+  Tran-Johnson, and 1 others. 2022. Language mod-         OpenAI. 2025. GPT-5.1: A smarter, more conversa-
+  els (mostly) know what they know. arXiv preprint          tional ChatGPT. Accessed: 2026-03-15.
+  arXiv:2207.05221.
+                                                          Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Mered-
+Sanyam Kapoor, Nate Gruver, Manley Roberts, Katie           ith Ringel Morris, Percy Liang, and Michael S. Bern-
+  Collins, Arka Pal, Umang Bhatt, Adrian Weller,            stein. 2023. Generative agents: Interactive simulacra
+  Samuel Dooley, Micah Goldblum, and Andrew G.              of human behavior. In Proceedings of the ACM Con-
+  Wilson. 2024. Large language models must be taught        ference on Human Factors in Computing Systems
+  to know what they don’t know. In The Thirty-eighth        (CHI), pages 1–22.
+  Annual Conference on Neural Information Process-
+  ing Systems.                                            Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan
+                                                            Dang, Jiahao Li, Cheng Yang, Weize Chen, Yusheng
+Hyuhng Joon Kim, Youna Kim, Cheonbok Park, Jun-             Su, Xin Cong, Juyuan Xu, Dahai Li, Zhiyuan Liu,
+  yeob Kim, Choonghyun Park, Kang Min Yoo, Sang-            and Maosong Sun. 2024. ChatDev: Communicative
+  goo Lee, and Taeuk Kim. 2024. Aligning language           agents for software development. In Proceedings
+  models to explicitly handle ambiguity. In Proceed-        of the 62nd Annual Meeting of the Association for
+  ings of the 2024 Conference on Empirical Methods          Computational Linguistics (Volume 1: Long Papers),
+  in Natural Language Processing, pages 1989–2007,          pages 15174–15186, Bangkok, Thailand. Association
+  Miami, Florida, USA.                                      for Computational Linguistics.
+Sudha Rao and Hal Daumé III. 2018. Learning to ask          Jie JW Wu and Fatemeh H. Fard. 2025. HumanEval-
+  good questions: Ranking clarification questions us-          Comm: Benchmarking the communication compe-
+  ing neural expected value of perfect information. In         tence of code generation for LLMs and LLM agents.
+  Proceedings of the 56th Annual Meeting of the As-            ACM Transactions on Software Engineering and
+  sociation for Computational Linguistics (Volume 1:           Methodology, 34(7):1–42.
+  Long Papers), pages 2737–2746, Melbourne, Aus-
+  tralia. Association for Computational Linguistics.        Shunyu Yao, Noah Shinn, Pedram Razavi, and
+                                                              Karthik R. Narasimhan. 2025. τ -bench: A bench-
+Preethi Seshadri, Samuel Cahyawijaya, Ayomide Odu-            mark for tool-agent-user interaction in real-world do-
+  makinde, Sameer Singh, and Seraphina Goldfarb-              mains. In The Thirteenth International Conference
+  Tarrant. 2026. Lost in simulation: LLM-simulated            on Learning Representations.
+  users are unreliable proxies for human users in agen-
+                                                            Michael JQ Zhang and Eunsol Choi. 2025. Clarify
+  tic evaluations. In Algorithmic Fairness Across Align-
+                                                              when necessary: Resolving ambiguity through in-
+  ment Procedures and Agentic Systems.
+                                                              teraction with LMs. In Findings of the Association
+                                                              for Computational Linguistics: NAACL 2025, pages
+Shannon Zejiang Shen, Valerie Chen, Ken Gu, Alexis            5541–5558, Albuquerque, New Mexico. Association
+  Ross, Zixian Ma, Jillian Ross, Alex Gu, Chenglei            for Computational Linguistics.
+  Si, Wayne Chi, Andi Peng, Jocelyn J Shen, Ameet
+  Talwalkar, Tongshuang Wu, and David Sontag. 2026.         Michael JQ Zhang, W. Bradley Knox, and Eunsol Choi.
+  Scaling collaborative effort with agents. In Find-          2025. Modeling future conversation turns to teach
+  ings of the Association for Computational Linguistics:      LLMs to ask clarifying questions. In The Thirteenth
+  ACL 2026, pages 12254–12271, San Diego, Califor-            International Conference on Learning Representa-
+  nia, United States. Association for Computational           tions.
+  Linguistics.
+                                                            Ruiqi Zhong, Peter Zhang, Steve Li, Jinwoo Ahn, Dan
+Weiwei Sun, Xuhui Zhou, Weihua Du, Xingyao Wang,              Klein, and Jacob Steinhardt. 2023. Goal driven dis-
+  Sean Welleck, Graham Neubig, Maarten Sap, and               covery of distributional differences via language de-
+ Yiming Yang. 2026. Training proactive and personal-          scriptions. In Thirty-seventh Conference on Neural
+  ized LLM agents. In Third Conference on Language            Information Processing Systems.
+ Modeling.
+                                                            Kaitlyn Zhou, Jena D. Hwang, Xiang Ren, and Maarten
+Alberto Testoni and Raquel Fernández. 2024. Asking            Sap. 2024. Relying on the unreliable: The impact of
+  the right question at the right time: Human and model       language models’ reluctance to express uncertainty.
+  uncertainty guidance to ask clarification questions.        In Proceedings of the 62nd Annual Meeting of the
+  In Proceedings of the 18th Conference of the Euro-          Association for Computational Linguistics (Volume 1:
+  pean Chapter of the Association for Computational           Long Papers), pages 3623–3643, Bangkok, Thailand.
+  Linguistics (Volume 1: Long Papers), pages 258–275,       Yifei Zhou, Song Jiang, Yuandong Tian, Jason Weston,
+  St. Julian’s, Malta.                                        Sergey Levine, Sainbayar Sukhbaatar, and Xian Li.
+                                                              2025. SWEET-RL: Training multi-turn LLM agents
+Sanidhya Vijayvargiya, Vijay Viswanathan, and Graham          on collaborative reasoning tasks. arXiv preprint
+  Neubig. 2026a. Asking what matters: Reward-driven           arXiv:2503.15478.
+  clarification for software engineering tasks. In Forty-
+  third International Conference on Machine Learning.
+
+Sanidhya Vijayvargiya, Xuhui Zhou, Akhila Yerukola,
+  Maarten Sap, and Graham Neubig. 2026b. Ambig-
+  SWE: Interactive agents to overcome underspecificity
+  in software engineering. In The Fourteenth Interna-
+  tional Conference on Learning Representations.
+
+Xingyao Wang, Boxuan Li, Yufan Song, Frank F. Xu,
+  Xiangru Tang, Mingchen Zhuge, Jiayi Pan, Yueqi
+  Song, Bowen Li, Jaskirat Singh, and 1 others. 2025.
+  OpenHands: An open platform for AI software de-
+  velopers as generalist agents. In The Thirteenth Inter-
+  national Conference on Learning Representations.
+
+Zora Zhiruo Wang, John Yang, Kilian Lieret, Alexa
+  Tartaglini, Valerie Chen, Yuxiang Wei, Zijian
+  Wang Lingming Zhang, Karthik Narasimhan, Lud-
+  wig Schmidt, Graham Neubig, and 1 others. 2026.
+  Position: Humans are missing from AI coding agent
+  research. Accessed: 2026-03-15.
+A    Dataset Construction and Validation                 instances where our manual analysis revealed that
+                                                         essential information was removed, but success-
+As mentioned in Section 3.1, we conduct our eval-
+                                                         fully solved the 5 instances where sufficient techni-
+uation using an underspecified variant of SWE-
+                                                         cal details were retained. This pattern is consistent
+bench Verified, directly adopting the dataset in-
+                                                         with the significant performance gap between the
+troduced by Vijayvargiya et al. (2026b). The au-
+                                                         H IDDEN and F ULL baselines (54.80% vs. 70.80%
+thors automatically constructed this dataset through
+                                                         for the Claude Sonnet 4.5 agent), highlighting that
+prompting GPT-4o to summarize the original
+                                                         the dataset provides meaningful signal for when in-
+GitHub issue. The prompt instructed the model
+                                                         teraction is required to resolve underspecification.
+to retain repository-specific terminology while re-
+moving important technical details.                      B     Task and Scaffold Prompts
+   To validate the synthetically generated dataset,
+Vijayvargiya et al. (2026b) applied distributional       B.1    Task Prompts
+difference analysis (Zhong et al., 2023), an LLM-        Figure 3 presents the SWE-bench task prompt tem-
+driven approach for discovering and describing           plate. The F ULL baseline is provided with this
+differences between corpora, to compare the gen-         prompt including the original, fully specified issue.
+erated issues against naturally occurring under-         The H IDDEN baseline and both U NCERTAINTY-
+specified issues in the original SWE-bench dataset.      AWARE scaffolds receive it with the underspecified
+Their analysis found that natural issues typically       issue. Conversely, only the I NTERACTIVE BASE -
+retain more concrete technical details, such as code     LINE receives the augmented variant (highlighted
+snippets, specific error messages, and file/line ref-    in bold in Figure 3), which explicitly mentions that
+erences, compared to the generated issues. Beyond        there is missing information and instructs the agent
+this difference, however, the synthetic and natu-        to first ask questions before proceeding.
+ral issues were not found to be otherwise distin-
+guishable. Consequently, the synthetic generation        B.2    Agent Scaffold Prompts
+process produces instances that are often strictly
+                                                         Figure 4 shows specific prompts required for the
+more underspecified than natural occurrences. For
+                                                         uncertainty-aware agents.
+our evaluation, this characteristic of the synthetic
+                                                            For U NCERTAINTY-AWARE (S INGLE ), we pro-
+dataset is advantageous, making the task more
+                                                         vide a recurring reminder prompt to the agent at
+challenging and heavily penalizing blind execution
+                                                         each turn (Figure 4A) to assess for underspecifica-
+while encouraging proactive interaction.
+                                                         tion. If the agent detects underspecification, it is
+Empirical Spot-Check Analysis To further ver-            encouraged to use the clarify tool to query the
+ify the dataset’s validity for our evaluation, we con-   user.
+ducted a manual qualitative analysis on a random            For U NCERTAINTY-AWARE (M ULTI ), we em-
+sample of 10 task instances. For each instance, we       ploy a customized system prompt for the Intent
+compared the original, fully specified issue descrip-    Agent (Figure 4B). This prompt instructs the agent
+tion with the synthetically generated underspecified     to analyze the state history at each turn to detect
+issue description to determine whether the removed       underspecification. Rather than performing code
+information was necessary for solving the task.          edits, the Intent Agent is constrained to identify-
+   In 5 instances, the removed information was es-       ing missing information and determining when the
+sential for solving the task, such as specific OS        Main Agent must pause execution to seek clarifica-
+configurations or user-provided value constraints.       tion from the simulated user.
+In the remaining 5 instances, the summarized de-            To reduce the over-querying behavior observed
+scription retained sufficient technical details (e.g.,   with Kimi K2.6, we additionally experimented with
+specific class or method names) to likely allow an       an augmented Intent Agent prompt that instructs
+agent to successfully localize the relevant files in     the agent not to flag underspecification when the
+the repository requiring edits to correctly resolve      user has already indicated they cannot provide fur-
+the issue. Figure 7 illustrates one example of each      ther details. Specifically, we appended the fol-
+case.                                                    lowing condition to the Intent Agent prompt “...
+   Notably, this variance closely mirrored actual        or when the user cannot provide any further de-
+agent performance. For instance, the H IDDEN base-       tails or explicitly asks you to keep working on the
+line using Claude Sonnet 4.5 failed to solve all 5       task”. While this modification reduced the num-
+   SWE-bench Task Prompt
+   <uploaded_files>
+   /workspace/{{ workspace_dir_name }}
+   </uploaded_files>
+   I’ve uploaded a python code repository in the directory {{ workspace_dir_name }}. Consider the following issue
+   description:
+   <issue_description>
+   {{ instance.problem_statement }}
+   </issue_description>
+   Can you help me implement the necessary changes to the repository so that the requirements specified in the <is-
+   sue_description> are met?
+   I’ve already taken care of all changes to any of the test files described in the <issue_description>. This means you
+   DON’T have to modify the testing logic or any of the tests in any way!
+   Also the development Python environment is already set up for you (i.e., all dependencies already installed), so you
+   don’t need to install other packages. Your task is to make the minimal changes to non-test files in the /workspace/{{
+   workspace_dir_name }} directory to ensure the <issue_description> is satisfied.
+   I have not provided all the necessary details about the issue and I have some hidden details that are helpful. Please
+   ask me specific questions using non-code commands to gather the relevant information that I have to help you
+   solve the issue. Ensure you have all the details you require to solve the issue.
+   You have a limited number of turns. Do NOT interact with me more than three times so as to maximize the
+   number of turns you have to work on the solution.
+   Then, follow these phases to resolve the issue:
+   [...]
+
+
+Figure 3: The base SWE-bench task prompt provided to the agents. The highlighted block in bold indicates the
+explicit clarification instructions added in the interactive variant, provided only to the I NTERACTIVE BASELINE.
+
+
+ber of times the agent asked a user while solving                    the /testbed directory. Rule 5 was added to
+individual tasks, the agent continued to flag the                    instruct the simulated user to explicitly remind
+vast majority of tasks as underspecified. This over-                 the agent of this if it asked about changing test
+querying behavior, i.e., the tendency to ask ques-                   files.
+tions even when it would be possible to solve the
+task without further clarification, suggests that the
+underlying Kimi K2.6 model has a limited ability                   • Resolving directory mismatches (Rule 6):
+to follow instructions and determine when tasks are                  Agents in OpenHands operate within a desig-
+underspecified.                                                      nated /workspace directory, whereas SWE-
+                                                                     bench imports and runs tests in a separate
+B.3   User Simulator Prompt                                          /testbed directory. Agents often became
+Figure 5 shows the prompt provided to the user                       confused when changes in /workspace were
+simulator, adapted from the prompt in Vijayvargiya                   not reflected in the tests run in /testbed.
+et al. (2026b). Initial experiments revealed that the                Rule 6 was added to instruct the simulated
+simulated user occasionally provided misaligned                      user to explicitly remind the agent of this if it
+guidance due to a lack of awareness regarding the                    asked why its edits weren’t being reflected.
+specific constraints of our evaluation environment
+(i.e., OpenHands agent in SWE-bench). To prevent
+the simulator from misleading the agent or leaking                Additionally, to prevent unbounded interactions
+unintended information, we augmented the original              and encourage efficient information-seeking, the
+prompt with the following environment-specific                 simulated user is restricted to three interaction turns
+guardrails:                                                    per trajectory. After this limit is reached, it issues
+                                                               a canned response instructing the agent to proceed
+   • Preventing test modifications (Rule 5): In                with the available information. Note that the I N -
+     SWE-bench, test files should not be modified              TERACTIVE BASELINE configuration is explicitly
+     by the agent. Because the original simulated              warned of this limit upfront, while our uncertainty-
+     user lacked this context, it failed to correct            aware agents are not, testing their ability to inde-
+     the agent when it attempted to edit files inside          pendently seek information in an efficient manner.
+C     Question Analyses                                     Finally, we analyze the temporal distribution of
+                                                         these queries. We categorize the timing of each
+C.1    Question Statistics                               question based on its event ID position within the
+Table 2 provides a detailed breakdown of                 agent trajectory, divided into deciles: “Early” (1st–
+clarification-seeking behavior across the three inter-   3rd decile), “Mid” (4th–7th decile), and “Late”
+active agent configurations using both LLM back-         (8th–10th decile). For Claude Sonnet 4.5, the
+bones.                                                   I NTERACTIVE BASELINE concentrates almost all
+   Regarding the amount of interaction, the I N -        questions in the Early stage (97.6%), while UA-
+TERACTIVE BASELINE initiates queries in nearly           S INGLE skews heavily Late (43.9%), suggesting
+all tasks for Claude Sonnet 4.5 (Nask =496, 1.02         it often attempts code modifications before rec-
+Q/Task), but far fewer for Kimi K2.6 (Nask =194,         ognizing an information gap. In contrast, UA-
+1.00 Q/Task). This reduction is largely driven by        M ULTI distributes queries across Early (41.8%)
+instruction-following failures, where the model er-      and Mid (43.4%) stages, reflecting continuous mon-
+roneously used the task completion tool to ask           itoring throughout the trajectory. For Kimi K2.6,
+questions rather than initiating a proper query turn,    the temporal patterns differ: UA-M ULTI concen-
+resulting in many tasks where interaction was at-        trates queries in the Mid stage (46.5%), while UA-
+tempted but not successfully executed.                   S INGLE skews Early (51.0%). Notably, the I NTER -
+   In general, the uncertainty-aware agents demon-       ACTIVE BASELINE for Kimi K2.6 is heavily con-
+strate more conservative query initiation but greater    centrated in the middle of the trajectory (66.5%),
+query volume. UA-M ULTI initiated queries in 344         in contrast to the Early concentration seen with
+tasks for Claude Sonnet 4.5 and 435 tasks for Kimi       Claude Sonnet 4.5, likely reflecting the instruction-
+K2.6, engaging in significantly more iterative dia-      following failures that disrupted early-stage query-
+logue (Claude: 3.06 Q/Task; Kimi: 8.71 Q/Task).          ing.
+The much higher query rate for Kimi K2.6 also re-
+flects the model’s tendency to over-flag underspec-
+ification. UA-S INGLE initiated queries in more          C.2   Query Frequency by Task Difficulty
+tasks with Claude Sonnet 4.5 (Nask =369) but in
+fewer tasks with Kimi K2.6 (Nask =167). For both
+                                                         To evaluate whether agents appropriately calibrate
+models, the query rate was substantially lower than
+                                                         their uncertainty to the complexity of the task,
+for the multi-agent scaffold (Claude: 1.84 Q/Task;
+                                                         we mapped their querying behavior to the human-
+Kimi: 1.23 Q/Task).
+                                                         annotated difficulty levels provided by SWE-bench
+   The length of these interactions also varies. For
+                                                         Verified (Chowdhury et al., 2024). Difficulty is
+Claude Sonnet 4.5, the I NTERACTIVE BASELINE
+                                                         categorized by the estimated time required for a
+generates highly verbose queries (251.33 tokens)
+                                                         human developer to fix the issue.
+and receives correspondingly long answers (415.53
+tokens), reflecting a strategy to ask for all po-           Table 3 presents the ask rates for both UA-
+tentially missing information upfront. In con-           S INGLE and UA-M ULTI. For Claude Sonnet 4.5,
+trast, UA-M ULTI uses the most concise queries           UA-M ULTI exhibits a greater difference in ask
+(171.57 tokens) and receives the shortest answers        rates than UA-S INGLE, particularly between the
+(173.65 tokens), supporting the observation that the     “<15 min fix” and “15 min – 1 hour” levels (9.28%
+multi-agent scaffold asks highly targeted, context-      vs. 2.43% increase). Notably, both scaffolds ex-
+specific questions based on intermediate tool ob-        hibit an increased ask rate for the harder tasks with
+servations (e.g., see Figure 6). UA-S INGLE falls        both agents reaching a 100% interaction rate on the
+between the two (181.35/229.76 tokens). For              most difficult “>4 hours” tasks. For Kimi K2.6,
+Kimi K2.6, the pattern differs: UA-M ULTI pro-           UA-M ULTI queries the vast majority of tasks at ev-
+duces shorter queries (96.73 tokens) but receives        ery difficulty level (82.99%–100%) with a modest
+markedly shorter answers (57.06 tokens), suggest-        monotonic increase, although the consistently high
+ing lower-quality clarification requests that elicit     query rate suggests reduced sensitivity to task com-
+less informative responses. Notably, UA-S INGLE          plexity. UA-S INGLE displays a non-monotonic
+with Kimi K2.6 asks fewer but more substantive           pattern, with ask rates declining from medium
+questions (143.18 tokens) and receives consider-         (36.02%) to harder tasks (30.95%), suggesting its
+ably longer answers (247.97 tokens).                     query decisions do not reliably track task difficulty.
+                                      Interaction Volume               Token Length      Timing Distribution (%)
+                                  # Queried    Total    Avg #
+         Agent                                                         Avg Q    Avg A    Early   Mid        Late
+                                    Tasks     Queries   Q/Task
+         Claude Sonnet 4.5
+           UA-Multi                 344        1053          3.06      171.57   173.65   41.8    43.4       14.8
+           UA-Single                369         679          1.84      181.35   229.76   25.0    31.1       43.9
+           Interactive Baseline     496         508          1.02      251.33   415.53   97.6     1.4        1.0
+         Kimi K2.6
+           UA-Multi                 435        3791          8.71      96.73    57.06    20.7    46.5       32.8
+           UA-Single                167         206          1.23      143.18   247.97   51.0    32.5       16.5
+           Interactive Baseline     194         194          1.00      176.63   244.07   28.4    66.5        5.2
+
+Table 2: Question statistics across evaluation settings. # Queried Tasks denotes the number of tasks where the agent
+initiated at least one query. Timing distributions are categorized into Early (1st–3rd decile), Mid (4th–7th decile),
+and Late (8th–10th decile) based on the question’s event ID position within the trajectory.
+
+
+                                     Ask Rate (%)                                                       Resolve Rate (%)
+ Difficulty Level    # Tasks   UA-S INGLE     UA-M ULTI             Evaluation Setting             Asked      Did Not Ask
+ Claude Sonnet 4.5                                                  Claude Sonnet 4.5 (Nask = 369, Nnot = 131)
+ <15 min fix            194          71.13           62.37            UA-Single                     58.54          68.70
+ 15 min–1 hour          261          73.56           71.65            Full                          67.48          80.15
+ 1–4 hours               42          85.71           78.57            Hidden                        47.43          75.57
+ >4 hours                 3         100.00          100.00            UA-Multi                      66.40          77.86
+                                                                      Interactive Baseline          68.29          76.34
+ Kimi K2.6
+ <15 min fix            194          29.90           82.99          Kimi K2.6 (Nask = 167, Nnot = 333)
+ 15 min–1 hour          261          36.02           88.89            UA-Single                     60.48          62.16
+ 1–4 hours               42          30.95           92.86            Full                          69.46          74.47
+ >4 hours                 3          66.67          100.00            Hidden                        35.33          65.47
+                                                                      UA-Multi                      65.87          71.17
+Table 3: Ask rates by SWE-bench Verified difficulty (es-              Interactive Baseline          37.72          51.95
+timated time-to-fix) for uncertainty-aware (UA) agents.
+                                                                Table 4: Resolve rates (%) conditioned on whether the
+                                                                UA-S INGLE agent queried the user at least once. Nask
+                                                                and Nnot denote subset sizes. Best per-subset results in
+C.3    Conditional Resolve Rates for
+                                                                bold.
+       U NCERTAINTY-AWARE (S INGLE )
+Table 4 details the task resolve rates conditioned
+                                                                C.4 Qualitative Example of Agent Interaction
+on whether the UA-S INGLE agent chose to inter-
+act with the user. For Claude Sonnet 4.5, when                     The transcripts in Figure 6 illustrate the dis-
+UA-S INGLE chose to ask questions (369 of 500                   tinct information-seeking strategies employed by
+tasks), it successfully elicited missing information,           the agents using Claude Sonnet 4.5 for the
+resolving 216 tasks compared to only 175 for the                pytest-dev__pytest-7324 task, which involves
+H IDDEN baseline on the same subset. Conversely,                resolving a pytest-related Python interpreter
+on the 131 tasks where the agent refrained from in-             crash. As highlighted in bold, while the baseline
+teraction, its performance closely mirrored the H ID -          relies on more generic questions, both uncertainty-
+DEN baseline (90 vs. 99 resolved tasks). These re-              aware agents ask more specific, technical questions.
+sults indicate that UA-S INGLE with Claude Sonnet               In particular, note how the multi-agent scaffold
+4.5 can effectively detect when missing information             uniquely engages in a mid-trajectory follow-up
+is critical for task resolution, although the perfor-           query after observing a test failure.
+mance gap with other configurations suggests that
+                                                                D      Underspecified Issue Examples
+its clarification-seeking behavior remains less cal-
+ibrated compared to UA-M ULTI. For Kimi K2.6,                   Figure 7 provides a comparison of the original and
+the pattern is weaker: resolve rates are nearly identi-         underspecified issue descriptions for two tasks. In
+cal regardless of whether the agent asked (60.48%)              creating the underspecified examples, the summa-
+or did not (62.16%), suggesting more weakly cali-               rization process generally targets the removal of
+brated clarification-seeking behavior.                          specific details such as code snippets, file paths/-
+line references and stack traces, while preserving
+relevant terminology to describe the issue at a high
+level. However, as noted in our spot-check analysis
+(Appendix A), the extent of this reduction varies
+across instances. In some cases, the retained high-
+level description still provides sufficient signal for
+an agent to localize the relevant code, while in oth-
+ers the removed details are essential for correct
+resolution, providing meaningful signal for when
+clarification-seeking behavior is required.
+
+E   Computing Costs
+Table 5 details the total inference costs for each
+evaluation setting across both LLM backbones. For
+Claude Sonnet 4.5, all agent inference calls were
+executed via the Anthropic API. While the multi-
+agent scaffold more than doubles the total inference
+cost compared to the single-agent baselines, the ab-
+solute financial cost per task remains negligible.
+We argue that this increase in compute expendi-
+ture is a highly favorable trade-off; by proactively
+resolving underspecification and significantly in-
+creasing the overall task resolve rate, the multi-
+agent setup ultimately saves substantial human de-
+veloper time and effort that would otherwise be
+spent on debugging solutions that are misaligned
+with the original intent. For Kimi K2.6, all agent
+inference calls were executed via the Moonshot
+API. Kimi K2.6 runs at roughly 30–50% of the
+cost of Claude Sonnet 4.5, offering substantial cost
+efficiency gains while maintaining competitive per-
+formance. Additionally, the multi-agent scaffold
+has a total inference cost less than double that of
+the single-agent baselines, making Kimi K2.6 a
+cost-efficient alternative for deploying the frame-
+work.
+                                Claude Sonnet 4.5           Kimi K2.6
+                                Total     Avg Cost      Total     Avg Cost
+        Setting
+                               Cost ($)   / Task ($)   Cost ($)   / Task ($)
+        Full                    817.02         1.63     316.18          0.63
+        Hidden                  899.43         1.80     418.26          0.84
+        Interactive Baseline    697.88         1.40     270.42          0.54
+        UA-Single              1017.34         2.03     323.27          0.65
+        UA-Multi               1748.08         3.50     498.36          1.00
+
+Table 5: API costs (in USD) across evaluation settings on SWE-bench Verified.
+   Uncertainty-Aware Agent Scaffold Prompts
+   A. U NCERTAINTY-AWARE (S INGLE ) Reminder Prompt
+   Before selecting your next tool or drafting a reply, first reason explicitly about whether you have enough information.
+   After stating that reasoning, write a line formatted as Ambiguity assessment: <clear|ambiguous>. If the assessment
+   is ambiguous, immediately call the clarify tool with questions for the user. If it is clear, proceed normally.
+
+   B. U NCERTAINTY-AWARE (M ULTI ) Intent Agent Prompt
+   You are Intent Agent, a specialized OpenHands agent. Your sole purpose is to assess at a given turn whether there exists
+   ambiguity or key missing information which may impact the work of the main agent trying to solve a user’s task.
+   <ROLE>
+
+       • Your primary role is to interpret, at any given point, the conversation history so far. This includes user messages,
+         as well as main agent actions and observations.
+
+       • Keep in mind these questions when you are performing the analysis:
+            1. What is the intended goal?
+            2. What is missing, ambiguous, or assumption-heavy?
+            3. What must be clarified before any further code or tool executions can happen?
+
+   </ROLE>
+   <WORKFLOW>
+
+      1. Carefully read the provided conversation history, including user messages, main agent actions, and observations.
+
+      2. Enumerate any ambiguities, missing information, or assumptions that could impact the main agent’s ability to
+         successfully complete the user’s task.
+
+      3. Finally, call the clarify_decision tool, producing a structured JSON output only indicating with a boolean
+         whether or not clarification is required (’needs_clarification’), and providing the reasons if necessary. if the
+         main agent attempts to read a file that does not exist, you would output something like:
+                 {
+                     'needs_clarification': true,
+                     'reasons': 'The main agent attempted to read a file that does not exist,
+                         indicating possible misunderstanding of the file structure.'
+                 }
+
+   </WORKFLOW>
+   <EXTRA_GUIDELINES>
+
+       • Be clear and concise in your reasoning, avoiding unnecessary complexity. Keep your reasoning short, only 30-50
+         words.
+
+       • You will be provided with a summary of the conversation history so far, including user messages, main agent
+         actions, and observations. Some of these may be truncated with “...”.
+
+       • If you ever see a user message of the form “1a, 2b, 3c”, this refers to answers for the main agent’s previous
+         clarifying questions.
+
+   </EXTRA_GUIDELINES>
+
+
+Figure 4: Prompts required for the custom uncertainty-aware agent scaffolds. Part A shows the reminder prompt for
+the U NCERTAINTY-AWARE (S INGLE ) agent at each turn. Part B shows the system prompt for the specialized Intent
+Agent in the U NCERTAINTY-AWARE (M ULTI ) agent scaffold.
+   User Simulator Prompt
+
+   You are a GitHub user reporting an issue. Here are the details of your issue and environment:
+   Issue: {issue}
+   Files relative to your current directory: {files}
+   Your task is to respond to questions from a coder who is trying to solve your issue. The coder has a summarized version
+   of the issue you have. Follow these rules:
+
+     1. If the coder asks a question that is directly related to the information in the issue you have, provide that information.
+
+     2. Always stay in character as a user reporting an issue, not as an AI assistant.
+
+     3. Keep your responses concise and to the point.
+
+     4. The coder has limited turns to solve the issue. Do not interact with the coder beyond 3 turns.
+
+     5. If the coder asks about modifying test files, remind them that all changes to any of the test files described in the
+        issue are already handled and should not be further modified.
+
+     6. If the coder says that their fixes aren’t reflected in tests or asks why the expected test behavior isn’t changing, remind
+        them that /testbed is where tests are imported and run, but they should make their final edits in /workspace.
+
+   Respond with "I don’t have that information" if the question is unrelated or you’re unsure.
+
+
+
+Figure 5: The prompt provided to the user simulator, including specific guardrails to prevent unintended test
+modifications (rule 5) and resolve environment directory mismatches (rule 6).
+   I NTERACTIVE BASELINE
+   Agent: Based on the issue description mentioning “Python expression”, “assertion failure in the Python compiler”, and
+   “constant names”, this is likely related to pytest’s assertion rewriting mechanism. Let me ask specific questions:
+
+      1. What is the specific Python expression that causes the crash?
+
+      2. What is the exact error message or assertion failure from the Python compiler? Is there a stack trace or specific
+         assertion message that appears?
+
+      3. Is there a specific Python bug report or bpo issue number that this is related to? The description mentions “a
+         known issue” - what is the reference for this?
+
+
+   User:
+      1. The minimal reproducer is this call into pytest’s mark expression compiler: Expression.compile("False").
+         Just compiling the string "False" (as a mark expression) is enough to trigger the crash on a debug build of Python
+         3.8+.
+
+      2. The crash is an assertion failure in the CPython compiler. On a debug build, it looks like:
+           python: Python/compile.c:3559: compiler_nameop: Assertion
+               `!_PyUnicode_EqualToASCIIString(name, "None") &&
+                !_PyUnicode_EqualToASCIIString(name, "True") &&
+                !_PyUnicode_EqualToASCIIString(name, "False")' failed.
+           [1] 29440 abort (core dumped) python
+
+      3. The related CPython bug report is bpo-40870: https://bugs.python.org/issue40870. That’s the known issue
+         aimed at improving this behavior I was referring to.
+
+
+
+   U NCERTAINTY-AWARE (S INGLE )
+   Agent: I need some clarification before proceeding:
+
+      1. What is the specific Python expression that causes the interpreter to crash on Python 3.8+ debug builds? For
+         example, is it related to assertions, specific constant values, or particular syntax patterns?
+
+      2. Which constant names are problematic and cause the assertion failure in the Python compiler? For example, are
+         they names like, ’__debug__’, ’True’, ’False’, ’None’, or other special constants?
+
+      3. You mentioned you’ve already taken care of test file changes. Are these test files already committed in the
+         repository, or should I look for them in a specific location? Can you point me to the test file that demonstrates
+         this issue?
+
+      4. Is there a specific GitHub issue number or Python bug tracker reference (bpo number) for the ’known issue’ you
+         mentioned that is related to this problem?
+
+
+   User:
+      1. The minimal expression is just using Expression.compile("False") (the string "False" as the expression).
+         That alone triggers the crash on a Python 3.8+ debug build.
+
+      2. The problematic constant names are None, True, and False. The assertion in compiler_nameop explicitly checks
+         that the name is not any of those three.
+
+      3. The tests for this issue are already handled; you shouldn’t modify any test files further.
+
+      4. Yes, the related Python bug tracker reference is bpo-40870 (https://bugs.python.org/issue40870).
+
+
+Figure 6: Comparison of user-agent interactions on the pytest-dev__pytest-7324 task (Claude Sonnet 4.5).
+Both the I NTERACTIVE BASELINE and the U NCERTAINTY-AWARE (S INGLE ) agent successfully identify missing
+information but group all their queries into a single, upfront interaction turn. Bold text highlights I NTERACTIVE
+BASELINE’s generic queries versus the more specific, technical queries of U NCERTAINTY-AWARE (S INGLE ).
+    U NCERTAINTY-AWARE (M ULTI )
+   Agent (Turn 1 - Early Stage): I need more specific information to understand and fix the issue properly:
+
+      1. Can you provide the specific Python expression that causes the crash? For example, is it something like assert
+         __debug__ or a specific constant name?
+
+      2. Do you have the actual error message or assertion failure from Python’s compiler/interpreter that appears on a
+         debug build?
+
+      3. Is there a specific test file or test case that was added to reproduce this issue?
+
+      4. What is the ’known issue’ this is linked to? Is it a Python bug tracker issue or a GitHub issue?
+
+
+   User:
+      1. The specific expression is just Expression.compile("False"), i.e. the string "False" being compiled by
+         Expression.compile in src/_pytest/mark/expression.py.
+
+      2. Yes, on a debug build it crashes with:
+           python: Python/compile.c:3559: compiler_nameop: Assertion
+               `!_PyUnicode_EqualToASCIIString(name, "None") &&
+                !_PyUnicode_EqualToASCIIString(name, "True") &&
+                !_PyUnicode_EqualToASCIIString(name, "False")' failed.
+           [1] 29440 abort (core dumped) python
+
+      3. There is a test covering this scenario, but all changes to the test files are already handled and shouldn’t be modified
+         further for this task.
+
+      4. The linked known issue is a Python bug tracker issue: bpo-40870 (https://bugs.python.org/issue40870).
+
+
+   Agent (Turn 2 - Mid Stage, Execution Phase): The test still fails after modifying the source code. This suggests
+   either a caching issue or the module hasn’t been reloaded. Let me check if the changes were saved correctly and try
+   reloading.
+
+      1. Should I continue debugging why the changes aren’t taking effect?
+
+
+   User: No, you don’t need to keep debugging that part. Remember that the tests are imported and run from /testbed,
+   but your final code changes should be made in /workspace. If your fixes aren’t reflected in the tests, it’s likely due to
+   that setup rather than a caching issue.
+
+
+Figure 6: (continued). Unlike the single-agent setups, the multi-agent framework successfully engages in additional
+late-stage, iterative clarification following a test failure on the pytest-dev__pytest-7324 task.
+   pylint-dev__pylint-7080
+
+   Original:
+   Bug description: When running recursively, it seems ignore-paths in my settings in pyproject.toml is completely
+   ignored.
+   Configuration:
+   [ tool . pylint . MASTER ]
+   ignore - paths = [
+      # Auto generated
+      "^ src / gen /.* $ " ,
+   ]
+
+   Command used:
+   pylint -- recursive = y src /
+
+   Pylint output:
+   ************* Module region_selection
+   src \ gen \ about . py :2:0: R2044 : Line with empty comment ( empty - comment )
+
+   [...]
+   Expected behavior: src\gen\* should not be checked.
+   OS / Environment: Windows 10.0.19044
+
+   Underspecified: There is an issue with a tool configuration where a recursive option is not respecting specified ignore
+   paths, leading to unintended files being processed. This occurs despite the paths being correctly set in the configuration
+   file. The problem is observed when running a specific command, and the expected behavior is for certain directories to
+   be excluded from processing.
+
+   Qualitative Analysis: Omits the OS (Windows 10.0.19044) and Pylint output with backslash paths
+   (src\gen\about.py), which contains the key information that the issue is occurring on a Windows filesystem.
+
+
+
+   scikit-learn__scikit-learn-26323
+
+   Original: When using set_output on a ColumnTransformer, it sets the output on its sub-transformers but ignores the
+   transformer defined in remainder.
+   Steps to reproduce:
+   import pandas as pd
+   from sklearn . compose import make_column_selector , make_column_transformer
+   from sklearn . feature_selection import VarianceThreshold
+
+   df = pd . DataFrame ({ " a " : [ True , False , True ] , " b " : [1 , 2 , 3]})
+   out1 = make_column_transformer (
+        ( VarianceThreshold () , make_column_selector ( dtype_include = bool ) ) ,
+        remainder = VarianceThreshold () ,
+        verbose_feature_names_out = False ,
+   ). set_output ( transform = " pandas " ) . fit_transform ( df )
+   print ( out1 )
+
+   Expected/Actual results: [...]
+
+   Versions: sklearn 1.2.2, pandas 2.0.1, Python 3.10.6, Linux-5.15.0-71-generic-x86_64
+
+   Underspecified: There is an issue with ColumnTransformer in scikit-learn where the set_output method does not
+   apply correctly to the transformer specified in the remainder parameter when it is an estimator. This results in incorrect
+   output when the transformation is applied, as the remainder transformer is not included in the final result as expected.
+
+   Qualitative Analysis: Preserves key class (ColumnTransformer), method (set_output), and parameter (remainder)
+   names, so an agent can locate the relevant code without clarification.
+
+
+
+Figure 7: Comparison of original (fully specified) and synthetically underspecified descriptions for two evaluation
+instances. In pylint-dev__pylint-7080 (top), the missing OS information renders completion without clarifi-
+cation challenging. In scikit-learn__scikit-learn-26323 (bottom), preserved class and method names are
+sufficient for an agent to localize and resolve the issue autonomously.
+

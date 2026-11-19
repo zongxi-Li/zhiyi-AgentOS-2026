@@ -1,0 +1,597 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-11-19T00:00:00.000Z" agent="Kinlin research architecture authoring" version="29.0.0" type="device" compressed="false">
+  <diagram id="fig01-zh" name="本地隐私发布架构">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig01_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig01_title" value="本地隐私发布架构" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig01_client" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="100" width="1060" height="610" />
+        </mxCell>
+        <mxCell id="fig01_client-heading" value="可信本机" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#3D6F9C;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="58" y="112" width="1024" height="40" />
+        </mxCell>
+        <mxCell id="fig01_cloud" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1140" y="100" width="260" height="610" />
+        </mxCell>
+        <mxCell id="fig01_cloud-heading" value="云端观察者" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#78838D;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1158" y="112" width="224" height="40" />
+        </mxCell>
+        <mxCell id="fig01_input" value="私有输入&#10;x" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="190" width="190" height="110" />
+        </mxCell>
+        <mxCell id="fig01_prefix" value="本地前导网络&#10;及私有 KV" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="310" y="190" width="220" height="110" />
+        </mxCell>
+        <mxCell id="fig01_gate" value="隐私发布门&#10;裁剪、随机化、绑定" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="590" y="190" width="270" height="110" />
+        </mxCell>
+        <mxCell id="fig01_egress" value="批准的&#10;唯一载荷" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="910" y="190" width="160" height="110" />
+        </mxCell>
+        <mxCell id="fig01_suffix" value="云端后段、KV&#10;及输出头" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1165" y="190" width="210" height="110" />
+        </mxCell>
+        <mxCell id="fig01_e_0" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_input" target="fig01_prefix">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_e_1" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_prefix" target="fig01_gate">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_e_2" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_gate" target="fig01_egress">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_e_3" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_egress" target="fig01_suffix">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_profile" value="已批准的隐私合同&#10;邻接、协议、机制" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="420" width="280" height="125" />
+        </mxCell>
+        <mxCell id="fig01_ledger" value="持久预算账本&#10;RDP 与原子预留" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="400" y="420" width="290" height="125" />
+        </mxCell>
+        <mxCell id="fig01_outbox" value="持久载荷发件箱&#10;发布标识绑定唯一字节" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="740" y="420" width="330" height="125" />
+        </mxCell>
+        <mxCell id="fig01_e_profile" value="控制" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_profile" target="fig01_gate">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-17" />
+            <Array as="points">
+              <mxPoint x="210" y="360" />
+              <mxPoint x="658" y="360" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_e_budget" value="先预留" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#74658C;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_ledger" target="fig01_gate">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="18" />
+            <Array as="points">
+              <mxPoint x="545" y="380" />
+              <mxPoint x="725" y="380" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_e_durable" value="先持久化再发送" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#74658C;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_gate" target="fig01_outbox">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="55" y="0" />
+            <Array as="points">
+              <mxPoint x="890" y="278" />
+              <mxPoint x="890" y="365" />
+              <mxPoint x="905" y="365" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_receipt" value="步骤结果&#10;及提交回执" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1165" y="420" width="210" height="125" />
+        </mxCell>
+        <mxCell id="fig01_e_reply" value="回执" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_suffix" target="fig01_receipt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="52" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_e_feedback" value="本地核验后进入下一步" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_receipt" target="fig01_prefix">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="250" y="20" />
+            <Array as="points">
+              <mxPoint x="1270" y="640" />
+              <mxPoint x="55" y="640" />
+              <mxPoint x="55" y="160" />
+              <mxPoint x="420" y="160" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_scope" value="公开固定形状协议；仅在声明的输入域和保护范围内讨论内容隐私" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="735" width="1300" height="40" />
+        </mxCell>
+        <mxCell id="fig01_key" value="实线：载荷数据流     虚线：控制或返回     紫色：持久状态" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="790" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig02-zh" name="先记账、后发送的发布数据流">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig02_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig02_title" value="先记账、后发送的发布数据流" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig02_validate" value="1  校验发布合同&#10;身份与公开协议" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_reserve" value="2  去重并预留预算&#10;账户内原子事务" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="425" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_noise" value="3  裁剪并随机化&#10;只产生一个新样本" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="780" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_prepare" value="4  持久化唯一字节&#10;PREPARED" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1135" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_e_top0" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_validate" target="fig02_reserve">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_top1" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_reserve" target="fig02_noise">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_top2" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_noise" target="fig02_prepare">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_finish" value="8  记录 ACKED&#10;不再次扣费" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_verify" value="7  核验步骤回执&#10;请求、步骤、摘要" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="425" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_send" value="6  发送批准载荷&#10;经认证的传输通道" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="780" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_mark" value="5  持久化发送标记&#10;MAYBE_SENT" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1135" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_e_turn" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_prepare" target="fig02_mark">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_bottom3" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_mark" target="fig02_send">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_bottom2" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_send" target="fig02_verify">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_bottom1" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_verify" target="fig02_finish">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_gap" value="网络发送必须晚于预算持久预留与唯一载荷持久绑定" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#267C78;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="85" y="335" width="1220" height="65" />
+        </mxCell>
+        <mxCell id="fig02_retry" value="重复发布标识：核对绑定后进入恢复流程，不再次预留，也不重新采样" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="650" width="1300" height="75" />
+        </mxCell>
+        <mxCell id="fig02_failure" value="第 6 步前任一环节失败均阻止发送；未知出站保留已计费用，见图 3 与图 5" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="760" width="1300" height="55" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig03-zh" name="持久隐私发布状态机">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig03_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig03_title" value="持久隐私发布状态机" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig03_new" value="NEW&#10;尚未预留" style="shape=ellipse;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="55" y="190" width="170" height="100" />
+        </mxCell>
+        <mxCell id="fig03_reserved" value="RESERVED&#10;费用已预留" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="290" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_prepared" value="PREPARED&#10;唯一载荷已持久化" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="600" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_maybe" value="MAYBE_SENT&#10;允许开始发送" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="910" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_acked" value="ACKED&#10;回执已核验" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1210" y="190" width="180" height="100" />
+        </mxCell>
+        <mxCell id="fig03_e_reserve" value="预留" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_new" target="fig03_reserved">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_prepare" value="绑定" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_reserved" target="fig03_prepared">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_mark" value="标记" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_prepared" target="fig03_maybe">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_ack" value="回执" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_acked">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_sealed" value="SEALED_CHARGED&#10;不再发送，费用不退回" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="505" y="540" width="430" height="105" />
+        </mxCell>
+        <mxCell id="fig03_e_orphan" value="不可恢复崩溃" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_reserved" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="-25" y="5" />
+            <Array as="points">
+              <mxPoint x="410" y="592" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_badbytes" value="载荷丢失或取消" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_prepared" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="115" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_unknown" value="无法安全恢复" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="50" y="0" />
+            <Array as="points">
+              <mxPoint x="1030" y="592" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_retry" value="先核查恢复条件，仅重用原字节" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_maybe">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+            <Array as="points">
+              <mxPoint x="1090" y="110" />
+              <mxPoint x="970" y="110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_query" value="ACKED 的重复请求返回原回执；载荷缺失永远不构成重新采样的授权" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="677" width="1300" height="55" />
+        </mxCell>
+        <mxCell id="fig03_meaning" value="SEALED_CHARGED 是本地终止标记，并不证明云端从未接收或从未执行" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="735" width="1300" height="55" />
+        </mxCell>
+        <mxCell id="fig03_budget" value="初版采取保守记账：所有预留均保留费用，后续状态迁移不重复计费" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="795" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig04-zh" name="Gaussian 发布与前瞻组合会计">
+    <mxGraphModel dx="1440" dy="940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="940" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig04_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="940" />
+        </mxCell>
+        <mxCell id="fig04_title" value="Gaussian 发布与前瞻组合会计" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig04_a" value="(a) 一次完整发布向量" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=27;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="100" width="1320" height="40" />
+        </mxCell>
+        <mxCell id="fig04_h" value="本地激活&#10;h(x) ∈ Rᵈ" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="175" width="230" height="110" />
+        </mxCell>
+        <mxCell id="fig04_clip" value="全局 L2 裁剪&#10;‖h̄(x)‖₂ ≤ C" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="365" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_gaussian" value="Gaussian 噪声&#10;Z ∼ N(0, s²I)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="725" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_y" value="发布载荷&#10;Y = h̄(x) + Z" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1085" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_e_hc" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_h" target="fig04_clip">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_e_cn" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_clip" target="fig04_gaussian">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_e_ny" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_gaussian" target="fig04_y">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_sensitivity" value="prompt replacement 邻接：Δ₂ ≤ 2C；噪声校准与有限精度实现必须另行核查" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="315" width="1300" height="65" />
+        </mxCell>
+        <mxCell id="fig04_b" value="(b) 原子预留前检查累计上界" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=27;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="425" width="1320" height="40" />
+        </mxCell>
+        <mxCell id="fig04_rho" value="账户已计费用 R(α)&#10;包含全部预留" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="490" width="500" height="100" />
+        </mxCell>
+        <mxCell id="fig04_cost" value="公开调度费用 cₜ(α)&#10;= αΔₜ² / (2sₜ²)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="640" width="500" height="100" />
+        </mxCell>
+        <mxCell id="fig04_convert" value="固定 δ* 下的前瞻 ε&#10;minα {R(α) + cₜ(α)&#10;+ ln(1/δ*) / (α − 1)}" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="700" y="530" width="675" height="150" />
+        </mxCell>
+        <mxCell id="fig04_e_account" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_rho" target="fig04_convert">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="635" y="540" />
+              <mxPoint x="635" y="575" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_e_cost" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_cost" target="fig04_convert">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="635" y="690" />
+              <mxPoint x="635" y="635" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_accept" value="满足 ε 上限：原子预留&#10;R(α) ← R(α) + cₜ(α)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="700" y="770" width="675" height="90" />
+        </mxCell>
+        <mxCell id="fig04_deny" value="超出预算或会计不兼容&#10;拒绝发布" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="790" width="500" height="70" />
+        </mxCell>
+        <mxCell id="fig04_e_accept" value="通过" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_convert" target="fig04_accept">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="45" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_e_deny" value="不通过" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.15;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_convert" target="fig04_deny">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="2" />
+            <Array as="points">
+              <mxPoint x="801" y="760" />
+              <mxPoint x="315" y="760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_scope" value="固定公开费用调度；同一保护范围内的条件上界；不使用子采样放大" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="890" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig05-zh" name="不重采样的丢失回执恢复时序">
+    <mxGraphModel dx="1440" dy="1060" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig05_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="1060" />
+        </mxCell>
+        <mxCell id="fig05_title" value="不重采样的丢失回执恢复时序" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig05_actor0" value="本地 Runtime" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="25" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life0" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="170" y="180" />
+            <mxPoint as="targetPoint" x="170" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_actor1" value="发布门与发件箱" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="390" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life1" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="535" y="180" />
+            <mxPoint as="targetPoint" x="535" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_actor2" value="隐私账本" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="755" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life2" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="900" y="180" />
+            <mxPoint as="targetPoint" x="900" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_actor3" value="云端后段与 KV" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1120" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life3" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="1265" y="180" />
+            <mxPoint as="targetPoint" x="1265" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_requests" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="170" y="220" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_requestt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="220" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_request" value="激活引用" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_requests" target="fig05_requestt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_reserves" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="280" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_reservet" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="900" y="280" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_reserve" value="只预留一次" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_reserves" target="fig05_reservet">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_reserveds" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="900" y="340" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_reservedt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="340" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_reserved" value="预留凭据" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#74658C;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_reserveds" target="fig05_reservedt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_localwork" value="采样一次；持久化载荷&#10;再写可能出站状态" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="380" width="310" height="85" />
+        </mxCell>
+        <mxCell id="fig05_payloads" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="505" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_payloadt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="505" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_payload" value="已固化的唯一载荷" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_payloads" target="fig05_payloadt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_cloudwork" value="串行化步骤提交&#10;KV、token 与回执" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1110" y="535" width="310" height="80" />
+        </mxCell>
+        <mxCell id="fig05_losts" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="650" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_lostt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="650" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_lost" value="回执丢失或超时" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_losts" target="fig05_lostt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_querys" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="720" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_queryt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="720" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_query" value="查询权威步骤状态" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_querys" target="fig05_queryt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_statuss" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="790" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_statust" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="790" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_status" value="已提交 / 确定未提交 / 不确定" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_statuss" target="fig05_statust">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_committed" value="已提交&#10;复用回执，只推进一次" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="45" y="880" width="420" height="110" />
+        </mxCell>
+        <mxCell id="fig05_notcommitted" value="确定未提交&#10;仅允许重发相同字节" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="510" y="880" width="420" height="110" />
+        </mxCell>
+        <mxCell id="fig05_unknown" value="状态不确定或会话失效&#10;停止，保留消费" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="975" y="880" width="420" height="110" />
+        </mxCell>
+        <mxCell id="fig05_authority" value="“确定未提交”必须在会话串行控制下排除在途执行；普通查询为空并不足以证明" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="45" y="1010" width="1350" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig06-zh" name="协议可观测范围与发布约束">
+    <mxGraphModel dx="1440" dy="940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="940" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig06_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="940" />
+        </mxCell>
+        <mxCell id="fig06_title" value="协议可观测范围与发布约束" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig06_private" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="110" width="400" height="590" />
+        </mxCell>
+        <mxCell id="fig06_private-heading" value="本地私有状态" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#3D6F9C;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="58" y="122" width="364" height="40" />
+        </mxCell>
+        <mxCell id="fig06_enforce" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="510" y="110" width="420" height="590" />
+        </mxCell>
+        <mxCell id="fig06_enforce-heading" value="批准协议的强制执行" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#267C78;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="528" y="122" width="384" height="40" />
+        </mxCell>
+        <mxCell id="fig06_observed" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1000" y="110" width="400" height="590" />
+        </mxCell>
+        <mxCell id="fig06_observed-heading" value="云端可观测内容" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#78838D;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1018" y="122" width="364" height="40" />
+        </mxCell>
+        <mxCell id="fig06_act" value="激活数值&#10;依赖私有输入" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="205" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_random" value="裁剪并随机化&#10;作用于完整向量" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="205" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_tensor" value="随机化张量 Y" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="205" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_length" value="真实长度、mask&#10;私有位置数据" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="375" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_public" value="公开形状与 padding&#10;元数据白名单" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="375" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_meta" value="声明为公开的元数据" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="375" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_behavior" value="停止、错误与时序&#10;可能依赖私有状态" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="545" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_schedule" value="批准的调度与规则&#10;否则重新界定保护范围" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="545" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_trace" value="可观测交互记录" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="545" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_e_ab" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_act" target="fig06_random">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_bc" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_random" target="fig06_tensor">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_de" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_length" target="fig06_public">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_eg" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_public" target="fig06_meta">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_hj" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_behavior" target="fig06_schedule">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_jk" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Microsoft YaHei;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_schedule" target="fig06_trace">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_reject" value="未经批准的原始字段或行为：阻止远程发布&#10;不降级发送原文，不为未分析的通道作保证" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Microsoft YaHei;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="125" y="755" width="1190" height="85" />
+        </mxCell>
+        <mxCell id="fig06_scope" value="保护范围必须明确身份与参与信息是否公开，以及是否排除时序或其他侧信道" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Microsoft YaHei;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="870" width="1310" height="45" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -53,9 +53,9 @@ selected={
 seeds={
 '2506.05813':('MAPLE.pdf','MAPLE','https://arxiv.org/abs/2506.05813v2'),
 '2603.09151':('Deep-Tabular-Research_arXiv2026.pdf','DTR','https://arxiv.org/abs/2603.09151v2'),
-'MACT':('MACT_Findings-NAACL2025.pdf','MACT','https://aclanthology.org/2025.findings-naacl.52/'),
-'Table-Critic':('Table-Critic_ACL2025.pdf','Table-Critic',''),
-'TALON':('TALON_EMNLP2025.pdf','TALON',''),
+'MACT':('MACT_Findings-NAACL2025.pdf','MACT','https://aclanthology.org/2025.findings-naacl.54/'),
+'Table-Critic':('Table-Critic_ACL2025.pdf','Table-Critic','https://aclanthology.org/2025.acl-long.853/'),
+'TALON':('TALON_EMNLP2025.pdf','TALON','https://aclanthology.org/2025.emnlp-main.1393/'),
 }
 # Query original identifiers as well as foundational papers missing from broad top-N searches.
 ids=list(dict.fromkeys([*selected,'2506.05813','2603.09151']))

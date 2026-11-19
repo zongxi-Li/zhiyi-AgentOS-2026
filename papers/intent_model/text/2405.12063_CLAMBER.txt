@@ -1,0 +1,1119 @@
+                                                CLAMBER: A Benchmark of Identifying and Clarifying Ambiguous
+                                                       Information Needs in Large Language Models
+                                                       Tong Zhang♠♡⋆ , Peixin Qin♠♡⋆ , Yang Deng♣ , Chen Huang♠♡ ,
+                                                               Hongru Liang♠♡ , Junhong Liu♢ , Dingnan Jin♢ ,
+                                                                       Wenqiang Lei♠♡† , Tat-Seng Chua♣
+                                                              ♠ College of Computer Science, Sichuan University, China
+                                                     ♡ Engineering Research Center of Machine Learning and Industry Intelligence,
+                                                                            Ministry of Education, China
+                                                                  ♢ Ant Group ♣ National University of Singapore
+                                                         {scu.zhangtong, huangc.scu}@gmail.com wenqianglei@scu.edu.cn
+
+                                                                    Abstract                       queries in real-world scenarios. For instance, in
+                                                                                                   a query like "what are the strategies for saving?",
+                                                Large language models (LLMs) are increas-
+arXiv:2405.12063v2 [cs.CL] 1 Jun 2024
+
+
+
+
+                                                                                                   the term "saving" can have multiple interpretations,
+                                                ingly used to meet user information needs,
+                                                                                                   such as "saving money" or "saving from sins", de-
+                                                but their effectiveness in dealing with user
+                                                queries that contain various types of ambigu-      pending on the user’s actual need. This necessitates
+                                                ity remains unknown, ultimately risking user       LLMs proactively identifying (i.e., determine if the
+                                                trust and satisfaction. To this end, we intro-     query is ambiguous or not) and clarifying the ambi-
+                                                duce CLAMBER, a benchmark for evaluating           guities rather than providing potentially incorrect
+                                                LLMs using a well-organized taxonomy. Build-       answers that may not align with the user’s true
+                                                ing upon the taxonomy, we construct ∼ 12K          needs, ultimately risking user trust and satisfaction
+                                                high-quality data to assess the strengths, weak-   (Liao et al., 2023).
+                                                nesses, and potential risks of various off-the-
+                                                shelf LLMs. Our findings indicate the lim-            Driven by this concern, recent works have
+                                                ited practical utility of current LLMs in iden-    explored LLMs’ capacity to address ambiguous
+                                                tifying and clarifying ambiguous user queries,     queries (Deng et al., 2023b; Kuhn et al., 2023).
+                                                even enhanced by chain-of-thought (CoT) and        However, these investigations have been somewhat
+                                                few-shot prompting. These techniques may           fragmented, lacking a comprehensive taxonomy,
+                                                result in overconfidence in LLMs and yield
+                                                                                                   leading to incomplete and inconsistent handling of
+                                                only marginal enhancements in identifying am-
+                                                biguity. Furthermore, current LLMs fall short
+                                                                                                   ambiguity distributions (Keyvan and Huang, 2022;
+                                                in generating high-quality clarifying questions    Rahmani et al., 2023). As a notable example, they
+                                                due to a lack of conflict resolution and inac-     are often limited to contextual ambiguity, where
+                                                curate utilization of inherent knowledge. In       the given context is insufficient for producing a
+                                                this paper, CLAMBER presents a guidance            definitive answer. In the era of LLMs, there should
+                                                and promotes further research on proactive and     be more emphasis on the LLM-oriented ambiguity
+                                                trustworthy LLMs. Our dataset is available at      that may occur when inherent knowledge stored
+                                                https://github.com/zt991211/CLAMBER.
+                                                                                                   within LLMs have conflict understanding about
+                                                                                                   the query. Consequently, it still remains unclear
+                                        1       Introduction
+                                                                                                   which ambiguities LLMs can effectively identify
+                                        Given well-defined user queries, large language            and clarify, along with the challenges that LLMs
+                                        models (LLMs) have demonstrated remarkable pro-            persistently encounter in this regard.
+                                        ficiency in facilitating the information search pro-          To this end, we introduce CLAMBER
+                                        cess (Pan et al., 2023; Kamalloo et al., 2023; Zhang       (Clarifying Ambiguous Query), a novel bench-
+                                        and Choi, 2023; Huang et al., 2023). They provide          mark for comprehensively evaluating LLMs in
+                                        more precise search results with the help of the           identifying and clarifying various ambiguities
+                                        inherent knowledge stored within LLMs. Nonethe-            using a well-organized taxonomy. Drawing inspi-
+                                        less, as evidenced by previous studies (Kuhn et al.,       ration from the input-process-output framework
+                                        2023; Deng et al., 2023a), the practical utility of        for evaluating collaborative systems (Pinsonneault
+                                        LLMs is hindered by unclear and ambiguous user             and Kraemer, 1989), we establish a taxonomy
+                                            †
+                                                Corresponding author.                              that consolidates both input understanding and
+                                            ⋆
+                                                Both authors contributed equally to this study.    task completion perspectives into three primary
+dimensions, as illustrated in Table 1. These               LLMs in an inclusive manner. Our findings shed
+dimensions are further conceptualized into eight           light on why current LLMs struggle to identify
+fine-grained categories to facilitate in-depth             and clarify ambiguities. These insights will guide
+evaluation. Building upon this taxonomy, we                future research in this field.
+construct ∼ 12K data for analyzing the pros and
+cons of LLMs when identifying and clarifying
+                                                       2     Related Works
+ambiguities.
+   With CLAMBER, we comprehensively evalu-             Our research is closely tied to the taxonomy and
+ate strengths, weaknesses, and potential risks of      resolution of ambiguities in LLMs. We provide a
+various LLMs. Our findings indicate that Chat-         literature review and highlight our differences.
+GPT (OpenAI, 2022) outperforms other small-            Ambiguity Taxonomy. As evidenced by a recent
+scale LLMs, especially excelling in identifying        survey (Rahmani et al., 2023), there is a lack of
+and clarifying ambiguities in multifaceted queries     a well-organized taxonomy for ambiguity in in-
+(Clarke et al., 2009), such as "What is the largest    formation retrieval. While previous research at-
+manufacturer in China?", which does not specify        tempts to integrate ambiguity taxonomies, their
+the type of "manufacturer". However, they still        taxonomies are fragmented and underdeveloped
+encounter numerous challenges: 1) current LLMs,        (Ginzburg, 1996; Song et al., 2007), failing to fa-
+despite leveraging chain-of-thought (CoT) and          cilitate comprehensive evaluations. Recent tax-
+few-shot prompting, face challenges in identify-       onomies Min et al. (2020); Guo et al. (2021) are
+ing ambiguities. Our results suggest that CoT          formulated based on a limited set of factual ques-
+and few-shot prompting may lead to the over-           tions and lack precise definitions for each category.
+confidence issue in small-scale LLMs, impacting        Moreover, existing taxonomies were established
+ambiguity identification negatively. Even with a       before the era of LLMs, disregarding the ambiguity
+large number of shots and CoT support, LLMs            specific to LLMs that may arise from conflicting in-
+only achieve a marginal improvement. Moreover,         terpretations of queries by the inherent knowledge
+current LLMs struggle to leverage contextual cues      stored within LLMs. This is evident when LLMs
+to disambiguate pronouns, highlighting the inade-      encounter unfamiliar entities (Yin et al., 2023) or
+quacy in deducing underlying ambiguities. 2) Cur-      potential inconsistencies within queries (Tamkin
+rent LLMs fail to ask high-quality clarifying          et al., 2022). For the first time, we introduce a
+questions, due to the inability of knowing their       well-organized taxonomy for categorizing various
+knowledge gap. Despite LLMs recognize a query          query ambiguities. Our taxonomy draws inspira-
+containing ambiguities, their lack of conflict res-    tion from the input-process-output view to evaluate
+olution and inaccurate use of inherent knowledge       collaborative systems. It combines three primary
+results in uncertainty about which ambiguity to        dimensions that capture potential ambiguities dur-
+clarify. This prompts the need of developing ef-       ing input understanding and task completion of
+fective methods for LLMs to resolve conflicts and      LLMs. Using this taxonomy, we construct ∼ 12K
+accurately utilize their inherent knowledge.           data for analyzing the pros and cons of LLMs in
+   In this paper, CLAMBER stands as a valuable         resolving different ambiguities.
+resource to provide guidance and insight into evalu-   Resolving ambiguity in LLMs. Recent efforts
+ating LLMs and addressing ambiguous information        resort to CoT and few-shot prompting to enhance
+needs for future improvements. In conclusion, our      LLMs’ capacity in identifying and clarifying am-
+contributions are threefold:                           biguous queries (Deng et al., 2023b; Kuhn et al.,
+                                                       2023; Cole et al., 2023). While these efforts have
+• We introduce a taxonomy for categorizing vari-       shown some improvements in performance, they
+  ous query ambiguities. This taxonomy combines        are confined to tasks involving specific types of
+  three primary dimensions, detailed as eight cate-    ambiguities, such as lexical ambiguity. In this pa-
+  gories for facilitating fine-grained evaluations.    per, we incorporate CoT and few-shot prompting as
+• We present a novel benchmark called CLAM-            baselines to evaluate their efficacy and inadequacy
+  BER, tailored to the characteristics of LLMs. It     across a broader range of ambiguity types using
+  contains ∼ 12K data featuring ambiguous user         CLAMBER. Other related works try to examine
+  queries across diverse categories.                   which of the two queries exhibits more ambiguity
+• With CLAMBER, we evaluate the off-the-shelf          (Zhang and Choi, 2023), unable to determine if a
+ Dimension       Category        Explanation                        Example
+                                 Query contains unfamiliar
+                 UNFAMILIAR                                         Find the price of Samsung Chromecast.
+                                 entities or facts
+  Epistemic
+                                                                    Output ’X’ if the sentence contains [category withhold] and ’Y’ otherwise.
+ Misalignment                    Query contains self-
+                 CONTRADICTION                                      The critic is in the restaurant.>X. The butterfly is in the river.>Y.
+                                 contradictions
+                                                                    The boar is in the theatre.>?
+                                 Query contains terms
+                 LEXICAL                                            Tell me about the source of Nile.
+    Linguistic                   with multiple meanings
+    Ambiguity                    Query lacks of context
+                 SEMANTIC                                           When did he land on the moon?
+                                 leading multiple interpretations
+                                 Query output contains
+                 WHO             confusion due to                   Suggest me some gifts for my mother.
+                                 missing personal elements
+                                 Query output contains
+                 WHEN            confusion due to                   How many goals did Argentina score in the World Cup?
+    Aleatoric                    missing temporal elements
+     Output                      Query output contains
+                 WHERE           confusion due to                   Tell me how to reach New York.
+                                 missing spatial elements
+                                 Query output contains
+                 WHAT            confusion due to                   Real name of gwen stacy in spiderman?
+                                 missing task-specific elements
+
+Table 1: The proposed taxonomy of ambiguous queries and examples. The clarifying questions of each example are
+provided in Table 8.
+
+
+query is ambiguous.                                                     sung Chromebook" and are unfamiliar with "Sam-
+                                                                        sung Chromecast", LLMs should proactively ask
+3     CLAMBER Benchmark                                                 for clarification about "Samsung Chromecast"
+                                                                        rather than provide answers regarding "Google
+To evaluate LLMs in an inclusive manner, we
+                                                                        Chromecast" or "Samsung Chromebook", ulti-
+present CLAMBER, which introduces a taxonomy
+                                                                        mately risking user satisfaction.
+encompassing three key dimensions (i.e., Epistemic
+Misalignment, Linguistic Ambiguity, Aleatoric Out-                    • Contradiction. It refers to situations where
+put) that capture potential ambiguities during input                    LLMs infers contradictions within queries based
+understanding and task completion. These three                          on their inherent knowledge. For example, given
+dimensions are further divided into eight specific                      a query "Output ’X’ if the sentence contains [cat-
+categories. We delve into the taxonomy and data                         egory withhold] and ’Y’ otherwise. Examples:
+collection process in following sections. Each data                     The critic is in the restaurant.>X. The butterfly
+comprises a user query, a binary ambiguity label,                       is in the river.>Y. Sentence: The boar is in the
+and a clarifying question for ambiguous queries.                        theatre.>?", LLMs may infer two different cat-
+See details of data collection in Appendix C.                           egories (i.e., human and indoor location) from
+                                                                        provided examples. This contradiction could lead
+3.1     Epistemic Misalignment (EM)                                     to confusion for LLMs. Consequently, LLMs
+                                                                        should seek clarification by asking: "Does this
+Building upon the input understanding perspective,
+                                                                        category a human or an indoor location?"
+EM occurs when inherent knowledge stored within
+LLMs have conflict understanding about the query
+                                                                      Data Collection. To evaluate the Unfamiliar cat-
+(Cole et al., 2023; Zhang and Choi, 2023). This
+                                                                      egory, it is important to determine exactly what
+ambiguity is a distinctive feature of LLMs, as they
+                                                                      LLMs are unfamiliar with (Wang et al., 2023). To
+respond to queries using their inherent knowledge.
+                                                                      mitigate bias stemming by training data, CLAM-
+We categorize EM into two categories based on the
+                                                                      BER opts to utilize entirely new, fabricated knowl-
+source of conflicting:
+                                                                      edge that are unfamiliar to all LLMs. To achieve
+• Unfamiliar. It refers to situations where LLMs                      this, we resort to the ALCUNA dataset (Yin et al.,
+  encounter entities or facts that are unfamiliar                     2023) as our data resource, which includes queries
+  to them, either because they are not within the                     that contain new entities fabricated by modifying
+  LLMs’ inherent knowledge or because they con-                       existing ones. We classify the queries containing
+  tradict it. Given a query "Find the price of Sam-                   new entities as ambiguous, while the rest are un-
+  sung Chromecast", if LLMs only have inherent                        ambiguous. Subsequently, we instruct GPT-4 to
+  knowledge on "Google Chromecast" or "Sam-                           generate a clarifying question for each ambiguous
+query, focusing on the ambiguity of new entities.              Ambiguity, CLAMBER pay special focus investi-
+As for the Contradiction category, the contradic-              gating referent ambiguity following (Kuhn et al.,
+tion in CLAMBER occurs when the query and the                  2022; Ortega-Martín et al., 2023). This type of
+given examples fail to match within a single inter-            ambiguity occurs in queries containing pronouns
+pretation. To achieve this, we directly utilize the            that lack contextual clues for clarification. Specif-
+AmbiTask dataset (Tamkin et al., 2022) to provide              ically, we employ the AmbiCoref dataset (Yuan
+ambiguous queries, which encodes contradiction                 et al., 2023), which consists of minimal pairs fea-
+among queries and provided examples. Addition-                 turing ambiguous and unambiguous referents. In
+ally, we create clarifying questions for ambiguous             this regard, an ambiguous query can be achieved
+queries by rule-based templates and manually trans-            by reducing context sizes to a single sentence and
+form ambiguous queries into unambiguous ones by                creating sentences where the verbs involved limit
+resolving contradictions.                                      the interpretation of their arguments. Additionally,
+                                                               we obtain the unambiguous queries by instruct-
+3.2    Linguistic Ambiguity (LA)                               ing GPT-4 and obtain clarifying questions by rule-
+Building upon the input understanding perspective,             based templates.
+LA arises when a word, phrase, or statement can
+be interpreted in multiple ways due to its imprecise           3.3   Aleatoric Output (AO)
+or unclear meaning (Berry and Kamsties, 2004;                  Building upon the task completion perspective, AO
+Ortega-Martín et al., 2023). We categorize LA into             occurs when the input is well-formed but the out-
+the the lexical and semantic ambiguities1 , which              put contains potential confusion due to the lack of
+encapsulate the main challenges in information re-             essential elements. It is prevalent across various
+trieval (Coden et al., 2015; Xu et al., 2019).                 types of queries in information retrieval, includ-
+                                                               ing faceted queries (Clarke et al., 2009), queries
+• Lexical Ambiguity. It concerns individual terms
+                                                               missing details (Trienes and Balog, 2019), board
+  with multiple meanings. For example, given a
+                                                               queries (Song et al., 2007) and under-specific
+  query "Tell me about the source of Nile", the term
+                                                               queries (Aliannejadi et al., 2021). Previous studies
+  "source of Nile" can be interpreted in two mean-
+                                                               have focused on specific aspects of this ambiguity,
+  ings: the origin of the Nile river or the board
+                                                               but there is a need for a more comprehensive un-
+  game named "source of Nile". In this case, LLMs
+                                                               derstanding of this ambiguity in order to advance
+  should ask for clarification: "Are you referring to
+                                                               research. Inspired by (Zamani et al., 2020), we
+  the Nile river or the board game?"
+                                                               categorize AO into four specific categories based
+• Semantic Ambiguity. It involves the lack of                  on the type of missing elements:
+  context leading to more than one interpretation
+  of a sentence (Ortega-Martín et al., 2023). For              • Whom denotes the absence of personal details,
+  example, given a query "When did he land on                    such as expertise. Given a query "Suggest me
+  the moon?", it is unclear who "he" may refer to                some gifts for my mother", the response may
+  without context. In this case, LLMs should ask                 vary due to missing the personal preferences of
+  for clarification: "Who is ’he’ referring to?"                 his mother. In this case, a clarifying question
+                                                                 like: "What specific preferences does your mother
+Data Collection. Lexical Ambiguity pertains to in-               have?" would be preferred.
+dividual terms with multiple meanings, often found             • Where pertains to the lack of spatial informa-
+in entity names and polysemy words (Keyvan and                   tion, such as departure place. For example, given
+Huang, 2022). In this paper, we resort to the Am-                a query "Tell me how to reach New York", the
+bER (Chen et al., 2021) and AmbiPun dataset (Mit-                response may vary due to missing the specific
+tal et al., 2022), which contain ambiguous entity                departure information. In this case, LLMs should
+names and ambiguous polysemy words, respec-                      ask for clarification "Where do you start from?"
+tively. We extract these terms along with their                • When refers to the absence of temporal elements,
+various meanings from the datasets and then create               such as specific dates. Given a query "How many
+ambiguous queries, clarifying questions and un-                  goals did Argentina score in the World Cup?",
+ambiguous queries using GPT-4. As for Semantic                   the response may vary due to missing the spe-
+   1
+     We omit the syntactic and pragmatic ambiguities as they     cific World Cup year. This ambiguity requires
+are not commonly used in information retrieval.                  LLMs to seek further details by asking clarifying
+  questions "Which year of the World Cup are you              Category         Sources
+                                                                                                        Distribution
+                                                                                             Ambig.   Non-Ambig.           ALL
+  referring to?"
+                                                             Unfamiliar       ALCUNA          684         547             1231
+• What refers to the remaining types. For ex-               Contradiction     AmbiTask        600         600             1200
+                                                              Lexical       AmbER,AmbiPun     815         921             1,736
+  ample, when a query is "Who played Thanos                  Semantic         AmbiCoref        400        400              800
+  in Guardians of the Galaxy?", the response                   What         AmbigQA, Dolly    1255
+                                                              Whom          AmbigQA, Dolly    762
+                                                                                                      3884 in total    7167 in total
+  may vary due to missing the specific version of              When         AmbigQA, Dolly    779
+                                                               Where        AmbigQA, Dolly    487
+  Guardians of the Galaxy. Clarifying question
+  should arise: "Which version are you referring to:     Table 2: CLAMBER Dataset Sources and Statistics.
+  TV series, 2014 film, or Telltale Series?"
+
+Data Collection. We construct four categories of
+ambiguities by recognizing the specific missing el-     preserving the same number of data samples per
+ements in well-structured queries. To accomplish        category. There are 200 positive and negative ex-
+this, we resort to the the AmbigQA dataset (Min         amples for each category. Particularly, the negative
+et al., 2020) and the Dolly-16K dataset (Conover        examples of each category within Aleatoric Output
+et al., 2023)) containing factual and instrumental      is 800 since its uniform nature.
+user search intent (Alexander et al., 2022). As for     Usage of LLMs. As our set of LLMs, we evalu-
+AmbigQA dataset, queries with multiple answers          ate Llama2-13B-Chat (i.e., Llama2-13B), Llama2-
+are deemed ambiguous, while those with a single         13B-Instruct (i.e., Llama2-13B-I), Vicuna-13B,
+answer are considered unambiguous. Ambiguous            Llama2-70B-Chat (i.e., Llama2-70B), and the GPT-
+queries are manually categorized into the four cat-     3.5-Turbo-16k (i.e., ChatGPT). These LLMs are
+egories. In the Dolly dataset, each query is auto-      widely used in recent studies of information search
+matically labeled as ambiguous or unambiguous           (Deng et al., 2023b; Zhang and Choi, 2023).
+by GPT-4, then manually verified and classified         Prompting Schemes. Following (Deng et al.,
+into the four categories if marked as ambiguous.        2023b), we devise four prompting schemes for eval-
+Due to the difficulty in crafting category-specific     uation: 1) Zero-shot w/o CoT, where the LLM is
+unambiguous queries, all four categories share the      evaluated directly on the test dataset, 2) Zero-shot
+same set of unambiguous queries.                        w/ CoT (Wei et al., 2022), where the LLM starts
+3.4    Validation and Revision                          with ambiguity analysis before making predictions,
+                                                        3) Few-shot w/o CoT (Dong et al., 2022), where
+To ensure the quality of our dataset, we engage         the LLM is evaluated by providing examples, 4)
+five linguistic experts for validation and revision.    Few-shot w/ CoT, where the LLM is evaluated by
+Initially, each data is validated by four experts,      providing examples with their corresponding ambi-
+and subsequently consolidated by the remaining          guity analysis. In the few-shot setting, we provide
+expert. The validation process includes verifying       two randomly selected examples, one is ambigu-
+the accuracy of ambiguity labels and assessing the      ous and the other is unambiguous. Importantly, we
+effectiveness of clarifying questions. If there are     carefully selected 3 prompts and test all LLMs on
+discrepancies between the four experts’ validation,     these prompts. We present the average performance
+the final expert examines their feedback and imple-     across various prompts to guarantee the statistical
+ments necessary data revisions. For further details     significance of the experimental findings. Details
+on the validation and revision procedures, please       on prompts are presented in Appendix A.
+refer to Appendix F. Finally, our data statistics are
+presented in Table 2.
+                                                        5     Task 1: Identifying Ambiguity
+4     Experimental Design
+We consider two tasks to evaluate off-the-shelf         This section aims to evaluate the ability of LLMs
+LLMs, including identifying ambiguities (cf. Sec-       to identify different categories of ambiguous user
+tion 5) and asking clarifying questions (cf. Section    queries, focusing on both the overall performance
+6). Each task utilizes different evaluation metrics,    (cf. Section 5.1) and performance specific to each
+outlined in the corresponding sections.                 category (cf. Section 5.2). Following (Hu et al.,
+Test Dataset. Our experiments are conducted on          2023; Deng et al., 2023b), we adopt the Accuracy
+sub-sample of 3600 instances randomly selected,         and F1 score as metrics.
+                 Zero-shot w/o CoT   Zero-shot w/ CoT    Few-shot w/o CoT         Few-shot w/ CoT          Average Performance
+      Methods
+                 Acc.       F1       Acc.      F1        Acc.          F1         Acc.          F1          Acc.              F1
+   Vicuna-13B    50.62     39.97     54.75    51.13      50.25        36.62       53.50       52.23        52.28             44.99
+  Llama2-13B-I   45.66     43.64     45.57    45.29      47.13        47.04       45.97       42.26        46.08             44.56
+   Llama2-13B    55.47     50.99     50.97    36.80      46.56        35.08       52.19       45.15        51.30             42.01
+   Llama2-70B    50.37     34.27     53.06    40.29      46.66        39.64       54.93       45.42        51.26             39.91
+    ChatGPT      54.34     53.45     57.38    56.91      51.66        49.28       53.60       51.42        54.25             52.77
+
+Table 3: Overall ambiguity identification evaluation of LLMs with varying prompting schemes. ChatGPT emerges as
+the superior model, yet there is still considerable room for improvement, even enhanced by the CoT and Few-Shot.
+
+
+5.1    Overall Evaluation                                    Metric        Model      Zero-shot w/o CoT   Zero-shot w/ CoT    Difference
+                                                                        Vicuna-13B          21.47               19.81           -1.66
+                                                                       Llama2-13B-I         22.43               19.91           -2.52
+As shown in Table 3, our findings suggest that cur-          ECE ↓      Llama2-13B          28.48               45.14          +16.66
+rent LLMs, despite leveraging CoT and few-shot                          Llama2-70B          48.21               47.24           -0.97
+                                                                         ChatGPT            29.74               16.30          -13.44
+prompting, face challenges in identifying ambigui-                      Vicuna-13B          49.73               51.37           +1.64
+                                                                       Llama2-13B-I         56.18               56.40           +0.22
+ties. Our detailed observations are as follows.              ROC ↑      Llama2-13B          57.00               48.22           -8.78
+                                                                        Llama2-70B          50.74               56.33           +5.59
+                                                                         ChatGPT            54.35               57.35           +3.00
+
+
+                                                           Table 4: Overconfidence evaluation on LLMs with
+                                                           and without CoT. Significant differences are marked
+                                                           in grey .
+
+                                                             Metric        Model      Zero-shot w/o CoT   Few-shot w/o CoT    Difference
+                                                                        Vicuna-13B          21.47              25.66            +4.19
+                                                                       Llama2-13B-I         22.43              20.99            -1.44
+                                                             ECE ↓      Llama2-13B          28.48              44.10           +15.62
+                                                                        Llama2-70B          48.21              31.68           -16.53
+                                                                         ChatGPT            29.74              13.40           -16.34
+                                                                        Vicuna-13B          49.73              48.70            -1.03
+Figure 1: Investigation on the identification accuracy                 Llama2-13B-I         56.18              56.56            +0.38
+when handling ambiguous (i.e, Acc@1) versus unam-            ROC ↑      Llama2-13B          57.00              50.55            -6.45
+biguous queries (i.e, Acc@0). We report the results                     Llama2-70B          50.74              43.84             -6.9
+                                                                         ChatGPT            54.35              51.57            -2.78
+under Zero-shot w/o CoT setting. Small-scale LLMs
+tend to classify most queries as ambiguous.                Table 5: Overconfidence evaluation on LLMs with and
+                                                           without few-shot prompting. Significant differences are
+In general, current LLMs are struggle to iden-             marked in grey .
+tify ambiguities. We observe that small-scale
+LLMs are unable to differentiate between ambigu-
+                                                           fectiveness is not guaranteed. They may lead
+ous and unambiguous queries. In particular, they
+                                                           to the overconfidence issue in small-scale LLMs,
+not only show significantly low performance but
+                                                           leading to negative outcomes. As shown in Table
+also demonstrate a substantial discrepancy between
+                                                           3, the effectiveness of CoT and few-shot prompt-
+accuracy and F1 score. For instance, the accuracy
+                                                           ing doesn’t consistently improve. To delve deeper,
+of Llama2-70B with Zero-shot w/o CoT is 50.37,
+                                                           we follow Cole et al. (2023) and gauged LLMs’
+while its F1 score is notably lower at 34.27. This
+                                                           prediction confidence 2 using Expected Calibration
+implies a notable variation in their performance
+                                                           Error (ECE) and Area Under the Receiver Operat-
+when handling ambiguous versus unambiguous
+                                                           ing Characteristic curve (AUROC). ECE assesses
+queries. As depicted in Figure 1, these models
+                                                           the alignment of confidence scores with actual ac-
+tend to classify most queries as ambiguous, even
+                                                           curacy, while AUROC measures the ability of con-
+those that are actually unambiguous. Compared
+                                                           fidence scores to distinguish between correct and
+to small-scale LLMs, ChatGPT stands out as the
+                                                           incorrect predictions. Our in-depth analysis, pre-
+superior model. However, it only reaches an accu-
+                                                           sented in Table 4 and Table 5, reveals that em-
+racy of 54.25% and an F1 score of 52.77%. There
+                                                           ploying CoT and few-shot prompting leads small-
+remains large room for improvement.
+CoT and few-shot prompting hold promise for                      2
+                                                                Self-consistency confidence with 4 candidate answers are
+enhancing ambiguity identification, but their ef-           used to obtain the LLM’s uncertainty (Xiong et al., 2023).
+Figure 2: Performance of ChatGPT enhanced with multiple examples. We ensure a variety of categories in the
+examples and maintain an equal balance of ambiguous and unambiguous instances.
+
+                   Epistemic Misalignment            Linguistic Ambiguity                                Aleatoric Output
+      Methods    contradiction    unfamiliar        lexical        semantic          what           whom              when             where
+                 Acc.     F1     Acc.     F1     Acc.     F1     Acc.     F1     Acc.     F1     Acc.      F1     Acc.       F1     Acc.     F1
+   Vicuna-13B    51.75   37.11   59.50   59.33   72.00   71.52   49.75   33.22   44.81   41.74   46.95    44.57   44.86     41.82   42.96   39.24
+  Llama2-13B-I   49.50   33.11   46.75   46.47   52.50   49.20   48.50   41.31   30.24   30.14   31.37    31.32   27.97     27.72   29.57   29.44
+   Llama2-13B    50.25   33.89   54.25   46.65   56.75   49.11   50.00   33.33   34.73   34.64   36.86    36.85   34.27     34.16   34.17   34.05
+   Llama2-70B    63.25   58.83   50.75   35.81   55.25   44.04   50.00   33.33   31.04   30.77   31.37    31.07   31.37     31.07   31.47   31.16
+    ChatGPT      38.00   28.17   60.00   59.67   58.75   58.06   50.75   49.32   65.40   50.54   68.77    57.48   65.00     45.66   63.10   45.24
+
+
+Table 6: The fine-grained ambiguity identification evaluation results under Few-shot w/o CoT setting. ChatGPT
+demonstrates excellent performance across all categories of Aleatoric Output, but it does not effectively address the
+semantic and contradiction categories.
+
+
+scale LLMs (e.g., Llama2-13B) to exhibit over-                           LLMs on each category. Here, we consider the
+confidence and less accurate ambiguity prediction,                       Few-shot w/ CoT setting and leave more details in
+contrary to our intended outcome.                                        Appendix E. Our observations are as follows.
+Even bolstered by numerous shots and CoT sup-                            ChatGPT displays superior performance on
+port, LLMs still struggles to accurately identify                        Aleatoric Output compared to small-scale
+query ambiguity. Figure 2 illustrates the perfor-                        LLMs. Across all categories of Aleatoric Out-
+mance of ChatGPT when enhanced with multiple                             put, ChatGPT attains an average increase of 5% in
+shots. The results indicate that the improvement                         accuracy and 8% in F1 score. This superior perfor-
+seen with few-shot prompting is minimal and often                        mance may stem from its vast world knowledge,
+inferior to the zero-shot counterpart. A consider-                       enabling it to infer the absence of task-oriented
+able number of shots (e.g., 12 shots) are required                       elements in user queries. Additional results re-
+for few-shot prompting to outperform the zero-shot                       veal ChatGPT performs exceptionally well in the
+method. However, this also entails longer input                          "whom", while struggles more with the "when" and
+lengths, risking exceeding the length limit for most                     "where" categories. This suggests room for future
+small-scale LLMs in our study. Providing exam-                           improvement in handling queries lacking temporal
+ples alone to ChatGPT could result in the learning                       and spatial elements.
+of superficial patterns that contradict its inherent                     The semantic category presents a significant
+knowledge, thereby diminishing its performance.                          challenge for all LLMs. As shown in Table 6, all
+Furthermore, ChatGPT’s difficulty in fully grasp-                        LLMs exhibit subpar performance when dealing
+ing correct reasoning with limited examples could                        with ambiguous queries requiring semantic compre-
+be another contributing factor.                                          hension. This indicates that current LLMs struggle
+                                                                         to use contextual cues to clarify pronouns, high-
+5.2     Fine-Grained Evaluation                                          lighting their inadequacy in robustly understanding
+This section analyzes the challenges LLMs faced                          context and inferring underlying ambiguity.
+in comprehending different ambiguities, offering                         ChatGPT lags behind other small-scale LLMs
+insights to guide future enhancements. Table 6                           on the contradiction category. As shown in Table
+details the ambiguity identification performance of                      6, ChatGPT only achieves limited accuracy (i.e.,
+                    Zero-shot w/o CoT      Zero-shot w/ CoT        Few-shot w/o CoT   Few-shot w/ CoT   Average Performance
+        Methods
+                     BS         Help.       BS        Help.          BS     Help.       BS    Help.      BS       Help.
+     Vicuna-13B     21.63       36.64      24.42      40.97        20.45    33.97     17.65   31.87     21.04     35.86
+    Llama2-13B-I    19.65       33.07      14.29      26.34         8.01    14.16      7.96   17.36     12.48     22.73
+     Llama2-13B     21.46       35.38      23.46      40.40        10.79    19.05     23.68   40.75     19.85     33.89
+     Llama2-70B     22.05       37.35      19.17      32.72        19.71    32.80     22.49   39.99     20.86     35.71
+      ChatGPT       27.47       46.45      30.22      50.47        31.16    51.58     33.48   53.29     31.33     50.45
+
+Table 7: Overall ambiguity clarification evaluation of LLMs with varying prompting schemes. ChatGPT emerges as
+the superior model to other open-sourced LLMs. We report BertScore (i.e., BS) and Help.
+
+
+38) and a low F1 score (i.e., 28.17). We observe                      6.2   Fine-Grained Evaluation
+that 81.97% of errors are false negatives, indicat-
+ing that ChatGPT often misidentifies queries with                    We provide an in-depth error analysis to reveal the
+self-contradictions as unambiguous. This limita-                     inadequacies in asking clarifying questions. Since
+tion could be attributed to its training approach (i.e.,             ChatGPT + Few-shot w/ CoT stands as the most
+SFT and RLHF (Ouyang et al., 2022)), which com-                      effective model, our analysis focus on it. Specif-
+pels ChatGPT to generate responses for all user                      ically, we randomly sampled 50 error clarifying
+queries, irrespective of potential contradictions.                   questions (whose Help scores are 0) from each cat-
+                                                                     egory, 400 in total. Inspired by (Deng et al., 2023b),
+6       Task 2: Asking Clarifying Questions                          we categorize these failure cases into four groups:
+
+This section investigates the ability of LLMs to                      • Wrong Aspect. It refers the case when the gen-
+produce effective clarifying questions for resolving                    erated question is aimed to clarify an incorrect
+ambiguities. Overall, current LLMs fail to ask high-                    aspect of the user’s query.
+quality clarifying questions, due to the inability of                 • Under-specified. The generated question is too
+assessing their knowledge boundaries. Detailed                          unspecific, making it difficult for the user to pro-
+observations are outlined below.                                        vide useful feedback.
+6.1      Overall Evaluation                                           • Over-specified. The generated question is an
+                                                                        overly detailed one when the needed information
+We utilize BertScore for automated assessment, as
+                                                                        is already evident in the user’s original query.
+lexical matching metrics can not adequately cap-
+ture clarification abilities (Guo et al., 2021). Specif-              • Generation error. ChatGPT doesn’t generate the
+ically, we compute the semantic similarity using                        output as the required format, such as no clarifi-
+BERT between the generated question and anno-                           cation question.
+tated clarifying questions. Additionally, we also
+conduct human evaluation3 to score whether the                           As illustrated in Figure 3, inability of know-
+generated question is helpful in resolving query                      ing their knowledge gap is the main reason for
+ambiguity (denoted as Help.4 )                                        the inadequacies in asking effective clarifying
+ChatGPT demonstrating its superior capabili-                          questions. Specifically, when dealing with the
+ties in generating clarifying questions compared                      Epistemic Misalignment and Linguistic Ambiguity,
+to small-scale LLMs. Table 7 showcases the ef-                        most errors are concentrated on Under-specified
+fectiveness of clarifying questions produced by dif-                  and Over-specified, while Wrong Aspect is evident
+ferent LLMs. It is evident that ChatGPT demon-                        in Aleatoric Output, with an average of 52.25% er-
+strates an average performance improvement of                         ror rate. This indicates that ChatGPT can not fully
+10.29 compared to Vicuna-13B, the top-performing                      comprehend semantic nuances and lack of conflict
+small-scale LLM. This indicates that ChatGPT ex-                      resolution despite their large parameters. More-
+cels in generating natural and useful clarifying                      over, ChatGPT use their inherent knowledge inac-
+questions (i.e., what to ask).                                        curately to clarify the missing elements of ambigu-
+    3                                                                 ous queries. These findings imply that there exists
+     Refer to Appendix D for details on human evaluation.
+    4
+     It entails assigning a binary score (0 or 1) to each gener-      a gap between inherent knowledge within LLMs
+ated question.                                                        and the ambiguities contained in user queries.
+                                                         prompting LLMs (Amayuelas et al., 2023; Deng
+                                                         et al., 2023b), the evaluation results are likely to be
+                                                         sensitive to the prompts. While we employ three
+                                                         different prompts and report the average results,
+                                                         it is challenging to assert that they are the most
+                                                         suitable ones for our specific issue. Indeed, the
+                                                         sensitivity of prompts and their optimality present
+                                                         significant research areas within LLMs, warranting
+                                                         further exploration in future studies.
+                                                         Limited LLMs. We only use 5 Large Language
+                                                         Models (LLMs) in our CLAMBER benchmark due
+                                                         to computational constraints. If given additional
+                                                         resources and an improved experimental environ-
+                                                         ment, it would be advantageous to evaluate the
+Figure 3: The statistics of error analysis. ChatGPT is   performance of other LLMs, such as PaLM540B,
+unable to recognize their knowledge gap for the inade-   etc., in our CLAMBER benchmark.
+quacies in asking the effective clarifying questions.
+
+                                                         References
+7   Conclusion
+                                                         Daria Alexander, Wojciech Kusa, and Arjen P. de Vries.
+In this work, we introduce CLAMBER, a bench-               2022. Orcas-i: Queries annotated with intent using
+mark for evaluating LLMs in identifying and clar-          weak supervision. In Proceedings of the 45th Inter-
+                                                           national ACM SIGIR Conference on Research and
+ifying ambiguous user queries through a well-              Development in Information Retrieval, SIGIR ’22,
+organized taxonomy. CLAMBER comprises ∼                    page 3057–3066, New York, NY, USA. Association
+12K high-quality data covering a wide range of             for Computing Machinery.
+ambiguity categories. With CLAMBER, we assess
+                                                         Mohammad Aliannejadi, Julia Kiseleva, Aleksandr
+strengths, weaknesses, and potential risks of vari-       Chuklin, Jeffrey Dalton, and Mikhail Burtsev. 2021.
+ous off-the-shelf LLMs. Our results indicate that         Building and evaluating open-domain dialogue cor-
+current LLMs still face difficulties in achieving op-     pora with clarifying questions. arXiv preprint
+timal performance in ambiguity identification and         arXiv:2109.05794.
+clarification, limiting their practical utility in ad-   Alfonso Amayuelas, Liangming Pan, Wenhu Chen, and
+vanced information search applications. In this pa-        William Wang. 2023. Knowledge of knowledge: Ex-
+per, CLAMBER acts as a foundation for enhancing            ploring known-unknowns uncertainty with large lan-
+the proactive capabilities of LLMs in addressing           guage models.
+ambiguity. Moving forward, we plan to integrate          Daniel M Berry and Erik Kamsties. 2004. Ambiguity
+more challenging and comprehensive datasets into           in requirements specification. In Perspectives on
+our CLAMBER based on our taxonomy.                         software requirements, pages 7–44. Springer.
+
+                                                         Anthony Chen, Pallavi Gudipati, Shayne Longpre, Xiao
+Acknowledgements                                           Ling, and Sameer Singh. 2021. Evaluating entity
+                                                           disambiguation and the role of popularity in retrieval-
+This work was supported in part by the Na-                 based NLP. In Proceedings of the 59th Annual Meet-
+tional Natural Science Foundation of China (No.            ing of the Association for Computational Linguistics
+62272330 and No. 62206191); in part by the Natu-           and the 11th International Joint Conference on Natu-
+ral Science Foundation of Sichuan (No. 2023NS-             ral Language Processing (Volume 1: Long Papers),
+                                                           pages 4472–4485, Online. Association for Computa-
+FSC0473), and in part by the Fundamental Re-
+                                                           tional Linguistics.
+search Funds for the Central Universities (No.
+2023SCU12089 and No. YJ202219).                          Charles LA Clarke, Nick Craswell, and Ian Soboroff.
+                                                           2009. Overview of the trec 2009 web track. In Trec,
+Limitations                                                volume 9, pages 20–29.
+
+                                                         Anni Coden, Daniel Gruhl, Neal Lewis, and Pablo N
+In this section, we discuss the limitations of this
+                                                           Mendes. 2015. Did you mean a or b? supporting clar-
+work from the following perspectives:                      ification dialog for entity disambiguation. In Sumpre-
+Sensitivity of Prompts. Similar to other studies on        hswi@ eswc.
+Jeremy Cole, Michael Zhang, Daniel Gillick, Julian         Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar.
+   Eisenschlos, Bhuwan Dhingra, and Jacob Eisenstein.        2022. Clam: Selective clarification for ambiguous
+   2023. Selectively answering ambiguous questions.          questions with generative language models. arXiv
+   In Proceedings of the 2023 Conference on Empiri-          preprint arXiv:2212.07769.
+   cal Methods in Natural Language Processing, pages
+   530–543, Singapore. Association for Computational       Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. 2023.
+   Linguistics.                                              Clam: Selective clarification for ambiguous ques-
+                                                             tions with generative language models.
+Mike Conover, Matt Hayes, Ankit Mathur, Jianwei Xie,
+  Jun Wan, Sam Shah, Ali Ghodsi, Patrick Wendell,          Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-
+  Matei Zaharia, and Reynold Xin. 2023. Free dolly:          field, Michael Collins, Ankur Parikh, Chris Alberti,
+  Introducing the world’s first truly open instruction-      Danielle Epstein, Illia Polosukhin, Jacob Devlin, Ken-
+  tuned llm.                                                 ton Lee, et al. 2019. Natural questions: a benchmark
+                                                             for question answering research. Transactions of the
+Yang Deng, Wenqiang Lei, Minlie Huang, and Tat-Seng          Association for Computational Linguistics, 7:453–
+  Chua. 2023a. Rethinking conversational agents in           466.
+  the era of llms: Proactivity, non-collaborativity, and
+  beyond. In Proceedings of the Annual International       Dongryeol Lee, Segwang Kim, Minwoo Lee, Hwan-
+  ACM SIGIR Conference on Research and Develop-              hee Lee, Joonsuk Park, Sang-Woo Lee, and Kyomin
+  ment in Information Retrieval in the Asia Pacific Re-      Jung. 2023. Asking clarification questions to handle
+  gion, pages 298–301.                                       ambiguity in open-domain qa.
+Yang Deng, Lizi Liao, Liang Chen, Hongru Wang,
+                                                           Lizi Liao, Grace Hui Yang, and Chirag Shah. 2023.
+  Wenqiang Lei, and Tat-Seng Chua. 2023b. Prompt-
+                                                             Proactive conversational agents in the post-chatgpt
+  ing and evaluating large language models for proac-
+                                                             world. In Proceedings of the 46th International ACM
+  tive dialogues: Clarification, target-guided, and non-
+                                                             SIGIR Conference on Research and Development in
+  collaboration. In Findings of the Association for
+                                                             Information Retrieval, pages 3452–3455.
+  Computational Linguistics: EMNLP 2023, pages
+  10602–10621, Singapore. Association for Compu-           Sewon Min, Julian Michael, Hannaneh Hajishirzi, and
+  tational Linguistics.                                      Luke Zettlemoyer. 2020. AmbigQA: Answering am-
+Qingxiu Dong, Lei Li, Damai Dai, Ce Zheng, Zhiy-             biguous open-domain questions. In Proceedings of
+  ong Wu, Baobao Chang, Xu Sun, Jingjing Xu, and             the 2020 Conference on Empirical Methods in Nat-
+  Zhifang Sui. 2022. A survey for in-context learning.       ural Language Processing (EMNLP), pages 5783–
+  arXiv preprint arXiv:2301.00234.                           5797, Online. Association for Computational Lin-
+                                                             guistics.
+Jonathan Ginzburg. 1996. Interrogatives: Questions,
+  facts and dialogue. The handbook of contemporary         Anirudh Mittal, Yufei Tian, and Nanyun Peng. 2022.
+  semantic theory, 5(18):359–423.                            Ambipun: Generating puns with ambiguous context.
+                                                             Association for Computational Linguistics (ACL).
+Meiqi Guo, Mingda Zhang, Siva Reddy, and Malihe
+ Alikhani. 2021. Abg-coqa: Clarifying ambiguity in         OpenAI. 2022. Introducing chatgpt. https://openai.
+ conversational question answering. In 3rd Confer-           com/blog/chatgpt.
+ ence on Automated Knowledge Base Construction.
+                                                           Miguel Ortega-Martín, Óscar García-Sierra, Alfonso
+Xuming Hu, Junzhe Chen, Xiaochuan Li, Yufei Guo,             Ardoiz, Jorge Álvarez, Juan Carlos Armenteros, and
+  Lijie Wen, Philip S. Yu, and Zhijiang Guo. 2023. Do        Adrián Alonso. 2023. Linguistic ambiguity analysis
+  large language models know about facts?                    in chatgpt. arXiv preprint arXiv:2302.06426.
+Chen Huang, Peixin Qin, Wenqiang Lei, and Jiancheng
+  Lv. 2023. Reduce human labor on evaluating con-          Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida,
+  versational information retrieval system: A human-         Carroll Wainwright, Pamela Mishkin, Chong Zhang,
+  machine collaboration approach. In Proceedings of          Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+  the 2023 Conference on Empirical Methods in Natu-          2022. Training language models to follow instruc-
+  ral Language Processing, pages 10876–10891, Sin-           tions with human feedback. Advances in Neural
+  gapore. Association for Computational Linguistics.         Information Processing Systems, 35:27730–27744.
+
+Ehsan Kamalloo, Aref Jafari, Xinyu Zhang, Nandan           Haojie Pan, Zepeng Zhai, Hao Yuan, Yaojia Lv, Ruiji
+  Thakur, and Jimmy Lin. 2023. Hagrid: A human-              Fu, Ming Liu, Zhongyuan Wang, and Bing Qin. 2023.
+  llm collaborative dataset for generative information-      Kwaiagents: Generalized information-seeking agent
+  seeking with attribution.                                  system with large language models. arXiv preprint
+                                                             arXiv:2312.04889.
+Kimiya Keyvan and Jimmy Xiangji Huang. 2022. How
+  to approach ambiguous queries in conversational          Alain Pinsonneault and Kenneth L Kraemer. 1989. The
+  search: A survey of techniques, approaches, tools,         impact of technological support on groups: An as-
+  and challenges. ACM Computing Surveys, 55(6):1–            sessment of the empirical research. Decision Support
+  40.                                                        Systems, 5(2):197–216.
+Hossein A. Rahmani, Xi Wang, Yue Feng, Qiang Zhang,       Michael J. Q. Zhang and Eunsol Choi. 2023. Clarify
+  Emine Yilmaz, and Aldo Lipani. 2023. A survey on          when necessary: Resolving ambiguity through inter-
+  asking clarification questions datasets in conversa-      action with lms.
+  tional systems. In Proceedings of the 61st Annual
+  Meeting of the Association for Computational Lin-       A       Prompt Design
+  guistics (Volume 1: Long Papers), pages 2698–2716,
+  Toronto, Canada. Association for Computational Lin-     Table 13 presents our four prompting schemes used
+  guistics.                                               for evaluation. In the case of few-shot prompt-
+Ruihua Song, Zhenxiao Luo, Ji-Rong Wen, Yong Yu,          ing, we randomly choose two examples from our
+  and Hsiao-Wuen Hon. 2007. Identifying ambiguous         CLAMBER benchmark. The demonstration of
+  queries in web search. In Proceedings of the 16th       chain-of-thoughts is written by human annotators,
+  international conference on World Wide Web, pages       which represents their own ambiguity analysis.
+  1169–1170.
+
+Alex Tamkin, Kunal Handa, Avash Shrestha, and Noah        B       Implementation Details
+  Goodman. 2022. Task ambiguity in humans and
+  language models.
+                                                          The implementation of our LLMs is based on Py-
+                                                          torch and Transformers toolkit. In particular, for
+Jan Trienes and Krisztian Balog. 2019. Identifying        Llama2-13B-Chat5 and Llama2-70B-Chat6 , we
+  unclear questions in community question answering       adopt the official version in Huggingface. For
+  websites. In Advances in Information Retrieval: 41st
+  European Conference on IR Research, ECIR 2019,          Llama2-13B-instruct, We adopt the version7 that
+  Cologne, Germany, April 14–18, 2019, Proceedings,       is fine-tuned on multiple instruction-following
+  Part I 41, pages 276–289. Springer.                     datasets. For Vicuna-13B, we choose the Vicuna-
+                                                          13B-delta-v1.5 version8 . In particular, we set the
+Yike Wang, Shangbin Feng, Heng Wang, Weijia
+  Shi, Vidhisha Balachandran, Tianxing He, and Yu-        temperature to 0 for ChatGPT and 0.5 for other
+  lia Tsvetkov. 2023. Resolving knowledge con-            open-sourced LLMs. In addition, we set the maxi-
+  flicts in large language models. arXiv preprint         mum number of new tokens to 128. During infer-
+  arXiv:2310.00935.                                       ence, the decoding strategy of open-sourced LLMs
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten          is top-p sampling with a top-p of 0.8. For the F1
+   Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou,         score, we use the weighted F1 score as our metric,
+   et al. 2022. Chain-of-thought prompting elicits rea-   given the balanced nature of our test set. Our aim is
+   soning in large language models. Advances in Neural    to ensure the model’s accuracy without ambiguity,
+   Information Processing Systems, 35:24824–24837.
+                                                          minimizing the need for excessive clarification. All
+Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie         of our experiments are conducted on two NVIDIA
+  Fu, Junxian He, and Bryan Hooi. 2023. Can llms          A100 GPUs.
+  express their uncertainty? an empirical evaluation
+  of confidence elicitation in llms. arXiv preprint       C       Details of Data Collection
+  arXiv:2306.13063.
+                                                          In this section, we describe the detailed data col-
+Jingjing Xu, Yuechen Wang, Duyu Tang, Nan Duan,
+   Pengcheng Yang, Qi Zeng, Ming Zhou, and Xu Sun.        lection process of each category, including the data
+   2019. Asking clarification questions in knowledge-     processing and the prompts used by GPT-4.
+   based question answering. In Proceedings of the
+   2019 conference on empirical methods in natural        C.1      ALCUNA Dataset
+   language processing and the 9th international joint    The ALCUNA dataset (Yin et al., 2023) creates
+   conference on natural language processing (EMNLP-
+   IJCNLP), pages 1618–1629.                              new entities by altering existing entity attributes
+                                                          and relationships, resulting in artificial entities that
+Xunjian Yin, Baizhou Huang, and Xiaojun Wan. 2023.        are distinct from real-world entities. It contains nu-
+  Alcuna: Large language models meet new knowledge.
+                                                          merous question-answer pairs designed as a bench-
+  arXiv preprint arXiv:2310.14820.
+                                                          mark to evaluate the capabilities of LLMs, espe-
+Yuewei Yuan, Chaitanya Malaviya, and Mark Yatskar.        cially in handling new knowledge. Specifically, we
+  2023. Ambicoref: Evaluating human and model             classify questions containing new entities in this
+  sensitivity to ambiguous coreference.
+                                                              5
+                                                                 https://huggingface.co/meta-llama/Llama-2-13b-chat-hf
+Hamed Zamani, Susan Dumais, Nick Craswell, Paul               6
+                                                                 https://huggingface.co/meta-llama/Llama-2-70b-chat-hf
+  Bennett, and Gord Lueck. 2020. Generating clarify-           7
+                                                                 https://huggingface.co/Expert68/Llama2_13b_instructed_
+  ing questions for information retrieval. In Proceed-        version2
+                                                               8
+  ings of the web conference 2020, pages 418–428.                https://huggingface.co/lmsys/vicuna-13b-v1.5
+dataset as ambiguous queries, and those involving        notated with its various meanings. We randomly
+existing entities as unambiguous queries. Further-       select 500 instances as our data resource, following
+more, we randomly select 1500 ambiguous queries          the same data collection process as the AmbER
+and employ GPT-4 to generate a clarifying ques-          dataset. Please refer to Table 18 for the prompts
+tion for each one, focusing on the ambiguity of the      and data examples.
+new entity. We provide the data examples and the
+prompt of generating clarifying question in Table        C.5    AmbiCoref Dataset
+14.                                                      The AmbiCoref dataset (Yuan et al., 2023) consists
+                                                         of minimal pairs featuring ambiguous and unam-
+C.2   AmbiTask Dataset
+                                                         biguous referents. This dataset extends the scope
+The AmbiTask Dataset (Tamkin et al., 2022) con-          of psycholinguistic research on how individuals
+structs multiple classification tasks, each accompa-     perceive ambiguity in specific verb structures and
+nied by an instruction and two provided examples.        their arguments. We incorporate the ambiguous
+The two examples can lead to multiple explana-           and unambiguous referent of this dataset as corre-
+tions of the instruction, resulting in contradictions.   sponding queries into our benchmark. For those
+In particular, we select three classification tasks:     ambiguous queries, we use a template to generate
+"propn negation", "religious pronoun" and "sub-          a clarifying question. The templates and examples
+ject location", totaling 1200 instances. we rephrase     are in Table 15.
+the ambiguous tasks using rule-based templates to
+enhance their clarity. These rephrased ambiguous         C.6    AmbigQA Dataset
+tasks serve as our ambiguous queries. We gener-          The AmbigQA dataset (Min et al., 2020) consists of
+ate clarifying questions based on the rule-based         ambiguous factoid questions sourced from Natural
+templates for these ambiguous queries. Addition-         Questions (Kwiatkowski et al., 2019). We classify
+ally, we create unambiguous queries by manually          the questions with multiple answers as ambiguous
+modifying the instruction and make sure the two ex-      while those those with a single answer are consid-
+amples can lead to just one interpretation. We also      ered unambiguous. Furthermore, we rely on the
+rephrase these unambiguous queries to make them          clarifying question annotations in (Lee et al., 2023),
+clear. The rule-based templates and data examples        we use the key word in their annotations and fur-
+are provided in Table 16.                                ther categorize each ambiguous question manually
+C.3   AmbER Dataset                                      into four categories. We adopt their annotated clar-
+                                                         ifying questions directly. The data examples are
+The AmbER dataset (Chen et al., 2021) includes           presented in Table 19.
+instances of entity ambiguity, where a single name
+can refer to multiple entities. Each ambiguous en-       C.7    Dolly Dataset
+tity is annotated with its different meanings, and
+                                                         The Dolly dataset (Conover et al., 2023) is com-
+each meaning is associated with a factual ques-
+                                                         monly used for instructional fine-tuning purposes.
+tion. Specifically, we have chosen the top-500 most
+                                                         We specifically choose the instructions from the
+frequent entities in the non-human category from
+                                                         open-qa sub-category as they align with the task
+AmbER as our data source. We feed the ambigu-
+                                                         of information retrieval. Our approach involves
+ous entity and its questions related to each mean-
+                                                         instructing GPT-4 to differentiate between ambigu-
+ing into GPT-4, which then generates ambiguous
+                                                         ous and unambiguous queries, generating clarify-
+queries along with corresponding clarifying ques-
+                                                         ing questions for the ambiguous ones, and then clas-
+tions. By providing these generated ambiguous
+                                                         sifying them into our predefined categories. Please
+queries and corresponding clarifying questions, we
+                                                         refer to Table 20 for examples of the prompts and
+guide GPT-4 to produce a clear and unambiguous
+                                                         data.
+version. Further information about the prompts and
+data samples can be found in Table 17.                   D     Human Evaluation Details
+C.4   AmbiPun Dataset                                    To evaluate the effectiveness of clarifying questions
+The AmbiPun dataset (Mittal et al., 2022) com-           produced by LLMs, we engage 3 annotators to con-
+prises pun words that carry diverse meanings de-         duct a human evaluation. Each annotator is tasked
+pending on the context. Each pun words is an-            with evaluating each clarifying question alongside
+ Category        Query                                                                        Clarifying Question
+ UNFAMILIAR      Find the price of Samsung Chromecast.                                        Do you mean Google Chromecast or Samsung Chromebook?
+                 Output ’X’ if the sentence contains [category withhold] and ’Y’ otherwise.
+                 The critic is in the restaurant.>X.
+ CONTRADICTION                                                                                Is the category either human or indoor location?
+                 The butterfly is in the river.>Y.
+                 The boar is in the theatre.>?
+ LEXICAL         Tell me about the source of Nile.                                            Are you referring to the Nile river or the board game?
+ SEMANTIC        When did he land on the moon?                                                Who do you mean by "he" in the question?
+ WHO             Suggest me some gifts for my mother.                                         What are your mother’s interests, hobbies, or something she has been wanting?
+ WHEN            How many goals did Argentina score in the World Cup?                         Which World Cup are you referring to?
+ WHERE           Tell me how to reach New York.                                               Please tell me where your departure place is?
+ WHAT            Real name of gwen stacy in spiderman?                                        Which one are you referring to: the actress,or the character?
+
+
+Table 8: The example clarifying questions associated with ambiguous queries in Table 1. There are no discerning
+patterns according to the ambiguity category.
+
+
+the corresponding ambiguous query and its asso-                                       vising our dataset: Firstly, they need to verify if the
+ciated category of ambiguity. The annotators are                                      query is ambiguous and if the ambiguity label as-
+instructed to adhere to a specific protocol for evalu-                                signed is accurate. Secondly, if the query is deemed
+ating the quality of clarifying questions: Initially,                                 ambiguous, they should evaluate whether the clari-
+they are to verify if the clarifying questions gener-                                 fying question effectively resolves any ambiguity.
+ated by LLMs adhere to the correct format. Subse-                                     In instances of differing opinions during validation,
+quently, they are to determine whether the clarify-                                   discussions should be held to reach a consensus on
+ing questions effectively aid in resolving ambiguity                                  the final data outcome. If significant disagreement
+within user queries. In cases where a clarifying                                      persists even after discussion, the data will be dis-
+question is considered unhelpful, the annotator will                                  carded. We ensure the quality of our final data in
+categorize the failure into one of four error types                                   two ways. The two authors of this paper acted as
+as detailed in Deng et al. (2023b): wrong aspect,                                     meta-reviewers, selecting 50 questions from each
+under-specified, over-specified, or generation error.                                 of the eight categories across the three dimensions
+Overall, we assess totally 400 queries and mea-                                       in CLAMBER. The meta-reviewers assessed the
+sure the inter-annotator agreement. We achieve an                                     correctness of ambiguity labels and the effective-
+inter-annotator reliability of Krippen-dorff’s alpha                                  ness of clarifying questions. For the 400 data sam-
+of above 0.70 for all ambiguity categories in our                                     ples, the average label accuracy was 92.4% and the
+taxonomy. In Table 12, we provide examples of                                         average BLEU score was 73.2. Based on the results
+generated clarifying questions for each error cate-                                   from the meta-reviewers, the data in CLAMBER is
+gory.                                                                                 considered to be of high quality.
+
+E   More Task Results
+Table 9, 10, 11 present the results of all LLMs
+across different categories under three different set-
+tings: Zero-shot w/o CoT, Zero-shot w/ CoT, and
+Few-shot w/o CoT. We discover that while the exact
+values vary, the overall performance and analysis
+conclusions remain largely consistent with Sec 5.2.
+
+F   Human Validation and Revision
+We initially engage 8 language experts via online
+platforms. Subsequently, they are assigned the task
+of reviewing 50 data samples according to provided
+instructions as part of a qualifying assessment. The
+5 experts who successfully pass this assessment are
+then designated to validate and revise our dataset.
+For each query, they are given the respective ambi-
+guity label and a corresponding clarifying question
+if the query is ambiguous. They are required to
+adhere to a specific protocol for validating and re-
+                 Epistemic Misalignment            Linguistic Ambiguity                                Aleatoric Output
+  Methods      contradiction    unfamiliar        lexical        semantic          what           whom              when             where
+               Acc.     F1     Acc.     F1     Acc.     F1     Acc.     F1     Acc.     F1     Acc.      F1     Acc.       F1     Acc.     F1
+ Vicuna-13B    54.25   54.24   49.75   37.17   49.25   33.43   50.25   33.89   21.26   18.75   21.38    18.80   21.58     18.95   21.78   19.09
+Llama2-13B-I   46.00   32.67   44.75   43.76   45.50   44.49   49.75   48.55   37.82   37.43   34.67    33.86   33.17     32.10   34.67   33.86
+ Llama2-13B    64.25   59.01   50.75   44.42   47.50   41.92   48.25   33.38   44.01   43.25   42.26    41.22   45.55     45.01   44.66   44.00
+ Llama2-70B    50.50   34.43   50.00   33.33   50.75   34.98   50.00   33.33   20.96   17.97   20.68    17.74   20.88     17.88   20.88   17.88
+  ChatGPT      39.50   30.10   50.75   36.59   53.50   49.23   54.50   44.75   49.70   46.56   49.95    46.90   52.44     50.15   49.35   46.10
+
+
+    Table 9: The fine-grained ambiguity identification evaluation results under Zero-shot w/o CoT setting.
+
+
+
+
+                 Epistemic Misalignment            Linguistic Ambiguity                                Aleatoric Output
+  Methods      contradiction    unfamiliar        lexical        semantic          what           whom              when             where
+               Acc.     F1     Acc.     F1      Acc.    F1     Acc.     F1     Acc.     F1     Acc.      F1     Acc.       F1     Acc.     F1
+ Vicuna-13B    67.75   67.41   52.25   44.79   56.50   51.54   52.25   44.56   37.23   37.00   36.16    35.85   36.86     36.61   38.16   38.01
+Llama2-13B-I   39.50   28.32   48.50   48.37   48.50   48.03   53.75   53.65   38.32   36.52   37.86    35.96   37.96     36.08   38.26   36.46
+ Llama2-13B    51.25   36.46   50.50   34.43   49.50   33.11   50.00   33.33   24.45   22.86   24.18    22.61   24.08     22.53   24.88   23.17
+ Llama2-70B    67.50   63.66   50.75   36.20   53.00   39.67   50.00   33.33   22.16   19.59   21.78    19.27   21.78     19.27   21.88   19.35
+  ChatGPT      42.48   38.97   55.25   55.24   74.00   72.79   54.00   43.26   65.70   53.44   64.35    50.61   64.00     49.93   63.30   48.42
+
+
+    Table 10: The fine-grained ambiguity identification evaluation results under Zero-shot w/ CoT setting.
+
+
+
+
+                  Epistemic Misalignment           Linguistic Ambiguity                                Aleatoric Output
+  Methods      contradiction    unfamiliar        lexical        semantic          what           whom              when             where
+               Acc.     F1     Acc.     F1     Acc.     F1     Acc.     F1     Acc.     F1     Acc.      F1     Acc.       F1     Acc.     F1
+ Vicuna-13B    50.00   33.33   49.50   38.37   51.50   38.48   50.50   35.68   22.46   20.42   22.58    20.49   22.58     20.49   22.18   20.18
+Llama2-13B-I   48.50   32.66   56.00   55.51   55.75   55.08   47.75   46.95   39.22   36.54   39.46    36.87   39.06     39.06   39.46   36.87
+ Llama2-13B    14.75   12.85   52.50   41.10   48.25   33.38   50.00   33.33   24.45   22.99   24.58    23.06   24.78     23.22   24.88   23.30
+ Llama2-70B    50.00   33.33   51.00   42.73   45.75   41.90   50.00   33.77   27.45   27.44   29.87    29.80   26.97     26.97   26.47   26.47
+  ChatGPT      39.00   28.05   60.00   59.67   58.75   58.06   50.75   49.32   65.40   50.54   68.77    57.48   65.00     49.66   63.10   45.24
+
+
+   Table 11: The fine-grained ambiguity identification evaluation results under Few-shot w/o CoT setting.
+Wrong Aspect
+Question:
+What is the dry mass of a seed of Dicent canadensis?
+Ground Truth Clarifying Question:
+What is the intended meaning of "Dicent canadensis"? Is it a specific plant species or a misspelling of
+a different plant name?
+LLM-generated Clarifying Question:
+Are you asking for the average dry mass of a seed of Dicentra canadensis or the specific dry mass of a
+particular seed?
+Under-Specified
+Question:
+What is the impact of being thrown?
+Ground Truth Clarifying Question:
+Are you referring to the physical act of being propelled through the air or the emotional state of being
+confused?
+LLM-generated Clarifying Question:
+Being thrown in what context or situation?
+Over-Specified
+Question:
+Give me the steps to purchase a new pair of shoes.
+Ground Truth Clarifying Question:
+Where do you want to buy new shoes, online of offline?
+LLM-generated Clarifying Question:
+Which specific steps are you referring to?
+Generation Error
+Question:
+What are some common symptoms of someone who is moped?
+Ground Truth Clarifying Question:
+Are you referring to someone who is feeling apathetic, gloomy, or dazed, or are you referring to a
+motorbike that can be pedaled or driven by a low-powered gasoline engine?
+LLM-generated Clarifying Question:
+#
+
+                                  Table 12: Examples of Error Analysis
+Prompting Schemes
+Zero-shot w/o CoT: Given a query, answer the question or ask a clarifying question. The response
+should start with "The answer is" or "The clarifying question is".
+Question: <Question>
+Zero-shot w/ CoT: Given a query first identify whether the question is ambiguous or not. If it is
+ambiguous, ask a clarifying question. If it is not ambiguous, answer the question. The response should
+start with the ambiguity analysis of the question and then follow by "Therefore, the question is not
+ambiguous. The answer is" or "Therefore, the question is ambiguous. The clarifying question is".
+Question: <Question>
+Few-shot w/o CoT: Given a query, answer the question or ask a clarifying question. The response
+should start with "The answer is" or "The clarifying question is".
+
+Question: Who played michael myers in rob zombie’s movie?
+Output: The answer is Tyler Mane.
+
+Question: Give me some Mother’s Day gift ideas.
+Output: The clarifying question is What are your mother’s interests, hobbies, or something she has
+been wanting?
+
+Question: <Question>
+Few-shot w/ CoT: Given a query, answer the question or ask a clarifying question. The response
+should start with "The answer is" or "The clarifying question is".
+
+Question: Who played michael myers in rob zombie’s movie?
+Output: In Rob Zombie’s "Halloween" films, the role of Michael Myers was primarily played by Tyler
+Mane. Mane portrayed the iconic horror character in both Rob Zombie’s "Halloween" (2007) and its
+sequel, "Halloween II" (2009). Therefore, the question is not ambiguous. The answer is Tyler Mane.
+
+Question: Give me some Mother’s Day gift ideas.
+Output: there could be underlying ambiguities depending on the interests of the specific mother in
+question, the budget, and the giver’s relationship to the mother. Without this context, a broad range of
+ideas could be considered appropriate. Therefore, the question is ambiguous. The clarifying question
+is: What are the interests or hobbies of the mother, and is there a particular budget range for the gift?
+
+Question: <Question>
+
+              Table 13: Four prompting schemes for ambiguity identification and clarification.
+ALCUNA dataset
+The prompt of generating clarifying questions:
+Given the user question: <question>.
+Note that the <entity> is a non-existent entity fabricated by existing entities.
+You need to generate a clarifying question about the <ENTITY> to better know its intended meaning.
+
+Your Generated Clarifying Question:
+Data Examples:
+An ambiguous example
+Query: What is the latitude of the habitat of inyidiidae?
+Clarifying Question: Can you please provide more information about "inyidiidae"?
+
+A unambiguous example
+Query: Is Mozambique a geographic distribution of Mantodea?
+
+                    Table 14: The prompt and data examples of the ALCUNA dataset
+
+
+
+
+AmbiCoref dataset
+The template of clarifying questions:
+What does <PRONOUN> refer to? <A> or <B>?
+Data Examples:
+An ambiguous example
+Query: Matthew bought Joshua a pizza after he asked for more food. Who asked for more food?
+Clarifying Question: What does he refer to? Matthew or Joshua?
+
+A unambiguous example
+Query: Matthew made Joshua a square pizza before he submitted the order. Who submitted the order?
+
+                  Table 15: The template and data examples of the AmbiCoref dataset
+AmbiTask dataset
+The template of rephrasing ambiguous queries:
+The all possible word categories are either <category 1> or <category 2>.
+The following two examples share a specific word category. You need to first infer the specific word
+category from the examples.
+Please output "X" if the given sentence mentions the specific word category. Please output "Y" if the
+given sentence does not mention the word category.
+
+Examples:
+The photographer is not in the restaurant.
+Bernie Sanders has been in the theatre.
+
+The Given Sentence:
+Paul Atreides may not be in the hotel lobby.
+The template of rephrasing unambiguous queries:
+Please output "X" if the given sentence contains a word of <category>. Please output "Y" if the given
+sentence does not contain any word of <category>.
+
+Examples:
+The fugitive has not been in the museum.(Output: X)
+Noam Chomsky was in the film studio.(Output: Y)
+
+The Given Sentence:
+The hiker was in the laboratory.
+The template of clarifying questions:
+Is the category either <category 1> or <category 2>?
+Data Examples:
+An ambiguous example
+Query: The all possible word categories are either "does not contain a negation" or "proper noun".
+The following two examples share a specific word category. You need to first infer the specific word
+category from the examples.
+Please output "X" if the given sentence mentions the specific word category. Please output "Y" if the
+given sentence does not mention the word category.
+
+Examples:
+The photographer is not in the restaurant.
+Bernie Sanders has been in the theatre.
+
+The Given Sentence: Paul Atreides may not be in the hotel lobby.
+Clarifying Question: Is the category either does not contain a negation or proper noun?
+
+A unambiguous example
+Query: Please output "X" if the given sentence contains a word of "common noun". Please output "Y"
+if the given sentence does not contain any word of "common noun".
+
+Examples:
+The fugitive has not been in the museum.(Output: X)
+Noam Chomsky was in the film studio.(Output: Y)
+
+The Given Sentence: The hiker was in the laboratory.
+
+       Table 16: The prompt, clarifying question template and data examples of the AmbiTask dataset
+AmbER dataset
+The prompt of generating ambiguous queries and clarifying questions:
+###############
+<QUESTION 1>
+<QUESTION 2>
+###############
+According to the above example questions, Note that <ENTITY> is an ambiguous entity and has
+multiple meanings.
+You should generate a new question using the <ENTITY> and random context.
+You need to make sure the generated question is ambiguous and answering the generated question
+requires further clarification.
+FORMAT: {"question": <STRING>, "clarifying_question": <STRING>}
+The prompt of generating unambiguous queries:
+Given an ambiguous query and its clarifying question, you need to generate a unambiguous query
+based on them.
+FORMAT: {"unambiguous query": <STRING>}
+Data Examples:
+An ambiguous example
+Query: What is the history of Alcatraz?
+Clarifying Question: Are you referring to the history of the Alcatraz Island or the history of the band
+Alcatraz?
+
+A unambiguous example
+Query: What are the tracks in the album or soundtrack called Birds?
+
+                     Table 17: The prompt and data examples of the AmbER dataset
+AmbiPun dataset
+The prompt of generating ambiguous queries and clarifying questions:
+//1. Generate ambiguous queries Given a polysemy word <WORD>, it has two senses, including of
+<SENSE1> and <SENSE2>.
+You need to generate an information-seeking question based on the word <WORD>.
+You need to make the generated question be ambiguous due to the polysemy of word <WORD>.
+Note the question needs to contain the word <WORD>.
+Answering the generated requires a clarifying question to better understand the word <WORD>.
+generated question:
+
+//2. Generate clarifying question
+Given a question: <QUESTION>
+Note the polysemy word <WORD> has two senses, including of <SENSE1> and <SENSE2>.
+The given question has ambiguity due to the polysemy word <WORD>.
+You need to generate a clarifying question based on the word <WORD> to better clarify the ambiguity
+of the given question.
+clarifying question:
+The prompt of generating unambiguous queries:
+Given an ambiguous query and its clarifying question, you need to generate a unambiguous query
+based on them.
+FORMAT: {"unambiguous query": <STRING>}
+Data Examples:
+An ambiguous example
+Query: What is the meaning of Smart?
+Clarifying Question: Are you referring to the adjective ’smart’ or a specific brand called ’Smart’?
+
+A unambiguous example
+Query: What are the common strategies for saving money?
+
+                     Table 18: The prompt and data examples of the AmbiPun dataset
+
+
+
+
+AmbigQA dataset
+Data Examples:
+An ambiguous example
+Query: Who played kelly on the drew carey show?
+Clarifying Question: Which role: Kellie Newmark, Marlo Kelly, Grace Kelly, or Kelly Walker?
+
+A unambiguous example
+Query: Where did they film ash vs evil dead?
+
+                    Table 19: The prompt and data examples of the AmbigQA dataset
+Dolly dataset
+The prompt of generating clarifying questions and category classification:
+Give you an instruction, you first need to judge whether the instruction is ambiguous or not.
+If you think the instruction is ambiguous and falls into one of the following ambiguous types,
+you need to output its ambiguous type and the corresponding clarifying questions to help answer the
+ambiguous instruction.
+If you think the instruction is not ambiguous and does not miss any specific information,
+you need to rewrite it and make sure it falls into one of the following ambiguous types.
+Ambiguous types:
+1. Missing personal information.
+For example, the instruction "Suggest me some good movies" misses the information of the user
+personal preference.
+2. Missing spatial information.
+For example, the instruction "How to reach a destination" misses the spatial information of the departure
+location.
+3. Missing temporal information.
+For example, the instruction "Make a restaurant reservation" misses the temporal information of the
+reservation time.
+4. Missing specific task-related information.
+For example, the instruction "convert string to int" misses the information of the programming language.
+
+You should output the ambiguous type, the ambiguous instruction and its corresponding clarifying
+questions for each instruction.
+FORMAT: {"ambiguous type": <STRING>, "ambiguous instruction": <STRING>, "clarifying ques-
+tion": <STRING>}
+Data Examples:
+An ambiguous example
+Query: Give me some Mother’s Day gift ideas
+Clarifying Question: What are your mother’s interests, hobbies, or something she has been wanting?
+
+A unambiguous example
+Query: Top scorer of uefa champions league of all time?
+
+                       Table 20: The prompt and data examples of the Dolly dataset
+

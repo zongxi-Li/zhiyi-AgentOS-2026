@@ -1,0 +1,134 @@
+                                           ECLAIR: Enhanced Clarification for Interactive Responses in an Enterprise AI
+                                                                           Assistant
+                                                                          John Murzaku* 1 , Zifan Liu2 , Vaishnavi Muppala2 ,
+                                                                           Md Mehrab Tanjim3 , Xiang Chen3 , Yunyao Li2
+                                                                                               1
+                                                                                          Stony Brook University
+                                                                                                 2
+                                                                                                   Adobe
+                                                                                            3
+                                                                                              Adobe Research
+                                                           jmurzaku@cs.stonybrook.edu, {zifanl, mvaishna, tanjim, xiangche, yunyaol}@adobe.com
+arXiv:2503.20791v1 [cs.CL] 19 Mar 2025
+
+
+
+
+                                                                   Abstract                                fied agentic framework designed for enterprise AI assistants.
+                                                                                                           ECLAIR provides a unified conversational experience on the
+                                           Large language models (LLMs) have shown remarkable
+                                                                                                           user side and offers better disambiguation capabilities.
+                                           progress in understanding and generating natural language
+                                           across various applications. However, they often strug-            Recent works on ambiguity detection and clarifica-
+                                           gle with resolving ambiguities in real-world, enterprise-       tion question generation often use prompt-based LLM ap-
+                                           level interactions, where context and domain-specific knowl-    proaches, such as zero-shot or few-shot chain-of-thought
+                                           edge play a crucial role. In this demonstration, we in-         (CoT) prompting (Kuhn, Gal, and Farquhar 2022; Deng
+                                           troduce ECLAIR (Enhanced CLArification for Interactive          et al. 2023; Zhang et al. 2024). Despite their successes on
+                                           Responses), a multi-agent framework for interactive disam-      benchmark datasets, these approaches are inadequate for re-
+                                           biguation. ECLAIR enhances ambiguous user query clarifi-        solving real-world ambiguities in an enterprise domain set-
+                                           cation through an interactive process where custom agents       ting. Our method aims to resolve these issues and is salient
+                                           are defined, ambiguity reasoning is conducted by the agents,    in two key aspects: 1) ECLAIR integrates ambiguity infor-
+                                           clarification questions are generated, and user feedback is
+                                                                                                           mation and domain knowledge from multiple downstream
+                                           leveraged to refine the final response. When tested on real-
+                                           world customer data, ECLAIR demonstrates significant im-        agents, enhancing overall context-awareness in resolving
+                                           provements in clarification question generation compared to     ambiguities. 2) ECLAIR is developed and evaluated using a
+                                           standard few-shot methods.                                      corpus of real user queries from the Adobe Experience Plat-
+                                                                                                           form (AEP) AI Assistant (Bhambhri 2024).
+                                                                Introduction                                               Framework Overview
+                                         In human conversation, ambiguities are naturally detected         The ECLAIR architecture (Figure 1) is built as a modulariz-
+                                         and resolved through contextually appropriate clarification       able and extendable framework: the AI Assistant developers
+                                         questions, integrating a combination of linguistic and par-       are able to fully define their custom ambiguity detection or
+                                         alinguistic cues. Large language models (LLMs) have made          grounding information agents. We describe a step-by-step
+                                         strides in this area, demonstrating some ability to resolve       sample interaction and what happens in our framework.
+                                         ambiguities through ambiguity detection and clarification            The framework takes a user query as input and generates a
+                                         question generation (Kuhn, Gal, and Farquhar 2022; Zhang          set of predefined agents for ambiguity detection. The agents
+                                         and Choi 2023; Zhang et al. 2024). However, recent LLM-           collaboratively reason whether an ambiguity exists in the
+                                         based approaches tend to rely on sequential pipelines where       query. The agents that do detect an ambiguity then get added
+                                         ambiguity is first detected and then a clarification question     to a prompt, which then calls a LLM to decide whether clari-
+                                         is generated. These methods treat ambiguity detection as a        fication is needed or not. In our example, ECLAIR then gen-
+                                         purely lexical issue, ignoring vital contextual and domain-       erates a clarification question with two choices, where the
+                                         specific information. This in turn significantly limits their     user can then add their feedback.
+                                         applicability to real-world, enterprise scenarios.                   In our specific use case, we define the following agents:
+                                            Existing approaches are also limited by their focus on         1) a generic sentence-level ambiguity detector that captures
+                                         datasets that lack the complexity and nuances of actual in-       domain-agnostic ambiguities, 2) a product ambiguity de-
+                                         dustry applications. Many of the datasets are synthetic, fail-    tector that decides if the query refers to multiple products
+                                         ing to capture the range of ambiguities in real-world inter-      in Adobe AEP 3) an entity linking ambiguity detector that
+                                         actions. This limits their applicability to enterprise systems    identifies text spans that can be linked to multiple entities in
+                                         that require a sophisticated understanding of ambiguity.          the database and 4) a concept graph module that identified
+                                            To address these challenges, we introduce ECLAIR               tokens that are AEP-specific terminology.
+                                         (Enhanced CLArification for Interactive Responses), a uni-
+                                            * Work done while interning at Adobe.                                               Demonstration
+                                         Copyright © 2025, Association for the Advancement of Artificial   Our demo video showcases two salient use cases for our en-
+                                         Intelligence (www.aaai.org). All rights reserved.                 terprise AI assistant on our UI deployment.
+                                        Figure 1: The architecture diagram of ECLAIR.
+
+
+Use Case 1: Ambiguous Product We show a case where a                 Model       Category              P       R       F1
+user’s product-related question can refer to multiple Adobe                      Clar. Needed        0.732   0.833    0.779
+products. ECLAIR successfully captures that this query is            Baseline    Clar. Not Needed    0.333   0.214    0.261
+ambiguous (from the product classifier agent), and asks a                        Avg                 0.533   0.524    0.520
+relevant clarification question.
+                                                                                 Clar. Needed        0.904   0.635    0.746
+Use Case 2: Ambiguous Entity We show cases where                     ECLAIR      Clar. Not Needed    0.438   0.808    0.568
+a user refers to ambiguous entities. ECLAIR successfully                         Avg                 0.671   0.721    0.657
+shows that there is entity ambiguity (through the entity link-
+ing agent), and generates a useful clarification question. The   Table 1: Comparison of Precision (P), Recall (R), and F1
+user then can clarify which specific entity type they are re-    Score for Baseline and ECLAIR models.
+ferring to in the interactive UI, and click their choice.
+
+               Framework Evaluation                              is, we do not want to over-clarify, and only ask clarifications
+Evaluation We perform a preliminary evaluation on                when they are needed). Therefore, ECLAIR’s higher preci-
+whether a clarification is needed or not. We evaluate this       sion means a better and more natural user experience: clarifi-
+with standard Precision/Recall/F1 metrics.                       cations are only asked when necessary. ECLAIR yields ma-
+Dataset Our evaluation set consists of a sample from real        jor improvements on the “Clarification Not Needed” label:
+user queries in the AEP AI Assistant, which was annotated        we see a boost in precision, recall, and F1, with the largest
+in-house for ambiguity detection. The dataset covers ambi-       boost occurring in recall. In turn, ECLAIR yields a overall
+guity types in three categories: contextual, where the context   F1 that is 13% higher than our few-shot method. This em-
+or reference to an object is underspecified; syntactic, where    phasizes that ECLAIR not only captures more information
+the sentence is malformed or incomplete, leading to indirect     and provides a clearer picture of ambiguity, but also yields
+interpretation; and aleatoric, where a specific token is unde-   better metrics compared to standard few-shot methods.
+fined or contains multiple possible meanings.
+Baseline For our baseline, we prompt GPT 3.5 to generate                                Conclusion
+clarification questions if needed. 10 human-crafted exam-
+                                                                 We present the ECLAIR framework and demonstrate its su-
+ples are provided in the prompt as the few shot examples.
+                                                                 perior performance in ambiguity detection and clarification
+We also use GPT 3.5 in ECLAIR for a fair comparison.
+                                                                 question generation on real-world data from the Adobe Ex-
+Results Table 1 shows the results for ECLAIR compared            perience Platform (AEP) AI Assistant. ECLAIR’s modu-
+to our few-shot baseline on deciding whether clarification       lar and unified approach not only outperforms traditional
+question is needed or not. We first observe that ECLAIR          few-shot methods but also integrates seamlessly into enter-
+achieves higher precision on “Clarification Needed”, but         prise AI systems, addressing practical challenges such as la-
+falls short on recall and F1. We emphasize that for our pro-     tency and precision. We showcase two major use-cases of
+duction setting, we are aiming to maximize precision (that       ECLAIR in a live deployment of an enterprise AI assistant.
+                   Acknowledgments
+We would like to thank Victor Soares Bursztyn, Cole Con-
+nelly, Nathenael Dereb, Rachel Hanessian, Jordyn Harrison,
+Sai Sree Harsha, Sai Jayakumar, Shun Jiang, Akash Ma-
+haraj, Danny Miller, Kun Qian, Pawan Sevak, Jordan Walker
+for their insightful discussions and valuable help throughout
+the development of this work. Their guidance and feedback
+greatly contributed to the quality of this research.
+
+                        References
+Bhambhri, A. 2024. New AI Integrations in Adobe Experi-
+ence Platform. Accessed: 2024-04-23.
+Deng, Y.; Liao, L.; Chen, L.; Wang, H.; Lei, W.; and
+Chua, T.-S. 2023. Prompting and Evaluating Large Lan-
+guage Models for Proactive Dialogues: Clarification, Target-
+guided, and Non-collaboration. In Bouamor, H.; Pino, J.;
+and Bali, K., eds., Findings of the Association for Computa-
+tional Linguistics: EMNLP 2023, 10602–10621. Singapore:
+Association for Computational Linguistics.
+Kuhn, L.; Gal, Y.; and Farquhar, S. 2022. Clam: Selective
+clarification for ambiguous questions with generative lan-
+guage models. arXiv preprint arXiv:2212.07769.
+Zhang, M. J.; and Choi, E. 2023. Clarify when necessary:
+Resolving ambiguity through interaction with lms. arXiv
+preprint arXiv:2311.09469.
+Zhang, T.; Qin, P.; Deng, Y.; Huang, C.; Lei, W.; Liu, J.; Jin,
+D.; Liang, H.; and Chua, T.-S. 2024. CLAMBER: A Bench-
+mark of Identifying and Clarifying Ambiguous Information
+Needs in Large Language Models.
+

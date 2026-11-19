@@ -1,0 +1,19 @@
+{
+  "id": "Dwork-Roth-2014",
+  "title": "The Algorithmic Foundations of Differential Privacy",
+  "authors": [
+    "Cynthia Dwork",
+    "Aaron Roth"
+  ],
+  "published": "2014",
+  "url": "https://www.cis.upenn.edu/~aaroth/privacybook.html",
+  "pdf": "https://www.cis.upenn.edu/~aaroth/Papers/privacybook.pdf",
+  "file": "2014_Dwork-Roth_Algorithmic-Foundations-DP.pdf",
+  "pages": 281,
+  "sha256": "599bb0add9a0ec7bf85a6561dbc7619f45403892a19084eb1fe622352ef91ef7",
+  "selected": true,
+  "short_name": "DP-Foundations-Book",
+  "download_status": "verified_pdf",
+  "reading_level": "selected_foundational_sections",
+  "score": 10
+}

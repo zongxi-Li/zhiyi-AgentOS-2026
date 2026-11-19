@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#fff}#graph{position:absolute;left:0;top:0;width:1600px;height:1200px;overflow:visible}svg text{font-variant-ligatures:none}</style>
+<script>var mxBasePath='.';var mxImageBasePath='.';var mxLoadResources=false;var mxLoadStylesheets=false;var urlParams={offline:'1',local:'1'};</script>
+<script src="viewer.min.js"></script></head><body><div id="graph"></div>
+<script>
+window.loadFigure=async function(xml){
+  document.getElementById('graph').innerHTML='';
+  const doc=mxUtils.parseXml(xml);
+  const model=doc.getElementsByTagName('mxGraphModel')[0];
+  if(!model)throw new Error('Missing native mxGraphModel');
+  const graph=new Graph(document.getElementById('graph'));
+  graph.setEnabled(false);graph.setPanning(false);graph.setConnectable(false);
+  graph.setHtmlLabels(false);
+  new mxCodec(doc).decode(model,graph.getModel());
+  graph.view.validate();
+  await document.fonts.ready;
+  mxSvgCanvas2D.prototype.foEnabled=true;
+  const svg=graph.getSvg('#ffffff',1,0);
+  if(svg.getElementsByTagName('foreignObject').length)throw new Error('Nonportable HTML label in SVG: '+new XMLSerializer().serializeToString(svg.getElementsByTagName('foreignObject')[0]).slice(0,700));
+  window.currentGraph=graph;
+  const result={svg:new XMLSerializer().serializeToString(svg),bounds:graph.getGraphBounds(),
+    modelCells:Object.keys(graph.model.cells).length, labels:[]};
+  for(const cell of Object.values(graph.model.cells)){
+    if(!cell.vertex || !cell.value)continue;
+    const state=graph.view.getState(cell);
+    const bb=state?.text?.boundingBox;
+    if(bb) result.labels.push({id:cell.id,text:cell.value,box:{x:bb.x,y:bb.y,w:bb.width,h:bb.height},
+      cell:{x:state.x,y:state.y,w:state.width,h:state.height}});
+  }
+  return result;
+};
+</script></body></html>

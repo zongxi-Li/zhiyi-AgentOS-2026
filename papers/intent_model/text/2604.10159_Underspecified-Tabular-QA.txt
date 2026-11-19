@@ -1,0 +1,1298 @@
+                                                 ODUTQA-MDC: A Task for Open-Domain Underspecified Tabular QA
+                                                         with Multi-turn Dialogue-based Clarification
+                                         Zhensheng Wang1,2 , Zhanteng Lin3 , Wenmian Yang2,† , Kun Zhou1,2 , Yiquan Zhang2 , Weijia Jia2,4
+                                                      1
+                                                        School of Artificial Intelligence, Beijing Normal University, Beijing, PR China
+                                         2
+                                           Institute of Artificial Intelligence and Future Networks, Beijing Normal University, Zhuhai, PR China
+                                                         3
+                                                           Faculty of Arts and Sciences, Beijing Normal University, Zhuhai, PR China
+                                                              4
+                                                                Beijing Normal-Hong Kong Baptist University, Zhuhai, PR China
+                                                 {jensenwang, zhantenglin, zhoukun}@mail.bnu.edu.cn, {wenmianyang, jiawj}@bnu.edu.cn, zhangyq987@hotmail.com
+
+
+                                                                       Abstract                           Q1: What is the greenery rate of the     SELECT
+                                                                                                                                                   FROM
+                                                                                                          Vanke Light of the Future community in   WHERE
+
+
+                                                     The advancement of large language models             Bao'an District, Shenzhen?
+arXiv:2604.10159v2 [cs.CL] 18 Apr 2026
+
+
+
+
+                                                     (LLMs) has enhanced tabular question answer-         Q2: How is the environment of the        SELECT
+                                                                                                                                                   FROM
+                                                     ing (Tabular QA), yet they struggle with open-       Vanke Light of the Future community in   WHERE
+
+                                                                                                          Bao'an District, Shenzhen?
+                                                     domain queries exhibiting underspecified or                                                   SELECT
+                                                     uncertain expressions. To address this, we           Q3: What is the greenery rate of the     FROM
+                                                                                                                                                   WHERE
+                                                                                                          Vanke Light of the Future community?
+                                                     introduce the ODUTQA-MDC task and the
+                                                     first comprehensive benchmark to tackle it.          Q4: What is the greenery rate of the     SELECT
+                                                                                                                                                   FROM
+
+                                                     This benchmark includes: (1) a large-scale           Vanke community in Bao'an District,      WHERE
+
+                                                                                                          Shenzhen?
+                                                     ODUTQA dataset with 209 tables and 25,105
+                                                     QA pairs; (2) a fine-grained labeling scheme       Figure 1: Examples of underspecified input causing
+                                                     for detailed evaluation; and (3) a dynamic clar-   questions to be unanswerable.
+                                                     ification interface that simulates user feedback
+                                                     for interactive assessment. We also propose
+                                                     MAIC-TQA, a multi-agent framework that ex-         underspecifications (Bhaskar et al., 2023). These
+                                                     cels at detecting ambiguities, clarifying them
+                                                                                                        approaches do not resolve the core challenge: gen-
+                                                     through dialogue, and refining answers. Exper-
+                                                     iments validate our benchmark and framework,
+                                                                                                        erating correct answers without user clarification.
+                                                     establishing them as a key resource for advanc-    Even conversational datasets like PRACTIQ (Dong
+                                                     ing conversational, underspecification-aware       et al., 2025) rely on predetermined, static dialogues,
+                                                     Tabular QA research. The data and code are         failing to capture the dynamic and unpredictable
+                                                     available at https://github.com/jensenw1/          nature of real-world user interactions.
+                                                     ODUTQA-MDC.                                           Real-world open-domain Tabular QA presents
+                                             1       Introduction                                       several core challenges that current methods do not
+                                                                                                        address: autonomously selecting relevant tables
+                                             Large language models (LLMs) have driven sig-              from large databases, handling queries with multi-
+                                             nificant progress in open-domain tabular question          ple types of underspecification simultaneously, and
+                                             answering (Tabular QA). Distinct from closed-              generating accurate answers by integrating infor-
+                                             domain settings where the target table is predeter-        mation gathered over users’ multi-turn clarification
+                                             mined, the open-domain paradigm necessitates au-           dialogues (Liu et al., 2025; Qin et al., 2026; Ye
+                                             tonomously retrieving relevant tables from a large-        et al., 2025). Progress has been limited by the
+                                             scale database (Fang et al., 2024; Kong et al., 2024;      absence of suitable datasets and evaluation frame-
+                                             Rai et al., 2023). However, existing text-to-SQL ap-       works designed for these complexities.
+                                             proaches often falter when applied to this pipeline,          To address these gaps, we introduce ODUTQA-
+                                             as real-world user queries are frequently underspec-       MDC, a new task for Open-Domain Underspeci-
+                                             ified due to spelling errors, unclear expressions, or      fied Tabular Question Answering with Multi-turn
+                                             incomplete information. Such ambiguity funda-              Dialogue-based Clarification. The task is supported
+                                             mentally hinders the generation of correct SQL             by three components: a large-scale dataset, a fine-
+                                             queries, leading to inaccurate answers.                    grained labeling scheme, and a simulated clarifi-
+                                                Existing research on this problem, while valu-          cation interface. We construct ODUTQA, the first
+                                             able, often remain limited to closed-domain scenar-        dedicated open-domain underspecified Tabular QA
+                                             ios that focus merely on detecting and classifying         dataset, with 209 structured tables and 25,105 QA
+                                                 †
+                                                     Corresponding author.                              pairs from property, real estate finance, and land
+auction domains. To align with text-to-SQL work-              Underspecified Tabular QA with Multi-turn
+flows, we categorize underspecifications by their             Dialogue-based Clarification, supported by
+correspondence with SQL structures: table-scope               the first corresponding dataset (ODUTQA),
+underspecification (impacting the FROM clause;                detailed detection labels, and a dynamic con-
+see Figure 1-Q3), query-intent underspecification             versational clarification interface.
+(affecting the SELECT clause; see Figure 1-Q2),
+query-condition underspecification (affecting the           • We propose an agent-based open-domain Tab-
+WHERE clause; see Figure 1-Q4), and mixed un-                 ular QA system capable of effectively identi-
+derspecification.                                             fying and dynamically clarifying underspeci-
+   For a nuanced evaluation, our framework intro-             fications through intelligent multi-turn inter-
+duces fine-grained underspecification detection la-           actions, substantially enhancing system adapt-
+bels. Building on intent and slot labels from spoken          ability in complex scenarios.
+language understanding, following previous work             • We systematically evaluate mainstream LLMs’
+(Wang et al., 2025), we define three auxiliary de-            underspecification detection and QA perfor-
+tection labels: intent underspecification (identified         mance on our dataset, presenting the first
+via binary classification), scope underspecification,         benchmark that comprehensively assesses the
+and condition underspecification (both using triple-          entire “information detection–multi-turn clari-
+based annotations for content, category, and error            fication–QA reasoning" workflow, facilitating
+type). To simulate practical interactions, we inte-           further development in this research area.
+grate a conversational agent that dynamically gener-
+ates clarification based only on the underspecifica-    2     Related Works
+tions detected by the system. This establishes a dy-
+namic “detection-clarification-redetection” closed-     2.1    TQA Datasets
+loop evaluation process, realistically simulating       Mainstream Text-to-SQL datasets, such as Spi-
+multi-turn interactions and enabling a rigorous as-     der (Yu et al., 2018), WikiSQL (Zhong et al.,
+sessment of a system’s ability to handle ambiguity.     2017), and Open-WikiTable (Kweon et al., 2023),
+   Building on this task, dataset, and evalua-          rarely consider underspecification in user queries.
+tion framework, we introduce MAIC-TQA, an               RETQA (Wang et al., 2025) provides SLU an-
+LLM-powered Multi-Agent Interactive Clarifica-          notations but does not address underspecification.
+tion framework for ODUTQA-MDC. MAIC-TQA                 More recent datasets introduce underspecification
+comprises four collaborative agents: the Spoken         via schema modification (Bhaskar et al., 2023),
+Language Understanding (SLU) module, Scope              multi-turn dialogue (Dong et al., 2025), or human
+Validator Agent, Table Retrieval Agent, and SQL         annotation (Saparina and Lapata, 2024). However,
+Generation and Validation Agent. Working in con-        these datasets remain simplistic, lack systematic
+cert, these agents deliver end-to-end, dynamic tab-     clarification annotation, and do not capture com-
+ular QA with multi-turn clarification. The frame-       plex real-world mismatches between queries and
+work leverages external SQL tools and integrates        database schemas. A detailed comparison of the
+execution feedback, such as SQL errors and empty        datasets is provided in Table 1.
+results, to drive effective underspecification detec-
+tion, adaptive clarification, and robust reasoning.     2.2    TQA Methods
+Throughout the workflow, the system dynamically         Existing methods address open-domain TQA and
+solicits clarifications, incorporates user responses,   underspecification separately. SLUTQA (Wang
+and iteratively refines both understanding and re-      et al., 2025) enhances LLMs with intent-based ex-
+trieval. By jointly optimizing underspecification       ample selection but does not resolve underspecifi-
+identification and QA accuracy, MAIC-TQA estab-         cation. PURPLE (Ren et al., 2024) prunes schema
+lishes the first comprehensive agent-based bench-       using a Steiner Tree approach, while LogicalBeam
+mark for open-domain underspecified tabular QA          (Bhaskar et al., 2023) generates diverse SQL tem-
+with interactive, multi-turn dialogue.                  plates, though both have limited flexibility and
+   The main contributions of this paper are as fol-     coverage. Most importantly, current TQA meth-
+lows:                                                   ods lack error identification and dynamic conversa-
+                                                        tional clarification, limiting their effectiveness in
+   • We introduce the novel task of Open-Domain         real-world underspecified scenarios.
+                                                       Mixed                                             Dynamic
+     Dataset   Open Domain   Underspecification                        QA Evaluation   Conversational
+                                                  Underspecification                                    Clarification
+      Spider       %                %                    %                  !               %                %
+     RETQA         !                %                    %                  !               %                %
+    PRACTIQ        %                !                    %                  %               !                %
+     AmbiQT        !                !                    %                  !               %                %
+    Ambrosia       !                !                    %                  %               %                %
+    ODUTQA         !                !                    !                  !               !                !
+
+Table 1: Dataset comparison. “Open Domain” indicates table retrieval from a large corpus, whereas “Closed
+Domain” (marked with ‘%’) specifies QA on given tables.
+
+
+3     Task Construction and Analysis                       schema, our core strategy injects underspecifica-
+                                                           tion by manipulating the question templates and
+3.1     Task Definition
+                                                           their assigned values.
+The ODUTQA-MDC task evaluates open-domain                     We begin with a detailed manual analysis, map-
+tabular QA systems on their ability to resolve query       ping each template variable to its SQL clause coun-
+ambiguities via multi-turn clarification. Given a          terpart. This process connects variables to table
+user query and a multi-table database, the task con-       captions (affecting the FROM clause), column
+sists of two stages:                                       headers (impacting the SELECT clause and defin-
+     • Underspecification Detection: Identifying           ing user intent), and query conditions (appearing
+       the specific ambiguity type within the query        in the WHERE clause).
+       (i.e., SELECT, FROM, WHERE, or Mixed).                 This mapping informs two distinct strategies for
+                                                           introducing underspecification. The first, template
+     • Clarification-based Dynamic QA: Interact-           restructuring, modifies the templates themselves to
+       ing with a user simulator to resolve detected       induce SELECT clause underspecification and cre-
+       ambiguities, followed by standard Table Re-         ate the Missing type for the FROM clause. The sec-
+       trieval and SQL Generation to derive the final      ond, value modification, alters values in generated
+       answer.                                             QA pairs to create WHERE clause underspecifica-
+3.2     Datasets Construction                              tion and to produce the Unmatch and Error types
+3.2.1 Data Source                                          for the FROM clause.
+                                                              These strategies yield three distinct categories of
+Our dataset originates from RETQA (Wang et al.,
+                                                           underspecification.
+2025), a specified, open-domain QA dataset with
+90 question templates, covering the Land Auction,              • SELECT Underspecification Generation:
+Property, and Real Estate Finance domains. To                    This arises from an insufficiently specified
+support the four defined underspecification types                user intent, making it difficult to identify the
+(table-scope, query-intent, query-condition, and                 target column. To induce this, we replace
+mixed), the original tables are normalized. Prop-                explicit column references in templates with
+erty and Land Auction tables are reorganized by                  vague expressions. For instance, "green cov-
+city into 102 tables (avg. 1,040.37 rows) and 103                erage ratio" is reformulated as “how is the en-
+tables (avg. 30.35 rows), respectively. The four fi-             vironment?”, while a question regarding “risk
+nance tables are consolidated by year (2019–2022),               level” is modified to “how is the business sta-
+each averaging 444.75 rows. All resulting tables                 tus?”. All original headers are preserved in
+are stored in a PostgreSQL database (Stonebraker                 a SELECT-Clarification dictionary for subse-
+et al., 2019) to simulate realistic tabular QA scenar-           quent resolution.
+ios.
+                                                               • FROM Underspecification Generation:
+3.2.2   Template Design and QA Pair                              This results from missing or incorrect scope-
+        Generation                                               defining information, hindering table identi-
+To construct a dataset of underspecified queries, we             fication. It is introduced two ways. Missing-
+adapt 90 seed templates from RETQA, each associ-                 type underspecification is generated at the
+ating a natural language question with a correspond-             template level by omitting variables such as
+ing SQL query. Rather than altering the database                 “city” or “district”. Error-type (typos) and
+     Unmatch-type (logical conflicts, e.g., a non-      data is split 6:2:2 into training (14,973), validation
+     existent city-district pair) are introduced by     (5,046), and test (5,086) sets (see Appendix A.7).
+     modifying values post-generation. All orig-           To further enhance linguistic naturalness, we
+     inal, correct information is recorded in a         paraphrase questions with an LLM. Given our
+     FROM-Clarification dictionary.                     dataset’s focus on underspecification, we use
+                                                        prompt engineering to explicitly prohibit the LLM
+   • WHERE Underspecification Generation:               from using forbidden words, namely, column head-
+     This occurs when incomplete or erroneous           ers specified in the SELECT-Clarification dictio-
+     conditions hinder accurate data matching. We       nary, thus preventing underspecified expressions
+     simulate this by post-processing QA pairs, re-     from being made explicit. See Appendix A.3 for
+     placing lengthy proper nouns (e.g., project        details.
+     names) with natural abbreviations from a few-
+     shot prompted LLM. After creating a name-          3.3   Label Annotation
+     to-abbreviation map, we systematically re-         To support fine-grained analysis and evaluation of
+     place the proper nouns in the questions. All       underspecification, we design a unified annotation
+     original full names are stored in a WHERE-         scheme comprising two main categories: labels for
+     Clarification dictionary for downstream use.       spoken language understanding (SLU) (Xing et al.,
+                                                        2025; Qin et al., 2025) and labels for underspecifi-
+   From the initial 90 templates, we identify 76 that   cation detection. Specifically, following previous
+are suitable for underspecification injection. These    work (Wang et al., 2025), we employ a template-
+are systematically expanded into 222 extended tem-      filling approach to synthesize the dataset, where
+plates, each incorporating diverse underspecifica-      all corresponding annotations are automatically in-
+tion patterns in the SELECT and FROM clauses.           ferred during the generation process. More details
+Throughout this process, the corresponding target       of label generation are provided in Appendix A.
+SQL template remains unchanged, as it represents
+                                                        3.3.1 Intent and Slot Annotation
+the definitive query intent once underspecification
+is resolved.                                            For SLU, we annotate both intent and slot infor-
+   To ensure data quality, we sample two QA pairs       mation for each question. Specifically, following
+per template for rigorous manual review against         previous work (Wang et al., 2025), each seed tem-
+criteria of fluency, consistency, underspecification    plate is assigned one or more intent labels. In cases
+preservation, and annotation correctness. Tem-          where underspecification is introduced through the
+plates are iteratively revised until they meet these    SELECT clause, the intent is annotated as “Un-
+standards.                                              known” to reflect uncertainty in user intent.
+   In the generation stage, validated templates are        Slot annotation adopts the standard BIO (Begin,
+populated with sampled database entities, yield-        Inside, Outside) format. Variables within question
+ing 63,496 initial QA pairs. We then perform            templates are treated as slots, with their types de-
+stratified sampling using the 76 template groups        fined by the corresponding variable names, while
+as strata, since templates naturally define dis-        all other tokens are labeled as “O”.
+tinct query structures and underspecification pat-      3.3.2 Underspecification Type Annotation
+terns and therefore provide an appropriate unit         In addition to standard annotations, our dataset de-
+for controlling data balance. During this pro-          fines three auxiliary underspecification detection
+cess, we further apply quality-control filters be-      labels: intent underspecification, scope underspec-
+fore and after SQL execution to remove cases            ification, and condition underspecification, as fol-
+that are unsuitable for an answerable QA bench-         lows:
+mark. We then sample according to per-group tar-
+get counts to achieve a balanced distribution across       • Intent Underspecification Label: This bi-
+well-specified, single-underspecified, and mixed-            nary label indicates whether a query exhibits
+underspecified examples. This procedure produces             intent underspecification. It is assigned as
+a final dataset of 25,105 QA pairs, including 5,095          “True” if the user intent is unclear (i.e., with
+well-specified, 7,892 single-underspecified (‘SE-            “unknown” intent label ), and “False” if the
+LECT’: 197; ‘FROM’: 3,274; ‘WHERE’: 4,421),                  user intent is clear (i.e., with specific intent
+and 12,118 mixed-underspecified instances. The               labels).
+   • Scope Underspecification Label: This la-            truth; otherwise, no clarification is revealed. Upon
+     bel employs a triple-based annotation format        correct detection, the interface retrieves the cor-
+     [“slot_content”, “slot_type”, “error_type”],        responding ground-truth value from clarification
+     capturing errors related to table scope. For        dictionaries. This value is inserted into a standard-
+     example, if a query omits the required “City”       ized response template.
+     slot, the label is [“”, “City”, “Missing”]. The        To emulate natural user interactions, an LLM is
+     possible values for “error_type” are as fol-        employed to paraphrase these templates into col-
+     lows:                                               loquial expressions. To guarantee reliability, we
+                                                         implement a rigorous post-generation verification
+        – Missing: A required slot is absent from
+                                                         mechanism. Specifically, the system validates that
+          the query.
+                                                         the ground-truth value retrieved from the dictionary
+        – Error: The slot content cannot be found        remains invariant within the paraphrased response.
+          in the database.                               If the value is missing, the system regenerates the
+        – Unmatch: The individual slot values are        response; if regeneration fails after a fixed num-
+          valid, but their combination does not ex-      ber of attempts, it falls back to the standardized
+          ist in the database.                           template. This design ensures linguistic diversity
+      These labels directly determine whether the        without sacrificing factual accuracy.
+      correct database table can be identified and          To support diverse benchmarking, the interface
+      serve as explicit signals for triggering system    offers two modes: Dynamic Mode generates varied
+      clarification.                                     responses to assess robustness under realistic con-
+                                                         ditions, while Fixed Mode delivers standardized
+   • Condition Underspecification Label: This            responses for reproducibility. See Appendix A.5
+     label addresses underspecifications in the          for implementation details and Appendix A.6 for
+     WHERE clause, particularly cases where a            the design rationale.
+     provided entity name (such as a project or en-
+     terprise) does not exist in the database. In        4     Method
+     such instances, the system generates a triplet
+                                                         4.1   Overview
+     [“slot_content”, “slot_type”, “not exist”], for
+     example, [“ABC Technology Inc.”, “enter-            As illustrated in Figure 2, the MAIC-TQA frame-
+     prise name”, “not exist”]. This enables the         work adopts a modular, multi-agent architecture to
+     system to explicitly identify invalid query con-    address open-domain underspecified tabular ques-
+     ditions and initiate targeted clarification or      tion answering with multi-turn clarification. The
+     correction.                                         workflow proceeds as follows: First, the SLU Mod-
+                                                         ule (Section 4.2) extracts user intent and slot infor-
+3.4   Conversational Clarification Interface             mation from the natural language query. Next, the
+To overcome the limitations of prior work that fo-       Scope Validator Agent (Section 4.3) verifies and, if
+cuses on static underspecification classification, we    necessary, requests clarification for caption-related
+introduce an automated interactive user simulator        slots to ensure accurate table scope identification.
+that resolves underspecified queries through multi-      The Table Retrieval Agent (Section 4.4) then inte-
+turn clarification dialogues. This design choice ad-     grates the original query and user clarifications to
+dresses a critical practical constraint: while human     determine the most relevant table caption. Finally,
+interaction provides high realism, it is prohibitively   the SQL Generation and Validation Agent (Section
+expensive and lacks consistency and reproducibil-        4.5) constructs and executes the SQL query, validat-
+ity at scale. Our simulator offers a scalable and        ing the output to generate the final answer (Duan
+standardized alternative that preserves sufficient       et al., 2025).
+linguistic realism for robust evaluation.
+   The simulator is implemented as a callable            4.2   SLU Module
+Python interface for handling SELECT, FROM,              Given a user’s natural language query, we first em-
+and WHERE underspecification types. Clarifica-           ploy a BERT-based classifier (Devlin et al., 2019)
+tion is strictly gated by detection accuracy: cor-       for intent detection and slot filling (Qin et al., 2021;
+rective information is provided only when the pre-       Cheng et al., 2023). An intent underspecification
+dicted underspecification label matches the ground       label is generated based on the classifier’s output.
+                   Stage 1. SLU Module                                  Dialog                                     Stage 3. TR Agent
+                                                           How is the environment of the
+      Query                                                Tomorrow City community                   Dialog      Prompt                    Intent
+       How is the environment of the                       in Nanjing?                                                        Candidate
+       Tomorrow City community in Nanjing?                                                                                     Prompts
+                                                           Your input is unclear, please                      Agent
+                                                           clarify your request further.
+               BERT            Intent
+                                                           I want to query the floor area              Summary                  BM25
+              Slots          Domain                        ratio.                                                                             Table
+                                                                                                                                             captions
+                                                           You did not provide the correct                                 Related Tables
+                   Stage 2. SV Agent                       district name.
+       You are a Scope                  Query                                                                   Stage 4. SGV Agent
+       Validator Agent. Please                             This community is located in
+       use the provided             Domain                 Xuanwu District, Nanjing.                  Dialog                                Intent
+       information to call tools        Slots                                                                          Candidate Prompts
+       for slot validation and
+                                                           The community "Tomorrow                    Domain
+       classify the slots          Slot Types              City" could not be found,                                        Prompt
+       accordingly. (...)                                                                              Slots
+                                                           please confirm if the
+                                                           community name is correct.                 Related
+                                                                                                      Tables                   Agent
+                                         Agent             The community name should
+         Table                                                                                         ["Tomorrow City",                       Tool
+        captions      Tool                                 be Forte Tomorrow City.                     project_name,
+                                                                                                       "not exist"]                        Null
+                       [                                   The floor area ratio of Forte              [
+                       “”, “District”, “Missing”                                                      "Forte Tomorrow City", floor_area_ratio, 3.33
+                                                           Tomorrow City is 3.33.
+                       ]                                                                              ]
+
+
+
+
+                                                   Figure 2: General framework of MAIC-TQA.
+
+
+If intent underspecification is detected, the system                            immediately assigns a scope underspecification la-
+issues a template-based follow-up question (e.g.,                               bel with “Missing” as the error_type, following the
+“Your input is unclear. Please clarify your request.”)                          specified prompt. For example, if the “District” slot
+to prompt user clarification. Upon receiving the                                is absent, the output triplet would be (“”, “District”,
+user’s response, the system concatenates the origi-                             “Missing”), as shown in Figure 2.
+nal query with the clarification to form an updated                                If all required slots are present, the agent pro-
+conversational context, which is then reprocessed                               ceeds to verify the validity of the provided slot
+by the BERT classifier for a second attempt at in-                              values. This is accomplished by calling a valida-
+tent recognition. Once a valid intent is identified,                            tion function, which cross-references the input slot
+the system proceeds to slot validation. To main-                                values with the corresponding database tables for
+tain interaction efficiency, the clarification loop is                          the specified domain, based on a detailed prompt.
+restricted to a single iteration.                                               If any slot value fails validation (e.g., the content
+   For downstream processing, clarified intent la-                              does not exist or the slot combination is invalid),
+bels are mapped to one of three domains, i.e., Prop-                            the agent generates the appropriate Scope Under-
+erty Sales, Land Auctions, or Enterprise Finance,                               specification Label and prompts the user for clarifi-
+as the domain labels for subsequent tasks.                                      cation.
+                                                                                   This two-stage validation process ensures both
+4.3      Scope Validator Agent                                                  the completeness and the correctness of scope in-
+The primary function of the Scope Validator Agent                               formation, facilitating robust and accurate table
+(SV Agent) is to verify the scope information in                                selection. The detailed prompt templates and vali-
+user queries, enabling accurate table matching.                                 dation functions used by this agent are provided in
+Scope information is typically represented by slot                              Appendix D.
+annotations; therefore, the agent receives the user’s
+original query, the domain label, the slot labels, and                           4.4        Table Retrieval Agent
+the list of domain-required slots as input.                                      The Table Retrieval Agent (TR Agent) generates a
+   The validation process begins by checking for                                 concise summary of the target table based on the
+missing slots. The agent compares the extracted                                  user’s original query and the supplementary infor-
+slots against the required slot types for the given                              mation collected by the Scope Validator Agent. It
+domain. If a required slot is missing, the agent                                 analyzes the complete dialogue history, identifying
+system prompts for clarification and correspond-          5     Experiments
+ing user responses. According to the previously
+                                                          5.1    Tasks and Baselines
+predicted intent label, the agent selects different
+representative examples as context for in-context         We utilize ODUTQA-MDC as the benchmark for
+learning. It then integrates information from both        open-domain underspecified tabular question an-
+the initial query and the clarifications to produce a     swering, which consists of two sub-tasks: (i) un-
+table summary, which serves as the predicted table        derspecification detection, including intent, scope,
+caption.                                                  and condition detection, and (ii) clarification-based
+                                                          dynamic QA that evaluates a system’s ability to
+   Table retrieval follows a two-stage process. First,    resolve underspecified queries through interaction.
+the system attempts to find an exact match between        As this benchmark explicitly targets clarification-
+the generated summary and the table captions in           aware reasoning over incomplete user inputs, there
+the database. If there is no exact match, the system      are no directly comparable prior systems that
+performs a similarity search using the BM25 algo-         jointly model underspecification detection and
+rithm (Robertson and Zaragoza, 2009). If the agent        clarification-driven query execution in tabular set-
+cannot generate a summary due to insufficient dia-        tings.
+logue information, the full dialogue history is used         For comparative evaluation, we implement
+directly for BM25 retrieval. This approach ensures        MAIC-TQA together with a state-of-the-art tab-
+robust table retrieval in all cases. The detailed         ular QA framework, SLUTQA (Wang et al., 2025),
+prompt templates used by this agent are provided          which does not employ clarification and instead
+in Appendix D.                                            answers directly from underspecified queries, serv-
+                                                          ing as a clarification-free baseline. For MAIC-
+                                                          TQA, we evaluate both fixed and dynamic clarifi-
+4.5   SQL Generation and Validation Agent                 cation responses, where all dynamic responses are
+                                                          generated by Qwen2.5-72B for consistency. The
+                                                          SGV Agent is responsible for SQL generation and
+After table retrieval, the SQL Generation and Vali-       execution, taking the complete dialogue history,
+dation Agent (SGV Agent) is responsible for gen-          predicted domain, extracted slots, and table cap-
+erating and validating SQL queries. The agent             tions as input; guided by user intent, it selects a
+takes four inputs: the complete dialogue history,         prompt template with five gold SQL examples for
+the predicted domain, the extracted slots, and the        in-context learning and generates the executable
+related table captions. Guided by the user’s intent,      query. We support both MAIC-TQA and SLUTQA
+the agent selects an appropriate prompt template          using LLM backbones with function-calling ca-
+containing five representative gold SQL examples          pabilities, including open-source Qwen3 32B and
+for in-context learning, and then generates and exe-      Qwen3 30B (A3B)(Yang et al., 2025) deployed via
+cutes the SQL query accordingly.                          SGLang(Zheng et al., 2024) with default chain-of-
+                                                          thought, and closed-source Kimi K2 (Team et al.,
+   If the query is successful and meets all user re-
+                                                          2025), GLM 4 (GLM et al., 2024), and Doubao
+quirements, the system returns the final SQL query
+                                                          (Seed 1.6 flash-250828) accessed through official
+and result, completing the task. If the result is
+                                                          APIs with default settings. Additional details are
+empty or incomplete (e.g., only a subset of the
+                                                          provided in Appendix B.2 and C.
+requested entities is returned), the agent calls a pre-
+defined SQL validation function to identify missing       5.2    Implementation
+conditions, generates a condition underspecifica-
+                                                          This section presents the evaluation metrics and im-
+tion label, and requests clarification from the user.
+                                                          plementation details for the two core tasks defined
+This clarification is appended to the dialogue his-
+                                                          in Section 3.4: Underspecification Detection and
+tory to form an updated context for a single round
+                                                          Clarification-based Dynamic QA.
+of SQL regeneration. If the new query still fails or
+returns no results, the process ends, and the empty       Evaluation Metrics For the Underspecification
+output is recorded as the final result.                   Detection task, we adopt Accuracy and macro F1-
+                                                          score to assess the model’s ability to detect intent,
+  Details of the prompt templates and the SQL             scope, and condition underspecifications. Accu-
+validation function are provided in Appendix D.           racy is calculated on the entire dataset, while F1 is
+                                 Fixed Clarification                           Dynamic Clarification
+      Model      SELECT            FROM            WHERE       Mixed        FROM        WHERE           Mixed
+               Acc.   F1       Acc.     F1      Acc.   F1      Acc.     Acc.    F1    Acc.      F1      Acc.
+    BERT       99.78 99.22       –       –        –     –        –        –      –     –        –         –
+  Qwen3 32B      –     –       77.66 82.82 69.59 66.02         54.96    78.78 85.11 73.81 72.49         59.42
+  Qwen3 30B      –     –       75.17 85.10 75.67 78.99         58.55    69.95 77.45 72.49 69.50         52.92
+   Kimi K2       –     –       82.60 87.95 69.02 65.54         55.51    81.63 87.31 64.81 59.55         52.69
+   GLM 4         –     –       81.10 86.71 44.77 28.96         37.97    78.55 84.39 57.02 53.41         46.23
+   Doubao        –     –       81.36 89.46 73.72 75.69         61.21    81.22 89.23 83.59 84.38         68.50
+
+  Table 2: Overall performance of underspecification detection under fixed and dynamic clarification settings.
+
+
+                             Table          SQL          evaluate model performance on three types corre-
+      Model     Method      Retrieval    Generation
+                               F1       ECR     EA       sponding to SQL clauses: intent (SELECT), scope
+               SLUTQA        60.07      85.90 24.20      (FROM), and condition (WHERE). As summarized
+ Qwen3 32B     Ours (Fix)    92.89      97.46 57.44      in Table 2, the BERT-based approach achieves
+               Ours (Dyn)    93.48      98.13 57.89
+               SLUTQA        58.78      86.75 21.22      strong results in both Accuracy and F1 score for
+ Qwen3 30B     Ours (Fix)    95.10      96.32 54.11      intent underspecification. For scope underspecifi-
+               Ours (Dyn)    91.17      97.56 49.55      cation, Kimi-K2 achieves the highest accuracy in
+               SLUTQA        62.33      88.35 30.70
+  Kimi-K2      Ours (Fix)    95.07      98.26 63.89      both dynamic and fixed scenarios, while Doubao
+               Ours (Dyn)    97.13      98.39 59.86      Seed 1.6 achieves the highest F1 score in both sce-
+               SLUTQA        60.15      85.51 25.75      narios. For condition underspecification, Qwen3
+      GLM 4    Ours (Fix)    89.89      85.88 32.47
+               Ours (Dyn)    89.28      88.84 44.63      30B A3B achieves the highest accuracy and F1
+               SLUTQA        59.95      78.52 23.72      score in the fixed scenario, whereas Doubao Seed
+   Doubao      Ours (Fix)    77.40      90.81 41.54
+               Ours (Dyn)    93.43      97.56 53.23
+                                                         1.6 achieves the highest accuracy and F1 score in
+                                                         the dynamic scenario. The mixed underspecifica-
+Table 3: Table retrieval and SQL generation results      tion task proves extremely challenging due to an
+(“Fix”/“Dyn”: Fixed/Dynamic clarification).              error accumulation effect, where failing to detect
+                                                         a single problem type leads to an overall incorrect
+                                                         prediction. Despite this difficulty, Doubao Seed 1.6
+reported specifically for underspecified queries.
+                                                         achieves the highest accuracy for this task across
+   For the Clarification-based Dynamic QA task,          both dynamic and fixed scenarios.
+evaluation is divided into two sub-tasks: (1) Ta-
+ble Retrieval, evaluated using F1 score; and (2)             In table retrieval, our method demonstrates ro-
+SQL Generation, assessed by Execution Correct-            bust performance across all models, as reported in
+ness Rate (ECR) and Execution Accuracy (EA) (Yu           Table 3. This gain is primarily attributed to our
+et al., 2018). ECR denotes the proportion of gener-       method’s ability to proactively identify missing key
+ated SQL statements that can be executed without          information, such as table captions, and to elicit
+error, while EA measures the proportion of cases          necessary details via follow-up questions, resulting
+where the execution result of the generated SQL           in more precise retrieval.
+exactly matches the gold standard result.
+                                                             For SQL generation, our method demonstrates
+   For SLUTQA, BERT parameters are loaded                 superior performance on all models, as shown
+directly from the officially released pre-trained         in Table 3. Specifically, on Doubao Seed 1.6,
+model. For our method, BERT is fine-tuned on              our method achieves execution compliance rate
+the ODUTQA training set. All LLM API calls                (ECR) improvements of 12.29% and 19.04% over
+follow their respective official default settings. De-    SLUTQA in the fixed and dynamic scenarios,
+tailed performance of the SLU Module is provided          respectively. Furthermore, on the EA metric,
+in Appendix B.1.                                          which more accurately captures intent alignment,
+                                                          our method achieves substantial improvements of
+5.3    Results and Discussions
+                                                          33.24% and 33.69% on Qwen3 32B for the fixed
+In this section, we present the experimental results      and dynamic scenarios, respectively, which further
+and analysis. The results of the ablation study are       underscores the necessity of clarification mecha-
+shown in Appendix B.3.                                    nisms for handling underspecified problems in ta-
+   For the underspecification detection task, we          ble QA.
+6   Conclusion                                            real estate market, a vertical characterized by
+                                                          dense attributes and user constraints. However,
+In this paper, we introduce ODUTQA-MDC, a
+                                                          the proposed framework is designed to be schema-
+new task for open-domain underspecified tabular
+                                                          agnostic, with clarification logic grounded in uni-
+question answering with multi-turn clarification.
+                                                          versal SQL syntax rather than domain-specific
+We provide three resources to support evaluation:
+                                                          rules. Therefore, despite the single-domain dataset,
+ODUTQA, the first large-scale underspecified tab-
+                                                          the underlying methodology for detecting and re-
+ular QA dataset; a fine-grained underspecification
+                                                          solving underspecification remains methodologi-
+labeling scheme; and a dynamic clarification inter-
+                                                          cally generalizable to other vertical industries such
+face. We further propose MAIC-TQA, an LLM-
+                                                          as healthcare or e-commerce.
+based agent framework that combines adaptive un-
+derspecification detection with iterative clarifica-      Acknowledgments
+tion. Extensive experiments benchmark diverse
+LLMs and baselines, delivering the first unified          This work is supported in part by the National
+evaluation of underspecification detection, clarifi-      Natural Science Foundation of China (NSFC) un-
+cation, and end-to-end QA, and establishing foun-         der Grant 62272050 and the grant of Beijing
+dational benchmarks for underspecification-aware          Normal- Hong Kong Baptist University sponsored
+tabular QA.                                               by Guangdong Provincial Department of Educa-
+                                                          tion; in part by Zhuhai Science-Tech Innovation
+Limitations                                               Bureau under Grant No. 2320004002772 and the
+                                                          Interdisciplinary Intelligence Super Computer Cen-
+While our proposed framework offers significant           ter of Beijing Normal University (Zhuhai).
+advancements in handling underspecified user
+queries, we acknowledge specific boundaries in
+our experimental design regarding the scope of            References
+ambiguity, interaction modeling, and domain cov-          Adithya Bhaskar, Tushar Tomar, Ashutosh Sathe, and
+erage. Regarding the dataset and SQL complexity,            Sunita Sarawagi. 2023. Benchmarking and improv-
+ODUTQA-MDC focuses strictly on informational                ing text-to-sql generation under ambiguity. In Pro-
+underspecification within the SELECT, FROM, and             ceedings of the 2023 Conference on Empirical Meth-
+                                                            ods in Natural Language Processing, EMNLP 2023,
+WHERE clauses, intentionally excluding complex              Singapore, December 6-10, 2023, pages 7053–7074.
+aggregations (e.g., GROUP BY or HAVING) and                 Association for Computational Linguistics.
+open-ended linguistic ambiguities. This scoping is
+                                                          Ziyang Chen, Jinzhi Liao, and Xiang Zhao. 2023. Multi-
+a deliberate design choice to isolate and rigorously        granularity temporal question answering over knowl-
+evaluate the model’s ability to perform logical clar-       edge graphs. In Proceedings of the 61st Annual Meet-
+ification mapping without the confounding factors           ing of the Association for Computational Linguis-
+of linguistic noise or advanced compositional rea-          tics (Volume 1: Long Papers), ACL 2023, Toronto,
+                                                            Canada, July 9-14, 2023, pages 11378–11392. Asso-
+soning, which would obscure the core clarification          ciation for Computational Linguistics.
+mechanism in a controlled study.
+   Concerning the evaluation paradigm, our user           An-Chieh Cheng, Hongxu Yin, Yang Fu, Qiushan Guo,
+                                                            Ruihan Yang, Jan Kautz, Xiaolong Wang, and Sifei
+simulator prioritizes logical consistency and factu-
+                                                            Liu. 2024. Spatialrgpt: Grounded spatial reasoning
+ality over the full spectrum of human behavioral            in vision-language models. In Advances in Neural
+stochasticity, such as irrelevant chitchat or dynamic       Information Processing Systems 38: Annual Confer-
+goal deviations. While this reduces the chaotic na-         ence on Neural Information Processing Systems 2024,
+ture of real-world interactions, it is critical for es-     NeurIPS 2024, Vancouver, BC, Canada, December
+                                                            10 - 15, 2024.
+tablishing a reproducible benchmark. By minimiz-
+ing interaction noise, we ensure that performance         Lizhi Cheng, Wenmian Yang, and Weijia Jia. 2023. A
+differences can be attributed solely to the model’s         scope sensitive and result attentive model for multi-
+                                                            intent spoken language understanding. In Proceed-
+capacity to resolve logical ambiguities rather than         ings of the AAAI Conference on Artificial Intelligence,
+its robustness to open-domain distractions, thus            pages 12691–12699. AAAI Press.
+serving as a standardized framework for this spe-
+                                                          Jacob Devlin, Ming-Wei Chang, Kenton Lee, and
+cific capability.                                            Kristina Toutanova. 2019. BERT: pre-training of
+   Finally, with respect to domain generalizabil-            deep bidirectional transformers for language under-
+ity, our current experiments are centered on the             standing. In Proceedings of the 2019 Conference of
+  the North American Chapter of the Association for       Libo Qin, Qiguang Chen, Jingxuan Zhou, Jin Wang,
+  Computational Linguistics: Human Language Tech-           Hao Fei, Wanxiang Che, and Min Li. 2025. Divide-
+  nologies, NAACL-HLT 2019, Minneapolis, MN, USA,           solve-combine: An interpretable and accurate
+  June 2-7, 2019, Volume 1 (Long and Short Papers),         prompting framework for zero-shot multi-intent de-
+  pages 4171–4186. Association for Computational            tection. In AAAI-25, Sponsored by the Association
+  Linguistics.                                              for the Advancement of Artificial Intelligence, Febru-
+                                                            ary 25 - March 4, 2025, Philadelphia, PA, USA, pages
+Mingwen Dong, Nischal Ashok Kumar, Yiqun Hu, Anuj           25038–25046. AAAI Press.
+  Chauhan, Chung-Wei Hang, Shuaichen Chang, Lin
+  Pan, Wuwei Lan, Henghui Zhu, Jiarong Jiang, Patrick     Libo Qin, Tailu Liu, Wanxiang Che, Bingbing Kang,
+  Ng, and Zhiguo Wang. 2025. PRACTIQ: A practical           Sendong Zhao, and Ting Liu. 2021. A co-interactive
+  conversational text-to-sql dataset with ambiguous and     transformer for joint slot filling and intent detection.
+  unanswerable queries. In Proceedings of the 2025          In ICASSP 2021-2021 IEEE International Confer-
+  Conference of the Nations of the Americas Chapter of      ence on Acoustics, Speech and Signal Processing
+  the Association for Computational Linguistics: Hu-        (ICASSP), pages 8193–8197. IEEE.
+  man Language Technologies, NAACL 2025 - Volume
+  1: Long Papers, Albuquerque, New Mexico, USA,           Daking Rai, Bailin Wang, Yilun Zhou, and Ziyu Yao.
+  April 29 - May 4, 2025, pages 255–273. Association        2023. Improving generalization in language model-
+  for Computational Linguistics.                            based text-to-sql semantic parsing: Two simple se-
+                                                            mantic boundary-based techniques. In Proceedings
+Yifan Duan, Yihong Tang, Kehai Chen, Liqiang Nie,           of the 61st Annual Meeting of the Association for
+  and Min Zhang. 2025. ORPP: Self-optimizing role-          Computational Linguistics (Volume 2: Short Papers),
+  playing prompts to enhance language model capa-           ACL 2023, Toronto, Canada, July 9-14, 2023, pages
+  bilities. In Proceedings of the 2025 Conference on        150–160. Association for Computational Linguistics.
+  Empirical Methods in Natural Language Processing,
+  pages 28585–28600, Suzhou, China. Association for       Tonghui Ren, Yuankai Fan, Zhenying He, Ren Huang,
+  Computational Linguistics.                                Jiaqi Dai, Can Huang, Yinan Jing, Kai Zhang, Yifan
+                                                            Yang, and X. Sean Wang. 2024. PURPLE: making
+Xi Fang, Weijie Xu, Fiona Anting Tan, Jiani Zhang,          a large language model a better SQL writer. In 40th
+  Ziqing Hu, Yanjun Qi, Scott Nickleach, Diego Socol-       IEEE International Conference on Data Engineering,
+  insky, Srinivasan H. Sengamedu, and Christos Falout-      ICDE 2024, Utrecht, The Netherlands, May 13-16,
+  sos. 2024. Large language models(llms) on tabular         2024, pages 15–28. IEEE.
+  data: Prediction, generation, and understanding - A
+  survey. CoRR, abs/2402.17944.
+                                                          Stephen E. Robertson and Hugo Zaragoza. 2009. The
+                                                             probabilistic relevance framework: BM25 and be-
+Team GLM, Aohan Zeng, Bin Xu, and Bowen Wang
+                                                            yond. Found. Trends Inf. Retr., 3(4):333–389.
+  et al. 2024. Chatglm: A family of large language
+  models from glm-130b to glm-4 all tools. Preprint,
+  arXiv:2406.12793.                                       Irina Saparina and Mirella Lapata. 2024. AMBROSIA:
+                                                             A benchmark for parsing ambiguous questions into
+Kezhi Kong, Jiani Zhang, Zhengyuan Shen, Balasub-            database queries. In Advances in Neural Information
+  ramaniam Srinivasan, Chuan Lei, Christos Falout-           Processing Systems 38: Annual Conference on Neu-
+  sos, Huzefa Rangwala, and George Karypis. 2024.            ral Information Processing Systems 2024, NeurIPS
+  Opentab: Advancing large language models as open-          2024, Vancouver, BC, Canada, December 10 - 15,
+  domain table reasoners. CoRR, abs/2402.14361.              2024.
+
+Sunjun Kweon, Yeonsu Kwon, Seonhee Cho, Yohan Jo,         Michael Stonebraker, Lawrence A. Rowe, and Michael
+  and Edward Choi. 2023. Open-wikitable : Dataset           Hirohama. 2019. The implementation of POST-
+  for open domain question answering with complex           GRES. In Michael L. Brodie, editor, Making
+  reasoning over table. In Findings of the Association      Databases Work: the Pragmatic Wisdom of Michael
+  for Computational Linguistics: ACL 2023, Toronto,         Stonebraker, volume 22 of ACM Books, pages 519–
+  Canada, July 9-14, 2023, pages 8285–8297. Associa-        559. ACM / Morgan & Claypool.
+  tion for Computational Linguistics.
+                                                          Kimi Team, Yifan Bai, Yiping Bao, and et al. 2025.
+Zeming Liu, Haifeng Wang, Zeyang Lei, Zheng-Yu Niu,         Kimi k2: Open agentic intelligence. Preprint,
+  Hua Wu, and Wanxiang Che. 2025. Towards few-              arXiv:2507.20534.
+  shot mixed-type dialogue generation. Sci. China Inf.
+  Sci., 68(2).                                            Zhensheng Wang, Wenmian Yang, Kun Zhou, Yiquan
+                                                            Zhang, and Weijia Jia. 2025. RETQA: A large-scale
+Libo Qin, Qiguang Chen, Xiachong Feng, Yang Wu,             open-domain tabular question answering dataset for
+  Yongheng Zhang, Yinghui Li, Min Li, Wanxiang              real estate sector. In AAAI-25, Sponsored by the Asso-
+  Che, and Philip S. Yu. 2026. Large language mod-          ciation for the Advancement of Artificial Intelligence,
+  els meet NLP: a survey. Frontiers Comput. Sci.,           February 25 - March 4, 2025, Philadelphia, PA, USA,
+  20(11):2011361.                                           pages 25452–25460. AAAI Press.
+Bowen Xing, Libo Qin, Zhihong Zhu, Zhou Yu, and            Question Template:   请问{城市名称}的{项目名称}这个小区的环境如何？
+  Ivor W Tsang. 2025. Dxa-net: Dual-task cross-              SQL Template:      SELECT "项目名称","容积率"
+  lingual alignment network for zero-shot cross-lingual                         FROM "{城市名称}{区域名称}土地成交信息表"
+  spoken language understanding. IEEE Transactions                              WHERE "项目名称" = '{项目名称}';
+
+  on Pattern Analysis and Machine Intelligence.           SELECT-Clarification 列名:容积率
+
+                                                          FROM-Clarification    区域名称:{区域名称}
+An Yang, Anfeng Li, Baosong Yang, and et al. 2025.
+  Qwen3 technical report. CoRR, abs/2505.09388.
+                                                           Question Template:   How is the environment of {Project_name} in {City_name}?
+Linhao Ye, Lang Yu, Zhikai Lei, Qin Chen, Jie Zhou,
+                                                             SQL Template:      SELECT "project_name","floor area ratio"
+  and Liang He. 2025. Optimizing question seman-                                FROM "Land Auction Table for {District_name}, {City_name}"
+  tic space for dynamic retrieval-augmented multi-hop                           WHERE "project_name" = '{Project_name}';
+
+  question answering. In Proceedings of the 63rd An-      SELECT-Clarification Column_name: Floor Area Ratio
+  nual Meeting of the Association for Computational       FROM-Clarification    District_name:{District_name}
+  Linguistics (Volume 1: Long Papers), ACL 2025, Vi-
+  enna, Austria, July 27 - August 1, 2025, pages 17814–   Figure 3: Examples of Template Filling (Chi-
+  17824. Association for Computational Linguistics.       nese–English Bilingual).
+Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga,
+  Dongxu Wang, Zifan Li, James Ma, Irene Li,
+  Qingning Yao, Shanelle Roman, Zilin Zhang, and          stored in a dictionary format without any slots; its
+  Dragomir R. Radev. 2018. Spider: A large-scale          purpose is to record the definitive user’s final in-
+  human-labeled dataset for complex and cross-domain      tent after an underspecified query is clarified. The
+  semantic parsing and text-to-sql task. In Proceed-
+                                                          FROM clarification contains slots related to the ta-
+  ings of the 2018 Conference on Empirical Methods
+  in Natural Language Processing, Brussels, Belgium,      ble caption, which are populated concurrently with
+  October 31 - November 4, 2018, pages 3911–3921.         other slots during the data sampling stage. Fur-
+  Association for Computational Linguistics.              thermore, the static text (i.e., the non-slot part) of
+Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue       a template determines its intent type and is uni-
+   Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos      formly labeled “O" during BIO tagging, whereas
+   Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark W.    the slot parts are tagged according to their specific
+   Barrett, and Ying Sheng. 2024. Sglang: Efficient
+                                                          sampled values. Once all slots in a template are
+   execution of structured language model programs. In
+  Advances in Neural Information Processing Systems       populated, the system executes the query generated
+  38: Annual Conference on Neural Information Pro-        from the SQL template, and the query result serves
+   cessing Systems 2024, NeurIPS 2024, Vancouver, BC,     as the final answer to the corresponding question.
+  Canada, December 10 - 15, 2024.                         An example of a complete generated QA pair is
+Victor Zhong, Caiming Xiong, and Richard Socher.          illustrated in Figure 5.
+  2017. Seq2sql: Generating structured queries
+  from natural language using reinforcement learning.     A.1.2       Rationale for Template-based
+  CoRR, abs/1709.00103.                                               Construction
+A     Dataset Construction and Statistics                 Template-based construction with controlled pertur-
+                                                          bations is standard practice in recent QA and TQA
+A.1    Template Filling
+                                                          datasets, such as MULTITQ (Chen et al., 2023),
+A.1.1 Implementation Details                              RETQA (Wang et al., 2025), and SpatialRGPT-
+Based on 209 tables, we design 222 seed templates.        Bench (Cheng et al., 2024), etc. This approach en-
+As shown in Figure 3, these templates are catego-         sures that the generated questions are logically con-
+rized by underspecification type: 38 with SELECT          sistent and answerable. Compared to manual anno-
+underspecification, 113 with FROM underspecifica-         tation or crowdsourcing, which is prohibitively ex-
+tion, and 71 that are specified. Each seed template       pensive and often suffers from inconsistent quality,
+comprises four components: a Question Template,           template-based generation allows for high-volume,
+an SQL Template, a SELECT clarification, and a            high-quality data creation that covers specific phe-
+FROM clarification. The parts enclosed in “{}"            nomena systematically. We acknowledge that pure
+are slots to be populated, and the slots across these     templates could in principle reduce diversity; there-
+four components are correspondingly linked. Af-           fore, we deliberately decouple semantic patterns
+ter randomly selecting appropriate values from the        from surface forms. Specifically, templates are
+database, these values are used to populate the cor-      used to encode the SQL intent and the specific type
+responding slots within the template. In the tem-         of underspecification. The natural-language word-
+plate’s components, the SELECT clarification is           ing is then produced by a LLM that is prompted to
+use varied, colloquial question styles while strictly      columns. By explicitly decoupling entity extrac-
+preserving the intent and ambiguity constraints.           tion (Slots) from logic determination (Intents), the
+Dictionaries are utilized only to sample realistic         model can better understand user intent and gener-
+entities and attribute values from real tables (e.g.,      ate SQL queries that are both syntactically correct
+city names or financial indicators), not to constrain      and semantically aligned with the user’s request.
+how questions are phrased. Combined with random
+sampling over templates, entities, and operators,          A.3   LLM-based Query Rewriting
+this strategy yields a broad range of question types.      Template-generated queries often display rigid
+The relatively low Text-to-SQL EA on MAIC-TQA              and monolithic syntactic patterns, which dif-
+(see Section 5.3) demonstrates that these questions,       fer markedly from the more flexible and nat-
+despite being synthesized, still present significant       ural language used by real users. This mis-
+challenges to current state-of-the-art models.             match can lead to suboptimal model performance
+                                                           when handling authentic user queries. To mit-
+A.2   SLU Annotations in TQA                               igate this issue, we leverage Large Language
+Figure 4 illustrates the application of Spoken Lan-        Models (LLMs)—specifically, the Qwen2.5-72B
+guage Understanding (SLU) tags, which serve as a           model—to rewrite template-generated queries.
+critical semantic bridge between unstructured nat-         This rewriting process is designed to preserve the
+ural language and structured SQL queries in our            original semantics while introducing greater lin-
+framework. The SLU annotations consist of two              guistic diversity through synonym replacement and
+distinct components: Slots and Intents.                    syntactic structure adjustments, resulting in queries
+                                                           that better resemble human language. Building on
+  1. Slot Tags (BIO Annotation): We employ the             this, we also adopt an augmentation strategy in-
+     BIO (Begin-Inside-Outside) tagging scheme             spired by RETQA, in which questions are further
+     to identify specific entities that act as filtering   paraphrased using an LLM to enhance linguistic
+     constraints in the SQL query. In the visual           naturalness. Given that our dataset targets under-
+     example, the tokens “Shanghai”, “July”, and           specified scenarios, we take care to prevent the
+     “2022” are explicitly tagged as B-C (City), B-M       LLM from simplifying underspecified expressions
+     (Month), and B-Y (Year), respectively. Among          into non-underspecified forms. To this end, we en-
+     them, “Shanghai” serves as the table scope in-        force additional constraints in the prompt, prohibit-
+     formation (affecting the FROM clause), while          ing the use of specific forbidden words—namely,
+     “July” and “2022” map directly to the con-            column names defined in the SELECT-Clarification
+     dition values in the SQL WHERE clause (e.g.,          dictionary—to maintain the intended underspecifi-
+     WHERE Date = ‘2022-07’).                              cation. Details of the prompt formulations used for
+                                                           these rewriting processes are provided in Appendix
+  2. Intent Labels: Intents capture the semantic           D, Figure 6.
+     goal of the query, determining which columns
+     and operations (such as sorting or aggregation)       A.4   Quality Assessment of LLM-based
+     are required. The example demonstrates a                    Paraphrasing
+     composite intent scenario where the user asks         To rigorously validate the quality of the LLM-based
+     for both volume ranking and price comparison.         rewriting, we conducted a manual assessment on
+     Consequently, the utterance is labeled with           samples drawn exclusively from the test set. We
+     two intents.                                          excluded QA pairs without underspecification and
+                                                           randomly selected 200 QA pairs that contained
+Role in TQA. In the Table Question Answering               ambiguities for detailed review. The sample dis-
+task, these SLU tags serve as critical intermediate        tribution included 30 cases of underspecification
+signals for bridging natural language and structured       in the SELECT clause, 137 in the FROM clause,
+queries. The Intent labels help the model iden-            and 159 in the WHERE clause. Note that the
+tify the user’s query goal, enabling more effective        sum exceeds 200 due to the presence of mixed-
+in-context example retrieval for few-shot learning.        underspecification instances, which were counted
+The Slot tags, on the other hand, capture the key          across the relevant categories.
+entities that constitute essential components of the          Human annotators reviewed the 200 sampled QA
+SQL query, such as filtering conditions and target         pairs and confirmed that the rewriting process did
+Utterance: Which of the top 5 communities by sales volume in Shanghai in July               2022 have the lowest average price ?
+
+Slot:        O   O   O   O   O        O         O    O       O    O      B-C     O B-M      B-Y     O     O        O   O   O   O
+
+Intent:                  real_estate_project_sales_volume_query          real_estate_project_average_price_query
+
+
+Figure 4: Illustration of an utterance with SLU tags. The example features two intents, where ‘B-C’ denotes ‘B-City’
+and ‘B-Y’ denotes ‘B-Year’.
+
+
+not compromise the integrity of the data; specif-                     extraction and validation:
+ically, no instances were found where the three
+                                                                         • Keyword Extraction: Before generation, the
+types of ambiguities were inadvertently deleted
+                                                                           system identifies the critical information slot
+or resolved by the LLM. This robust preserva-
+                                                                           (e.g., "Beijing") that must be present in the
+tion of ambiguity is attributed to our dual-layered
+                                                                           response.
+validation strategy. First, our prompt design
+explicitly incorporates specific “forbidden key-                         • Iterative Validation: The generation process
+words”—corresponding to the missing informa-                               includes a max_retries mechanism (set to 5).
+tion—to constrain the generation process and pre-                          After the LLM generates a rewrite, the inter-
+vent the model from filling in the gaps. Second,                           face automatically checks if the extracted key-
+we implemented a rigorous string matching check                            word exists in the new sentence.
+to verify that these prohibited terms do not appear
+in the final rewritten queries. This combination of                      • Fallback Strategy: If the generated sentence
+constrained prompting and post-generation verifi-                          does not contain the keyword after 5 attempts,
+cation ensures the accuracy and reliability of the                         the system discards the LLM output and de-
+paraphrasing process.                                                      faults to the standard template sentence.
+                                                                         This mechanism ensures that the “Dynamic”
+A.5       Details of Conversational Clarification                     mode tests the target model’s ability to understand
+          Interface                                                   natural language variations without introducing
+To clarify the mechanism introduced in Section 3.4,                   false information that could invalidate the QA eval-
+we describe the implementation details of our user                    uation.
+simulator, which runs in two modes: Fixed and
+                                                                      A.6      Rationale for the Simulated Clarification
+Dynamic.
+                                                                               Interface
+   1. Data Retrieval and Template Construc-
+tion. When the system correctly detects an un-                        While we acknowledge that simulated interactions
+derspecification (e.g., a missing city in the scope),                 cannot fully capture the stochastic nature of human
+the interface looks up the ground-truth value                         behavior, our design choice to utilize a Dynamic
+from the dataset’s clarification dictionary (e.g.,                    Clarification Interface rather than human-in-the-
+FROM_clarification). It then constructs a standard                    loop evaluation is deliberately driven by the spe-
+response sentence, such as “The correct city is [Bei-                 cific requirements of constructing a robust bench-
+jing].”                                                               mark. The rationale behind this decision is three-
+                                                                      fold:
+   2. Dynamic Response Generation (LLM-based
+Rewriting). In the dynamic scenario, to simulate                      Reproducibility and Standardization for Bench-
+the diverse and unpredictable nature of real human                    marking. The primary objective of ODUTQA
+language, we employ a LLM (Qwen2.5-72B) to                            is to provide a standardized testbed for evaluat-
+rewrite the standard response. We utilize a spe-                      ing SQL generation capabilities under uncertainty.
+cialized prompt (see Figure 7) that instructs the                     Human-based evaluation, while offering high real-
+LLM to act as a grammar expert, making the sen-                       ism, inherently suffers from high variance, subjec-
+tence more colloquial and using varied sentence                       tivity, and irreproducibility. A strictly “real” envi-
+structures (e.g., inversions).                                        ronment would make it mathematically impossible
+   3. Reliability Control Mechanism. A critical                       to fairly compare different models or track progress
+challenge in automatic generation is ensuring fac-                    over time, as the “test set” (the variable human re-
+tual consistency. We address this by strict keyword                   sponses) would shift with every interaction. Our
+simulated approach guarantees that every model is       dataset comprises 5,095 non-underspecified ques-
+evaluated against a consistent, reliable, and rigor-    tions (20.29%). It also features questions with un-
+ous standard, which is paramount for a scientific       derspecifications related to specific SQL clauses:
+benchmark.                                              197 for SELECT (7.85%), 3,274 for FROM
+                                                        (13.04%), and 4,421 for WHERE (17.61%). No-
+The Hybrid Design: Controlled Logic with Gen-
+                                                        tably, the dataset contains 12,118 questions with
+erative Flexibility. We clarify that our interface
+                                                        mixed underspecifications (48.27%), underscoring
+is not “rule-based” in the traditional sense of rigid
+                                                        the complexity of the challenge. Regarding intent,
+templates. We employ a hybrid architecture to
+                                                        it includes 1,966 single-intent and 23,139 multi-
+balance logical correctness with linguistic natural-
+                                                        intent questions. Based on table sources, there are
+ness:
+                                                        3,851 single-table and 21,254 multi-table questions,
+   • Decision Layer (Deterministic): The deci-          increasing the reasoning complexity. The dataset
+     sion of what to clarify is governed by logic de-   features 6 distinct slot types and is built upon 102
+     rived from the dataset’s Gold Labels. This is      Property Information Tables, 4 Real Estate Com-
+     necessary to ensure the provided information       pany Finance Information Tables, and 103 Land
+     accurately resolves the specific ambiguity in      Auction Information Tables. To facilitate model
+     the SQL generation task without introducing        development and evaluation, the dataset is parti-
+     hallucinatory noise or irrelevant deviations.      tioned into a training set (14,973), a validation set
+                                                        (5,046), and a test set (5,086). These statistics un-
+   • Generation Layer (Probabilistic): The ac-          derscore the comprehensive and representative na-
+     tual dialogue utterances are generated by a        ture of ODUTQA-MDC, especially in terms of the
+     state-of-the-art LLM (Qwen2.5-72B) condi-          complexity of underspecification and the diversity
+     tioned on the dialogue history. As shown in        of annotation labels.
+     our manual inspection, this allows for diverse
+     wording, varying sentence structures, and nat-
+                                                        B        Supplementary experiments
+     ural phrasing. The model is free to formulate
+     the question as long as it conveys the neces-
+                                                        B.1       SLU Task
+     sary disambiguating information.
+                                                        Table 5 presents the performance comparison of In-
+This design allows us to “stress test” models with      tent and Slot prediction in queries using BERT and
+linguistically diverse inputs while maintaining the     ICL methods. For the BERT model, we fine-tune
+logical precision required for automated evaluation.    the “Bert-base-chinese1 ” version on the training
+Scalability and Cost-Effectiveness. For a bench-        set, following the procedure outlined in the main
+mark to be practically useful to the research com-      text. The training hyperparameters for BERT are
+munity, it must be scalable. Our automated in-          a learning rate of 1 × 10−5 and a batch size of 16.
+terface allows for the evaluation of thousands of       In the ICL scenario, we select a sufficient number
+samples and multiple model iterations at a negligi-     of samples from the training set, covering all intent
+ble cost compared to human annotation. This ac-         types, to construct the context. These samples in-
+cessibility encourages broader adoption and more        cluded both intent and slot information, enabling
+frequent testing, which is critical for advancing the   LLMs to generate intent and slot labels for new
+field of text-to-SQL.                                   queries in a single pass. When the SLU label for-
+   In summary, while we trade off a degree of be-       mat in the LLM output is not standardized, we
+havioral realism, we gain the reliability, validity,    select the label that most closely matches the out-
+and operability essential for a scientific benchmark.   put characters. The experimental results indicate
+We believe this is the optimal approach for quan-       that the fine-tuned BERT model achieves better per-
+titatively assessing underspecification resolution      formance in predicting SLU labels compared with
+capabilities.                                           ICL methods. However, fine-tuning requires exten-
+                                                        sive manual annotation, whereas the ICL methods
+A.7   Dataset Statistics                                can achieve comparable results with only a few
+Table 4 presents the detailed statistics of the         examples.
+ODTQA-FoRe dataset concerning question under-
+                                                            1
+specification, intent type, and table type. The                 https://huggingface.co/google-bert/bert-base-chinese
+                       Statistics                                               Num
+                       Non-underspecified                                       5,095
+                       SELECT underspecification                                197
+                       FROM underspecification                                  3,274
+                       WHERE underspecification                                 4,421
+                       Mixed-underspecification                                 12,118
+                       Single intent                                            1,966
+                       Multi intents                                            23,139
+                       Single Table                                             3,851
+                       Multi Tables                                             21,254
+                       Slot type                                                6
+                       Poperty Information Tables                               102
+                       Real Estate Enterprise Finance Information Tables        4
+                       Land Auction Information Tables                          103
+                       Train                                                    14,973
+                       Validation                                               5,046
+                       Test                                                     5,086
+
+                                          Table 4: Dataset Statistics.
+
+
+B.2   Implementation of baseline                          30B A3B. Meanwhile, removing the condition clar-
+                                                          ification mechanism has the most pronounced im-
+Furthermore, to highlight the challenges our dataset
+                                                          pact on the EA metric, causing it to fall by 28.59%
+presents to existing methods, we adopt SLUTQA as
+                                                          and 27.29% for the two models. These findings
+a baseline approach. SLUTQA follows the design
+                                                          highlight that scope and condition underspecifica-
+described in its original paper, selecting prompt
+                                                          tions are the primary factors limiting performance
+templates based on the detected user intent and in-
+                                                          on this dataset and confirm the effectiveness of our
+corporating SLU information into the prompt to
+                                                          proposed clarification mechanisms in addressing
+guide the LLM in generating more accurate SQL.
+                                                          these issues.
+Notably, SLUTQA does not invoke the clarifica-
+tion interface, as it lacks a built-in mechanism for
+underspecification detection.                             B.4    Impact of Dynamic Clarification.
+
+                                                          As shown in Tables 2, different models exhibit vary-
+B.3   Ablation Study
+                                                          ing performance fluctuations between fixed and
+To evaluate the contribution of each module within        dynamic clarification modes. It is important to clar-
+the MAIC-TQA framework in handling underspeci-            ify that this variance is not due to interface design
+fied queries, we conduct a series of ablation studies     flaws or the provision of incorrect ("bad") clarifi-
+on the Qwen3 32B and Qwen3 30B A3B models.                cation information. Instead, our interface employs
+These experiments involve removing the clarifi-           a strict built-in verification mechanism to ensure
+cation mechanisms for intent underspecification           reliability: it retrieves canonical fact information
+(SELECT), scope underspecification (FROM), and            from the ground-truth dictionaries only when the
+condition underspecification (WHERE). The re-             system’s detection label is correct. In dynamic
+sults are presented in Table 6.                           mode, while the LLM rewrites this canonical infor-
+   The results indicate that removing the intent clar-    mation into conversational paraphrases (e.g., using
+ification mechanism has the least impact on perfor-       colloquialisms or inverted structures), the design
+mance. Specifically, for Qwen3 32B, ECR and EA            strictly enforces the inclusion of key entity words.
+decrease by 6.13% and 4.45%, respectively. For            This ensures that the generated content remains se-
+Qwen3 30B A3B, ECR and EA decrease by 3.69%               mantically fact-accurate. Therefore, the observed
+and 4.81%, respectively. In contrast, removing the        performance differences are primarily attributed to
+scope clarification mechanism most severely af-           the varying robustness of different backbone mod-
+fects the ECR metric, leading to a significant drop       els against diverse linguistic surface forms, as well
+of 16.92% for Qwen3 32B and 15.31% for Qwen3              as the inherent stochasticity in generation, rather
+         Model      Task      P        R       F1         work. The rewriting prompt for data construction
+                   Intent   98.51    98.61    98.56       is presented in Figure 6.
+         BERT
+                   Slots    99.68    99.88    99.78          Within the MAIC-TQA framework, the Scope
+                   Intent   90.57    91.73    91.00       Validator Agent uses the prompt shown in Figure 8
+     Qwen3 30B
+                   Slots    97.01    96.79    96.90       to verify the scope information in user queries, uti-
+                   Intent   88.27    91.27    89.74       lizing the Slot Retrieval Tool defined by Algorithm
+     Qwen3 32B
+                   Slots    96.07    97.23    96.64       1. The Table Retrieval Agent then uses the prompt
+                                                          shown in Figure 9 to summarize the target table.
+Table 5: Performance of Different Models on SLU           Finally, the SQL Generation and Validation Agent
+Tasks.
+                                                          utilizes the prompt in Figure 10 to generate and
+         Method      Model          ECR       EA          validate SQL queries, and utilizes the tool defined
+                                                          by Algorithm 2 to execute SQL statements.
+                   Qwen3 32B        97.46    57.44
+  MAIC-TQA
+                   Qwen3 30B        96.32    54.11
+                   Qwen3 32B        91.33    52.99
+ w/o SELECT
+                   Qwen3 30B        92.63    49.30
+                   Qwen3 32B        80.54    35.98
+     w/o FROM
+                   Qwen3 30B        81.01    31.84
+                   Qwen3 32B        90.72    28.85
+ w/o WHERE
+                   Qwen3 30B        90.34    26.82
+
+Table 6: Ablation study of the clarification modules in
+the MAIC-TQA framework.
+
+
+than factual noise introduced by the clarification
+interface. Notably, our main conclusions remain
+stable across both modes, as MAIC-TQA consis-
+tently demonstrates significant superiority.
+
+C        Computing Infrastructure Statement
+All neural network models are implemented using
+PyTorch2 v2.3.1. For training the BERT model, we
+use a single NVIDIA GeForce RTX 4090 GPU.
+   For experiments of LLMs, we perform inference
+with the SGLang library3 on eight NVIDIA A800-
+SXM4-80GB GPUs. Specifically, we allocate four
+GPUs to the Qwen3 32B model, four to the Qwen3
+30B A3B model. Model responses for Kimi K2
+(0711-preview version), GLM 4 plus, and Doubao
+Seed 1.6 (flash version) are obtained through their
+respective official APIs 4 5 6 to ensure consistency
+and reliability of the inference process.
+
+D        Prompts and Functions of Agent
+This section summarizes the prompts used for data
+construction and within the MAIC-TQA frame-
+     2
+       https://pytorch.org/
+     3
+       https://docs.sglang.ai/
+     4
+       Kimi K2: https://api.moonshot.cn/v1
+     5
+       GLM 4 plus: https://open.bigmodel.cn/api/paas/
+v4
+     6
+    Doubao Seed 1.6: https://ark.cn-beijing.volces.
+com/api/v3
+Algorithm 1 The slotSearchTool used by the SV agent
+Require: slots: str or List[str]; domain: str
+Ensure: result: Dict[str, int]
+Parameter: all_domains: List[str]
+ 1: if domain ∈  / all_domains then
+ 2:    Raise error: “Unknown domain"
+ 3: end if
+ 4: if slots is a string then
+ 5:    Convert slots to a list with one element
+ 6: end if
+ 7: captions ← all_table_captions[domain]
+ 8: Initialize result ← empty dictionary
+ 9: for each slot in slots do
+10:    count ← 0
+11:    for each caption in captions do
+12:       if slot is a substring of caption then
+13:          count ← count + 1
+14:       end if
+15:    end for
+16:    result[slot] ← count
+17: end for
+18: return result
+
+
+
+
+Algorithm 2 The sqlQueryTool used by the SGV agent
+Require: sql_statement: str; db_name: str
+Ensure: result: str
+Parameter: all_db_names: List[str]
+ 1: Define try_execute_on_db(database):
+ 2:      Create PostgresQueryExecutor instance with given database
+ 3:      Return result of executing sql_statement
+ 4: if db_name ∈ all_db_names then
+ 5:    result ← try_execute_on_db(db_name)
+ 6:
+ 7:   return str(result)
+ 8: else if db_name == ‘unknowDomain’ then
+ 9:   for each db_name in all_db_names do
+10:     result ← try_execute_on_db(db_name)
+11:     if result is of type list then
+12:
+13:        return str(result)
+14:     end if
+15:   end for
+16:
+17:   return “Failed to execute SQL on all databases."
+18: else
+19:
+20:   return “Invalid database name: " + db_name
+21: end if
+                  Dataset Example
+Query: 广州市的滨江雅苑的小区环境怎么样？
+Intent: "未知"
+Slots: ["B-city", "I-city", "I-city", "O", "B-community",
+"I-community", "I-community", "I-community", "O",
+"O", "O", "O", "O", "O", "O", "O", "O"]
+SELECT-Clarification: {"列名": "绿化率"}
+FROM-Clarification: {"从化区": "区域"}
+WHERE-Clarification: {"雅居乐滨江雅苑": "项目
+名称"}
+Intent-Underspecification: "True"
+Scope-Underspecification: ["从化区", "区域",
+"Missing"]
+Condition-Underspecification: ["滨江雅苑", "项目名
+称", "不存在"]
+Table_caption: ["广州市从化区土地成交信息表"]
+SQL: SELECT "项目名称","绿化率(%)" FROM "广州
+市从化区土地成交信息表" WHERE "项目名称" =
+'雅居乐滨江雅苑';
+Answer: 绿化率是25%          。
+Query: How is the environment of Binjiang Garden in
+Guangzhou City?
+Intent: "unknown"
+Slots: ["O", "O", "O", "O", "O", "B-community", "I-
+community", "O", "B-city", "I-city", "O"]
+SELECT-Clarification: {"Column Name": "Green
+Coverage Ratio"}
+FROM-Clarification: {"Conghua District": "District"}
+WHERE-Clarification: {"Agile Binjiang Garden":
+"Project Name"}
+Intent-Underspecification: "True"
+Scope-Underspecification: ["Conghua District",
+"District", "Missing"]
+Condition-Underspecification: ["Binjiang Garden",
+"Project Name", "not exist"]
+Table_caption: ["Table of Land Auction Information in
+Conghua District, Guangzhou"]
+SQL: SELECT "Project Name","Green Coverage
+Ratio" FROM "Table of Land Auction Information in
+Conghua District, Guangzhou" WHERE "Project
+Name" = 'Agile Binjiang Garden';
+Answer: The Green Coverage Ratio is 25%.
+
+
+               Figure 5: QA example.
+                                   Rewriting Prompt
+
+Your input is a query obtained by filling in city and district names based on a template.
+Please process your input <Query> as follows; do not answer the question directly. The
+main goal is to rewrite the <Query> while ensuring the meaning remains unchanged and the
+<Keywords> are preserved:
+1. <Keywords> listed must not be altered and must appear in the
+<Rewritten_query>. <Keywords> are the city name, district name, year, month, or time
+range.
+2. <Forbidden_keywords> listed must not appear in the rewritten query. You can only use
+approximate phrasing. The intent of the <Rewritten_query> is to phrase a vague question
+regarding the <Forbidden_keywords>.
+3. You only need to rewrite the question, not answer it. Rewriting methods include, but are
+not limited to, inversion and synonym replacement.
+4. "<Forbidden_keywords>: 'None'" indicates there are no forbidden words.
+5. You can be creative and increase sentence diversity while ensuring the meaning remains
+unchanged, <Keywords> are preserved, and <Forbidden_keywords> do not appear.
+############Example 1##############
+<Query>:Which environment is better when comparing Yuyue Guangnian and Nanan
+Chaoming in Yuhuatai District, Nanjing City?
+<Keywords>:['Yuyue Guangnian', 'Nanan Chaoming', 'Yuhuatai District', 'Nanjing', ]
+<Forbidden_keywords>:Greening Rate (%)
+<Rewritten Query>:When analyzing from the perspective of neighborhood environment,
+which is better between Yuyue Guangnian and Nanan Chaoming in Nanjing's Yuhuatai
+District?
+############Example 2##############
+......
+#########Complete the following#########
+<Query>:{query}
+<Keywords>:{keywords}
+<Forbidden_keywords>:{forbidden_keywords}
+<Rewritten Query>:
+
+
+                  Figure 6: Query rewriting prompts for dataset construction.
+
+
+
+
+       Rewriting Prompt for Dynamic Clarification Interface
+
+You are a grammar rewriting expert. Please rewrite the input sentence to make it sound
+more natural and human-like.
+Do not change the original meaning of the sentence, and do not output any explanations or
+notes.
+You may use various grammatical structures like inversion, add modal particles, and make it
+as colloquial as possible.
+Note: The keyword '{keyword}' must be included.
+Now, please rewrite the following sentence: {sentence}
+
+
+
+       Figure 7: Prompt for sentence rewriting used in the dynamic clarification interface.
+                                  Prompt for Scope Validator Agent
+
+You are a slot classification agent. Based on the provided input, you are required to use a tool to perform slot
+verification and classify the slots accordingly.
+Note: In the final output, only the classification results should be included. Do not include any thought processes or
+other additional content.
+### Input Description ###:
+<Query>: A string representing the original sentence from which the slots are extracted.
+<Domain>: A string indicating the question domain; one of 'realEstateSalesField', 'landInformationField', or
+'enterpriseFinanceField'.
+<Slots>: A list in the format "type:slot", representing the extracted slots and their corresponding types from the
+<Query>.
+<Target Slot Types>: A list of slot types that are required to appear in the current question.
+### Tool Description ###:
+You must use a retrieval tool named "slotSearchTool", which is designed to verify whether a slot or a combination
+of slots exists within table headers under the specified <Domain>.
+"slotSearchTool" Input:
+'slots': A 'str' or 'List[str]' representing the slot(s) or slot combination(s) to be searched.
+'domain': A 'str' representing the question domain.
+Return:
+A Dict[str, int], where each key is a slot string and the value indicates the number of tables found (0 means not
+found, 1 means found in 1 table, n means found in n tables).
+### Processing Procedure ###:
+========================Step 1: Slot Verification ========================
+1. Extract Target Slots: Filter all slots in <Slots> that match the <Target Slot Types>.
+2. Invoke Tool for Verification:
+   - Single-slot Verification: Search each target slot individually and record the results.
+   - Combined-slot Verification: Combine target slots (e.g., city + district) according to their order of appearance in
+<Query>, then perform combined verification.
+============Step 2: Slot Classification (Apply rules in priority order) =============
+1. 'Missing':
+   - If a target slot type does not appear at all in <Slots>, classify it as ['', slot_type, 'Missing'].
+2. 'Unmatch' (Combination Mismatch):
+   - All individual slot checks return values > 0 (i.e., all exist individually);
+   - But the combination slot query returns 0;
+   - Then both slots in the combination are classified as [slot, slot_type, 'Unmatch'].
+   - Important: Once classified as 'Unmatch', these slots cannot be reclassified as 'Error' or 'Correct'.
+3. 'Error' (Retrieval Failed):
+   - If a slot is present in '<Slots>' but its single-slot verification result is 0, classify it as [slot, slot_type, 'Error'].
+4. 'Correct' (Fully Matched):
+   - All target slot types are present;
+   - All individual slot queries return values > 0;
+   - Combined slot query also returns > 0;
+   - Then each involved slot is classified as [slot, slot_type, 'Correct'].
+############ [Example] ##########
+<Query>:
+"Please provide the building density of Dongping Town in Shanghai and Yuntai Yuanzhu in Jianye District,
+Nanjing."
+<Domain>: 'realEstateSalesField'
+<Slots>: ['city:Shanghai', 'community:Dongping Town', 'city:Nanjing', 'district:Jianye District', 'community:Yuntai
+Yuanzhu']
+<Target Slot Types>: ['city', 'district']
+→ Input to "slotSearchTool": (['Shanghai', 'Nanjing', 'Jianye District', 'Jianye District, Nanjing'],
+'realEstateSalesField')
+→ Return: {'Shanghai': 18, 'Nanjing': 11, 'Jianye District': 0, 'Jianye District, Nanjing': 0}
+→ Classification Result:
+[['Shanghai', 'city', 'Correct'],
+ ['', 'district', 'Missing'],
+ ['Nanjing', 'city', 'Correct'],
+ ['Jianye District', 'district', 'Error']]
+
+
+
+                                     Figure 8: Prompt for slots classification.
+              Summary Prompt for Table Retrieval Agent
+
+You are an information extraction assistant. Based on the <Dialog> conversation below,
+extract the table names relevant to the user's query.
+### Task Instructions
+1. In the <Dialog>, "system" represents the system's follow-up questions based on the user's
+original input, and "user" represents the user's supplementary information in response to
+errors or omissions;
+2. The user’s original query may contain mistakes — you should make judgments based on
+the user’s supplemental input;
+3. The <Summary> should be a list consisting of a geographic region + table name, such as
+"Table of Property Transaction Prices in Haidian District, Beijing";
+############ Example 1 ##############
+<Dialog>:
+User: Could you tell me how many property units were sold in November 2020 in Park
+No.1 in Daxing District, Beijing, and Jing'an No.1 in Shanghai?
+System: Your input lacks a region name. Please provide the correct region.
+User: The correct region should be Jing'an District.
+<Summary>: ["Table of Property Transaction Prices in Jing'an District, Shanghai", "Table
+of Property Transaction Prices in Daxing District, Beijing"]
+############ Example 2 ##############
+<Dialog>:
+User: Please check the average transaction prices in June 2020 for Jinyue Mansion in Miyun
+District, Beijing and Hyde Apartment in Yuhang District, Hangzhou.
+<Summary>: ["Table of Property Transaction Prices in Miyun District, Beijing", "Table of
+Property Transaction Prices in Yuhang District, Hangzhou"]
+······
+########## Complete the following# #########
+<Dialog>:
+{query}
+<Summary>:
+
+
+                      Figure 9: Prompt for table caption summarization.
+                   Prompt for SQL Generation and Validation Agent
+
+You are an assistant for SQL generation and validation.
+### Input Components
+<Dialog>: A conversation containing system follow-up prompts and user-provided corrections.
+  - system: Follow-up questions posed by the system after detecting errors in the user’s original query.
+  - user: Corrected information provided by the user in response to the system's prompt.
+<Domain>: The domain of the query, which also serves as an input to the `sqlQueryTool`.
+<SLOTS>: Key database information extracted from the user’s original question.
+<Table_Captions>: Predicted table titles relevant to the database.
+### Task Workflow
+============================= Step 1: SQL Generation =============================
+1. Analyze the content of the <Dialog> to identify the user's query intent.
+2. Important: Always prioritize the corrected information provided by the user over the erroneous information
+in the original query.
+3. Generate an SQL query using the provided <SLOTS> and <Table_Captions>.
+4. Strictly follow the format shown in the examples below.
+############ Example 1 ##############
+<Dialog>:
+User: What is the operating profit of Lishui Economic Development Group?
+System: Your input is missing the year. Please provide a year between 2019 and 2022.
+User: I'm interested in the year 2021.
+<Domain>: enterpriseFinanceField
+<SLOTS>: {'Lishui Economic Development Group': 'Enterprise Name'}
+<Table_Captions>: National Enterprise Finance Table 2021
+<SQL>: SELECT "Enterprise Name", "Operating Profit" FROM "National Enterprise Finance Table 2021"
+WHERE "Enterprise Name" = 'Nanjing Lishui Economic and Technological Development Group Co., Ltd.';
+############ Example 2 ##############
+<Dialog>:
+User: What were the profits of Tahoe Group Co., Ltd. and Sunshine New Industry Real Estate Co., Ltd. in
+2019?
+<Domain>: enterpriseFinanceField
+<SLOTS>: {'2019': 'Year', 'Tahoe Group Co., Ltd.': 'Enterprise Name', 'Sunshine New Industry Real Estate
+Co., Ltd.': 'Enterprise Name'}
+<Table_Captions>: National Enterprise Finance Table 2019
+<SQL>: SELECT "Enterprise Name", "Operating Profit" FROM "National Enterprise Finance Table 2019"
+WHERE "Enterprise Name" IN ('Tahoe Group Co., Ltd.', 'Sunshine New Industry Real Estate Co., Ltd.');
+······
+=========================== Step 2: SQL Validation and Execution ======================
+Use the "sqlQueryTool" (input: SQL query and domain) to validate the generated SQL. Note: You are
+allowed to call the tool only once for validation.
+"sqlQueryTool" input:
+- sql_statement: str, the SQL query to execute
+- domain: str, the domain of the query
+Returns:
+- The result of the SQL execution
+================================ Step 3: Final Output =============================
+After executing the SQL using the tool, construct the final output in the following dictionary format:
+```json
+{
+  "sql": "<The actual SQL statement executed, ending with a semicolon — do not omit it>",
+  "result": "<The result of the SQL execution, or the error message if execution failed>",
+  "note": [] or [['slot content', 'slot type', 'not exist'] , ...]
+}```
+
+
+          Figure 10: Prompt for SQL generation and condition underspecification detection.
+

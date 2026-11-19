@@ -1,0 +1,506 @@
+                                             Model Inversion in Split Learning for Personalized LLMs: New
+                                                     Insights from Information Bottleneck Theory
+                                                         Yunmeng Shu                                      Shaofeng Li                                  Tian Dong
+                                                   fuyi_verty@sjtu.edu.cn                            shaofengli@seu.edu.cn                      tian.dong@sjtu.edu.cn
+                                                Shanghai Jiao Tong University                         Southeast University                   Shanghai Jiao Tong University
+                                                      Shanghai, China                                   Nanjing, China                             Shanghai, China
+
+                                                                                   Yan Meng                                    Haojin Zhu
+                                                                           yan_meng@sjtu.edu.cn                         zhu-hj@cs.sjtu.edu.cn
+                                                                        Shanghai Jiao Tong University                Shanghai Jiao Tong University
+arXiv:2501.05965v1 [cs.LG] 10 Jan 2025
+
+
+
+
+                                                                              Shanghai, China                              Shanghai, China
+
+                                         ABSTRACT
+                                         Personalized Large Language Models (LLMs) have become increas-
+                                         ingly prevalent, showcasing the impressive capabilities of models
+                                         like GPT-4. This trend has also catalyzed extensive research on de-
+                                         ploying LLMs on mobile devices. Feasible approaches for such edge-
+                                         cloud deployment include using split learning. However, previous
+                                         research has largely overlooked the privacy leakage associated with
+                                         intermediate representations transmitted from devices to servers.
+                                         This work is the first to identify model inversion attacks in the split
+                                         learning framework for LLMs, emphasizing the necessity of secure
+                                         defense. For the first time, we introduce mutual information entropy
+                                         to understand the information propagation of Transformer-based
+                                         LLMs and assess privacy attack performance for LLM blocks. To
+                                         address the issue of representations being sparser and containing
+                                         less information than embeddings, we propose a two-stage attack
+                                                                                                                    Figure 1: Collaborative training in split learning scenario
+                                         system in which the first part projects representations into the
+                                         embedding space, and the second part uses a generative model to
+                                         recover text from these embeddings. This design breaks down the
+                                         complexity and achieves attack scores of 38%-75% in various sce-
+                                         narios, with an over 60% improvement over the SOTA. This work             locality and model scalability for personalized LLM training, split
+                                         comprehensively highlights the potential privacy risks during the         learning emerges as a solution for collaborative training of deep net-
+                                         deployment of personalized LLMs on the edge side.                         works. As depicted in Fig. 1, users can segment the model at chosen
+                                                                                                                   split points and engage in collaborative training. Recent studies on
+                                         KEYWORDS                                                                  split LLMs show that distributing multi-head self-attention layers
+                                         Large language model, Edge computing, Split learning, Privacy,            across multiple devices enables joint parallel computation.
+                                         Model inversion attack                                                       However, the security and privacy of split personalized LLMs
+                                                                                                                   have yet to receive sufficient attention. Some claim that when using
+                                                                                                                   edge-cloud collaborative method, a curious-but-honest server no
+                                         1   INTRODUCTION                                                          longer accesses raw data, which ostensibly improves security. But
+                                         In the rapidly evolving landscape of Artificial Intelligence (AI), par-   do these methods truly protect local users’ privacy? Intermediate
+                                         ticularly with the advancements in Large Language Models (LLMs)           representations contain substantial information that, if inverted,
+                                         like GPT-4 [12], there has been a significant shift towards enhanc-       can lead to severe privacy breaches. Attackers can exploit interme-
+                                         ing personalization through extensive training data and sophisti-         diate representations of input data for privacy inversion attacks,
+                                         cated algorithms. Initiatives such as OpenAI’s Agent program and          including “cut layer" information, “smashed data" in computer vi-
+                                         advancements in Retrieval-Augmented Generation (RAG)[8] tech-             sion, or “hidden state" information in the field of NLP. In computer
+                                         nology exemplify this trend, aiming to tailor LLMs with individual        vision, inversion techniques have shown the ability to recover input
+                                         data to improve accuracy and relevance, thereby underscoring their        images from final layer activations, while the literature on black-
+                                         growing importance in both personal and professional domains.             box attacks indicates that segmentation layer activation values can
+                                            However, leveraging LLMs through traditional cloud computing           be exploited.
+                                         methods introduces several challenges, such as latency, bandwidth            In the field of natural language, there remains a noticeable gap
+                                         resources, and privacy concerns, especially given the multi-modal         in research addressing the risk of inversion attacks on intermediate
+                                         nature of modern AI applications. To bridge the gap between data          representations in LLMs. Most research focuses only on embedding
+                                                                                        Yunmeng Shu, Shaofeng Li, Tian Dong, Yan Meng, and Haojin Zhu
+
+
+layer inversion and does not consider all intermediate representa-        the training data or other sensitive information behind a given
+tions comprehensively. Table 1 illustrates the potential for inversion    model, often through its output.
+using our approach, RevertLM.                                                Model inversion attacks are typically classified into white-box
+                                                                          attacks and black-box attacks. In a white-box scenario, the attacker
+Table 1: Examples of text inversion with RevertLM at the                  has full access to the model’s internal information, including its
+20th decoder LLM blocks                                                   structure, weights, and outputs. In a black-box scenario, the attacker
+                                                                          can only access the model’s output, such as confidence scores, hard
+                                                                          labels, or feature representations.
+    Raw text                          Inversed text
+    no i just make boats on           no i just make boats on             2.1    Model Inversion Attacks in Computer
+    the weekend . what else           the weekend . what else                    Vision
+    do you do ?                       do you do ?                         In the domain of computer vision, model inversion attacks typically
+                                                                          aim to reconstruct the original image or its key features from the
+    deep sea or fresh water ?         water borne or deep sea?
+                                                                          output of image-processing models. The concept of model inversion
+    what is your favorite hol-        which is your favorite?...          attacks was first introduced by Fredrikson et al[6] for simple linear
+    iday ? mine is christmas          christmas is my all time            regression models. Recent research has extended these attacks to
+    .                                                                     more complex deep neural networks. Many computer vision models
+                                                                          are open-source, making them prime targets for white-box attacks.
+                                                                          These attacks can be categorized into two types: generation-based
+   To study privacy attacks on LLMs in a cooperative learning             inversion and optimization-based inversion.
+scenario, our research begins with an exploration of information             Generation-based inversion involves using confidence scores
+transfer in representations and progresses to a groundbreaking in-        disclosed by the model during predictions to infer sensitive in-
+vestigation of representation reversal attacks. We identify a unique      formation. For example, Zhang et al.[23] introduced Generative
+challenge in inverting representations for LLMs with existing de-         Model Inversion (GMI), which leverages a generative adversarial
+coders: the recovery performance is significantly lower at the in-        network (GAN) to reconstruct private training data based on partial
+termediate layer compared to the initial embedding layer in other         shared information. Research by Chen et al. [3] proposed KEDMI
+studies [10, 11]. Embeddings contain the information of a whole           (Knowledge-Enriched Distributional Model Inversion Attacks), a
+sentence and pass through fewer layers compared with representa-          new GAN-based structure that efficiently extracts private domain
+tions. To overcome this difficulty, we propose a two-stage inversion      information from public datasets. The black-box attack proposed by
+system with the first step involving purifying the representational       Erdogan et al. [5] exploits the activation values transmitted through
+information into the embedding space to solve the sparsity in rep-        the split layers as additional knowledge for the attack.
+resentation. In the second step, we use a decoder-based generative           Optimization-based inversion focuses on minimizing the dif-
+model toward purified representation to better leverage the sequen-       ference between the outputs generated by a random input and the
+tial features in our language embeddings. This research provides          model’s output corresponding to private data. This approach iter-
+a robust foundation for tackling privacy and security concerns in         atively adjusts the random input to converge to a reconstruction
+split learning scenarios for large language models.                       that is increasingly similar to the original data[1].
+   The contributions of this work are listed as follows:
+      • Formal recognition and definition of severe privacy prob-         2.2    Model Inversion Attacks in Natural
+        lems in the split learning scenario for LLMs.                            Language Processing
+      • Combining information theory, this study investigates in-         Similarly, language models are susceptible to privacy attacks. Yao
+        formation propagation in transformer-based LLMs.                  et al. [21] summarize several types of privacy attacks on large lan-
+      • Addressing the decreasing effectiveness of representation         guage models, including adversarial attacks (e.g., data poisoning
+        reversal after multiple layers, we propose a two-stage text       and backdoor attacks), inference attacks (e.g., attribute inference
+        recovery attack using a decoder architecture, improving           and membership inference), and extraction attacks (e.g., model steal-
+        state-of-the-art results by over 60%.                             ing, gradient leakage, and training data extraction). Among these,
+                                                                          representation inversion attacks pose significant privacy risks as
+2     RELATED WORK                                                        they target the hidden states of model embeddings or intermediate
+In edge-cloud collaborative systems, privacy data stored on user de-      layers rather than requiring gradients.
+vices may be exposed to servers or third parties through adversarial         Embedding inversion attacks are a prevalent form of repre-
+attacks. This issue is particularly critical in deep learning, where it   sentation inversion, where an attacker recovers the original text
+is often referred to as the model inversion problem. Model inversion      from the model’s embeddings. Carlini et al. [2] showed that lan-
+attacks target deep learning models with the goal of inferring sen-       guage models, such as GPT-2, can leak personal data (e.g., names,
+sitive information from the model’s output. These attacks leverage        emails, phone numbers) through API queries. Subsequent work
+reverse engineering and reasoning techniques to reconstruct data          demonstrated that BERT [4] embeddings can encode significant
+or model parameters, posing significant privacy and security risks.       information about the original input, enabling reconstruction of
+Specifically, the goal of a model inversion attack is to reconstruct      the original text.
+Model Inversion in Split Learning for Personalized LLMs: New Insights from Information Bottleneck Theory
+
+
+   Generative embedding inversion attacks (GEIA) were introduced
+by Gu et al. [7], where a generative decoder is trained to directly
+reconstruct the target sequence word-by-word from its embedding.
+Their method outperforms previous approaches, restoring semanti-
+cally similar and coherent sentences from the embeddings.
+   Morris et al. [10] proposed Vec2Text, which introduces the idea
+of iteratively refining the inverted text sequence, i.e., training a self-
+corrector. Vec2Text first trains an embedding inversion model using
+the T5 model [14] as the base model. Then, it trains the corrector
+by matching the embeddings generated by the victim embedding
+model for the generated text with the input embeddings.                                 Figure 2: Visualization for embedding and representation
+   However, these approaches assume a white-box setting where                           after decoder block 1
+the attacker has full access to the embedding model, which is often
+not the case in industrial settings, especially with personalized
+training. The assumption that embedding models’ outputs can be                             The goal of representation inversion attacks is to reconstruct the
+directly targeted for inversion is insufficient for scenarios involving                 input 𝑥 from its intermediate representations {ℎ𝑖𝑡 }𝑇𝑡=0 , where ℎ𝑖𝑡 =
+edge-cloud collaboration, where data representations are likely                                        𝑡 −1
+more complex and involve dynamic partitioning of models across                          𝑓𝑖 (𝑥, {𝑂𝑡 }𝑡 𝑗=0 ) and 𝑇 represents the final time step or maximum
+devices and servers.                                                                    length of generated sequence. The top part of model 𝑓𝑖 is fixed,
+                                                                                        with its parameters and architecture not subject to modification by
+                                                                                        the adversary. Instead, the adversary leverages an auxiliary dataset
+2.3     Defense Against Model Inversion Attacks                                         𝐷 aux with a distribution similar to the training data to construct an
+Despite the increasing prevalence of model inversion attacks, de-                       external attacker model Φ. This model aims to learn to reconstruct
+fense mechanisms remain underexplored. In computer vision, com-                         the original text, such that:
+mon defenses include adding noise to the model’s output, obfuscat-
+ing confidence scores, employing differential privacy, and reducing                                                    Φ({ℎ𝑖𝑡 }𝑇𝑡=0 ) = 𝑥ˆ ≈ 𝑥 .
+the dependency between input and output. Similar strategies are
+                                                                                           To address the computational infeasibility of enumerating all
+being explored in natural language processing, but adapting them
+                                                                                        possible sequences, the problem can be approached by learning
+to scenarios involving personalized and distributed models remains
+                                                                                        a distribution of texts given their representations. This is formu-
+a challenge. Zhang et al. [23] proposed adding noise to the posterior
+                                                                                        lated as learning a conditional model 𝑝 (𝑥 |𝑟 ; 𝜃 ) that maximizes the
+difference during inference to thwart attacks, while Titcombe et al.
+                                                                                        likelihood of texts given their representations:
+[19] explored adding noise to representations transmitted during
+federated learning.                                                                                           𝜃 = arg max E𝑥∼𝐷 [𝑝 (𝑥 |{ℎ𝑖𝑡 }𝑇𝑡=0 ; 𝜃ˆ)],
+                                                                                                                        𝜃ˆ
+
+3     REPRESENTATION INVERSION ATTACK                                                   where 𝐷 = {𝑥 1, 𝑥 2, . . .} is a dataset of texts. This process essentially
+The deployment of personalized LLMs in device-edge-cloud col-                           amortizes the combinatorial optimization of directly inverting rep-
+laborative learning is becoming increasingly prevalent. However,                        resentations into the parameters of a neural network, a task known
+privacy protection in this field remains unexplored. Inspired by                        to be challenging.
+intermediate representation attacks in computer vision, we suspect
+that there may be severe privacy leakage of input data in personal-                     3.2      Analysis of information
+ized LLM scenarios.                                                                     Intuitively, after certain transformer blocks, data passes through
+   As illustrated in Fig. 2, the differences between embeddings and                     more activation layers, leading to increased sparsity of the infor-
+representations are significant. Post-decoding representations are                      mation. According to the On the information bottleneck theory of
+considerably sparser than embeddings and contain less information                       deep learning [17], as the data passes through more processors, the
+about the input sentence, highlighting the need for advanced and                        input information 𝑥 contained in the intermediate layer ℎ decreases,
+precise attack methods.                                                                 while the information about the output layer 𝑦 increases. This af-
+   In the following section, we formally define the problem within                      fects the effectiveness of model inversion attacks which motivates
+this new attack scenario and propose our novel attack system specif-                    us to measure mutual information to study this process.
+ically designed to address this issue.                                                      Given any two random variables, 𝐴 and 𝐵, with a joint distribu-
+                                                                                        tion 𝑝 (𝑎, 𝑏), their Mutual Information is defined as:
+3.1     Problem Formulation                                                                                                     ∑︁                  
+                                                                                                                                                       𝑝 (𝑎, 𝑏)
+                                                                                                                                                                 
+Given a sensitive input text sequence 𝑥 as the input of the LM,                         𝐼 (𝐴; 𝐵) = 𝐷𝐾𝐿 [𝑝 (𝑎, 𝑏)∥𝑝 (𝑎)𝑝 (𝑏)] =         𝑝 (𝑎, 𝑏) log
+                                                                                                                                                      𝑝 (𝑎)𝑝 (𝑏)
+the victim large language model 𝑔 and personal device part of this                                                                        𝑎∈𝐴,𝑏 ∈𝐵
+model cut at 𝑖-th layer, we denoted as 𝑓𝑖 . Based on the autoregressive                                                                                           (1)
+                                                                                                                                          
+intuitive for the decoder, we define the output of 𝑔 at moment 𝑡 𝑗 as
+                                                                                                           ∑︁                        𝑝 (𝑎|𝑏)
+                𝑡 −1
+                                                                                                   =              𝑝 (𝑎, 𝑏) log               = 𝐻 (𝐴) − 𝐻 (𝐴|𝐵),   (2)
+𝑂𝑡 𝑗 = 𝑔(𝑥, 𝑂𝑡 𝑡 𝑗=0 ).                                                                                                               𝑝 (𝑎)
+                                                                                                       𝑎∈𝐴,𝑏 ∈𝐵
+                                                                                      Yunmeng Shu, Shaofeng Li, Tian Dong, Yan Meng, and Haojin Zhu
+
+
+where 𝐷𝐾𝐿 [𝑝 ∥𝑞] is the Kullback-Leibler divergence of the distribu-
+tions 𝑝 and 𝑞, and 𝐻 (𝐴) and 𝐻 (𝐴|𝐵) are the entropy and conditional
+entropy of 𝐴 and 𝐵, respectively.
+   Following [17], for each representation ℎ, we utilize discretiza-
+tion to compute the mutual information 𝐼 (𝑥, ℎ) and 𝐼 (ℎ, 𝑦). Fig. 3
+shows the variation of mutual information in the information prop-
+agation process for different layers ℎ across various blocks.
+
+                                                                                          Figure 4: System of RevertLM
+
+
+                                                                         connections. Our findings enrich the understanding of the internal
+                                                                         information flow within the Transformer, providing a theoretical
+                                                                         foundation for the further design of attack methods.
+
+                                                                         3.3    Threat Model
+                                                                         We define the black-box attack knowledge in this scenario as fol-
+                                                                         lows: The attacker has access only to the transmitted representation
+                                                                         and the server’s model structure, or the intermediate representa-
+                                                                         tions of each layer of the server’s model.
+                                                                            In black-box attacks, the attacker can only use transmitted rep-
+                                                                         resentation vectors. We propose using autoencoder-like and Trans-
+                                                                         former decoder structures for compression, due to the sparsity of
+                                                                         representation vectors. For image data, we suggest upsampling and
+                                                                         deconvolution networks, while for language sequences, attention
+                                                                         mechanisms are used to better understand representation vectors.
+                                                                            In white-box attack, the attacker has full access to the model
+                                                                         structure and parameters of the split large language model. With full
+                                                                         model knowledge, we can design more complex inversion modules,
+                                                                         including autoencoder-like structures or those mirroring the later
+                                                                         parts of the victim model.
+
+                                                                         3.4    Attack method
+ Figure 3: Mutual Information across Transformer Blocks
+                                                                         Based on the conclusion regarding the reduction of input infor-
+                                                                         mation in intermediate layers and the fact that intermediate layer
+   As the block deepens, we find that in contrast to traditional
+                                                                         information resides in the same vector space, we propose a two-
+DNNs mentioned in [16, 17], the mutual information associated
+                                                                         stage attack method. Specifically, due to the challenges in directly
+with the input information does not consistently decrease. Follow-
+                                                                         inverting deep representations, we divide the attack process into
+up studies also found that the compression and generalization in
+                                                                         two phases. The first phase maps the representation vector to a
+the later stages of training mentioned in the paper are not absolute
+                                                                         semantically richer embedding space, referred to as the informa-
+either, networks that do not compress are still capable of general-
+                                                                         tion purification module. The second phase trains an adversarial
+ization, and vice versa. Here compression represents the reduction
+                                                                         generative model as the main inversion attack module, aiming to
+of 𝐼 (𝑥, 𝑡) with the number of layers, which is also consistent with
+                                                                         recover the original text from the embedding vector. The attack
+our findings. This may also be related to the residual information
+                                                                         system is illustrated in Fig. 4.
+from the specification layer added by the transformation blocks in
+                                                                            We then first introduces the main inversion attack module, which
+the language model. Furthermore, we find that 𝐼 (𝑥, 𝑡) and 𝐼 (𝑡, 𝑦)
+                                                                         has strong inversion capabilities, followed by a discussion of the
+are consistently positively correlated. In the 10th decoder block, the
+                                                                         information purification module that addresses the first phase sub-
+mutual information increases and then gradually decreases. Inside
+                                                                         problem.
+the Transformer, we also see a rise in mutual information in the
+middle block. However, the amount of information passing through         3.4.1 Main Inversion Module. Generative attack methods exhibit
+the forward layer is not the same as the amount of information           superior inversion and generalization capabilities compared to
+passing through the multi-attention layer.                               optimization-based approaches. Therefore, we select generative
+   In summary, through the analysis of mutual information, we have       models as the primary inversion module.
+discovered that the Transformer model exhibits complex dynamic              Language models are structurally divided into three categories:
+variations in how it processes input and output information at           encoder-only models, encoder-decoder models, and decoder-only
+different layers. This variation is influenced by various factors,       models. Encoder-only models, such as BERT, are primarily used
+including the model architecture, attention mechanism, and residual      for understanding rich input semantics and excel in classification
+Model Inversion in Split Learning for Personalized LLMs: New Insights from Information Bottleneck Theory
+
+
+and scene comprehension tasks [4]. Encoder-decoder models, such                         where 𝑥 is the input sequence, 𝑤 is the output sequence, 𝑡 refers to
+as T5, are specialized in tasks that heavily depend on input, such                      the length of output sequence.
+as translation and text summarization. Decoder-only models, like                           We also use the Perplexity of adversary decoder as the metrics
+the GPT series and LLaMa, are suitable for other generative tasks,                      to evaluate generative capacity. The formulation is below:
+including question answering. The primary inversion module is
+selected from encoder-decoder and decoder-only models due to                                                          𝑡
+                                                                                                                                                                   !
+                                                                                                                   1 ∑︁
+their ability to leverage the generative power of large language                                𝑃𝑃𝐿(𝑥) = exp −           log 𝑃𝑟𝜃𝜙 (𝑤𝑖 |𝑤 0, 𝑤 1, . . . , 𝑤𝑖 −1 )
+                                                                                                                   𝑡 𝑖=1
+models.
+   Decoder-based large language models stand out in generative                          Step 3: Joint fine-tune adversary decoder, projection module and
+tasks due to their extensive pretraining on large-scale text corpora,                   autoencoder with SequenceCrossEntropy Loss. We integrate the
+which enables them to capture intricate linguistic patterns. This                       adversary decoder, projection module, and autoencoder into a single
+capability allows them to generate natural language with high                           model. This unified model is trained with a consistent optimizer.
+levels of semantic understanding, logical coherence, and fluency,
+excelling in both short and long-form text generation. Their robust                     4     EXPERIMENTS
+sequence modeling ability, driven by self-attention mechanisms,
+                                                                                        Our experiments include two scenarios: one involves sentiment
+extends beyond natural language processing to applications such
+                                                                                        analysis, a classification downstream task that utilizes embeddings
+as code generation and dialogue systems.
+                                                                                        from large language models, and the other directly uses large lan-
+   In this section, we utilize GPT2-XL as the attack generator.
+                                                                                        guage models as the model for downstream tasks.
+Decoder-only models, which are trained autoregressively, excel
+in handling complex linguistic structures and demonstrate superior
+                                                                                        4.1      Experiment settings
+generalization, making them well-suited for zero-shot and few-
+shot tasks. Additionally, their direct decoding of input sequences                      4.1.1 Datasets. Most sentence embedding models are typically
+without relying on intermediate representations enables them to                         trained on question-answer pairs (semi-supervised tasks) and nat-
+better capture and utilize input details, leading to more accurate                      ural language inference (supervised tasks) datasets. In the experi-
+and coherent outputs.                                                                   mental section of this study, we evaluate the attack performance
+   The attack module uses the representation vector as input, and                       of these models on two distinct datasets. The first selected dataset
+the attack generator is trained using an autoregressive approach. A                     is the PersonaChat dataset [22], which consists of open-domain
+mapping module ensures that the input dimensions match those                            conversational dialogues between two speakers with specific per-
+required by the attack generator.                                                       sona settings. Most persona settings are well represented within
+                                                                                        the corresponding dialogues, some of which may involve sensitive
+3.4.2 Information Purification Module. This section distinguishes                       and private information.
+between representation and embedding, which guides the design of                           The second dataset is Wiki [20], which is derived from the Stan-
+the information purification module. Representation maps data to                        ford Question Answering Dataset (SQuAD) [15] and consists of con-
+a high-dimensional space capturing its features, while embedding                        tent extracted from Wikipedia articles containing domain knowl-
+reduces data to a lower-dimensional space for further processing.                       edge. The presence of such domain knowledge may pose a challenge
+Understanding this distinction is key to designing the purification                     to inversion attacks. During the evaluation process, we utilize the
+module for various attack scenarios.                                                    training data of each dataset as auxiliary data to train the attacker
+3.4.3 Training Method. According to Sections 3.4.2 and 3.4.1, the                       model and report its performance on the respective test sets. A
+two-stage attack method in this work decomposes the complex                             detailed summary of both datasets is provided in Table 2.
+problem by first using the information purification module to map
+the representation to the embedding space, and then employing the                                          Table 2: Statistics of Text Datasets
+generative adversary to invert the vectors in the embedding space.
+The training method of this attack can be summarized as:                                Statistic                                       PersonaChat           Wikipedia
+Step 1: Pretrain information purification module with an auxiliary
+                                                                                        Number of Sentences                                  162,064               220,412
+dataset. Direct joint training will lead to the perturbation of the
+                                                                                        Train/Validation/Test Split                           82:9:9                95:0:5
+generation capacity of the attack model. Our training needs an
+                                                                                        Number of Unique Named Entities                       1,425                 46,567
+auxiliary dataset of embeddings for the victim model with negligible
+                                                                                        Average Sentence Length                               11.71                 18.25
+size.
+Step 2: Train adversary decoder. Using the representation input
+after the pre-trained information purification module, we train the
+generative attacker with the joint loss of SequenceCrossEntropy                         4.1.2 Metrics. We use three standard metrics to measure the attack
+and generative capacity loss. The SequenceCrossEntropy inspired                         performance as below:
+by teacher-forcing measures the discrepancy between the generated                              • ROUGE represents Recall-Oriented Understudy for Gisting
+token 𝑤𝑖 and the probability depends on previous tokens.                                         Evaluation [9]. This is a metric for assessing the degree of
+                           𝑡                                                                     overlap between automated abstracts or machine transla-
+                                                                                                 tions and reference summaries (or translations). It includes
+                          ∑︁
+       𝐿Φ (𝑥; 𝜃 Φ ) = −         log(𝑃𝑟 (𝑤𝑖 |𝑓 (𝑥), 𝑤 0, 𝑤 1, . . . , 𝑤𝑖 −1 )),   (3)
+                          𝑖=1                                                                    several variants such as ROUGE-L (scoring based on the
+                                                                                    Yunmeng Shu, Shaofeng Li, Tian Dong, Yan Meng, and Haojin Zhu
+
+
+        longest common subsequence)) to measure different levels
+        of similarity.
+      • BLEU score stands for Bilingual Evaluation Understudy.
+        This is done mainly by measuring the overlap between the
+        machine translation output and a set of reference transla-
+        tions.
+      • Cosine Similarity. This metric uses a transformer-based
+        tokenizer and embedding model to project the two texts
+        into a high-dimensional vector space to match similarity.
+4.1.3 Victim Models. In our experiments, we consider different
+victim models and split points to evaluate the performance of the
+proposed inversion attack method:
+Case I: The victim model comprises the encoder part of a language              Figure 5: Attack performance towards GPT2
+model (T5) followed by a four-layer MLP. The split point is chosen
+after the first layer following the embedding layer.                   4.4    Different Purification Modules
+Case II: We evaluate two victim models: the decoder model GPT2-
+                                                                       Here we formally evaluate the two-step system of RevertLM with
+XL and the encoder-decoder model T5. The split points are strate-
+                                                                       the previously mentioned SOTA’s approach GEIA [7].
+gically placed within the blocks of the decoder part or within the
+                                                                       Case I: We evaluated the performance of the RevertLM with differ-
+multi-head attention layers.
+                                                                       ent purification modules. The results, presented in Table ??, indicate
+                                                                       that the linear projection method achieves the best inversion results
+4.2     Information in Transformer Blocks                              across all metrics. This suggests that models whose structures form
+Through experiments summarized in Table ??, we observed that           an inverse function relationship with the victim model’s structure
+the performance of the attacker model varies significantly depend-     can achieve better inversion results.
+ing on the layer from which the intermediate representations are
+obtained. Representations from the attention layers exhibit perfor-    Table 4: Evaluation for different purification modules in Re-
+mance similar to those processed through entire blocks. However,       vertLM
+representations processed by the Feed-Forward Network (FFN) lay-
+ers show a significant decline in attack performance.                                                     ROUGE       BLEU     Cosine Similarity
+                                                                               Base RevertLM              0.5353     0.2411          0.9209
+Table 3: Attacker performance for different layers in trans-                 + Linear projection          0.5972     0.2985          0.9360
+former block                                                            + Linear projection with tester   0.5227     0.2313          0.9195
+                                                                                + Training AE             0.5208     0.2279          0.9179
+ Block number      Attention blocks      FFN layer    Whole block
+      Block 1             0.74              0.13      0.72             Case II: We assessed the performance of the RevertLM against the
+      Block 20            0.66              0.14      0.62             T5 model. The results, shown in Table 5 and 6, demonstrate that
+                                                                       the proposed RevertLM outperforms the state-of-the-art method
+      Block 45            0.58              0.12      0.75
+                                                                       across all metrics. Here T5 represents the base attack model of
+                                                                       Vec2text [10], note that all the models here can be used in the
+                                                                       framework of Vec2text.
+4.3     Attack for Different Layer Blocks
+                                                                       Table 5: Inversion Performance on the Personachat Dataset
+Figure 5 illustrates the attack performance across various blocks      with T5 Model as the Victim Model
+of the GPT2 model. Initially, as the block number increases, the
+inversion results improve. However, there is a subsequent decline
+followed by an increase in performance. This trend aligns with our                             ROUGE          BLEU        Cosine Similarity
+analysis of mutual information, indicating that intermediate repre-
+sentations closer to the input or output layers are more susceptible          Vec2text          0.1078       0.0004              0.7270
+to inversion attacks.                                                          GEIA             0.3372       0.0932              0.7841
+   Our base model achieves a ROUGE-L score of over 50% and a               Base RevertLM        0.4988       0.2501              0.8663
+cosine similarity recovery rate of 90%, which are considered strong          RevertLM           0.5630       0.2884              0.9021
+indicators of semantic similarity in NLP tasks [13, 18], regardless
+of the layer used as the partition point. This demonstrates that the
+newly proposed problem in our paper is both real and urgent. Addi-
+tionally, we observe a trend where the attack effects vary depending   5     CONCLUSION
+on the segmentation layer, with some layers showing increasing         Our study identifies critical privacy vulnerabilities in the person-
+vulnerability and others decreasing vulnerability to attacks.          alized deployment of LLMs within split learning. Additionally, we
+Model Inversion in Split Learning for Personalized LLMs: New Insights from Information Bottleneck Theory
+
+
+Table 6: Inversion Performance on the Wiki Dataset with T5                                 [10] John Morris, Volodymyr Kuleshov, Vitaly Shmatikov, and Alexander Rush. 2023.
+Model as the Victim Model                                                                       Text Embeddings Reveal (Almost) As Much As Text. In Proceedings of the 2023
+                                                                                                Conference on Empirical Methods in Natural Language Processing, Houda Bouamor,
+                                                                                                Juan Pino, and Kalika Bali (Eds.). Association for Computational Linguistics,
+                                                                                                Singapore, 12448–12460. https://doi.org/10.18653/v1/2023.emnlp-main.765
+                      ROUGE              BLEU            Cosine Similarity                 [11] John X. Morris, Wenting Zhao, Justin T. Chiu, Vitaly Shmatikov, and Alexander M.
+                                                                                                Rush. 2023. Language Model Inversion. https://arxiv.org/abs/2311.13647v1.
+  Vec2text             0.0054            0.0001                    0.8292                  [12] OpenAI, Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge
+                                                                                                Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam
+   GEIA                0.0504            0.0102                    0.8493                       Altman, Shyamal Anadkat, Red Avila, Igor Babuschkin, Suchir Balaji, Valerie
+                                                                                                Balcom, Paul Baltescu, Haiming Bao, Mohammad Bavarian, Jeff Belgum, Irwan
+    Base               0.0802            0.0242                    0.8574                       Bello, Jake Berdine, Gabriel Bernadett-Shapiro, Christopher Berner, Lenny Bog-
+                                                                                                donoff, Oleg Boiko, Madelaine Boyd, Anna-Luisa Brakman, Greg Brockman,
+   Ours                0.1538            0.0870                    0.8678                       Tim Brooks, Miles Brundage, Kevin Button, Trevor Cai, Rosie Campbell, An-
+                                                                                                drew Cann, Brittany Carey, Chelsea Carlson, Rory Carmichael, Brooke Chan,
+                                                                                                Che Chang, Fotis Chantzis, Derek Chen, Sully Chen, Ruby Chen, Jason Chen,
+                                                                                                Mark Chen, Ben Chess, Chester Cho, Casey Chu, Hyung Won Chung, Dave
+                                                                                                Cummings, Jeremiah Currier, Yunxing Dai, Cory Decareaux, Thomas Degry,
+analyzed the variation of mutual information across different blocks                            Noah Deutsch, Damien Deville, Arka Dhar, David Dohan, Steve Dowling, Sheila
+                                                                                                Dunning, Adrien Ecoffet, Atty Eleti, Tyna Eloundou, David Farhi, Liam Fe-
+of language models, providing deeper insights into information                                  dus, Niko Felix, Simón Posada Fishman, Juston Forte, Isabella Fulford, Leo Gao,
+propagation and potential leakage points. To address the challenges                             Elie Georges, Christian Gibson, Vik Goel, Tarun Gogineni, Gabriel Goh, Rapha
+of attacking intermediate representations, we propose a two-step                                Gontijo-Lopes, Jonathan Gordon, Morgan Grafstein, Scott Gray, Ryan Greene,
+                                                                                                Joshua Gross, Shixiang Shane Gu, Yufei Guo, Chris Hallacy, Jesse Han, Jeff Harris,
+inversion system that significantly improves the recovery of these                              Yuchen He, Mike Heaton, Johannes Heidecke, Chris Hesse, Alan Hickey, Wade
+representations in split learning for large language models, enhanc-                            Hickey, Peter Hoeschele, Brandon Houghton, Kenny Hsu, Shengli Hu, Xin Hu,
+ing recovery rates by over 60%.                                                                 Joost Huizinga, Shantanu Jain, Shawn Jain, Joanne Jang, Angela Jiang, Roger
+                                                                                                Jiang, Haozhun Jin, Denny Jin, Shino Jomoto, Billie Jonn, Heewoo Jun, Tomer
+   These findings underscore that intermediate representations,                                 Kaftan, Łukasz Kaiser, Ali Kamali, Ingmar Kanitscheider, Nitish Shirish Keskar,
+much like raw data, pose substantial privacy risks and must be                                  Tabarak Khan, Logan Kilpatrick, Jong Wook Kim, Christina Kim, Yongjik Kim,
+                                                                                                Jan Hendrik Kirchner, Jamie Kiros, Matt Knight, Daniel Kokotajlo, Łukasz Kon-
+treated with stringent anonymization and robust security measures.                              draciuk, Andrew Kondrich, Aris Konstantinidis, Kyle Kosic, Gretchen Krueger,
+Protecting intermediate representations at the same level as raw                                Vishal Kuo, Michael Lampe, Ikai Lan, Teddy Lee, Jan Leike, Jade Leung, Daniel
+text is essential to safeguard user privacy, particularly in sensitive                          Levy, Chak Ming Li, Rachel Lim, Molly Lin, Stephanie Lin, Mateusz Litwin,
+                                                                                                Theresa Lopez, Ryan Lowe, Patricia Lue, Anna Makanju, Kim Malfacini, Sam
+domains like healthcare.                                                                        Manning, Todor Markov, Yaniv Markovski, Bianca Martin, Katie Mayer, Andrew
+                                                                                                Mayne, Bob McGrew, Scott Mayer McKinney, Christine McLeavey, Paul McMil-
+                                                                                                lan, Jake McNeil, David Medina, Aalok Mehta, Jacob Menick, Luke Metz, Andrey
+REFERENCES                                                                                      Mishchenko, Pamela Mishkin, Vinnie Monaco, Evan Morikawa, Daniel Mossing,
+ [1] [n. d.].           Reinforcement Learning-Based Black-Box Model In-                        Tong Mu, Mira Murati, Oleg Murk, David Mély, Ashvin Nair, Reiichiro Nakano,
+     version Attacks | IEEE Conference Publication | IEEE Xplore.                               Rajeev Nayak, Arvind Neelakantan, Richard Ngo, Hyeonwoo Noh, Long Ouyang,
+     https://ieeexplore.ieee.org/document/10203595.                                             Cullen O’Keefe, Jakub Pachocki, Alex Paino, Joe Palermo, Ashley Pantuliano,
+ [2] Nicholas Carlini, Florian Tramèr, Eric Wallace, Matthew Jagielski, Ariel Herbert-          Giambattista Parascandolo, Joel Parish, Emy Parparita, Alex Passos, Mikhail
+     Voss, Katherine Lee, Adam Roberts, Tom Brown, Dawn Song, Úlfar Erlings-                    Pavlov, Andrew Peng, Adam Perelman, Filipe de Avila Belbute Peres, Michael
+     son, Alina Oprea, and Colin Raffel. 2021. Extracting Training Data from Large              Petrov, Henrique Ponde de Oliveira Pinto, Michael, Pokorny, Michelle Pokrass,
+     Language Models. In 30th USENIX Security Symposium (USENIX Security 21).                   Vitchyr H. Pong, Tolly Powell, Alethea Power, Boris Power, Elizabeth Proehl,
+     2633–2650.                                                                                 Raul Puri, Alec Radford, Jack Rae, Aditya Ramesh, Cameron Raymond, Francis
+ [3] Si Chen, Mostafa Kahla, Ruoxi Jia, and Guo-Jun Qi. 2021. Knowledge-Enriched                Real, Kendra Rimbach, Carl Ross, Bob Rotsted, Henri Roussez, Nick Ryder, Mario
+     Distributional Model Inversion Attacks. In 2021 IEEE/CVF International Con-                Saltarelli, Ted Sanders, Shibani Santurkar, Girish Sastry, Heather Schmidt, David
+     ference on Computer Vision (ICCV). 16158–16167. https://doi.org/10.1109/                   Schnurr, John Schulman, Daniel Selsam, Kyla Sheppard, Toki Sherbakov, Jessica
+     ICCV48922.2021.01587                                                                       Shieh, Sarah Shoker, Pranav Shyam, Szymon Sidor, Eric Sigler, Maddie Simens,
+ [4] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT:              Jordan Sitkin, Katarina Slama, Ian Sohl, Benjamin Sokolowsky, Yang Song, Na-
+     Pre-training of Deep Bidirectional Transformers for Language Understanding. In             talie Staudacher, Felipe Petroski Such, Natalie Summers, Ilya Sutskever, Jie Tang,
+     Proceedings of the 2019 Conference of the North American Chapter of the Association        Nikolas Tezak, Madeleine B. Thompson, Phil Tillet, Amin Tootoonchian, Eliza-
+     for Computational Linguistics: Human Language Technologies, Volume 1 (Long and             beth Tseng, Preston Tuggle, Nick Turley, Jerry Tworek, Juan Felipe Cerón Uribe,
+     Short Papers), Jill Burstein, Christy Doran, and Thamar Solorio (Eds.). Association        Andrea Vallone, Arun Vijayvergiya, Chelsea Voss, Carroll Wainwright, Justin Jay
+     for Computational Linguistics, Minneapolis, Minnesota, 4171–4186. https://doi.             Wang, Alvin Wang, Ben Wang, Jonathan Ward, Jason Wei, CJ Weinmann, Akila
+     org/10.18653/v1/N19-1423                                                                   Welihinda, Peter Welinder, Jiayi Weng, Lilian Weng, Matt Wiethoff, Dave Willner,
+ [5] Ege Erdoğan, Alptekin Küpçü, and A. Ercüment Çiçek. 2022. UnSplit: Data-                   Clemens Winter, Samuel Wolrich, Hannah Wong, Lauren Workman, Sherwin
+     Oblivious Model Inversion, Model Stealing, and Label Inference Attacks against             Wu, Jeff Wu, Michael Wu, Kai Xiao, Tao Xu, Sarah Yoo, Kevin Yu, Qiming Yuan,
+     Split Learning. In Proceedings of the 21st Workshop on Privacy in the Electronic           Wojciech Zaremba, Rowan Zellers, Chong Zhang, Marvin Zhang, Shengjia Zhao,
+     Society (WPES’22). Association for Computing Machinery, New York, NY, USA,                 Tianhao Zheng, Juntang Zhuang, William Zhuk, and Barret Zoph. 2024. GPT-4
+     115–124. https://doi.org/10.1145/3559613.3563201                                           Technical Report. arXiv:2303.08774 [cs.CL] https://arxiv.org/abs/2303.08774
+ [6] Matthew Fredrikson, Eric Lantz, Somesh Jha, Simon Lin, David Page, and Thomas         [13] Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. 2002. Bleu:
+     Ristenpart. 2014. Privacy in Pharmacogenetics: An End-to-End Case Study of                 a Method for Automatic Evaluation of Machine Translation. In Proceedings of
+     Personalized Warfarin Dosing. In Proceedings of the 23rd USENIX Conference on              the 40th Annual Meeting of the Association for Computational Linguistics, Pierre
+     Security Symposium (SEC’14). USENIX Association, USA, 17–32.                               Isabelle, Eugene Charniak, and Dekang Lin (Eds.). Association for Computational
+ [7] Kang Gu, Ehsanul Kabir, Neha Ramsurrun, Soroush Vosoughi, and Shagufta                     Linguistics, Philadelphia, Pennsylvania, USA, 311–318. https://doi.org/10.3115/
+     Mehnaz. 2023. Towards Sentence Level Inference Attack Against Pre-trained                  1073083.1073135
+     Language Models. Proceedings on Privacy Enhancing Technologies (2023).                [14] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang,
+ [8] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir                     Michael Matena, Yanqi Zhou, Wei Li, and Peter J. Liu. 2023. Exploring the Limits
+     Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim                     of Transfer Learning with a Unified Text-to-Text Transformer. arXiv:1910.10683
+     Rocktäschel, Sebastian Riedel, and Douwe Kiela. 2021. Retrieval-Augmented             [15] Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. 2016.
+     Generation for Knowledge-Intensive NLP Tasks. https://doi.org/10.48550/arXiv.              SQuAD: 100,000+ Questions for Machine Comprehension of Text. In Proceedings
+     2005.11401 arXiv:2005.11401 [cs]                                                           of the 2016 Conference on Empirical Methods in Natural Language Processing,
+ [9] Chin-Yew Lin. 2004. ROUGE: A Package for Automatic Evaluation of Summaries.                Jian Su, Kevin Duh, and Xavier Carreras (Eds.). Association for Computational
+     In Text Summarization Branches Out. Association for Computational Linguistics,             Linguistics, Austin, Texas, 2383–2392. https://doi.org/10.18653/v1/D16-1264
+     Barcelona, Spain, 74–81.
+                                                                                                      Yunmeng Shu, Shaofeng Li, Tian Dong, Yan Meng, and Haojin Zhu
+
+
+[16] Andrew Michael Saxe, Yamini Bansal, Joel Dapello, Madhu Advani, Artemy               BlackboxNLP: Analyzing and Interpreting Neural Networks for NLP, Tal Linzen,
+     Kolchinsky, Brendan Daniel Tracey, and David Daniel Cox. 2018. On the In-            Grzegorz Chrupała, and Afra Alishahi (Eds.). Association for Computational
+     formation Bottleneck Theory of Deep Learning. In International Conference on         Linguistics, Brussels, Belgium, 353–355. https://doi.org/10.18653/v1/W18-5446
+     Learning Representations. https://openreview.net/forum?id=ry_WPG-A-             [21] Yifan Yao, Jinhao Duan, Kaidi Xu, Yuanfang Cai, Eric Sun, and Yue Zhang. 2023. A
+[17] Ravid Shwartz-Ziv and Naftali Tishby. 2017. Opening the Black Box of Deep            Survey on Large Language Model (LLM) Security and Privacy: The Good, the Bad,
+     Neural Networks via Information. https://doi.org/10.48550/arXiv.1703.00810           and the Ugly. https://doi.org/10.48550/arXiv.2312.02003 arXiv:2312.02003 [cs]
+     arXiv:1703.00810 [cs]                                                           [22] Saizheng Zhang, Emily Dinan, Jack Urbanek, Arthur Szlam, Douwe Kiela, and
+[18] Sotaro Takeshita, Simone Paolo Ponzetto, and Kai Eckert. 2024. ROUGE-K: Do           Jason Weston. 2018. Personalizing Dialogue Agents: I Have a Dog, Do You
+     Your Summaries Have Keywords? https://doi.org/10.48550/arXiv.2403.05186              Have Pets Too?. In Proceedings of the 56th Annual Meeting of the Association for
+     arXiv:2403.05186 [cs]                                                                Computational Linguistics (Volume 1: Long Papers), Iryna Gurevych and Yusuke
+[19] Tom Titcombe, Adam J. Hall, Pavlos Papadopoulos, and Daniele Romanini. 2021.         Miyao (Eds.). Association for Computational Linguistics, Melbourne, Australia,
+     Practical Defences Against Model Inversion Attacks for Split Neural Networks.        2204–2213. https://doi.org/10.18653/v1/P18-1205
+     https://doi.org/10.48550/arXiv.2104.05743 arXiv:2104.05743 [cs]                 [23] Yuheng Zhang, Ruoxi Jia, Hengzhi Pei, Wenxiao Wang, Bo Li, and Dawn Song.
+[20] Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel        2020. The Secret Revealer: Generative Model-Inversion Attacks Against Deep
+     Bowman. 2018. GLUE: A Multi-Task Benchmark and Analysis Platform for                 Neural Networks. In 2020 IEEE/CVF Conference on Computer Vision and Pattern
+     Natural Language Understanding. In Proceedings of the 2018 EMNLP Workshop            Recognition (CVPR). 250–258. https://doi.org/10.1109/CVPR42600.2020.00033
+

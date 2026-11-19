@@ -1,0 +1,3034 @@
+[
+  {
+    "key": "fig01",
+    "lang": "en",
+    "name": "Local privacy release architecture",
+    "width": 1440,
+    "height": 850,
+    "path": "drawio/fig01_en.drawio",
+    "spec": [
+      {
+        "id": "fig01_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 850,
+        "size": 26
+      },
+      {
+        "id": "fig01_title",
+        "role": "text",
+        "text": "Local privacy release architecture",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig01_client",
+        "role": "frame",
+        "text": "",
+        "x": 40,
+        "y": 100,
+        "w": 1060,
+        "h": 610,
+        "size": 26
+      },
+      {
+        "id": "fig01_client-heading",
+        "role": "text",
+        "text": "Trusted client",
+        "x": 58,
+        "y": 112,
+        "w": 1024,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig01_cloud",
+        "role": "frame",
+        "text": "",
+        "x": 1140,
+        "y": 100,
+        "w": 260,
+        "h": 610,
+        "size": 26
+      },
+      {
+        "id": "fig01_cloud-heading",
+        "role": "text",
+        "text": "Remote observer",
+        "x": 1158,
+        "y": 112,
+        "w": 224,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig01_input",
+        "role": "node",
+        "text": "Private input\nx",
+        "x": 70,
+        "y": 190,
+        "w": 190,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_prefix",
+        "role": "node",
+        "text": "Local prefix\n+ private KV",
+        "x": 310,
+        "y": 190,
+        "w": 220,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_gate",
+        "role": "node",
+        "text": "Privacy release gate\nclip, randomize, bind",
+        "x": 590,
+        "y": 190,
+        "w": 270,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_egress",
+        "role": "node",
+        "text": "Approved\npayload",
+        "x": 910,
+        "y": 190,
+        "w": 160,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_suffix",
+        "role": "node",
+        "text": "Suffix + KV\nand output head",
+        "x": 1165,
+        "y": 190,
+        "w": 210,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_e_0",
+        "role": "edge",
+        "source": "fig01_input",
+        "target": "fig01_prefix",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_e_1",
+        "role": "edge",
+        "source": "fig01_prefix",
+        "target": "fig01_gate",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_e_2",
+        "role": "edge",
+        "source": "fig01_gate",
+        "target": "fig01_egress",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_e_3",
+        "role": "edge",
+        "source": "fig01_egress",
+        "target": "fig01_suffix",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_profile",
+        "role": "node",
+        "text": "Approved profile\nneighbor / protocol / mechanism",
+        "x": 70,
+        "y": 420,
+        "w": 280,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_ledger",
+        "role": "node",
+        "text": "Persistent ledger\nRDP + atomic reservation",
+        "x": 400,
+        "y": 420,
+        "w": 290,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_outbox",
+        "role": "node",
+        "text": "Durable outbox\nreleaseId ↔ exact bytes",
+        "x": 740,
+        "y": 420,
+        "w": 330,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_e_profile",
+        "role": "edge",
+        "source": "fig01_profile",
+        "target": "fig01_gate",
+        "text": "control",
+        "points": [
+          [
+            210,
+            360
+          ],
+          [
+            658,
+            360
+          ]
+        ]
+      },
+      {
+        "id": "fig01_e_budget",
+        "role": "edge",
+        "source": "fig01_ledger",
+        "target": "fig01_gate",
+        "text": "reserve first",
+        "points": [
+          [
+            545,
+            380
+          ],
+          [
+            725,
+            380
+          ]
+        ]
+      },
+      {
+        "id": "fig01_e_durable",
+        "role": "edge",
+        "source": "fig01_gate",
+        "target": "fig01_outbox",
+        "text": "persist before send",
+        "points": [
+          [
+            890,
+            278
+          ],
+          [
+            890,
+            365
+          ],
+          [
+            905,
+            365
+          ]
+        ]
+      },
+      {
+        "id": "fig01_receipt",
+        "role": "node",
+        "text": "Step result\n+ commit receipt",
+        "x": 1165,
+        "y": 420,
+        "w": 210,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_e_reply",
+        "role": "edge",
+        "source": "fig01_suffix",
+        "target": "fig01_receipt",
+        "text": "receipt",
+        "points": []
+      },
+      {
+        "id": "fig01_e_feedback",
+        "role": "edge",
+        "source": "fig01_receipt",
+        "target": "fig01_prefix",
+        "text": "verify locally; next step",
+        "points": [
+          [
+            1270,
+            640
+          ],
+          [
+            55,
+            640
+          ],
+          [
+            55,
+            160
+          ],
+          [
+            420,
+            160
+          ]
+        ]
+      },
+      {
+        "id": "fig01_scope",
+        "role": "text",
+        "text": "Public-shape protocol; content protection within the declared input domain",
+        "x": 70,
+        "y": 735,
+        "w": 1300,
+        "h": 40,
+        "size": 24
+      },
+      {
+        "id": "fig01_key",
+        "role": "text",
+        "text": "Solid: payload flow     Dashed: control / response     Purple: persistent state",
+        "x": 70,
+        "y": 790,
+        "w": 1300,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig02",
+    "lang": "en",
+    "name": "Write-ahead release dataflow",
+    "width": 1440,
+    "height": 850,
+    "path": "drawio/fig02_en.drawio",
+    "spec": [
+      {
+        "id": "fig02_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 850,
+        "size": 26
+      },
+      {
+        "id": "fig02_title",
+        "role": "text",
+        "text": "Write-ahead release dataflow",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig02_validate",
+        "role": "node",
+        "text": "1  Validate profile\nidentity + protocol",
+        "x": 70,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_reserve",
+        "role": "node",
+        "text": "2  Reserve once\natomic transaction",
+        "x": 425,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_noise",
+        "role": "node",
+        "text": "3  Clip + randomize\none noise draw",
+        "x": 780,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_prepare",
+        "role": "node",
+        "text": "4  Persist bytes\nPREPARED",
+        "x": 1135,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_e_top0",
+        "role": "edge",
+        "source": "fig02_validate",
+        "target": "fig02_reserve",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_top1",
+        "role": "edge",
+        "source": "fig02_reserve",
+        "target": "fig02_noise",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_top2",
+        "role": "edge",
+        "source": "fig02_noise",
+        "target": "fig02_prepare",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_finish",
+        "role": "node",
+        "text": "8  Record ACKED\nno second charge",
+        "x": 70,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_verify",
+        "role": "node",
+        "text": "7  Verify receipt\nstep + digest",
+        "x": 425,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_send",
+        "role": "node",
+        "text": "6  Send payload\nexact bytes + TLS",
+        "x": 780,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_mark",
+        "role": "node",
+        "text": "5  Mark durable\nMAYBE_SENT",
+        "x": 1135,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_e_turn",
+        "role": "edge",
+        "source": "fig02_prepare",
+        "target": "fig02_mark",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_bottom3",
+        "role": "edge",
+        "source": "fig02_mark",
+        "target": "fig02_send",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_bottom2",
+        "role": "edge",
+        "source": "fig02_send",
+        "target": "fig02_verify",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_bottom1",
+        "role": "edge",
+        "source": "fig02_verify",
+        "target": "fig02_finish",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_gap",
+        "role": "text",
+        "text": "The only network send occurs after both durable budget and payload binding",
+        "x": 85,
+        "y": 335,
+        "w": 1220,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig02_retry",
+        "role": "node",
+        "text": "Duplicate releaseId: verify binding and follow recovery; do not reserve or sample again",
+        "x": 70,
+        "y": 650,
+        "w": 1300,
+        "h": 75,
+        "size": 25
+      },
+      {
+        "id": "fig02_failure",
+        "role": "text",
+        "text": "Any failure before step 6 blocks sending. Unknown egress retains its charge (Figures 3 and 5).",
+        "x": 70,
+        "y": 760,
+        "w": 1300,
+        "h": 55,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig03",
+    "lang": "en",
+    "name": "Persistent release state machine",
+    "width": 1440,
+    "height": 850,
+    "path": "drawio/fig03_en.drawio",
+    "spec": [
+      {
+        "id": "fig03_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 850,
+        "size": 26
+      },
+      {
+        "id": "fig03_title",
+        "role": "text",
+        "text": "Persistent release state machine",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig03_new",
+        "role": "node",
+        "text": "NEW\nuncharged",
+        "x": 55,
+        "y": 190,
+        "w": 170,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_reserved",
+        "role": "node",
+        "text": "RESERVED\ncharge reserved",
+        "x": 290,
+        "y": 190,
+        "w": 240,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_prepared",
+        "role": "node",
+        "text": "PREPARED\nexact bytes durable",
+        "x": 600,
+        "y": 190,
+        "w": 240,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_maybe",
+        "role": "node",
+        "text": "MAYBE_SENT\negress permitted",
+        "x": 910,
+        "y": 190,
+        "w": 240,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_acked",
+        "role": "node",
+        "text": "ACKED\nreceipt verified",
+        "x": 1210,
+        "y": 190,
+        "w": 180,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_e_reserve",
+        "role": "edge",
+        "source": "fig03_new",
+        "target": "fig03_reserved",
+        "text": "admit",
+        "points": []
+      },
+      {
+        "id": "fig03_e_prepare",
+        "role": "edge",
+        "source": "fig03_reserved",
+        "target": "fig03_prepared",
+        "text": "bind",
+        "points": []
+      },
+      {
+        "id": "fig03_e_mark",
+        "role": "edge",
+        "source": "fig03_prepared",
+        "target": "fig03_maybe",
+        "text": "log",
+        "points": []
+      },
+      {
+        "id": "fig03_e_ack",
+        "role": "edge",
+        "source": "fig03_maybe",
+        "target": "fig03_acked",
+        "text": "ACK",
+        "points": []
+      },
+      {
+        "id": "fig03_sealed",
+        "role": "node",
+        "text": "SEALED_CHARGED\nno further send / no refund",
+        "x": 505,
+        "y": 540,
+        "w": 430,
+        "h": 105,
+        "size": 26
+      },
+      {
+        "id": "fig03_e_orphan",
+        "role": "edge",
+        "source": "fig03_reserved",
+        "target": "fig03_sealed",
+        "text": "unrecoverable crash",
+        "points": [
+          [
+            410,
+            592
+          ]
+        ]
+      },
+      {
+        "id": "fig03_e_badbytes",
+        "role": "edge",
+        "source": "fig03_prepared",
+        "target": "fig03_sealed",
+        "text": "bytes lost / cancel",
+        "points": []
+      },
+      {
+        "id": "fig03_e_unknown",
+        "role": "edge",
+        "source": "fig03_maybe",
+        "target": "fig03_sealed",
+        "text": "cannot recover safely",
+        "points": [
+          [
+            1030,
+            592
+          ]
+        ]
+      },
+      {
+        "id": "fig03_e_retry",
+        "role": "edge",
+        "source": "fig03_maybe",
+        "target": "fig03_maybe",
+        "text": "recover first; same bytes only",
+        "points": [
+          [
+            1090,
+            110
+          ],
+          [
+            970,
+            110
+          ]
+        ]
+      },
+      {
+        "id": "fig03_query",
+        "role": "text",
+        "text": "ACKED duplicates return the original receipt. Missing bytes never authorize resampling.",
+        "x": 65,
+        "y": 677,
+        "w": 1300,
+        "h": 55,
+        "size": 24
+      },
+      {
+        "id": "fig03_meaning",
+        "role": "text",
+        "text": "SEALED_CHARGED is an internal terminal marker; remote state may remain unknown.",
+        "x": 65,
+        "y": 735,
+        "w": 1300,
+        "h": 55,
+        "size": 24
+      },
+      {
+        "id": "fig03_budget",
+        "role": "text",
+        "text": "Conservative first version: all reservations remain charged; state transitions do not add the fee again.",
+        "x": 65,
+        "y": 795,
+        "w": 1300,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig04",
+    "lang": "en",
+    "name": "Gaussian release and prospective composition",
+    "width": 1440,
+    "height": 940,
+    "path": "drawio/fig04_en.drawio",
+    "spec": [
+      {
+        "id": "fig04_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 940,
+        "size": 26
+      },
+      {
+        "id": "fig04_title",
+        "role": "text",
+        "text": "Gaussian release and prospective composition",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig04_a",
+        "role": "text",
+        "text": "(a) One complete publication vector",
+        "x": 50,
+        "y": 100,
+        "w": 1320,
+        "h": 40,
+        "size": 27
+      },
+      {
+        "id": "fig04_h",
+        "role": "node",
+        "text": "Local activation\nh(x) ∈ Rᵈ",
+        "x": 65,
+        "y": 175,
+        "w": 230,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_clip",
+        "role": "node",
+        "text": "Global L2 clipping\n‖h̄(x)‖₂ ≤ C",
+        "x": 365,
+        "y": 175,
+        "w": 290,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_gaussian",
+        "role": "node",
+        "text": "Gaussian noise\nZ ∼ N(0, s²I)",
+        "x": 725,
+        "y": 175,
+        "w": 290,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_y",
+        "role": "node",
+        "text": "Release\nY = h̄(x) + Z",
+        "x": 1085,
+        "y": 175,
+        "w": 290,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_e_hc",
+        "role": "edge",
+        "source": "fig04_h",
+        "target": "fig04_clip",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig04_e_cn",
+        "role": "edge",
+        "source": "fig04_clip",
+        "target": "fig04_gaussian",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig04_e_ny",
+        "role": "edge",
+        "source": "fig04_gaussian",
+        "target": "fig04_y",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig04_sensitivity",
+        "role": "text",
+        "text": "Prompt replacement: Δ₂ ≤ 2C. Noise calibration and finite-precision implementation require review.",
+        "x": 65,
+        "y": 315,
+        "w": 1300,
+        "h": 65,
+        "size": 24
+      },
+      {
+        "id": "fig04_b",
+        "role": "text",
+        "text": "(b) Prospective check before atomic reservation",
+        "x": 50,
+        "y": 425,
+        "w": 1320,
+        "h": 40,
+        "size": 27
+      },
+      {
+        "id": "fig04_rho",
+        "role": "node",
+        "text": "Charged account R(α)\nincludes reservations",
+        "x": 65,
+        "y": 490,
+        "w": 500,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig04_cost",
+        "role": "node",
+        "text": "Public-schedule cost cₜ(α)\n= αΔₜ² / (2sₜ²)",
+        "x": 65,
+        "y": 640,
+        "w": 500,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig04_convert",
+        "role": "node",
+        "text": "Prospective ε at fixed δ*\nminα {R(α) + cₜ(α)\n+ ln(1/δ*) / (α − 1)}",
+        "x": 700,
+        "y": 530,
+        "w": 675,
+        "h": 150,
+        "size": 25
+      },
+      {
+        "id": "fig04_e_account",
+        "role": "edge",
+        "source": "fig04_rho",
+        "target": "fig04_convert",
+        "text": "",
+        "points": [
+          [
+            635,
+            540
+          ],
+          [
+            635,
+            575
+          ]
+        ]
+      },
+      {
+        "id": "fig04_e_cost",
+        "role": "edge",
+        "source": "fig04_cost",
+        "target": "fig04_convert",
+        "text": "",
+        "points": [
+          [
+            635,
+            690
+          ],
+          [
+            635,
+            635
+          ]
+        ]
+      },
+      {
+        "id": "fig04_accept",
+        "role": "node",
+        "text": "Within ε limit: reserve atomically\nR(α) ← R(α) + cₜ(α)",
+        "x": 700,
+        "y": 770,
+        "w": 675,
+        "h": 90,
+        "size": 26
+      },
+      {
+        "id": "fig04_deny",
+        "role": "node",
+        "text": "Over limit / incompatible account\nreject without sending",
+        "x": 65,
+        "y": 790,
+        "w": 500,
+        "h": 70,
+        "size": 24
+      },
+      {
+        "id": "fig04_e_accept",
+        "role": "edge",
+        "source": "fig04_convert",
+        "target": "fig04_accept",
+        "text": "pass",
+        "points": []
+      },
+      {
+        "id": "fig04_e_deny",
+        "role": "edge",
+        "source": "fig04_convert",
+        "target": "fig04_deny",
+        "text": "fail",
+        "points": [
+          [
+            801,
+            760
+          ],
+          [
+            315,
+            760
+          ]
+        ]
+      },
+      {
+        "id": "fig04_scope",
+        "role": "text",
+        "text": "Fixed public cost schedule; conditional bounds; no subsampling amplification.",
+        "x": 65,
+        "y": 890,
+        "w": 1300,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig05",
+    "lang": "en",
+    "name": "Lost-receipt recovery without resampling",
+    "width": 1440,
+    "height": 1060,
+    "path": "drawio/fig05_en.drawio",
+    "spec": [
+      {
+        "id": "fig05_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 1060,
+        "size": 26
+      },
+      {
+        "id": "fig05_title",
+        "role": "text",
+        "text": "Lost-receipt recovery without resampling",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig05_actor0",
+        "role": "node",
+        "text": "Local runtime",
+        "x": 25,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_actor1",
+        "role": "node",
+        "text": "Release gate / outbox",
+        "x": 390,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_actor2",
+        "role": "node",
+        "text": "Privacy ledger",
+        "x": 755,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_actor3",
+        "role": "node",
+        "text": "Cloud / suffix KV",
+        "x": 1120,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_requests",
+        "role": "anchor",
+        "text": "",
+        "x": 170,
+        "y": 220,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_requestt",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 220,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_request",
+        "role": "edge",
+        "source": "fig05_requests",
+        "target": "fig05_requestt",
+        "text": "activation reference",
+        "points": []
+      },
+      {
+        "id": "fig05_reserves",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 280,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_reservet",
+        "role": "anchor",
+        "text": "",
+        "x": 900,
+        "y": 280,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_reserve",
+        "role": "edge",
+        "source": "fig05_reserves",
+        "target": "fig05_reservet",
+        "text": "reserve once",
+        "points": []
+      },
+      {
+        "id": "fig05_reserveds",
+        "role": "anchor",
+        "text": "",
+        "x": 900,
+        "y": 340,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_reservedt",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 340,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_reserved",
+        "role": "edge",
+        "source": "fig05_reserveds",
+        "target": "fig05_reservedt",
+        "text": "reservation receipt",
+        "points": []
+      },
+      {
+        "id": "fig05_localwork",
+        "role": "node",
+        "text": "Sample once; persist bytes + MAYBE_SENT",
+        "x": 380,
+        "y": 380,
+        "w": 310,
+        "h": 85,
+        "size": 24
+      },
+      {
+        "id": "fig05_payloads",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 505,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_payloadt",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 505,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_payload",
+        "role": "edge",
+        "source": "fig05_payloads",
+        "target": "fig05_payloadt",
+        "text": "exact prepared payload",
+        "points": []
+      },
+      {
+        "id": "fig05_cloudwork",
+        "role": "node",
+        "text": "Serialized step commit\nKV + token + receipt",
+        "x": 1110,
+        "y": 535,
+        "w": 310,
+        "h": 80,
+        "size": 24
+      },
+      {
+        "id": "fig05_losts",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 650,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_lostt",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 650,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_lost",
+        "role": "edge",
+        "source": "fig05_losts",
+        "target": "fig05_lostt",
+        "text": "reply lost / timeout",
+        "points": []
+      },
+      {
+        "id": "fig05_querys",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 720,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_queryt",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 720,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_query",
+        "role": "edge",
+        "source": "fig05_querys",
+        "target": "fig05_queryt",
+        "text": "query authoritative step state",
+        "points": []
+      },
+      {
+        "id": "fig05_statuss",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 790,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_statust",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 790,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_status",
+        "role": "edge",
+        "source": "fig05_statuss",
+        "target": "fig05_statust",
+        "text": "COMMITTED / NOT_COMMITTED / UNKNOWN",
+        "points": []
+      },
+      {
+        "id": "fig05_committed",
+        "role": "node",
+        "text": "COMMITTED\nreuse receipt; advance once",
+        "x": 45,
+        "y": 880,
+        "w": 420,
+        "h": 110,
+        "size": 25
+      },
+      {
+        "id": "fig05_notcommitted",
+        "role": "node",
+        "text": "NOT_COMMITTED\nretry identical bytes only",
+        "x": 510,
+        "y": 880,
+        "w": 420,
+        "h": 110,
+        "size": 25
+      },
+      {
+        "id": "fig05_unknown",
+        "role": "node",
+        "text": "UNKNOWN / session invalid\nstop; retain charge",
+        "x": 975,
+        "y": 880,
+        "w": 420,
+        "h": 110,
+        "size": 25
+      },
+      {
+        "id": "fig05_authority",
+        "role": "text",
+        "text": "NOT_COMMITTED must exclude in-flight work under the same session lock; an empty lookup is insufficient.",
+        "x": 45,
+        "y": 1010,
+        "w": 1350,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig06",
+    "lang": "en",
+    "name": "Protocol observability and enforcement",
+    "width": 1440,
+    "height": 940,
+    "path": "drawio/fig06_en.drawio",
+    "spec": [
+      {
+        "id": "fig06_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 940,
+        "size": 26
+      },
+      {
+        "id": "fig06_title",
+        "role": "text",
+        "text": "Protocol observability and enforcement",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig06_private",
+        "role": "frame",
+        "text": "",
+        "x": 40,
+        "y": 110,
+        "w": 400,
+        "h": 590,
+        "size": 26
+      },
+      {
+        "id": "fig06_private-heading",
+        "role": "text",
+        "text": "Private local state",
+        "x": 58,
+        "y": 122,
+        "w": 364,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig06_enforce",
+        "role": "frame",
+        "text": "",
+        "x": 510,
+        "y": 110,
+        "w": 420,
+        "h": 590,
+        "size": 26
+      },
+      {
+        "id": "fig06_enforce-heading",
+        "role": "text",
+        "text": "Protocol enforcement",
+        "x": 528,
+        "y": 122,
+        "w": 384,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig06_observed",
+        "role": "frame",
+        "text": "",
+        "x": 1000,
+        "y": 110,
+        "w": 400,
+        "h": 590,
+        "size": 26
+      },
+      {
+        "id": "fig06_observed-heading",
+        "role": "text",
+        "text": "Remote observation",
+        "x": 1018,
+        "y": 122,
+        "w": 364,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig06_act",
+        "role": "node",
+        "text": "Activation values\nprivate-input dependent",
+        "x": 65,
+        "y": 205,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_random",
+        "role": "node",
+        "text": "Clip + randomize\ncomplete vector",
+        "x": 535,
+        "y": 205,
+        "w": 370,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_tensor",
+        "role": "node",
+        "text": "Randomized tensor Y",
+        "x": 1025,
+        "y": 205,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_length",
+        "role": "node",
+        "text": "True length / mask\nprivate position data",
+        "x": 65,
+        "y": 375,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_public",
+        "role": "node",
+        "text": "Public shape / padding\nallowlisted metadata",
+        "x": 535,
+        "y": 375,
+        "w": 370,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_meta",
+        "role": "node",
+        "text": "Declared public metadata",
+        "x": 1025,
+        "y": 375,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_behavior",
+        "role": "node",
+        "text": "Stop / error / timing\nprivate-state dependent",
+        "x": 65,
+        "y": 545,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_schedule",
+        "role": "node",
+        "text": "Approved schedule / rules\notherwise revise scope",
+        "x": 535,
+        "y": 545,
+        "w": 370,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_trace",
+        "role": "node",
+        "text": "Observable interaction trace",
+        "x": 1025,
+        "y": 545,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_e_ab",
+        "role": "edge",
+        "source": "fig06_act",
+        "target": "fig06_random",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_bc",
+        "role": "edge",
+        "source": "fig06_random",
+        "target": "fig06_tensor",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_de",
+        "role": "edge",
+        "source": "fig06_length",
+        "target": "fig06_public",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_eg",
+        "role": "edge",
+        "source": "fig06_public",
+        "target": "fig06_meta",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_hj",
+        "role": "edge",
+        "source": "fig06_behavior",
+        "target": "fig06_schedule",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_jk",
+        "role": "edge",
+        "source": "fig06_schedule",
+        "target": "fig06_trace",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_reject",
+        "role": "node",
+        "text": "Unapproved raw fields or behavior: block remote release\nno raw-text fallback; no guarantee for an unanalyzed channel",
+        "x": 125,
+        "y": 755,
+        "w": 1190,
+        "h": 85,
+        "size": 25
+      },
+      {
+        "id": "fig06_scope",
+        "role": "text",
+        "text": "Scope must state public identity / participation and any excluded timing or side channels explicitly.",
+        "x": 65,
+        "y": 870,
+        "w": 1310,
+        "h": 45,
+        "size": 24
+      }
+    ]
+  },
+  {
+    "key": "fig01",
+    "lang": "zh",
+    "name": "本地隐私发布架构",
+    "width": 1440,
+    "height": 850,
+    "path": "drawio/fig01_zh.drawio",
+    "spec": [
+      {
+        "id": "fig01_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 850,
+        "size": 26
+      },
+      {
+        "id": "fig01_title",
+        "role": "text",
+        "text": "本地隐私发布架构",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig01_client",
+        "role": "frame",
+        "text": "",
+        "x": 40,
+        "y": 100,
+        "w": 1060,
+        "h": 610,
+        "size": 26
+      },
+      {
+        "id": "fig01_client-heading",
+        "role": "text",
+        "text": "可信本机",
+        "x": 58,
+        "y": 112,
+        "w": 1024,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig01_cloud",
+        "role": "frame",
+        "text": "",
+        "x": 1140,
+        "y": 100,
+        "w": 260,
+        "h": 610,
+        "size": 26
+      },
+      {
+        "id": "fig01_cloud-heading",
+        "role": "text",
+        "text": "云端观察者",
+        "x": 1158,
+        "y": 112,
+        "w": 224,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig01_input",
+        "role": "node",
+        "text": "私有输入\nx",
+        "x": 70,
+        "y": 190,
+        "w": 190,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_prefix",
+        "role": "node",
+        "text": "本地前导网络\n及私有 KV",
+        "x": 310,
+        "y": 190,
+        "w": 220,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_gate",
+        "role": "node",
+        "text": "隐私发布门\n裁剪、随机化、绑定",
+        "x": 590,
+        "y": 190,
+        "w": 270,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_egress",
+        "role": "node",
+        "text": "批准的\n唯一载荷",
+        "x": 910,
+        "y": 190,
+        "w": 160,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_suffix",
+        "role": "node",
+        "text": "云端后段、KV\n及输出头",
+        "x": 1165,
+        "y": 190,
+        "w": 210,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig01_e_0",
+        "role": "edge",
+        "source": "fig01_input",
+        "target": "fig01_prefix",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_e_1",
+        "role": "edge",
+        "source": "fig01_prefix",
+        "target": "fig01_gate",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_e_2",
+        "role": "edge",
+        "source": "fig01_gate",
+        "target": "fig01_egress",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_e_3",
+        "role": "edge",
+        "source": "fig01_egress",
+        "target": "fig01_suffix",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig01_profile",
+        "role": "node",
+        "text": "已批准的隐私合同\n邻接、协议、机制",
+        "x": 70,
+        "y": 420,
+        "w": 280,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_ledger",
+        "role": "node",
+        "text": "持久预算账本\nRDP 与原子预留",
+        "x": 400,
+        "y": 420,
+        "w": 290,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_outbox",
+        "role": "node",
+        "text": "持久载荷发件箱\n发布标识绑定唯一字节",
+        "x": 740,
+        "y": 420,
+        "w": 330,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_e_profile",
+        "role": "edge",
+        "source": "fig01_profile",
+        "target": "fig01_gate",
+        "text": "控制",
+        "points": [
+          [
+            210,
+            360
+          ],
+          [
+            658,
+            360
+          ]
+        ]
+      },
+      {
+        "id": "fig01_e_budget",
+        "role": "edge",
+        "source": "fig01_ledger",
+        "target": "fig01_gate",
+        "text": "先预留",
+        "points": [
+          [
+            545,
+            380
+          ],
+          [
+            725,
+            380
+          ]
+        ]
+      },
+      {
+        "id": "fig01_e_durable",
+        "role": "edge",
+        "source": "fig01_gate",
+        "target": "fig01_outbox",
+        "text": "先持久化再发送",
+        "points": [
+          [
+            890,
+            278
+          ],
+          [
+            890,
+            365
+          ],
+          [
+            905,
+            365
+          ]
+        ]
+      },
+      {
+        "id": "fig01_receipt",
+        "role": "node",
+        "text": "步骤结果\n及提交回执",
+        "x": 1165,
+        "y": 420,
+        "w": 210,
+        "h": 125,
+        "size": 26
+      },
+      {
+        "id": "fig01_e_reply",
+        "role": "edge",
+        "source": "fig01_suffix",
+        "target": "fig01_receipt",
+        "text": "回执",
+        "points": []
+      },
+      {
+        "id": "fig01_e_feedback",
+        "role": "edge",
+        "source": "fig01_receipt",
+        "target": "fig01_prefix",
+        "text": "本地核验后进入下一步",
+        "points": [
+          [
+            1270,
+            640
+          ],
+          [
+            55,
+            640
+          ],
+          [
+            55,
+            160
+          ],
+          [
+            420,
+            160
+          ]
+        ]
+      },
+      {
+        "id": "fig01_scope",
+        "role": "text",
+        "text": "公开固定形状协议；仅在声明的输入域和保护范围内讨论内容隐私",
+        "x": 70,
+        "y": 735,
+        "w": 1300,
+        "h": 40,
+        "size": 24
+      },
+      {
+        "id": "fig01_key",
+        "role": "text",
+        "text": "实线：载荷数据流     虚线：控制或返回     紫色：持久状态",
+        "x": 70,
+        "y": 790,
+        "w": 1300,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig02",
+    "lang": "zh",
+    "name": "先记账、后发送的发布数据流",
+    "width": 1440,
+    "height": 850,
+    "path": "drawio/fig02_zh.drawio",
+    "spec": [
+      {
+        "id": "fig02_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 850,
+        "size": 26
+      },
+      {
+        "id": "fig02_title",
+        "role": "text",
+        "text": "先记账、后发送的发布数据流",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig02_validate",
+        "role": "node",
+        "text": "1  校验发布合同\n身份与公开协议",
+        "x": 70,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_reserve",
+        "role": "node",
+        "text": "2  去重并预留预算\n账户内原子事务",
+        "x": 425,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_noise",
+        "role": "node",
+        "text": "3  裁剪并随机化\n只产生一个新样本",
+        "x": 780,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_prepare",
+        "role": "node",
+        "text": "4  持久化唯一字节\nPREPARED",
+        "x": 1135,
+        "y": 160,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_e_top0",
+        "role": "edge",
+        "source": "fig02_validate",
+        "target": "fig02_reserve",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_top1",
+        "role": "edge",
+        "source": "fig02_reserve",
+        "target": "fig02_noise",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_top2",
+        "role": "edge",
+        "source": "fig02_noise",
+        "target": "fig02_prepare",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_finish",
+        "role": "node",
+        "text": "8  记录 ACKED\n不再次扣费",
+        "x": 70,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_verify",
+        "role": "node",
+        "text": "7  核验步骤回执\n请求、步骤、摘要",
+        "x": 425,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_send",
+        "role": "node",
+        "text": "6  发送批准载荷\n经认证的传输通道",
+        "x": 780,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_mark",
+        "role": "node",
+        "text": "5  持久化发送标记\nMAYBE_SENT",
+        "x": 1135,
+        "y": 450,
+        "w": 235,
+        "h": 120,
+        "size": 25
+      },
+      {
+        "id": "fig02_e_turn",
+        "role": "edge",
+        "source": "fig02_prepare",
+        "target": "fig02_mark",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_bottom3",
+        "role": "edge",
+        "source": "fig02_mark",
+        "target": "fig02_send",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_bottom2",
+        "role": "edge",
+        "source": "fig02_send",
+        "target": "fig02_verify",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_e_bottom1",
+        "role": "edge",
+        "source": "fig02_verify",
+        "target": "fig02_finish",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig02_gap",
+        "role": "text",
+        "text": "网络发送必须晚于预算持久预留与唯一载荷持久绑定",
+        "x": 85,
+        "y": 335,
+        "w": 1220,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig02_retry",
+        "role": "node",
+        "text": "重复发布标识：核对绑定后进入恢复流程，不再次预留，也不重新采样",
+        "x": 70,
+        "y": 650,
+        "w": 1300,
+        "h": 75,
+        "size": 25
+      },
+      {
+        "id": "fig02_failure",
+        "role": "text",
+        "text": "第 6 步前任一环节失败均阻止发送；未知出站保留已计费用，见图 3 与图 5",
+        "x": 70,
+        "y": 760,
+        "w": 1300,
+        "h": 55,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig03",
+    "lang": "zh",
+    "name": "持久隐私发布状态机",
+    "width": 1440,
+    "height": 850,
+    "path": "drawio/fig03_zh.drawio",
+    "spec": [
+      {
+        "id": "fig03_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 850,
+        "size": 26
+      },
+      {
+        "id": "fig03_title",
+        "role": "text",
+        "text": "持久隐私发布状态机",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig03_new",
+        "role": "node",
+        "text": "NEW\n尚未预留",
+        "x": 55,
+        "y": 190,
+        "w": 170,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_reserved",
+        "role": "node",
+        "text": "RESERVED\n费用已预留",
+        "x": 290,
+        "y": 190,
+        "w": 240,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_prepared",
+        "role": "node",
+        "text": "PREPARED\n唯一载荷已持久化",
+        "x": 600,
+        "y": 190,
+        "w": 240,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_maybe",
+        "role": "node",
+        "text": "MAYBE_SENT\n允许开始发送",
+        "x": 910,
+        "y": 190,
+        "w": 240,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_acked",
+        "role": "node",
+        "text": "ACKED\n回执已核验",
+        "x": 1210,
+        "y": 190,
+        "w": 180,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig03_e_reserve",
+        "role": "edge",
+        "source": "fig03_new",
+        "target": "fig03_reserved",
+        "text": "预留",
+        "points": []
+      },
+      {
+        "id": "fig03_e_prepare",
+        "role": "edge",
+        "source": "fig03_reserved",
+        "target": "fig03_prepared",
+        "text": "绑定",
+        "points": []
+      },
+      {
+        "id": "fig03_e_mark",
+        "role": "edge",
+        "source": "fig03_prepared",
+        "target": "fig03_maybe",
+        "text": "标记",
+        "points": []
+      },
+      {
+        "id": "fig03_e_ack",
+        "role": "edge",
+        "source": "fig03_maybe",
+        "target": "fig03_acked",
+        "text": "回执",
+        "points": []
+      },
+      {
+        "id": "fig03_sealed",
+        "role": "node",
+        "text": "SEALED_CHARGED\n不再发送，费用不退回",
+        "x": 505,
+        "y": 540,
+        "w": 430,
+        "h": 105,
+        "size": 26
+      },
+      {
+        "id": "fig03_e_orphan",
+        "role": "edge",
+        "source": "fig03_reserved",
+        "target": "fig03_sealed",
+        "text": "不可恢复崩溃",
+        "points": [
+          [
+            410,
+            592
+          ]
+        ]
+      },
+      {
+        "id": "fig03_e_badbytes",
+        "role": "edge",
+        "source": "fig03_prepared",
+        "target": "fig03_sealed",
+        "text": "载荷丢失或取消",
+        "points": []
+      },
+      {
+        "id": "fig03_e_unknown",
+        "role": "edge",
+        "source": "fig03_maybe",
+        "target": "fig03_sealed",
+        "text": "无法安全恢复",
+        "points": [
+          [
+            1030,
+            592
+          ]
+        ]
+      },
+      {
+        "id": "fig03_e_retry",
+        "role": "edge",
+        "source": "fig03_maybe",
+        "target": "fig03_maybe",
+        "text": "先核查恢复条件，仅重用原字节",
+        "points": [
+          [
+            1090,
+            110
+          ],
+          [
+            970,
+            110
+          ]
+        ]
+      },
+      {
+        "id": "fig03_query",
+        "role": "text",
+        "text": "ACKED 的重复请求返回原回执；载荷缺失永远不构成重新采样的授权",
+        "x": 65,
+        "y": 677,
+        "w": 1300,
+        "h": 55,
+        "size": 24
+      },
+      {
+        "id": "fig03_meaning",
+        "role": "text",
+        "text": "SEALED_CHARGED 是本地终止标记，并不证明云端从未接收或从未执行",
+        "x": 65,
+        "y": 735,
+        "w": 1300,
+        "h": 55,
+        "size": 24
+      },
+      {
+        "id": "fig03_budget",
+        "role": "text",
+        "text": "初版采取保守记账：所有预留均保留费用，后续状态迁移不重复计费",
+        "x": 65,
+        "y": 795,
+        "w": 1300,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig04",
+    "lang": "zh",
+    "name": "Gaussian 发布与前瞻组合会计",
+    "width": 1440,
+    "height": 940,
+    "path": "drawio/fig04_zh.drawio",
+    "spec": [
+      {
+        "id": "fig04_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 940,
+        "size": 26
+      },
+      {
+        "id": "fig04_title",
+        "role": "text",
+        "text": "Gaussian 发布与前瞻组合会计",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig04_a",
+        "role": "text",
+        "text": "(a) 一次完整发布向量",
+        "x": 50,
+        "y": 100,
+        "w": 1320,
+        "h": 40,
+        "size": 27
+      },
+      {
+        "id": "fig04_h",
+        "role": "node",
+        "text": "本地激活\nh(x) ∈ Rᵈ",
+        "x": 65,
+        "y": 175,
+        "w": 230,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_clip",
+        "role": "node",
+        "text": "全局 L2 裁剪\n‖h̄(x)‖₂ ≤ C",
+        "x": 365,
+        "y": 175,
+        "w": 290,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_gaussian",
+        "role": "node",
+        "text": "Gaussian 噪声\nZ ∼ N(0, s²I)",
+        "x": 725,
+        "y": 175,
+        "w": 290,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_y",
+        "role": "node",
+        "text": "发布载荷\nY = h̄(x) + Z",
+        "x": 1085,
+        "y": 175,
+        "w": 290,
+        "h": 110,
+        "size": 26
+      },
+      {
+        "id": "fig04_e_hc",
+        "role": "edge",
+        "source": "fig04_h",
+        "target": "fig04_clip",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig04_e_cn",
+        "role": "edge",
+        "source": "fig04_clip",
+        "target": "fig04_gaussian",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig04_e_ny",
+        "role": "edge",
+        "source": "fig04_gaussian",
+        "target": "fig04_y",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig04_sensitivity",
+        "role": "text",
+        "text": "prompt replacement 邻接：Δ₂ ≤ 2C；噪声校准与有限精度实现必须另行核查",
+        "x": 65,
+        "y": 315,
+        "w": 1300,
+        "h": 65,
+        "size": 24
+      },
+      {
+        "id": "fig04_b",
+        "role": "text",
+        "text": "(b) 原子预留前检查累计上界",
+        "x": 50,
+        "y": 425,
+        "w": 1320,
+        "h": 40,
+        "size": 27
+      },
+      {
+        "id": "fig04_rho",
+        "role": "node",
+        "text": "账户已计费用 R(α)\n包含全部预留",
+        "x": 65,
+        "y": 490,
+        "w": 500,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig04_cost",
+        "role": "node",
+        "text": "公开调度费用 cₜ(α)\n= αΔₜ² / (2sₜ²)",
+        "x": 65,
+        "y": 640,
+        "w": 500,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig04_convert",
+        "role": "node",
+        "text": "固定 δ* 下的前瞻 ε\nminα {R(α) + cₜ(α)\n+ ln(1/δ*) / (α − 1)}",
+        "x": 700,
+        "y": 530,
+        "w": 675,
+        "h": 150,
+        "size": 25
+      },
+      {
+        "id": "fig04_e_account",
+        "role": "edge",
+        "source": "fig04_rho",
+        "target": "fig04_convert",
+        "text": "",
+        "points": [
+          [
+            635,
+            540
+          ],
+          [
+            635,
+            575
+          ]
+        ]
+      },
+      {
+        "id": "fig04_e_cost",
+        "role": "edge",
+        "source": "fig04_cost",
+        "target": "fig04_convert",
+        "text": "",
+        "points": [
+          [
+            635,
+            690
+          ],
+          [
+            635,
+            635
+          ]
+        ]
+      },
+      {
+        "id": "fig04_accept",
+        "role": "node",
+        "text": "满足 ε 上限：原子预留\nR(α) ← R(α) + cₜ(α)",
+        "x": 700,
+        "y": 770,
+        "w": 675,
+        "h": 90,
+        "size": 26
+      },
+      {
+        "id": "fig04_deny",
+        "role": "node",
+        "text": "超出预算或会计不兼容\n拒绝发布",
+        "x": 65,
+        "y": 790,
+        "w": 500,
+        "h": 70,
+        "size": 24
+      },
+      {
+        "id": "fig04_e_accept",
+        "role": "edge",
+        "source": "fig04_convert",
+        "target": "fig04_accept",
+        "text": "通过",
+        "points": []
+      },
+      {
+        "id": "fig04_e_deny",
+        "role": "edge",
+        "source": "fig04_convert",
+        "target": "fig04_deny",
+        "text": "不通过",
+        "points": [
+          [
+            801,
+            760
+          ],
+          [
+            315,
+            760
+          ]
+        ]
+      },
+      {
+        "id": "fig04_scope",
+        "role": "text",
+        "text": "固定公开费用调度；同一保护范围内的条件上界；不使用子采样放大",
+        "x": 65,
+        "y": 890,
+        "w": 1300,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig05",
+    "lang": "zh",
+    "name": "不重采样的丢失回执恢复时序",
+    "width": 1440,
+    "height": 1060,
+    "path": "drawio/fig05_zh.drawio",
+    "spec": [
+      {
+        "id": "fig05_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 1060,
+        "size": 26
+      },
+      {
+        "id": "fig05_title",
+        "role": "text",
+        "text": "不重采样的丢失回执恢复时序",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig05_actor0",
+        "role": "node",
+        "text": "本地 Runtime",
+        "x": 25,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_actor1",
+        "role": "node",
+        "text": "发布门与发件箱",
+        "x": 390,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_actor2",
+        "role": "node",
+        "text": "隐私账本",
+        "x": 755,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_actor3",
+        "role": "node",
+        "text": "云端后段与 KV",
+        "x": 1120,
+        "y": 105,
+        "w": 290,
+        "h": 65,
+        "size": 26
+      },
+      {
+        "id": "fig05_requests",
+        "role": "anchor",
+        "text": "",
+        "x": 170,
+        "y": 220,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_requestt",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 220,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_request",
+        "role": "edge",
+        "source": "fig05_requests",
+        "target": "fig05_requestt",
+        "text": "激活引用",
+        "points": []
+      },
+      {
+        "id": "fig05_reserves",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 280,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_reservet",
+        "role": "anchor",
+        "text": "",
+        "x": 900,
+        "y": 280,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_reserve",
+        "role": "edge",
+        "source": "fig05_reserves",
+        "target": "fig05_reservet",
+        "text": "只预留一次",
+        "points": []
+      },
+      {
+        "id": "fig05_reserveds",
+        "role": "anchor",
+        "text": "",
+        "x": 900,
+        "y": 340,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_reservedt",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 340,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_reserved",
+        "role": "edge",
+        "source": "fig05_reserveds",
+        "target": "fig05_reservedt",
+        "text": "预留凭据",
+        "points": []
+      },
+      {
+        "id": "fig05_localwork",
+        "role": "node",
+        "text": "采样一次；持久化载荷\n再写可能出站状态",
+        "x": 380,
+        "y": 380,
+        "w": 310,
+        "h": 85,
+        "size": 24
+      },
+      {
+        "id": "fig05_payloads",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 505,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_payloadt",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 505,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_payload",
+        "role": "edge",
+        "source": "fig05_payloads",
+        "target": "fig05_payloadt",
+        "text": "已固化的唯一载荷",
+        "points": []
+      },
+      {
+        "id": "fig05_cloudwork",
+        "role": "node",
+        "text": "串行化步骤提交\nKV、token 与回执",
+        "x": 1110,
+        "y": 535,
+        "w": 310,
+        "h": 80,
+        "size": 24
+      },
+      {
+        "id": "fig05_losts",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 650,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_lostt",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 650,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_lost",
+        "role": "edge",
+        "source": "fig05_losts",
+        "target": "fig05_lostt",
+        "text": "回执丢失或超时",
+        "points": []
+      },
+      {
+        "id": "fig05_querys",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 720,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_queryt",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 720,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_query",
+        "role": "edge",
+        "source": "fig05_querys",
+        "target": "fig05_queryt",
+        "text": "查询权威步骤状态",
+        "points": []
+      },
+      {
+        "id": "fig05_statuss",
+        "role": "anchor",
+        "text": "",
+        "x": 1265,
+        "y": 790,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_statust",
+        "role": "anchor",
+        "text": "",
+        "x": 535,
+        "y": 790,
+        "w": 0,
+        "h": 0,
+        "size": 26
+      },
+      {
+        "id": "fig05_e_status",
+        "role": "edge",
+        "source": "fig05_statuss",
+        "target": "fig05_statust",
+        "text": "已提交 / 确定未提交 / 不确定",
+        "points": []
+      },
+      {
+        "id": "fig05_committed",
+        "role": "node",
+        "text": "已提交\n复用回执，只推进一次",
+        "x": 45,
+        "y": 880,
+        "w": 420,
+        "h": 110,
+        "size": 25
+      },
+      {
+        "id": "fig05_notcommitted",
+        "role": "node",
+        "text": "确定未提交\n仅允许重发相同字节",
+        "x": 510,
+        "y": 880,
+        "w": 420,
+        "h": 110,
+        "size": 25
+      },
+      {
+        "id": "fig05_unknown",
+        "role": "node",
+        "text": "状态不确定或会话失效\n停止，保留消费",
+        "x": 975,
+        "y": 880,
+        "w": 420,
+        "h": 110,
+        "size": 25
+      },
+      {
+        "id": "fig05_authority",
+        "role": "text",
+        "text": "“确定未提交”必须在会话串行控制下排除在途执行；普通查询为空并不足以证明",
+        "x": 45,
+        "y": 1010,
+        "w": 1350,
+        "h": 35,
+        "size": 23
+      }
+    ]
+  },
+  {
+    "key": "fig06",
+    "lang": "zh",
+    "name": "协议可观测范围与发布约束",
+    "width": 1440,
+    "height": 940,
+    "path": "drawio/fig06_zh.drawio",
+    "spec": [
+      {
+        "id": "fig06_canvas",
+        "role": "background",
+        "text": "",
+        "x": 0,
+        "y": 0,
+        "w": 1440,
+        "h": 940,
+        "size": 26
+      },
+      {
+        "id": "fig06_title",
+        "role": "text",
+        "text": "协议可观测范围与发布约束",
+        "x": 40,
+        "y": 24,
+        "w": 1360,
+        "h": 44,
+        "size": 32
+      },
+      {
+        "id": "fig06_private",
+        "role": "frame",
+        "text": "",
+        "x": 40,
+        "y": 110,
+        "w": 400,
+        "h": 590,
+        "size": 26
+      },
+      {
+        "id": "fig06_private-heading",
+        "role": "text",
+        "text": "本地私有状态",
+        "x": 58,
+        "y": 122,
+        "w": 364,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig06_enforce",
+        "role": "frame",
+        "text": "",
+        "x": 510,
+        "y": 110,
+        "w": 420,
+        "h": 590,
+        "size": 26
+      },
+      {
+        "id": "fig06_enforce-heading",
+        "role": "text",
+        "text": "批准协议的强制执行",
+        "x": 528,
+        "y": 122,
+        "w": 384,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig06_observed",
+        "role": "frame",
+        "text": "",
+        "x": 1000,
+        "y": 110,
+        "w": 400,
+        "h": 590,
+        "size": 26
+      },
+      {
+        "id": "fig06_observed-heading",
+        "role": "text",
+        "text": "云端可观测内容",
+        "x": 1018,
+        "y": 122,
+        "w": 364,
+        "h": 40,
+        "size": 26
+      },
+      {
+        "id": "fig06_act",
+        "role": "node",
+        "text": "激活数值\n依赖私有输入",
+        "x": 65,
+        "y": 205,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_random",
+        "role": "node",
+        "text": "裁剪并随机化\n作用于完整向量",
+        "x": 535,
+        "y": 205,
+        "w": 370,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_tensor",
+        "role": "node",
+        "text": "随机化张量 Y",
+        "x": 1025,
+        "y": 205,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_length",
+        "role": "node",
+        "text": "真实长度、mask\n私有位置数据",
+        "x": 65,
+        "y": 375,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_public",
+        "role": "node",
+        "text": "公开形状与 padding\n元数据白名单",
+        "x": 535,
+        "y": 375,
+        "w": 370,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_meta",
+        "role": "node",
+        "text": "声明为公开的元数据",
+        "x": 1025,
+        "y": 375,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_behavior",
+        "role": "node",
+        "text": "停止、错误与时序\n可能依赖私有状态",
+        "x": 65,
+        "y": 545,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_schedule",
+        "role": "node",
+        "text": "批准的调度与规则\n否则重新界定保护范围",
+        "x": 535,
+        "y": 545,
+        "w": 370,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_trace",
+        "role": "node",
+        "text": "可观测交互记录",
+        "x": 1025,
+        "y": 545,
+        "w": 350,
+        "h": 100,
+        "size": 26
+      },
+      {
+        "id": "fig06_e_ab",
+        "role": "edge",
+        "source": "fig06_act",
+        "target": "fig06_random",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_bc",
+        "role": "edge",
+        "source": "fig06_random",
+        "target": "fig06_tensor",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_de",
+        "role": "edge",
+        "source": "fig06_length",
+        "target": "fig06_public",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_eg",
+        "role": "edge",
+        "source": "fig06_public",
+        "target": "fig06_meta",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_hj",
+        "role": "edge",
+        "source": "fig06_behavior",
+        "target": "fig06_schedule",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_e_jk",
+        "role": "edge",
+        "source": "fig06_schedule",
+        "target": "fig06_trace",
+        "text": "",
+        "points": []
+      },
+      {
+        "id": "fig06_reject",
+        "role": "node",
+        "text": "未经批准的原始字段或行为：阻止远程发布\n不降级发送原文，不为未分析的通道作保证",
+        "x": 125,
+        "y": 755,
+        "w": 1190,
+        "h": 85,
+        "size": 25
+      },
+      {
+        "id": "fig06_scope",
+        "role": "text",
+        "text": "保护范围必须明确身份与参与信息是否公开，以及是否排除时序或其他侧信道",
+        "x": 65,
+        "y": 870,
+        "w": 1310,
+        "h": 45,
+        "size": 24
+      }
+    ]
+  }
+]

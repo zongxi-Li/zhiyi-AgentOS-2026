@@ -1,0 +1,1364 @@
+                                             Privacy from Symmetry: Orthogonally Equivariant
+                                                      Transformers for LLM Inference
+
+
+                                                     Alexander Yukhimchuk1         Andrey Shulga         Mladen Kolar1,2      Martin Takáč1
+                                                                         1            2
+                                                                             MBZUAI       University of Southern California
+arXiv:2606.16461v1 [cs.LG] 15 Jun 2026
+
+
+
+
+                                                                                            Abstract
+                                                      Running large language models locally is often impractical, pushing inference on
+                                                      sensitive text to third-party providers. Split inference partially mitigates this by
+                                                      keeping tokens on the client and sending only hidden representations, but these
+                                                      representations can still be recovered via nearest-neighbor search against the public
+                                                      embedding table. We propose an orthogonal obfuscation procedure in which the
+                                                      client multiplies embeddings by a secret orthogonal matrix before transmission. To
+                                                      enable correct inference under arbitrary rotations, we introduce C ONJ F ORMER, a
+                                                      transformer variant that is exactly O(d)-equivariant via a lightweight normalization
+                                                      change (scalar RMSNorm) together with blockwise orthogonal conjugation of all
+                                                      linear weights. As a result, the server performs the full forward pass entirely in the
+                                                      rotated basis and never observes unrotated hidden states. Experiments on GPT-2
+                                                      and Llama 3.2 1B models fine-tuned on PubMed show that orthogonal obfuscation
+                                                      eliminates direct cosine nearest-neighbor inversion and reduces token recovery
+                                                      from over 35% top-10 to at most 1.3%, while increasing perplexity by only 0.4%
+                                                      after fine-tuning. These results indicate that enforcing symmetry at the architectural
+                                                      level can provide a practical defense for privacy-preserving LLM inference without
+                                                      noise injection or heavy cryptographic machinery.
+
+
+                                         1    Introduction
+                                         Large language models (LLMs) have become a central paradigm in modern NLP, achieving state-
+                                         of-the-art performance across a wide range of tasks [11, 28, 38, 9, 24, 57]. As model sizes continue
+                                         to grow, LLMs are increasingly deployed as cloud-based services, allowing clients to query remote
+                                         models without maintaining local computational resources [4, 5]. However, this deployment model
+                                         raises a critical privacy concern: during inference, users must send their data to the model provider,
+                                         which can expose sensitive or proprietary information [8]. Ensuring privacy of user data at inference
+                                         time therefore remains an essential and still challenging problem.
+                                         Most privacy-preserving methods focus on training-time protection, often using differential privacy
+                                         and related techniques [1]. In contrast, inference-time privacy for LLMs has received comparatively
+                                         less attention. Cryptographic approaches such as homomorphic encryption or secure multiparty
+                                         computation offer strong guarantees, but they introduce prohibitively high computational overhead
+                                         for practical autoregressive inference [17, 53].
+                                         Another systems-level direction is to run inference inside a trusted execution environment (TEE)
+                                         backed by a hardware root of trust (HRoT), using remote attestation to terminate encrypted client
+                                         communication inside the enclave and thus protect model inputs and outputs from the cloud opera-
+                                         tor [48, 26]. However, these guarantees rely on specific hardware and a substantial trusted software
+                                         stack, and known implementation flaws or side channels through timing and resource usage may still
+                                         reveal sensitive details [26].
+                                         A widely used architecture to reduce client-side exposure is split inference (SI), in which the client
+                                         runs the embedding layer (and possibly a few early transformer blocks) locally and sends only
+
+                                         Preprint.
+intermediate hidden representations to the server [21, 47, 51, 8]. Although SI avoids sending plaintext
+tokens, it does not prevent reconstruction of the input.
+In particular, dense text embeddings and intermediate representations are known to leak substantial
+information about the original text and are often invertible [45, 32, 25, 23].
+Differentially private noise injection can provide formal guarantees against such invertibility [13, 7],
+but it typically leads to a significant degradation in model quality.
+In the standard SI setting for pretrained LLMs, the embedding table is typically public, enabling
+a straightforward and robust attack: nearest-neighbor (NN) embedding inversion, which recovers
+tokens by matching server-observed representations against the public embedding table using cosine
+similarity. We demonstrate empirically that this attack remains highly effective even after fine-tuning
+the model.
+In this work, we introduce C ONJ F ORMER, a framework designed for the standard SI setting that
+directly targets embedding inversion by applying a secret orthogonal transformation to the client-side
+embeddings. To make such obfuscation feasible, our framework combines (i) lightweight architectural
+modifications that make each transformer block equivariant to the action of the orthogonal group O(d),
+and (ii) blockwise orthogonal conjugation of the weights, ensuring that the model’s functionality is
+preserved exactly when input embeddings are rotated. Our implementation is available at: https:
+//github.com/katcinskiy/equivariant-private-transformer.
+
+1.1   Related Works
+
+We first review works on privacy-preserving inference, then focus on equivariant and invariant
+architectures as potential solutions.
+
+Cryptographic approaches. A classical approach to private inference relies on secure multiparty
+computation (MPC) and homomorphic encryption (HE) [17, 53]. Although these methods provide
+strong cryptographic guarantees, they are very slow for real-world applications: HE introduces a
+significant overhead on every matrix multiplication and nonlinear operation [6]. As a result, pure
+cryptographic approaches remain impractical for LLM inference.
+
+Prompt modifications. Another line of work protects sensitive information by modifying the
+prompt before it is sent to the server. For example, this may involve masking or replacing identifiable
+entities [15], or rewriting or abstracting the input [54, 52]. However, such approaches provide
+limited protection, as masked content can often be inferred from context using the model’s prior
+knowledge [50].
+
+Differentially private embedding obfuscation. These methods operate in an SI setting and apply
+the differential privacy (DP) [13] mechanism to hidden representations before sending them to the
+server [1, 12, 40, 30, 15]. For example, Mai et al. [30] adds Laplacian noise to the input embeddings
+to satisfy dχ -privacy [7] guarantees. Although such methods provide formal privacy guarantees, they
+face significant practical limitations: DP noise degrades model performance, and as noted by Mai
+et al. [30], the size of the auxiliary decoder, which is used to preserve the functionality of the model
+on the client side, scales in size with the underlying server-side model. By contrast, C ONJ F ORMER
+avoids stochastic noise injection and does not require an additional learned decoder to preserve model
+functionality.
+
+Embedding obfuscations and architectural defenses. A more general line of work relies on
+heuristic transformations of the embedding space and models rather than formal privacy guarantees,
+aiming to defend against specific classes of attacks [56]. For instance, Roberts et al. [40] learn a
+stochastic encoder that injects structured noise into embeddings, minimizing mutual information
+between the original and obfuscated representations, thereby mitigating embedding inversion.
+Some works attempt to make architectural changes to the model [31]. The main problem of such
+methods is the uncertainty of new attacks that could be applied to them. For example, Lin et al. [27]
+show that the obfuscation from Mishra et al. [31] can be easily reversed by exploiting the invariance
+of differences between neighboring components of the embedding vector. In a related theoretical
+
+
+                                                   2
+result, Semenov et al. [42] exploited orthogonal matrix obfuscation to show that in a simple linear
+regression setup, the client’s data cannot be recovered without knowing its prior distribution.
+Compared to prior work, our approach enforces resistance to embedding inversion at the architectural
+level. While previous methods rely on noise injection or heuristic transformations of the embedding
+space, we make the transformer itself exactly O(d)-equivariant.
+This allows embeddings to be obfuscated by secret orthogonal transformations, with weight conjuga-
+tion preserving functionality. The construction removes direct nearest-neighbor embedding inversion
+in the original embedding coordinates.
+
+Equivariance and invariance. Equivariance and invariance to rotations are well studied in com-
+puter vision and scientific machine learning, where data often exhibit geometric structure [10, 18].
+However, these methods typically target low-dimensional groups (e.g., planar or SO(3) rota-
+tions), whereas our setting requires equivariance to the full orthogonal group O(d) acting on high-
+dimensional embeddings. Standard transformers are not O(d)-equivariant; our method provides
+a construction that enforces this property via lightweight architectural modifications and weight
+conjugation.
+
+1.2   Main Contributions
+
+Our main contributions are as follows:
+
+1. We develop a transformer architecture that is exactly O(d)-equivariant through lightweight
+   modifications (scalar RMSNorm), making it compatible with arbitrary orthogonal transformation
+   of the embedding space.
+2. Building on this, we propose the C ONJ F ORMER framework, which applies blockwise orthogonal
+   conjugation to all linear weights so that the model remains functionally identical under secret
+   orthogonal obfuscation. This ensures that the server only observes rotated hidden states and
+   removes direct nearest-neighbor embedding inversion in the original embedding coordinates.
+3. We show that C ONJ F ORMER fundamentally changes the nature of attacks: once direct matching in
+   the embedding space is eliminated, the natural next step for the adversary is to recover the hidden
+   orthogonal transformations by aligning the model parameters after they have been conjugated.
+   Building on this observation, we introduce and analyze a class of weight alignment attacks tailored
+   to orthogonally obfuscated models, including two-sided ALS–Procrustes and Gram-based weight
+   alignment methods.
+4. Through extensive experiments on multiple model families, including GPT-2 (Small, Medium,
+   Large) [39] and Llama 3.2 1B [20], we show that C ONJ F ORMER preserves standard training and
+   fine-tuning behavior while substantially reducing attack effectiveness. In particular, embedding
+   inversion remains highly effective on the original models even after fine-tuning, whereas under our
+   framework, the strongest remaining weight alignment attacks achieve near-random token-recovery
+   accuracy.
+
+To the best of our knowledge, C ONJ F ORMER is the first transformer architecture that explicitly
+enforces O(d)-equivariance as a mechanism for privacy-preserving inference.
+
+1.3   Threat Model and System Overview
+
+We assume an honest-but-curious server: the server follows the inference protocol but attempts to
+recover the client’s input tokens from all observations available during inference. Our setting is
+open-weight and client-controlled: the base model is public, and the server knows the architecture,
+public pretrained weights, uploaded conjugated transformer-body weights, and all rotated hidden
+states sent during inference. The method does not aim to hide a proprietary server-side model. The
+client may fine-tune locally and keeps the secret orthogonal transformations, private fine-tuning data,
+unrotated fine-tuned body weights, fine-tuned embedding table, and LM head private. The adversary’s
+goal is token recovery. The secret key is client- or deployment-specific; if a key is disclosed, all
+sessions protected by that key are compromised. Figure 1 summarizes the setup.
+
+
+                                                  3
+                                                      Local side
+                         pretrained equivariant model
+
+(1) Preparation stage     pretrained
+                            model
+                                             Retrofit to
+                                               become
+                                                                            matrices
+
+                                                                           generation
+                                             equivariant
+
+
+
+                                        or
+                                                                                                      Send conjugated weights to
+                                 pretrained                  local fine-
+                                 equivariant                   tuning
+                                                                                         weight
+                                                                                       conjugation
+                                                                                                              the server
+                                   model
+
+
+                                                                                                                                                        Server side
+                                       gets an                             Inverses rotation
+                                                     Samples next                                                                                           Add & Norm
+(2) Inference stage
+
+
+
+
+                                       answer           token                                                                                                 Feed 
+
+                                                                                                                                                             Forward
+
+                                                                                                                            unvel.cor 19traster plen
+       Add & Norm
+                                                                                                                           umrive soliqten frav_118
+                                                                                                     Nearest                                                Multi-Head 
+
+                                                                                                     neighbor                                                Attention
+
+
+
+
+                                                             Embedding                                                                Model inversion
+                                                               table
+                                                                                                                                                            Add & Norm
+
+                                                                                                                                                              Feed 
+
+                                                                                                                                                             Forward
+                                                                                                                Nearest
+                                                                                                                                                            Add & Norm
+                                                                                                                neighbor
+                                    asks a            Embeds text        rotates embeddings                                                                 Multi-Head 
+
+                                                                                                                                                             Attention
+                                   question
+
+
+
+
+Figure 1: High-level client–server inference with C ONJ F ORMER. During preparation, the client
+starts from a publicly available pretrained model (either already O(d)-equivariant, or retrofitted to
+become equivariant) with weights W , fine-tunes it locally to obtain W̃ , samples secret matrices
+{U, Ob , Pb , Rb }, and applies the corresponding weight conjugation (Appendix A.1) to obtain a model
+Ŵ that is functionally identical in the rotated basis. The client then uploads the conjugated weights to
+the server while keeping the embedding table after fine-tuning. During inference, the client embeds
+the prompt, rotates the embeddings with matrix U , and sends obfuscated embeddings to the server;
+the server performs all computation in the rotated basis and returns the rotated output (e.g., XB U ⊤ ),
+which the client de-rotates to sample the next token via LM head locally.
+
+
+Client-side computation. The client performs a limited amount of local computation. Offline,
+the client stores the fine-tuned embedding table and LM head, samples the secret orthogonal trans-
+formations, conjugates the transformer-body weights once, and uploads the conjugated body to the
+server. When input and output embeddings are tied [36], the fine-tuned embedding table and LM head
+refer to the same parameter matrix. During inference, the client computes token embeddings locally,
+applies the secret rotation before transmission, de-rotates the returned hidden state, and applies the
+local LM head for next-token prediction. The transformer body, which accounts for most of the
+autoregressive inference cost, is evaluated by the server. Therefore, the method targets clients that
+can perform local embedding/LM head computation and one-time preprocessing, but do not want to
+run the full transformer body locally.
+
+Scope and limitations. C ONJ F ORMER is not a cryptographic or differentially private mechanism.
+It relies on key secrecy and on keeping the fine-tuned embedding table and LM head private on the
+client side. Orthogonal invariants such as norms, pairwise distances, repeated-token patterns, and
+attention logits remain visible to the server, so key reuse or known-plaintext observations may enable
+stronger attacks than those evaluated here.
+
+2                       Methodology
+2.1                     Preliminaries
+
+In this section, we introduce the theoretical foundations of our work. Our construction relies on
+the action of the orthogonal group, equivariance, and the behavior of linear layers under two-sided
+orthogonal conjugation.
+
+
+                                                                                   4
+Orthogonal group.      Let O(d) denote the group of d × d orthogonal matrices:
+                                 O(d) = {U ∈ Rd×d | U ⊤ U = I},
+equipped with matrix multiplication. Each U ∈ O(d) preserves Euclidean norms and inner products
+of vectors. In our setting, we apply an orthogonal transformation to obfuscate the model’s input
+embeddings and conjugate the weights to preserve the model’s functionality.
+
+Group equivariance. Let a group G act on the representation space X through a transformation
+ρ(g). A function F is equivariant to a group action ρ(g) if
+                          F (Xρ(g)) = F (X)ρ(g)           ∀ g ∈ G, X ∈ X .
+In our construction, the relevant property is functional equivalence under simultaneous rotation of
+hidden states and conjugation of weights:
+                                       F̂ (XU ⊤ ) = F (X)U ⊤ ,
+where F̂ denotes the conjugated block. Thus the server evaluates the same computation in a rotated
+hidden-state basis.
+
+Two-sided linear conjugation. Consider a linear transformation implemented as a PyTorch-style
+layer [35]:
+                              Linear(X; W, b) = XW ⊤ + b,
+where W ∈ Rdout ×din , b ∈ Rdout .
+Given orthogonal matrices U ∈ O(din ), O ∈ O(dout ), we define the two-sided conjugation of a
+linear layer (W, b) by
+                              Ŵ = OW U ⊤ ,       b̂ = b O⊤ .
+This conjugation plays a central role in C ONJ F ORMER. If the input is expressed in a rotated basis as
+XU ⊤ , then applying the conjugate linear layer yields a correspondingly rotated output:
+                             XU ⊤ Ŵ ⊤ + b̂ = XU ⊤ (OW U ⊤ )⊤ + b O⊤
+                                            = XW ⊤ O⊤ + b O⊤
+                                            = (XW ⊤ + b) O⊤ .
+
+In other words, the linear layer performs the same computation as before, except that its output is
+expressed in the rotated basis O⊤ .
+
+Transformer components. A transformer block consists of (i) multi-head self-attention imple-
+mented using the linear projections WQ , WK , WV , and WO ; (ii) a feed-forward network (FFN)
+with two linear layers and a nonlinear activation in between; (iii) residual connections; and (iv)
+normalization layers. Throughout this work, we use the standard pre-norm transformer design [33].
+In the following sections, we describe how each of these components is adapted to ensure full
+O(d)-equivariance of the entire transformer block.
+
+2.2   Architecture
+
+We first establish exact O(d)-equivariance for GPT-2–style transformers, and then extend the con-
+struction to modern architectures such as Llama with SwiGLU MLPs [44] and RoPE [46] positional
+embeddings; see Appendices A and B for details.
+C ONJ F ORMER builds on a standard transformer architecture [49] with minimal modifications that
+enforce exact equivariance to the orthogonal group O(d). The key design objective is the following
+block-level functional equivalence:
+                                      F̂b (XU ⊤ ) = Fb (X)U ⊤ ,
+so that the entire forward pass can be carried out in an arbitrarily rotated basis. This property allows
+the server to operate exclusively on obfuscated representations without ever observing unrotated
+hidden states.
+
+
+                                                   5
+                                                       Feed Forward (expanded)
+
+
+
+
+                                   Multi-Head 
+
+                                                      Add & 
+          Feed 
+      Add & 
+
+                                    Attention
+                                                   RMSNorm (scalar)   Forward   RMSNorm (scalar)
+
+
+
+
+                                                       B
+Figure 2: Low-level view of one C ONJ F ORMER block. All server-side computations are performed in
+a rotated basis: the input is Xb−1 U ⊤ and the output Xb U ⊤ . Query/key projections are rotated by Ob
+and values by Rb , which preserves attention logits: Q̂b K̂b⊤ = Qb Kb⊤ . As a result, the server never
+observes any unrotated intermediate representations, except for the attention logits. The feed-forward
+layer uses a permutation matrix Pb that commutes with the nonlinearity.
+
+
+Architectural equivariance. Achieving exact O(d)-equivariance requires only a single architec-
+tural modification: replacing standard normalization with RMSNorm with a scalar gain. This choice
+ensures that normalization commutes with orthogonal transformations, while preserving the training
+and optimization behavior of existing transformer models.
+For GPT-2 architectures, we replace LayerNorm; for the Llama model, which already uses RMSNorm,
+we replace the learnable gain vector with a scalar. A formal proof of equivariance is given in
+Lemma 2.2.
+Note that Dropout [22] does not affect O(d)-equivariance of the model, because it is deterministic at
+inference.
+
+Weight conjugation. To preserve model functionality under orthogonal obfuscation of the input
+embeddings, all linear layers are transformed via two-sided linear conjugation. As a result, rotating the
+input embeddings induces a corresponding rotation of all intermediate representations while leaving
+the underlying computation unchanged. The exact conjugation rules are provided in Appendix A.1.
+
+Positional encoding. Positional encodings do not require architectural changes, but must be
+compatible with O(d)-equivariance. Absolute positional embeddings are fully supported, as they are
+added on the client side prior to obfuscation. Relative positional encodings that modify only attention
+logits (e.g., additive bias schemes such as ALiBi [37]) are also compatible, since attention logits are
+invariant under orthogonal transformations. Rotary positional embeddings (RoPE) can be supported
+under a restriction on the orthogonal transformation; full details are provided in Appendix B.2.
+
+Inference under obfuscation. During inference, the client sends obfuscated embeddings X0 U ⊤ to
+the server, which processes them through the B conjugated transformer blocks and returns the final
+rotated output XB U ⊤ . Figure 2 illustrates the computation performed by a single C ONJ F ORMER
+block.
+We now formalize this block-level behavior and show that each conjugated transformer block is
+functionally equivalent to its original counterpart, up to an orthogonal change of basis.
+
+
+
+
+                                                   6
+ Lemma 2.1 (Blockwise Functional Equivalence Under Orthogonal Conjugation). Consider a
+ transformer block b with original parameters and its conjugate version, whose weights and biases
+ are defined as in Appendix A.1. Assume that the input to the conjugated block is expressed in the
+ rotated basis, X̂b−1 = Xb−1 U ⊤ . Let Xb denote the output of the original block applied to Xb−1 .
+ Then the output of the conjugated block satisfies X̂b = Xb U ⊤ .
+
+Proof. See Appendix A.2.
+
+Normalization. Modern LLMs typically rely on LayerNorm [3] or RMSNorm [55] for normal-
+ization; however, their standard formulations are not exactly O(d)-equivariant due to coordinate-
+dependent operations such as mean subtraction or per-dimension scaling. We therefore replace
+standard normalization with RMSNorm with a scalar gain, which preserves activation scale while
+remaining exactly O(d)-equivariant.
+
+ Lemma 2.2 (O(d)-equivariance of RMSNorm with a scalar gain). Let U ∈ O(d) and define
+                                    √      x
+                 RMSNormε (x) = γ d p             ,      x ∈ Rd , ε > 0,
+                                        ∥x∥22 + ε
+ with a learned scalar γ ∈ R. Then, for all x ∈ Rd and U ∈ O(d),
+                             RMSNormε (xU ⊤ ) = RMSNormε (x) U ⊤ .
+ In particular, RMSNorm with a scalar gain is exactly O(d)-equivariant.
+
+Proof. See Appendix B.1.
+
+
+3     Attacks
+
+The main goal of C ONJ F ORMER is to remove direct nearest-neighbor embedding inversion in the
+original embedding coordinates. Orthogonal obfuscation does not make token recovery information-
+theoretically impossible; rather, it changes the attack into a basis-recovery or alignment problem.
+We consider two broad families of attacks. The first family operates directly in representation
+space and leverages invariants preserved under orthogonal transformations. For example, since an
+orthogonal map preserves ℓ2 -norms (and pairwise distances), a server observing XU ⊤ can still access
+norm-based statistics of the original embeddings, which may already leak token identity.
+The second family consists of weight alignment attacks. To maintain O(d)-equivariance, the client
+applies two-sided linear conjugation to each linear layer. Although the server does not directly observe
+the fine-tuned weights W̃ , it has access to their conjugate versions Ŵ as well as the public pretrained
+weights W . Since fine-tuning typically induces only moderate changes to pretrained weights,
+this residual similarity can be exploited to align Ŵ with W and estimate the hidden orthogonal
+transformation U , thereby approximately undoing the obfuscation of the client embeddings.
+
+3.1   Embedding and Model Inversion Attacks
+
+Embedding inversion is one of the most widely used attacks in the split inference setting and is often
+treated as the primary privacy threat in prior work [40, 30, 45, 32]. The attacker treats each hidden
+representation as a point in the embedding space and recovers tokens by performing a nearest-neighbor
+search against the public embedding table using cosine similarity. On an original fine-tuned model,
+this attack is extremely effective: in high-dimensional embedding spaces, token representations tend
+to be nearly orthogonal, making NN matching highly reliable [45, 32]. Mitigating this behavior
+requires applying a substantial global transformation to the embedding space.
+More generally, model inversion attacks extend embedding inversion by learning a decoder that maps
+hidden representations at any layer of the model back to token sequences [14, 16]. Such attacks rely
+on access to aligned pairs of hidden states and their corresponding plaintext tokens.
+
+
+                                                   7
+In C ONJ F ORMER, direct cosine nearest-neighbor inversion against the original embedding coordinates
+is no longer directly applicable: the server observes representations only in an unknown rotated basis
+and cannot simply compare them to the public embedding table. This does not rule out stronger
+inversion-style attacks that first recover the basis or learn an alignment between the rotated and
+original spaces.
+
+3.2   Norm-based Invariant Attacks
+
+A simple class of attacks exploits quantities preserved under orthogonal transformations. Since
+any U ∈ O(d) preserves Euclidean norms, a server observing XU ⊤ has direct access to the norm
+statistics of the original embeddings.
+Prior work shows that token embedding norms in LLMs are nonuniform and correlate strongly with
+token frequency [34]. An attacker can therefore perform token recovery by matching ℓ2 -norms
+against the public embedding table. Without fine-tuning the embedding matrix, this attack is nearly
+trivial: when token norms are distinct—as we observe empirically—recovery accuracy approaches
+100%. Fine-tuning the embedding table removes the norm structure exploited by this attack, as shown
+in Appendix D.4.
+
+3.3   Two-sided ALS–Procrustes Alignment
+
+We next consider a first weight alignment attack that exploits the structured relationship between
+the public pretrained weights and the conjugate fine-tuned weights uploaded to the server. For each
+transformer block b, the server knows the public pretrained query/key projections (WQb , WK  b
+                                                                                               ) and
+                                       b     b
+their uploaded conjugate versions (ŴQ , ŴK ). These matrices are related to the unknown fine-tuned
+                  b
+weights (W̃Qb , W̃K ) via two-sided linear conjugation:
+
+                                 ŴQb = Ob W̃Qb U ⊤ ,
+                                                              U, Ob ∈ O(d).
+                                   b
+                                 ŴK        b
+                                     = Ob W̃K U ⊤,
+
+Since fine-tuning typically induces only moderate changes, the attacker may approximate W̃Qb ≈ WQb
+       b       b
+and W̃K   ≈ WK   and estimate (U, Ob ) by solving the two-sided orthogonal Procrustes problem:
+                                                        2                        2
+                      min        ŴQb − Ob WQb U ⊤ F +            b
+                                                                ŴK        b
+                                                                    − O b WK U⊤ F .
+                   U, Ob ∈O(d)
+
+
+In contrast to the classical one-sided Procrustes problem [41], this two-sided formulation does not
+admit a closed-form solution. We therefore approximate it using an alternating least-squares (ALS)
+procedure that alternates between estimating Ob and U , where each update reduces to a standard
+one-sided Procrustes problem solved via a single SVD (see Appendix C.2).
+Crucially, each block is conjugated by its own orthogonal matrix Ob , so alignment information cannot
+be aggregated across blocks in this formulation. Therefore, the attacker can at best use the query
+and key projections of a single block, i.e., two matrix pairs in total. All reported ALS–Procrustes
+experiments use this setting.
+
+3.4   Gram-based Weight Alignment
+
+The attacker can also exploit Gram-based weight alignment. Again, for each block b, the server
+observes conjugate query and key projections:
+
+                            ŴQb = Ob W̃Qb U ⊤ ,              b
+                                                            ŴK        b
+                                                                = Ob W̃K U ⊤,
+
+where U ∈ O(d) is global and Ob ∈ O(d) is block-specific. As noted in the ALS–Procrustes attack,
+the block-specific transformations Ob prevent direct alignment across blocks, but they cancel in the
+Gram matrix:
+                                       b ⊤                b ⊤
+                             Ĝb := (ŴK ) ŴQb = U (W̃K   ) W̃Qb U ⊤ ,
+                                     b ⊤
+                             Gb := (WK ) WQb .
+
+                                                    8
+                           ALS Procrustes        Gram Alignment      NN (on original)
+
+Top-10 Accuracy
+                  1.0
+                      GPT-2 Small   1.0
+                                         GPT-2 Medium 1.0 GPT-2 Large 1.0 LLaMA 3.2 1B
+
+                  0.5                       0.5                           0.5                       0.5
+
+                  0.0                       0.0                           0.0                       0.0
+                        0 10k 20k 30k 40k         0 10k 20k 30k 40k             0 10k 20k 30k 40k         0 10k 20k 30k 40k
+                                                               Iterations
+   Figure 3: Top-10 token-recovery accuracy for different attacks on nonobfuscated and obfuscated
+   models. NN inversion is evaluated on the nonobfuscated model, while ALS–Procrustes and Gram-
+   based weight alignment attacks are evaluated on the obfuscated model. The Gram-based weight
+   alignment attack is more robust than ALS–Procrustes, but still degrades to near-random performance
+   with fine-tuning.
+
+
+   As a result, the attacker obtains B matrix pairs {(Gb , Ĝb )}B
+                                                                 b=1 linked by a shared unknown rotation
+   U and estimates it by solving:
+                                                              B
+                                                              X                       2
+                                                      min           Ĝb − U Gb U ⊤ F .
+                                                    U ∈O(d)
+                                                              b=1
+
+
+   We optimize this objective on O(d) using Riemannian gradient descent [2]. Empirically, this Gram-
+   based weight alignment attack is substantially stronger than the ALS–Procrustes alignment, since it
+   can aggregate information across blocks by eliminating the block-specific transformation Ob .
+
+   3.5              Statistical Matching: Attention Fingerprints
+
+   After fine-tuning, the model’s weights are fixed, and each token produces a characteristic attention
+   logit when processed in isolation. Orthogonal obfuscation of embeddings does not affect this value,
+   so the server could, in principle, record the logits from each head and layer produced by each
+   obfuscated token sent by the client and treat it as a simple multi-dimensional fingerprint. With enough
+   observations, the server may then try to match these fingerprints to those of the public vocabulary,
+   analogous to recovering a permutation in a classical substitution cipher [43].
+   These fingerprints depend on the model’s fine-tuned weights, and even a small amount of additional
+   fine-tuning on the client side changes them. This would invalidate any previously collected fingerprint
+   statistics on the server and require the adversary to rebuild a matching table from scratch, as we show
+   in Appendix D.5.
+
+   4              Experimental Setup
+                                                                           Model             Base     ConjFormer     ∆PPL
+   We evaluate C ONJ F ORMER on GPT-2 (Small, GPT-2 Small                  19.77      20.16      +1.97%
+   Medium, Large) and Llama 3.2 1B architectures         GPT-2 Medium 15.75           15.88      +0.83%
+   in the standard language modeling setting, where      GPT-2  Large      15.63      15.65      +0.13%
+                                                         Llama 3.2 1B      15.36      15.40      +0.26%
+   the objective is to predict the next token given the
+   previous context.                                    Table 1: Validation perplexity on OpenWebText
+   For additional details about experiments, refer to after pretraining the base (original) and equivari-
+   Appendix D. All experiments were conducted on ant models, showing that the equivariant archi-
+   a system equipped with 4× NVIDIA A100 GPUs. tecture stays within 2%.
+
+   Pretraining. Our architectural modifications affect all normalization layers and may therefore
+   impact the pretraining process. To evaluate this, we pretrain equivariant and original versions of
+   models on the OpenWebText [19] dataset for 100,000 iterations. Table 1 reports validation perplexity
+   with degradation below 2%.
+
+
+                                                                      9
+    Model          Base    ConjFormer     ∆PPL          Fine-tuning. We fine-tune both the baseline
+                                                        models and their O(d)-equivariant variants on
+    GPT-2 Small    12.71       12.70      -0.07%        the PubMed abstracts dataset using identical hy-
+    GPT-2 Medium   12.02       12.07      +0.40%        perparameters for 5 epochs with 4,096 tokens
+    GPT-2 Large    12.51       12.46      -0.40%        per update. We use a relatively large learning
+    Llama 3.2 1B   13.77       13.62      -1.00%
+                                                        rate (10−3 ) to ensure sufficient deviation from
+                                                        the pretrained weights, which is necessary to
+Table 2: Validation perplexity after fine-tuning on
+                                                        reduce the effectiveness of NN inversion and
+the PubMed abstracts dataset.
+                                                        weight alignment attacks. Table 2 reports the
+                                                        best validation perplexity, showing only a small
+performance drop for some models.
+
+Retrofitting. The only architectural change needed for O(d)-equivariance is replacing normal-
+ization layers with RMSNorm with a scalar gain. To avoid pretraining from scratch, we retrofit
+pretrained models by making this replacement, keeping all other parameters fixed, and initializing
+the scalar gain to match the average scale of the original normalization. After brief fine-tuning, all
+retrofitted models recover the original validation perplexity within 2,000 iterations; see Appendix D.3
+and Figure 6.
+
+Attacks. During the fine-tuning mentioned above, we measure how accurately an adversary can
+recover the original input tokens after a certain number of fine-tuning iterations. For each position,
+the attacker outputs a ranked list of candidate tokens, and we report the fraction of positions where
+the true token appears in the top-k predictions.
+We evaluate the strongest applicable attack in each setting. For the original model, we use NN
+embedding inversion. For the model under C ONJ F ORMER, direct nearest-neighbor embedding
+inversion in the original embedding coordinates is inapplicable by construction; we therefore evaluate
+weight alignment attacks, including ALS–Procrustes alignment and Gram-based weight alignment.
+Figure 3 shows the results of the attacks during the fine-tuning process. NN inversion on the
+nonobfuscated model quickly reaches a stable plateau. In contrast, both Procrustes and Gram-based
+weight alignment attacks on the obfuscated model degrade with fine-tuning: the Procrustes attack
+collapses rapidly, while the Gram-based weight alignment—despite access to all layers—also decays
+to near-random performance. We observe the same qualitative behavior across model sizes and
+architectures.
+
+5     Discussion and Limitations
+Our results show that orthogonal obfuscation, combined with an O(d)-equivariant transformer,
+fundamentally changes the attacker’s problem. Without obfuscation, the adversary can directly
+perform embedding inversion in the embedding space, resulting in a simple, highly effective attack.
+After obfuscating the hidden representations via an orthogonal rotation, direct nearest-neighbor
+embedding inversion in the original embedding coordinates becomes inapplicable. Orthogonal
+conjugation ensures that the server-side model remains functionally equivalent under this obfuscation,
+but forces the adversary to first recover the hidden transformations via a substantially harder weight
+alignment problem. Our approach does not provide formal cryptographic guarantees; its goal
+is narrower: it removes direct nearest-neighbor embedding inversion in the original embedding
+coordinates while preserving exact server-side inference in the rotated basis.
+
+
+
+
+                                                   10
+References
+ [1] M. Abadi, A. Chu, I. Goodfellow, H. B. McMahan, I. Mironov, K. Talwar, and L. Zhang. Deep learning
+     with differential privacy. In Proceedings of the 2016 ACM SIGSAC Conference on Computer and Com-
+     munications Security, CCS’16, page 308–318. ACM, Oct. 2016. doi: 10.1145/2976749.2978318. URL
+     http://dx.doi.org/10.1145/2976749.2978318.
+
+ [2] P.-A. Absil, R. Mahony, and R. Sepulchre. Optimization algorithms on matrix manifolds. Princeton
+     University Press, 2008.
+
+ [3] J. L. Ba, J. R. Kiros, and G. E. Hinton. Layer normalization, 2016. URL https://arxiv.org/abs/
+     1607.06450.
+
+ [4] R. Bommasani, D. A. Hudson, E. Adeli, R. Altman, S. Arora, S. von Arx, M. S. Bernstein, J. Bohg,
+     A. Bosselut, E. Brunskill, E. Brynjolfsson, S. Buch, D. Card, R. Castellon, N. Chatterji, A. Chen, K. Creel,
+     J. Q. Davis, D. Demszky, C. Donahue, M. Doumbouya, E. Durmus, S. Ermon, J. Etchemendy, K. Ethayarajh,
+     L. Fei-Fei, C. Finn, T. Gale, L. Gillespie, K. Goel, N. Goodman, S. Grossman, N. Guha, T. Hashimoto,
+     P. Henderson, J. Hewitt, D. E. Ho, J. Hong, K. Hsu, J. Huang, T. Icard, S. Jain, D. Jurafsky, P. Kalluri,
+     S. Karamcheti, G. Keeling, F. Khani, O. Khattab, P. W. Koh, M. Krass, R. Krishna, R. Kuditipudi, A. Kumar,
+     F. Ladhak, M. Lee, T. Lee, J. Leskovec, I. Levent, X. L. Li, X. Li, T. Ma, A. Malik, C. D. Manning,
+     S. Mirchandani, E. Mitchell, Z. Munyikwa, S. Nair, A. Narayan, D. Narayanan, B. Newman, A. Nie, J. C.
+     Niebles, H. Nilforoshan, J. Nyarko, G. Ogut, L. Orr, I. Papadimitriou, J. S. Park, C. Piech, E. Portelance,
+     C. Potts, A. Raghunathan, R. Reich, H. Ren, F. Rong, Y. Roohani, C. Ruiz, J. Ryan, C. Ré, D. Sadigh,
+     S. Sagawa, K. Santhanam, A. Shih, K. Srinivasan, A. Tamkin, R. Taori, A. W. Thomas, F. Tramèr, R. E.
+     Wang, W. Wang, B. Wu, J. Wu, Y. Wu, S. M. Xie, M. Yasunaga, J. You, M. Zaharia, M. Zhang, T. Zhang,
+     X. Zhang, Y. Zhang, L. Zheng, K. Zhou, and P. Liang. On the opportunities and risks of foundation models,
+     2022. URL https://arxiv.org/abs/2108.07258.
+
+ [5] T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry,
+     A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler,
+     J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner,
+     S. McCandlish, A. Radford, I. Sutskever, and D. Amodei. Language models are few-shot learners, 2020.
+     URL https://arxiv.org/abs/2005.14165.
+
+ [6] A. Brutzkus, O. Elisha, and R. Gilad-Bachrach. Low latency privacy preserving inference, 2019. URL
+     https://arxiv.org/abs/1812.10659.
+
+ [7] K. Chatzikokolakis, M. E. Andrés, N. E. Bordenabe, and C. Palamidessi. Broadening the scope of
+     differential privacy using metrics. In E. De Cristofaro and M. Wright, editors, Privacy Enhancing
+     Technologies, pages 82–102, Berlin, Heidelberg, 2013. Springer Berlin Heidelberg. ISBN 978-3-642-
+     39077-7.
+
+ [8] J. Chi, E. Owusu, X. Yin, T. Yu, W. Chan, P. Tague, and Y. Tian. Privacy partitioning: Protecting user data
+     during the deep learning inference phase, 2018. URL https://arxiv.org/abs/1812.02863.
+
+ [9] O. Choukrani, I. Malek, D. Orel, Z. Xie, Z. Iklassov, M. Takáč, and S. Lahlou. Llm-babybench: Un-
+     derstanding and evaluating grounded planning and reasoning in llms. arXiv preprint arXiv:2505.12135,
+     2025.
+
+[10] T. S. Cohen and M. Welling. Steerable cnns, 2016. URL https://arxiv.org/abs/1612.08498.
+
+[11] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova. Bert: Pre-training of deep bidirectional transformers
+     for language understanding, 2019. URL https://arxiv.org/abs/1810.04805.
+
+[12] M. Du, X. Yue, S. S. M. Chow, T. Wang, C. Huang, and H. Sun. Dp-forward: Fine-tuning and inference
+     on language models with differential privacy in forward pass. In Proceedings of the 2023 ACM SIGSAC
+     Conference on Computer and Communications Security, CCS ’23, page 2665–2679. ACM, Nov. 2023. doi:
+     10.1145/3576915.3616592. URL http://dx.doi.org/10.1145/3576915.3616592.
+
+[13] C. Dwork. Differential privacy. In M. Bugliesi, B. Preneel, V. Sassone, and I. Wegener, editors, Automata,
+     Languages and Programming, pages 1–12, Berlin, Heidelberg, 2006. Springer Berlin Heidelberg. ISBN
+     978-3-540-35908-1.
+
+[14] E. Erdoğan, A. Küpçü, and A. E. Çiçek. Unsplit: Data-oblivious model inversion, model stealing, and
+     label inference attacks against split learning. In Proceedings of the 21st Workshop on Privacy in the
+     Electronic Society, CCS ’22, page 115–124. ACM, Nov. 2022. doi: 10.1145/3559613.3563201. URL
+     http://dx.doi.org/10.1145/3559613.3563201.
+
+
+                                                      11
+[15] O. Feyisetan, B. Balle, T. Drake, and T. Diethe. Privacy- and utility-preserving textual analysis via
+     calibrated multivariate perturbations, 2019. URL https://arxiv.org/abs/1910.08902.
+
+[16] M. Fredrikson, S. Jha, and T. Ristenpart. Model inversion attacks that exploit confidence information
+     and basic countermeasures. In Proceedings of the 22nd ACM SIGSAC Conference on Computer and
+     Communications Security, CCS ’15, page 1322–1333, New York, NY, USA, 2015. Association for
+     Computing Machinery. ISBN 9781450338325. doi: 10.1145/2810103.2813677. URL https://doi.
+     org/10.1145/2810103.2813677.
+
+[17] A. Frikha, N. Walha, R. Mendes, K. K. Nakka, X. Jiang, and X. Zhou. Obfuscatune: Obfuscated offsite
+     fine-tuning and inference of proprietary llms on private datasets, 2025. URL https://arxiv.org/abs/
+     2407.02960.
+
+[18] F. B. Fuchs, D. E. Worrall, V. Fischer, and M. Welling. Se(3)-transformers: 3d roto-translation equivariant
+     attention networks, 2020. URL https://arxiv.org/abs/2006.10503.
+
+[19] A. Gokaslan and V. Cohen.                  Openwebtext corpus.             http://Skylion007.github.io/
+     OpenWebTextCorpus, 2019.
+
+[20] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten,
+     A. Vaughan, A. Yang, A. Fan, A. Goyal, A. Hartshorn, A. Yang, A. Mitra, A. Sravankumar, A. Korenev,
+     A. Hinsvark, A. Rao, A. Zhang, A. Rodriguez, A. Gregerson, A. Spataru, B. Roziere, B. Biron, B. Tang,
+     B. Chern, C. Caucheteux, C. Nayak, C. Bi, C. Marra, C. McConnell, C. Keller, C. Touret, C. Wu, C. Wong,
+     C. C. Ferrer, C. Nikolaidis, D. Allonsius, D. Song, D. Pintz, D. Livshits, D. Wyatt, D. Esiobu, D. Choudhary,
+     D. Mahajan, D. Garcia-Olano, D. Perino, D. Hupkes, E. Lakomkin, E. AlBadawy, E. Lobanova, E. Dinan,
+     E. M. Smith, F. Radenovic, F. Guzmán, F. Zhang, G. Synnaeve, G. Lee, G. L. Anderson, G. Thattai, G. Nail,
+     G. Mialon, G. Pang, G. Cucurell, H. Nguyen, H. Korevaar, H. Xu, H. Touvron, I. Zarov, I. A. Ibarra,
+     I. Kloumann, I. Misra, I. Evtimov, J. Zhang, J. Copet, J. Lee, J. Geffert, J. Vranes, J. Park, J. Mahadeokar,
+     J. Shah, J. van der Linde, J. Billock, J. Hong, J. Lee, J. Fu, J. Chi, J. Huang, J. Liu, J. Wang, J. Yu, J. Bitton,
+     J. Spisak, J. Park, J. Rocca, J. Johnstun, J. Saxe, J. Jia, K. V. Alwala, K. Prasad, K. Upasani, K. Plawiak,
+     K. Li, K. Heafield, K. Stone, K. El-Arini, K. Iyer, K. Malik, K. Chiu, K. Bhalla, K. Lakhotia, L. Rantala-
+     Yeary, L. van der Maaten, L. Chen, L. Tan, L. Jenkins, L. Martin, L. Madaan, L. Malo, L. Blecher,
+     L. Landzaat, L. de Oliveira, M. Muzzi, M. Pasupuleti, M. Singh, M. Paluri, M. Kardas, M. Tsimpoukelli,
+     M. Oldham, M. Rita, M. Pavlova, M. Kambadur, M. Lewis, M. Si, M. K. Singh, M. Hassan, N. Goyal,
+     N. Torabi, N. Bashlykov, N. Bogoychev, N. Chatterji, N. Zhang, O. Duchenne, O. Çelebi, P. Alrassy,
+     P. Zhang, P. Li, P. Vasic, P. Weng, P. Bhargava, P. Dubal, P. Krishnan, P. S. Koura, P. Xu, Q. He, Q. Dong,
+     R. Srinivasan, R. Ganapathy, R. Calderer, R. S. Cabral, R. Stojnic, R. Raileanu, R. Maheswari, R. Girdhar,
+     R. Patel, R. Sauvestre, R. Polidoro, R. Sumbaly, R. Taylor, R. Silva, R. Hou, R. Wang, S. Hosseini,
+     S. Chennabasappa, S. Singh, S. Bell, S. S. Kim, S. Edunov, S. Nie, S. Narang, S. Raparthy, S. Shen,
+     S. Wan, S. Bhosale, S. Zhang, S. Vandenhende, S. Batra, S. Whitman, S. Sootla, S. Collot, S. Gururangan,
+     S. Borodinsky, T. Herman, T. Fowler, T. Sheasha, T. Georgiou, T. Scialom, T. Speckbacher, T. Mihaylov,
+     T. Xiao, U. Karn, V. Goswami, V. Gupta, V. Ramanathan, V. Kerkez, V. Gonguet, V. Do, V. Vogeti,
+     V. Albiero, V. Petrovic, W. Chu, W. Xiong, W. Fu, W. Meers, X. Martinet, X. Wang, X. Wang, X. E.
+     Tan, X. Xia, X. Xie, X. Jia, X. Wang, Y. Goldschlag, Y. Gaur, Y. Babaei, Y. Wen, Y. Song, Y. Zhang,
+     Y. Li, Y. Mao, Z. D. Coudert, Z. Yan, Z. Chen, Z. Papakipos, A. Singh, A. Srivastava, A. Jain, A. Kelsey,
+     A. Shajnfeld, A. Gangidi, A. Victoria, A. Goldstand, A. Menon, A. Sharma, A. Boesenberg, A. Baevski,
+     A. Feinstein, A. Kallet, A. Sangani, A. Teo, A. Yunus, A. Lupu, A. Alvarado, A. Caples, A. Gu, A. Ho,
+     A. Poulton, A. Ryan, A. Ramchandani, A. Dong, A. Franco, A. Goyal, A. Saraf, A. Chowdhury, A. Gabriel,
+     A. Bharambe, A. Eisenman, A. Yazdan, B. James, B. Maurer, B. Leonhardi, B. Huang, B. Loyd, B. D.
+     Paola, B. Paranjape, B. Liu, B. Wu, B. Ni, B. Hancock, B. Wasti, B. Spence, B. Stojkovic, B. Gamido,
+     B. Montalvo, C. Parker, C. Burton, C. Mejia, C. Liu, C. Wang, C. Kim, C. Zhou, C. Hu, C.-H. Chu,
+     C. Cai, C. Tindal, C. Feichtenhofer, C. Gao, D. Civin, D. Beaty, D. Kreymer, D. Li, D. Adkins, D. Xu,
+     D. Testuggine, D. David, D. Parikh, D. Liskovich, D. Foss, D. Wang, D. Le, D. Holland, E. Dowling,
+     E. Jamil, E. Montgomery, E. Presani, E. Hahn, E. Wood, E.-T. Le, E. Brinkman, E. Arcaute, E. Dunbar,
+     E. Smothers, F. Sun, F. Kreuk, F. Tian, F. Kokkinos, F. Ozgenel, F. Caggioni, F. Kanayet, F. Seide,
+     G. M. Florez, G. Schwarz, G. Badeer, G. Swee, G. Halpern, G. Herman, G. Sizov, Guangyi, Zhang,
+     G. Lakshminarayanan, H. Inan, H. Shojanazeri, H. Zou, H. Wang, H. Zha, H. Habeeb, H. Rudolph, H. Suk,
+     H. Aspegren, H. Goldman, H. Zhan, I. Damlaj, I. Molybog, I. Tufanov, I. Leontiadis, I.-E. Veliche, I. Gat,
+     J. Weissman, J. Geboski, J. Kohli, J. Lam, J. Asher, J.-B. Gaya, J. Marcus, J. Tang, J. Chan, J. Zhen,
+     J. Reizenstein, J. Teboul, J. Zhong, J. Jin, J. Yang, J. Cummings, J. Carvill, J. Shepard, J. McPhie, J. Torres,
+     J. Ginsburg, J. Wang, K. Wu, K. H. U, K. Saxena, K. Khandelwal, K. Zand, K. Matosich, K. Veeraraghavan,
+     K. Michelena, K. Li, K. Jagadeesh, K. Huang, K. Chawla, K. Huang, L. Chen, L. Garg, L. A, L. Silva,
+     L. Bell, L. Zhang, L. Guo, L. Yu, L. Moshkovich, L. Wehrstedt, M. Khabsa, M. Avalani, M. Bhatt,
+     M. Mankus, M. Hasson, M. Lennie, M. Reso, M. Groshev, M. Naumov, M. Lathi, M. Keneally, M. Liu,
+     M. L. Seltzer, M. Valko, M. Restrepo, M. Patel, M. Vyatskov, M. Samvelyan, M. Clark, M. Macey,
+     M. Wang, M. J. Hermoso, M. Metanat, M. Rastegari, M. Bansal, N. Santhanam, N. Parks, N. White,
+
+
+                                                          12
+     N. Bawa, N. Singhal, N. Egebo, N. Usunier, N. Mehta, N. P. Laptev, N. Dong, N. Cheng, O. Chernoguz,
+     O. Hart, O. Salpekar, O. Kalinli, P. Kent, P. Parekh, P. Saab, P. Balaji, P. Rittner, P. Bontrager, P. Roux,
+     P. Dollar, P. Zvyagina, P. Ratanchandani, P. Yuvraj, Q. Liang, R. Alao, R. Rodriguez, R. Ayub, R. Murthy,
+     R. Nayani, R. Mitra, R. Parthasarathy, R. Li, R. Hogan, R. Battey, R. Wang, R. Howes, R. Rinott,
+     S. Mehta, S. Siby, S. J. Bondu, S. Datta, S. Chugh, S. Hunt, S. Dhillon, S. Sidorov, S. Pan, S. Mahajan,
+     S. Verma, S. Yamamoto, S. Ramaswamy, S. Lindsay, S. Lindsay, S. Feng, S. Lin, S. C. Zha, S. Patil,
+     S. Shankar, S. Zhang, S. Zhang, S. Wang, S. Agarwal, S. Sajuyigbe, S. Chintala, S. Max, S. Chen, S. Kehoe,
+     S. Satterfield, S. Govindaprasad, S. Gupta, S. Deng, S. Cho, S. Virk, S. Subramanian, S. Choudhury,
+     S. Goldman, T. Remez, T. Glaser, T. Best, T. Koehler, T. Robinson, T. Li, T. Zhang, T. Matthews, T. Chou,
+     T. Shaked, V. Vontimitta, V. Ajayi, V. Montanez, V. Mohan, V. S. Kumar, V. Mangla, V. Ionescu, V. Poenaru,
+     V. T. Mihailescu, V. Ivanov, W. Li, W. Wang, W. Jiang, W. Bouaziz, W. Constable, X. Tang, X. Wu, X. Wang,
+     X. Wu, X. Gao, Y. Kleinman, Y. Chen, Y. Hu, Y. Jia, Y. Qi, Y. Li, Y. Zhang, Y. Zhang, Y. Adi, Y. Nam, Yu,
+     Wang, Y. Zhao, Y. Hao, Y. Qian, Y. Li, Y. He, Z. Rait, Z. DeVito, Z. Rosnbrick, Z. Wen, Z. Yang, Z. Zhao,
+     and Z. Ma. The llama 3 herd of models, 2024. URL https://arxiv.org/abs/2407.21783.
+[21] O. Gupta and R. Raskar. Distributed learning of deep neural network over multiple agents, 2018. URL
+     https://arxiv.org/abs/1810.06060.
+[22] G. E. Hinton, N. Srivastava, A. Krizhevsky, I. Sutskever, and R. R. Salakhutdinov. Improving neural
+     networks by preventing co-adaptation of feature detectors, 2012. URL https://arxiv.org/abs/1207.
+     0580.
+[23] Y.-H. Huang, Y. Tsai, H. Hsiao, H.-Y. Lin, and S.-D. Lin. Transferable embedding inversion attack:
+     Uncovering privacy risks in text embeddings without model queries. In Proceedings of the 62nd Annual
+     Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), page 4193–4205.
+     Association for Computational Linguistics, 2024. doi: 10.18653/v1/2024.acl-long.230. URL http:
+     //dx.doi.org/10.18653/v1/2024.acl-long.230.
+[24] Z. Iklassov, Y. Du, F. Akimov, and M. Takáč. Self-guiding exploration for combinatorial problems.
+     Advances in Neural Information Processing Systems, 37:130569–130601, 2024.
+[25] H. Li, M. Xu, and Y. Song. Sentence embedding leaks more information than you expect: Generative
+     embedding inversion attack to recover the whole sentence, 2023. URL https://arxiv.org/abs/2305.
+     03010.
+[26] M. Li, Y. Yang, G. Chen, M. Yan, and Y. Zhang. Sok: Understanding design choices and pitfalls of
+     trusted execution environments. In Proceedings of the 19th ACM Asia Conference on Computer and
+     Communications Security, ASIA CCS ’24, page 1600–1616, New York, NY, USA, 2024. Association
+     for Computing Machinery. ISBN 9798400704826. doi: 10.1145/3634737.3644993. URL https:
+     //doi.org/10.1145/3634737.3644993.
+[27] Y. Lin, Q. Zhang, Q. Cai, J. Hong, W. Ye, H. Liu, and B. Duan. An inversion attack against obfuscated
+     embedding matrix in language model inference. In Y. Al-Onaizan, M. Bansal, and Y.-N. Chen, editors,
+     Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pages 2100–
+     2104, Miami, Florida, USA, Nov. 2024. Association for Computational Linguistics. doi: 10.18653/v1/
+     2024.emnlp-main.126. URL https://aclanthology.org/2024.emnlp-main.126/.
+[28] Y. Liu, M. Ott, N. Goyal, J. Du, M. Joshi, D. Chen, O. Levy, M. Lewis, L. Zettlemoyer, and V. Stoyanov.
+     Roberta: A robustly optimized bert pretraining approach, 2019. URL https://arxiv.org/abs/1907.
+     11692.
+[29] I. Loshchilov and F. Hutter. Decoupled weight decay regularization, 2019. URL https://arxiv.org/
+     abs/1711.05101.
+[30] P. Mai, R. Yan, Z. Huang, Y. Yang, and Y. Pang. Split-and-denoise: Protect large language model inference
+     with local differential privacy, 2024. URL https://arxiv.org/abs/2310.09130.
+[31] A. Mishra, M. Li, and S. Deo. Sentinellms: Encrypted input adaptation and fine-tuning of language models
+     for private and secure inference, 2023. URL https://arxiv.org/abs/2312.17342.
+[32] J. X. Morris, V. Kuleshov, V. Shmatikov, and A. M. Rush. Text embeddings reveal (almost) as much as
+     text, 2023. URL https://arxiv.org/abs/2310.06816.
+[33] T. Q. Nguyen and J. Salazar. Transformers without tears: Improving the normalization of self-attention.
+     2019. doi: 10.5281/ZENODO.3525484. URL https://zenodo.org/record/3525484.
+[34] M. Oyama, S. Yokoi, and H. Shimodaira. Norm of word embedding encodes information gain, 2023. URL
+     https://arxiv.org/abs/2212.09663.
+
+
+                                                      13
+[35] A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein,
+     L. Antiga, A. Desmaison, A. Köpf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner,
+     L. Fang, J. Bai, and S. Chintala. Pytorch: An imperative style, high-performance deep learning library,
+     2019. URL https://arxiv.org/abs/1912.01703.
+[36] O. Press and L. Wolf. Using the output embedding to improve language models, 2017. URL https:
+     //arxiv.org/abs/1608.05859.
+[37] O. Press, N. A. Smith, and M. Lewis. Train short, test long: Attention with linear biases enables input
+     length extrapolation, 2022. URL https://arxiv.org/abs/2108.12409.
+[38] X. Qiu, T. Sun, Y. Xu, Y. Shao, N. Dai, and X. Huang. Pre-trained models for natural language processing:
+     A survey. Science China Technological Sciences, 63(10):1872–1897, 2020. ISSN 1869-1900. doi:
+     10.1007/s11431-020-1647-3. URL http://dx.doi.org/10.1007/s11431-020-1647-3.
+[39] A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever. Language models are unsupervised
+     multitask learners. 2019.
+[40] J. Roberts, K. Mylonakis, S. Roy, and K. Kale. Learning obfuscations of llm embedding sequences: Stained
+     glass transform, 2025. URL https://arxiv.org/abs/2506.09452.
+[41] P. H. Schönemann. A generalized solution of the orthogonal procrustes problem. Psychometrika, 31(1):
+     1–10, 1966. doi: 10.1007/BF02289451.
+[42] A. Semenov, P. Zmushko, A. Pichugin, and A. Beznosikov. Just a simple transformation is enough for data
+     protection in vertical federated learning, 2024. URL https://arxiv.org/abs/2412.11689.
+[43] C. E. Shannon. Communication theory of secrecy systems. Bell System Technical Journal, 28(4):656–715,
+     1949. doi: https://doi.org/10.1002/j.1538-7305.1949.tb00928.x. URL https://onlinelibrary.wiley.
+     com/doi/abs/10.1002/j.1538-7305.1949.tb00928.x.
+[44] N. Shazeer. Glu variants improve transformer, 2020. URL https://arxiv.org/abs/2002.05202.
+[45] C. Song and A. Raghunathan. Information leakage in embedding models, 2020. URL https://arxiv.
+     org/abs/2004.00053.
+[46] J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu. Roformer: Enhanced transformer with rotary
+     position embedding, 2023. URL https://arxiv.org/abs/2104.09864.
+[47] C. Thapa, M. A. P. Chamikara, S. Camtepe, and L. Sun. Splitfed: When federated learning meets split
+     learning, 2022. URL https://arxiv.org/abs/2004.12088.
+[48] F. Tramèr and D. Boneh. Slalom: Fast, verifiable and private execution of neural networks in trusted
+     hardware, 2019. URL https://arxiv.org/abs/1806.03287.
+[49] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin.
+     Attention is all you need, 2023. URL https://arxiv.org/abs/1706.03762.
+[50] A. Vats, Z. Liu, P. Su, D. Paul, Y. Ma, Y. Pang, Z. Ahmed, and O. Kalinli. Recovering from privacy-
+     preserving masking with large language models, 2023. URL https://arxiv.org/abs/2309.08628.
+[51] P. Vepakomma, O. Gupta, T. Swedish, and R. Raskar. Split learning for health: Distributed deep learning
+     without sharing raw patient data, 2018. URL https://arxiv.org/abs/1812.00564.
+[52] P. West, A. Holtzman, J. Buys, and Y. Choi. Bottlesum: Unsupervised and self-supervised sentence
+     summarization using the information bottleneck principle, 2019. URL https://arxiv.org/abs/1909.
+     07405.
+[53] G. Xiao, J. Lin, and S. Han. Offsite-tuning: Transfer learning without full model, 2023. URL https:
+     //arxiv.org/abs/2302.04870.
+[54] B. Yan, K. Li, M. Xu, Y. Dong, Y. Zhang, Z. Ren, and X. Cheng. On protecting the data privacy of large
+     language models (llms): A survey, 2024. URL https://arxiv.org/abs/2403.05156.
+[55] B. Zhang and R. Sennrich. Root mean square layer normalization, 2019. URL https://arxiv.org/
+     abs/1910.07467.
+[56] X. Zhang, C. Chen, Y. Xie, X. Chen, J. Zhang, and Y. Xiang. Privacy inference attacks and defenses in
+     cloud-based deep neural network: A survey, 2021. URL https://arxiv.org/abs/2105.06300.
+[57] A. Zhumabayeva, N. Ranjan, M. Takac, S. Sanvito, and H. Ucar. Magbert: magnetics knowledge aware
+     language model coupled with a question answering pipeline for curie temperature extraction task. The
+     Journal of Physical Chemistry C, 128(31):13217–13229, 2024.
+
+
+                                                     14
+Supplementary Material
+Contents
+
+1   Introduction                                                                                                1
+    1.1   Related Works . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .      2
+    1.2   Main Contributions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .       3
+    1.3   Threat Model and System Overview . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .         3
+
+2   Methodology                                                                                                 4
+    2.1   Preliminaries . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .    4
+    2.2   Architecture . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .     5
+
+3 Attacks                                                                                                       7
+    3.1   Embedding and Model Inversion Attacks . . . . . . . . . . . . . . . . . . . . . . . . . . . .          7
+    3.2   Norm-based Invariant Attacks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .       8
+    3.3   Two-sided ALS–Procrustes Alignment . . . . . . . . . . . . . . . . . . . . . . . . . . . . .           8
+    3.4   Gram-based Weight Alignment . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .          8
+    3.5   Statistical Matching: Attention Fingerprints . . . . . . . . . . . . . . . . . . . . . . . . . . .     9
+
+4   Experimental Setup                                                                                          9
+
+5   Discussion and Limitations                                                                                  10
+
+A Core Equivariance for GPT-2–style Transformers                                                                16
+    A.1 Blockwise Conjugation Rules . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .         16
+    A.2 Proof of Lemma 2.1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .        16
+
+B Extensions to Modern Architectures                                                                            17
+    B.1 Proof of Lemma 2.2 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .        17
+    B.2 Equivariance with RoPE . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .        18
+    B.3 Equivariant Conjugation of SwiGLU MLPs . . . . . . . . . . . . . . . . . . . . . . . . . . .            18
+
+C Weight Alignment Attack Algorithms                                                                            19
+    C.1 Overview . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .        19
+    C.2 ALS–Procrustes Alignment . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .          19
+
+D Experiment Details                                                                                            19
+    D.1 Pretraining . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .     19
+    D.2 Fine-tuning . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .       20
+    D.3 Retrofitting    . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .   20
+    D.4 Attacks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .     21
+    D.5 Token Identification by Attention Fingerprints . . . . . . . . . . . . . . . . . . . . . . . . .        22
+
+
+
+
+                                                        15
+A     Core Equivariance for GPT-2–style Transformers
+A.1    Blockwise Conjugation Rules
+In this section, we formalize weight conjugation of the transformer with pre-norm normalization that preserves
+its functionality while masking the secret matrix U used to transform input embeddings on the client side. For
+linear transformations, we use the PyTorch-style Linear layer:
+                                           Linear(X; W, b) = XW ⊤ + b.
+We use a scalar trainable parameter in RMSNorm so that it remains O(d)-equivariant, since the ℓ2 -norm is
+invariant under orthogonal transformations.
+Overall, we assume the following invariant across layers:
+
+       1. Before each block, the embeddings are of the form
+                                                            X̂in = XU ⊤ .
+       2. After each block, the embeddings are of the form
+                                                           X̂out = XU ⊤ .
+
+For every block b, we define the following conjugated weights. Here U, Ob , Rb ∈ Rd×d , where Ob , Rb are
+block-diagonal orthogonal matrices that act independently on each attention head, H is the number of attention
+heads and dh the per-head dimension:
+                       Ob = diag(Ob,1 , . . . , Ob,H ),           Rb = diag(Rb,1 , . . . , Rb,H ),
+where each block satisfies
+                                                Ob,h , Rb,h ∈ O(dh ),
+and the full model dimension is
+                                                        d = H · dh .
+                                               dFFN ×dFFN
+We also use an FFN mixing matrix Pb ∈ R                       , which is chosen to be a permutation matrix. Thus, the
+conjugation rules are as follows:
+                                            b ⊤
+                                   b
+                                 ŴQ = Ob W̃Q U ,         b̂bQ = b̃bQ Ob⊤ ,
+                                   b
+                                 ŴK        b
+                                     = Ob W̃K U ⊤,        b̂bK = b̃bK Ob⊤ ,
+                                 ŴVb = Rb W̃Vb U ⊤ ,     b̂bV = b̃bV Rb⊤ ,
+                                 ŴOb = U W̃Ob Rb⊤ ,     b̂bO = b̃bO U ⊤ ,
+                                   b
+                                 ŴFFN,1 = Pb⊤ W̃FFN,1
+                                                 b
+                                                       U ⊤,          b̂bFFN,1 = b̃bFFN,1 Pb ,
+                                   b
+                                 ŴFFN,2       b
+                                         = U W̃FFN,2 Pb ,         b̂bFFN,2 = b̃bFFN,2 U ⊤ .
+
+The fact that these conjugation rules preserve the functionality of each block is formalized in Lemma 2.1, and
+the full proof is provided in Appendix A.2.
+
+A.2    Proof of Lemma 2.1
+Proof. Assume that the input to block b is expressed in the rotated basis,
+                                                   X̂in = Xin U ⊤ .
+
+RMSNorm. Since RMSNorm uses a single scalar parameter and the ℓ2 -norm is invariant under orthogonal
+transformations, it holds that
+                                     RMSNorm(XU ⊤ ) = RMSNorm(X)U ⊤ .
+A formal proof is provided in Appendix B.1.
+
+Attention. Using the definition of the conjugated Q-projection,
+                                                    ⊤
+                                        Q̂ = X̂in ŴQ + b̂Q
+                                           = Xin U ⊤ (Ob W̃Q U ⊤ )⊤ + b̃Q Ob⊤
+                                                    ⊤
+                                           = (Xin W̃Q + b̃Q ) Ob⊤ = QOb⊤ .
+
+
+                                                             16
+For the K-projection:
+                                                  ⊤
+                                      K̂ = X̂in ŴK + b̂K
+                                         = Xin U ⊤ (Ob W̃K U ⊤ )⊤ + b̃K Ob⊤
+                                                  ⊤
+                                         = (Xin W̃K + b̃K ) Ob⊤ = KOb⊤ .
+
+Similarly, for the V -projection:
+                                       V̂ = X̂in ŴV⊤ + b̂V
+                                         = Xin U ⊤ (Rb W̃V U ⊤ )⊤ + b̃V Rb⊤
+                                         = (Xin W̃V⊤ + b̃V ) Rb⊤ = V Rb⊤ .
+
+Attention logits. Because Ob is orthogonal,
+                                       Q̂K̂ ⊤ = (QOb⊤ )(KOb⊤ )⊤ = QK ⊤ .
+
+Since Ob = diag(Ob,1 , . . . , Ob,H ) acts head-wise, the identity Q̂(h) (K̂ (h) )⊤ = Q(h) (K (h) )⊤ holds for each
+head h, and therefore the multi-head attention logits are preserved. Thus, the attention logits remain invariant.
+                                                     √
+Attention output. Let A = Softmax(QK ⊤ / dh ) V . Using invariance of logits and the transformed V ,
+                                                              !
+                                                    Q̂K̂ ⊤
+                                       Â = Softmax √             V̂ = ARb⊤ .
+                                                       dh
+The output projection satisfies
+                          Ŷ = ÂŴO⊤ + b̂O = ARb⊤ (U W̃O Rb⊤ )⊤ + b̃O U ⊤ = Y U ⊤ ,
+where Y is the output of the original block.
+The residual connection preserves the rotation U ⊤ from the right:
+                                     Ẑ = X̂in + Ŷ = (Xin + Y )U ⊤ = ZU ⊤ .
+
+FFN block. The FFN input satisfies Ẑ = ZU ⊤ , so
+                                               ⊤
+                                  ÂFFN = Ẑ ŴFFN,1 + b̂FFN,1
+                                        = ZU ⊤ (Pb⊤ W̃FFN,1 U ⊤ )⊤ + b̃FFN,1 Pb
+                                               ⊤
+                                        = (Z W̃FFN,1 + b̃FFN,1 ) Pb = AFFN Pb .
+Since the FFN uses an elementwise activation function (such as ReLU or GELU), it commutes with the
+permutation matrix Pb :
+                                      σ(AFFN Pb ) = σ(AFFN )Pb .
+For the second linear transformation,
+                                                ⊤
+                           ŶFFN = σ(AFFN Pb )ŴFFN,2 + b̂FFN,2
+                                    = σ(AFFN )Pb (U W̃FFN,2 Pb )⊤ + b̃FFN,2 U ⊤
+                                                 ⊤
+                                    = (σ(AFFN )W̃FFN,2 + b̃FFN,2 ) U ⊤ = YFFN U ⊤ .
+
+A final residual connection yields
+                                  X̂b = Ẑ + ŶFFN = (Z + YFFN )U ⊤ = Xb U ⊤ .
+
+Conclusion. Thus the block takes the rotated input Xb−1 U ⊤ and produces the rotated output Xb U ⊤ , proving
+the lemma.
+
+
+B     Extensions to Modern Architectures
+B.1    Proof of Lemma 2.2
+Proof. Let x ∈ Rd and let U ∈ O(d) be any orthogonal matrix. RMSNorm with a scalar gain γ and stability
+constant ε > 0 is defined as                         √        x
+                                RMSNormε (x) = γ d p                 .
+                                                           ∥x∥22 + ε
+
+
+                                                         17
+Since orthogonal matrices preserve the Euclidean norm,
+                                                 ∥xU ⊤ ∥22 = ∥x∥22 .
+Therefore,
+                               √         xU ⊤           √     xU ⊤
+       RMSNormε (xU ⊤ ) = γ d p                     =γ dp              = RMSNormε (x) U ⊤ .
+                                      ∥xU ⊤ ∥22 + ε          ∥x∥22 + ε
+Thus RMSNorm with a scalar gain is exactly O(d)-equivariant.
+
+B.2    Equivariance with RoPE
+Non-equivariance of RoPE. We consider attention logits between positions t and s. Let R(t) denote the
+RoPE operator applied on the right, so that
+                                     Qt := QR(t),                Ks := KR(s).
+Without obfuscation, the RoPE attention logits are
+                          ℓt,s := Qt Ks⊤ = QR(t) (KR(s))⊤ = Q R(t)R(s)⊤ K ⊤ .
+
+After obfuscation, we have Q̂ = QOb⊤ and K̂ = KOb⊤ , hence
+                      Q̂t := Q̂R(t) = QOb⊤ R(t),                 K̂s := K̂R(s) = KOb⊤ R(s),
+and the corresponding logits become
+                                 ℓ̂t,s := Q̂t K̂s⊤ = Q Ob⊤ R(t) R(s)⊤ Ob K ⊤ .
+In general, ℓ̂t,s ̸= ℓt,s because Ob does not commute with R(t)R(s)⊤ .
+
+Restoring equivariance by restricting Ob . To restore equivariance, it suffices to restrict Ob to commute
+with R(t) for all positions t:
+                                           Ob R(t) = R(t)Ob       ∀t.
+A simple sufficient choice is to take Ob block-diagonal with aligned 2 × 2 rotation blocks:
+                                           d/2
+                                           M
+                                    Ob =         V (θi ),         V (θi ) ∈ SO(2).
+                                           i=1
+Since both Ob and R(t) are block-diagonal with the same 2 × 2 block structure, they commute, hence also Ob
+commutes with R(t)R(s)⊤ for all t, s. Therefore,
+                      ℓ̂t,s = Q Ob⊤ R(t)R(s)⊤ Ob K ⊤ = Q R(t)R(s)⊤ K ⊤ = ℓt,s ,
+and RoPE equivariance is preserved.
+
+B.3    Equivariant Conjugation of SwiGLU MLPs
+Llama replaces the classical two-layer FFN with a gated MLP (SwiGLU) that lacks bias terms in its projections.
+For an input Z ∈ Rd the MLP is
+                                                                     
+                                                      ⊤           ⊤      ⊤
+                             MLP(Z) = SiLU(Z W̃gate      ) ⊙ (Z W̃up ) W̃down ,
+
+where W̃gate , W̃up ∈ RdFFN ×d , W̃down ∈ Rd×dFFN , and ⊙ denotes elementwise multiplication.
+Assume the block input is expressed in the rotated basis, Ẑ = ZU ⊤ . To preserve equivariance through the gated
+hidden dimension, we introduce a block-specific change of basis Pb ∈ RdFFN ×dFFN in the MLP intermediate
+space. In our implementation, Pb is a permutation matrix, and therefore it commutes with elementwise operations,
+so that for arbitrary matrices M and N :
+                          σ(N Pb ) = σ(N )Pb ,      (N Pb ) ⊙ (M Pb ) = (N ⊙ M )Pb .
+We then update the Llama MLP weights by conjugation:
+                Ŵgate = Pb⊤ W̃gate U ⊤ ,       Ŵup = Pb⊤ W̃up U ⊤ ,      Ŵdown = U W̃down Pb .
+With these definitions,
+                                     ⊤            ⊤               ⊤          ⊤
+                                Ẑ Ŵgate = Z W̃gate  Pb ,   Ẑ Ŵup  = Z W̃up Pb ,
+and therefore the gated activation transforms as
+                                    ⊤             ⊤                   ⊤             ⊤ 
+                        SiLU(Ẑ Ŵgate  ) ⊙ (Ẑ Ŵup ) = SiLU(Z W̃gate   ) ⊙ (Z W̃up ) Pb .
+Finally, the down projection yields
+                                                ⊤           ⊤          ⊤
+                    MLP(
+                    [ Ẑ) = SiLU(Z W̃gate          ) ⊙ (Z W̃up ) Pb Ŵdown   = MLP(Z) U ⊤ .
+So the Llama MLP preserves the same rotated-basis equivariance as the rest of the block.
+
+
+                                                            18
+Grouped-query attention. In grouped-query attention, keys/values have fewer heads and are shared across
+groups of query heads (via simple repetition to match the query-head count). We handle this by using the same
+head-wise orthogonal conjugation as in standard attention, with the only change that the rotation assigned to a
+KV head is reused for all query heads that share it (i.e., the same blocks are repeated across the corresponding
+query-head groups).
+
+
+C     Weight Alignment Attack Algorithms
+
+C.1    Overview
+
+Under orthogonal obfuscation, direct NN inversion is no longer applicable. Instead, the attacker must first
+recover the unknown orthogonal transformation U ∈ O(d) that maps obfuscated representations back to the
+original embedding space. Once an estimate Û is obtained, token recovery reduces to standard embedding
+inversion via cosine similarity against the public embedding table.
+Accordingly, we consider weight alignment attacks whose primary objective is to estimate U from the relationship
+between public pretrained weights and their conjugated counterparts. After estimating U , all attacks use the
+same token-recovery procedure.
+
+
+C.2    ALS–Procrustes Alignment
+
+Because each transformer block is conjugated by its own orthogonal matrix Ob , the alignment problem must be
+solved independently for each block. In this appendix, we describe the ALS–Procrustes procedure for a single
+block and omit the block index b for simplicity. In this setting, the attacker can use at most two matrix pairs: the
+query and key projections (WQ , ŴQ ) and (WK , ŴK ).
+The attacker estimates the hidden orthogonal matrices by solving:
+                                                          2                            2
+                            min        ŴQ − O WQ U ⊤ F +         ŴK − O WK U ⊤ F .
+                          O, U ∈O(d)
+
+
+Since the objective is bilinear in (O, U ), we optimize it using an alternating least-squares (ALS) procedure. Each
+subproblem admits a closed-form solution via a single SVD. The full procedure is summarized in Algorithm 1.
+
+
+Algorithm 1 Two-sided ALS–Procrustes weight alignment (single block, Q/K)
+Require: Public weights (WQ , WK ), conjugated weights (ŴQ , ŴK ), iterations T
+ 1: Initialize O (0) ← Id , U (0) ← Id
+ 2: for t = 1, . . . , T do
+          (t)                    ⊤                  ⊤
+ 3:    Mout ← ŴQ U (t−1) WQ         + ŴK U (t−1) WK
+                               (t)
+       L, Σ, R⊤ ← SVD Mout
+                                   
+ 4:
+         (t)          ⊤
+ 5:    O ← LR
+          (t)        ⊤ (t)             ⊤
+ 6:    Min ← ŴQ        O WQ + ŴK       O(t) WK
+                               (t)
+       L, Σ, R⊤ ← SVD Min
+                                   
+ 7:
+         (t)          ⊤
+ 8:    U ← LR
+ 9: end for
+10: return O (T ) , U (T )
+
+
+
+
+D     Experiment Details
+
+D.1    Pretraining
+
+For pretraining, we used the OpenWebText dataset (2B tokens) and trained on 4× NVIDIA A100 GPUs with
+65,536 tokens per optimizer update. We used AdamW [29] (β1 = 0.9, β2 = 0.999, weight decay = 0.1) with
+a peak learning rate of 3 × 10−4 for 100,000 iterations, using a linear warmup over the first 2,000 iterations
+followed by cosine decay. Figure 4 shows the validation perplexity during pretraining, confirming that the
+equivariant architecture preserves standard training behavior across all model sizes.
+
+
+                                                        19
+                                                  Original             Equivariant
+                    GPT-2 Small               GPT-2 Medium              GPT-2 Large               LLaMA 3.2 1B
+Perplexity   40
+                                        30                        40                        30
+             30
+                                        20                        20                        20
+             20
+                  0 25k 50k 75k 100k         0 25k 50k 75k 100k        0 25k 50k 75k 100k        0 25k 50k 75k 100k
+                                                        Iterations
+  Figure 4: Validation perplexity during pretraining on OpenWebText for GPT-2 Small, Medium, Large,
+  and Llama 3.2 1B. Equivariant models closely match original versions throughout training.
+
+
+  D.2             Fine-tuning
+  For fine-tuning, we trained all models on the PubMed abstracts dataset using the same optimization setup as in
+  pretraining. We used AdamW (β1 = 0.9, β2 = 0.999, weight decay = 0.1) with a learning rate of 10−3 and
+  4,096 tokens per optimizer update, employing a linear warmup over the first 2,000 iterations followed by cosine
+  decay. Figure 5 shows the validation perplexity during fine-tuning, indicating that the equivariant and original
+  models exhibit similar adaptation behavior with only a minor difference in final perplexity.
+
+
+                                                  Original             Equivariant
+                    GPT-2 Small               GPT-2 Medium              GPT-2 Large                   LLaMA 3.2 1B
+Perplexity
+
+
+
+
+             20                         20
+                                                                  20                         20
+             15                         15                        15                         15
+                  0 10k 20k 30k 40k          0 10k 20k 30k 40k         0 10k 20k 30k 40k          0 10k 20k 30k 40k
+                                                        Iterations
+  Figure 5: Validation perplexity during fine-tuning on the PubMed abstracts dataset for GPT-2 Small,
+  Medium, Large, and Llama 3.2 1B.
+
+
+  D.3             Retrofitting
+  For retrofitting, we start from a publicly available pretrained model that is not O(d)-equivariant, replace only the
+  normalization layers with RMSNorm with a scalar gain, and then perform a short fine-tuning on the PubMed
+  abstracts to recover performance. We use AdamW with learning rate 10−4 and 8,192 tokens per optimizer update.
+  The goal is to demonstrate that C ONJ F ORMER can be obtained without retraining from scratch: equivariance
+  can be enforced by a minimal architectural change followed by lightweight adaptation. Figure 6 shows the
+  retrofitting curves.
+
+
+                             Retrofitted Equivariant                        Original Baseline
+             100
+                 GPT-2 Small        GPT-2 Medium                           GPT-2 Large       20 LLaMA 3.2 1B
+Perplexity
+
+
+
+
+                                        100
+                                                                   40
+             50                                                                                  15
+                                         50
+                                                                   20
+                  100 200 300 400 500        200 300 400 500        200 300 400 500               600     1000 1400
+                                                        Iterations
+  Figure 6: Validation perplexity during retrofitting on the PubMed abstracts dataset after replacing
+  only the normalization layers with RMSNorm with a scalar gain.
+
+
+
+                                                             20
+ Table 3: Token-recovery accuracy (%) evaluated at the checkpoint with minimum validation perplexity.
+ Validation perplexities for Original (Orig) and C ONJ F ORMER (Ours) are shown in the header. —
+ indicates that an attack is not applicable in that setting.
+
+                                            GPT-2 S        GPT-2 M           GPT-2 L       Llama 3.2 1B
+                    Attack             Orig     Ours      Orig     Ours     Orig   Ours    Orig     Ours
+                    Val PPL (min)      12.71    12.70    12.02    12.07    12.51   12.46   13.77   13.62
+                                                           Top-1
+                    NN inversion       24.3      —        34.3     —        29.0    —      14.3     —
+                    Norm-based          0.0      0.0       0.0     0.0      0.0     0.0    0.0      0.0
+                    ALS–Procrustes      —        0.0       —       0.0       —      0.0     —       0.0
+                    Gram Alignment      —        0.0       —       0.3       —      0.0     —       1.3
+                                                          Top-10
+                    NN inversion       35.8      —        39.3     —        38.0    —      16.8     —
+                    Norm-based          0.0      0.0       0.0     0.0      0.0     0.0    0.0      0.0
+                    ALS–Procrustes      —        0.0       —       0.0       —      0.0     —       0.0
+                    Gram Alignment      —        1.0       —       1.0       —      0.0     —       1.3
+                                                          Top-100
+                    NN inversion       39.5      —        44.8     —        47.0    —      19.0     —
+                    Norm-based          0.0      0.0       0.0     0.0      0.0     0.0    0.0      0.0
+                    ALS–Procrustes      —        0.2       —       0.4       —      0.0     —       0.0
+                    Gram Alignment      —        3.0       —       5.5       —      0.8     —       2.0
+
+
+
+ D.4        Attacks
+
+ For both the ALS–Procrustes and Gram-based weight alignment attacks, we tune the number of optimization
+ iterations to balance reconstruction accuracy and computational efficiency. In all experiments, we use 1,000
+ iterations for the ALS–Procrustes procedure and 2,500 iterations of gradient descent for the Gram-based weight
+ alignment, with learning rate 10−3 . The resulting token-recovery accuracy across models and top-k settings is
+ reported in Table 3. Additional top-1 and top-100 token-recovery curves under fine-tuning are shown in Figure 7.
+ All reported results are averaged over multiple random seeds. For each random seed, token-recovery accuracy is
+ computed as the mean top-k accuracy over 128 randomly sampled tokens, and the final numbers are obtained by
+ averaging across seeds.
+
+
+                  ALS Procrustes     Gram Alignment      NN (on original)
+          1.0
+              GPT-2 Small 1.0 GPT-2 Medium 1.0 GPT-2 Large 1.0 LLaMA 3.2 1B
+Top-1
+
+
+
+
+          0.5                        0.5                          0.5                       0.5
+
+          0.0                        0.0                          0.0                       0.0
+                0 10k 20k 30k 40k          0 10k 20k 30k 40k            0 10k 20k 30k 40k         0 10k 20k 30k 40k
+          1.0                        1.0                          1.0                       1.0
+Top-100
+
+
+
+
+          0.5                        0.5                          0.5                       0.5
+
+          0.0                        0.0                          0.0                       0.0
+                0 10k 20k 30k 40k          0 10k 20k 30k 40k            0 10k 20k 30k 40k         0 10k 20k 30k 40k
+                                                        Iterations
+ Figure 7: Top-1 and top-100 token-recovery accuracy for different attacks under fine-tuning. NN
+ inversion is evaluated on nonobfuscated models, while ALS–Procrustes and Gram-based weight
+ alignment attacks are evaluated on obfuscated models.
+
+
+
+                                                             21
+                                            Top-1       Top-10                     Top-100
+           1.0
+                   GPT-2 Small          1.0
+                                             GPT-2 Medium 1.0                 GPT-2 Large 1.0 LLaMA 3.2 1B
+Accuracy
+           0.5                          0.5                           0.5                          0.5
+
+           0.0 0   200 400 600 800 1k
+                                        0.0 0   200 400 600 800 1k
+                                                                      0.0 0   200 400 600 800 1k
+                                                                                                   0.0 0   200 400 600 800 1k
+                                                           Iterations
+  Figure 8: Token recovery using invariant attention-logit fingerprints. Top-1, top-10, and top-100
+  accuracy as a function of fine-tuning iterations for GPT-2 Small, Medium, Large, and Llama 3.2 1B.
+
+
+  D.5         Token Identification by Attention Fingerprints
+ As discussed in Section 3.5, attention logits remain invariant under C ONJ F ORMER. An attacker can therefore
+ use them as fingerprints for statistical matching.
+  In this appendix, we show empirically that additional fine-tuning breaks the association between these fingerprints
+  and the underlying tokens.
+ When a user sends a sequence of length L, the server can store the inputs and perform one-token inference
+ offline. Since modern LLMs typically do not use absolute positional embeddings, a token’s embedding does
+ not depend on its position after the client sends it. In particular, for a given token i, the server can compute all
+ self-attention logits across all layers and heads.
+  For each token i, the attacker can construct a feature vector
+                                                        ℓ1,1 (i), . . . , ℓB,H (i) ∈ RBH ,
+                                                                                  
+                                              f (i) =
+ where ℓb,h (i) denotes the single-position self-attention logit at layer b and head h.
+  Changing only the secret orthogonal matrices does not change the vector f (i), since attention logits are invariant
+  under the corresponding basis transformation. As a result, the server can accumulate statistics over time, which
+  may weaken the defense.
+ We empirically show that fine-tuning mitigates this issue by shifting the vectors f (i) away from their previous
+ values, thereby breaking the link between newly observed tokens and their accumulated statistics. To evaluate
+ this effect, we perform top-k nearest-neighbor search in the space RBH .
+  Using the same fine-tuning protocol as in the main experiments, we observe that top-k matching accuracy drops
+  substantially, introducing significant uncertainty into statistical matching as shown in Figure 8.
+
+
+
+
+                                                                 22
+

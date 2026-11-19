@@ -1,0 +1,1237 @@
+                                                                                                                                                                                                    1
+
+
+
+
+                                          Device-Cloud Collaborative LLM Inference with
+                                         Multi-Modal, Multi-Task, Multi-Turn Conversations
+                                          Liangqi Yuan, Graduate Student Member, IEEE, Dong-Jun Han, Member, IEEE, Shiqiang Wang, Fellow, IEEE,
+                                                                      and Christopher G. Brinton, Senior Member, IEEE
+
+
+
+                                             Abstract—Compared to traditional machine learning mod-
+                                         els, recent large language models (LLMs) can exhibit multi-
+                                         task-solving capabilities through multi-modal data sources and
+                                         multi-turn conversations. These unique characteristics of LLMs,
+                                         together with their large model size, make their deployment
+                                         more challenging. Specifically, (i) deploying LLMs on devices
+                                         faces computational, memory, and energy resource issues, while
+                                         (ii) deploying them in the cloud cannot guarantee real-time
+                                         service and incurs communication/usage costs. In this paper,
+                                         we design TMO, a device-cloud LLM inference system with
+                                         Three-M Offloading: Multi-modal, Multi-task, and Multi-turn
+arXiv:2502.11007v5 [cs.LG] 10 Jul 2026
+
+
+
+
+                                         conversation. TMO incorporates (i) a lightweight on-device LLM
+                                         that can process simple tasks at high speed and (ii) a large-
+                                         scale cloud LLM that can handle multi-modal data sources. We
+                                         develop a resource-constrained reinforcement learning (RCRL)
+                                         strategy for TMO that optimizes the inference location (i.e.,
+                                         device vs. cloud) and multi-modal data sources to use for each
+                                         task in multi-turn conversations, aiming to maximize the long-                   Fig. 1. Application Scenario for the TMO System in Kitchen Activity
+                                         term reward (response quality, latency, and usage cost) while                    Assistance. Given a user prompt, the decision engine selects between the
+                                                                                                                          on-device and cloud LLMs and chooses the relevant data modalities based
+                                         adhering to resource constraints. We also contribute M4A1,                       on the current task and conversation history. For the query “Where did I put
+                                         a new dataset we curated across multiple modalities, tasks,                      my dishes?”, first-person and overhead views are uploaded to the cloud LLM,
+                                         conversation turns, and LLM configurations, enabling evaluation                  which the text-only on-device LLM alone could not have solved.
+                                         of offloading decisions. We demonstrate the effectiveness of TMO
+                                         compared to several exploration-decision and LLM-as-Router
+                                         baselines, showing significant improvements in latency, cost,
+                                                                                                                          LLMs on devices presents practical challenges, including
+                                         and response quality. Our code and dataset are available at                      computational, memory, and energy resource limitations [6]–
+                                         https://github.com/liangqiyuan/TMO.                                              [8]. These issues hinder the deployment of large-scale LLMs
+                                            Index Terms—Large Language Model, Reinforcement Learn-
+                                                                                                                          on users’ devices. Industry giants have developed strategies
+                                         ing, Multi-modal, Collaborative Inference, Resource Constraint.                  that either (i) involve lightweight versions of LLMs, such as
+                                                                                                                          Google’s Gemma and Meta’s LLaMA, which offer solutions
+                                                                                                                          with varying numbers of parameters (typically 3B, 8B, 13B,
+                                                                                                                          etc.) for fast and cost-efficient response, or (ii) place LLMs
+                                                                   I. I NTRODUCTION
+                                                                                                                          in the cloud, where users interact with them via the Internet,
+                                            Large language models (LLMs) have demonstrated remark-                        as seen with the ChatGPT application on mobile phones.
+                                         able general-purpose task-solving capabilities across various                    The former often suffers from inferior inference performance,
+                                         fields and have been gradually incorporated into daily life                      while the latter requires substantial network bandwidth and
+                                         [2]–[5]. The development of LLMs is thriving, yet deploying                      incurs high costs from service providers [9]. This creates a
+                                                                                                                          pressing need to build systems that combine the advantages of
+                                            This work was supported in part by the National Science Foundation (NSF)
+                                         under grant CPS-2313109, by the Office of Naval Research (ONR) under
+                                                                                                                          both strategies, i.e., enhancing response quality while ensuring
+                                         grant N00014-23-C-1016, by the Air Force Office of Scientific Research           lower latency and usage costs.
+                                         (AFOSR) under grant FA9550-24-1-0083, by the Institute of Information &
+                                         communications Technology Planning & Evaluation (IITP) from the Korea
+                                         government (MSIT) (No. RS-2024-00457882, AI Research Hub Project), and
+                                         by NVIDIA’s Academic Grant Program.                                              A. Research Questions
+                                            An earlier version of this paper was presented at the Twenty-sixth Interna-
+                                         tional Symposium on Theory, Algorithmic Foundations, and Protocol Design            Optimizing LLMs over networks introduces unique chal-
+                                         for Mobile Networks and Mobile Computing (MobiHoc 2025) [1], where it            lenges beyond traditional machine learning models, as LLMs
+                                         received the Best Paper Award Runner-up.                                         operate with (i) multi-modal data sources (e.g., text, images),
+                                            L. Yuan and C. G. Brinton are with the School of Electrical and Computer
+                                         Engineering, Purdue University, West Lafayette, IN 47907, USA. E-mail:           (ii) multi-task environments (e.g., editing, recommendations),
+                                         liangqiy@purdue.edu; cgb@purdue.edu                                              and (iii) multi-turn conversation contexts (i.e., ongoing con-
+                                            D.-J. Han is with the Department of Computer Science and Engineering,         versations with users). Although these elements enrich the
+                                         Yonsei University, Seoul, South Korea. E-mail: djh@yonsei.ac.kr
+                                            S. Wang is with the Department of Computer Science, University of Exeter,     capabilities of LLMs, they introduce significant challenges,
+                                         EX4 4RN, UK. E-mail: shiqiang.wang@ieee.org                                      particularly in the inference stage:
+                                                                                                                                  2
+
+
+
+   1. Determining the optimal inference location: Determin-         latency and usage costs. We address the above research
+ing whether to process tasks using an on-device LLM or to           questions through a resource-constrained reinforcement learn-
+offload them to a cloud LLM is non-trivial. This decision           ing (RCRL) methodology that learns optimal actions (i.e.,
+critically impacts not only the response quality but also the       RQ1, RQ2, and RQ3) to respond to multi-task scenarios in
+latency and costs. For example, on-device LLM inference may         multi-turn conversations. We develop an estimator of LLM
+limit response quality due to the lightweight model deployed        inference through a nearest neighbor strategy for effective
+on user devices, whereas cloud LLM inference, although              offline training (i.e., RQ4). Our main contributions are as
+more powerful and capable of multi-modal processing, can            follows:
+introduce significant communication and computation delay.
+                                                                      • We construct TMO to enable adaptive offloading between
+   2. Understanding relationships between modalities, tasks,
+                                                                        on-device and cloud LLM inference across multi-modal,
+and conversation turns: There are intricate associations be-
+                                                                        multi-task, multi-turn conversations. This includes for-
+tween multi-modal data sources, inference tasks, and their
+                                                                        malizing the interaction with both types of LLMs to
+temporal variation across multiple turns in a conversation.
+                                                                        dynamically adapt with diverse conversational demands
+Although various types of input data can improve the response
+                                                                        (Sec. III-A and Sec. III-B).
+quality of LLMs, not all tasks require comprehensive multi-
+                                                                      • We formulate TMO’s decision engine in terms of
+modal data. For example, a message editing task may not
+                                                                        resource-constrained reinforcement learning (RCRL) to
+require images as inputs, whereas some human activity tasks
+                                                                        maximize cumulative reward across multi-turn conversa-
+require various types of image modalities [10]. Furthermore,
+                                                                        tions by selecting the optimal LLMs and modalities for
+when considering multi-turn conversations, where each turn
+                                                                        inference. This approach enables a concrete optimization
+represents a task in sequential order, earlier uploaded data
+                                                                        of trade-offs between response quality, latency, and usage
+modalities may provide sustained informational advantages,
+                                                                        costs while incorporating task-modality associations into
+yet they might necessitate re-uploading if the information
+                                                                        the decision-making process (Sec. IV-A and Sec. IV-B).
+becomes outdated.
+                                                                      • We devise a nearest neighbor strategy to overcome state-
+   3. Uncertainty issues in offline training with LLM in-
+                                                                        action pair uncertainty in estimating response quality
+ference data: It is often desirable to train auxiliary models
+                                                                        during RCRL training. Our approach addresses two types
+using LLM inference results, e.g., to learn modality-task
+                                                                        of uncertainty that manifest in LLM evaluation con-
+associations. The computationally expensive nature of LLMs
+                                                                        texts: non-deterministic evaluation (NDE), where iden-
+renders it impractical to conduct online training of such
+                                                                        tical state-action pairs can yield varying response quality
+models. Consequently, generating datasets for offline training
+                                                                        evaluations, and out-of-distribution (OOD), where the
+becomes necessary. However, due to inherent uncertainty in
+                                                                        system estimates the response quality for unseen state-
+LLM inference, which arises from the probabilistic nature
+                                                                        action pairs (Sec. IV-C).
+of language model outputs [11], such datasets may contain
+                                                                      • We curate a new dataset, termed M4A1, which contains
+multiple identical samples with varying response scores. This
+                                                                        samples from three multi-modal data sources, four in-
+uncertainty substantially complicates the evaluation of LLM
+                                                                        ference tasks, 2-5 conversation turns, and four LLMs,
+outputs, particularly in multi-task or generative scenarios
+                                                                        with real-world measurements of latency and usage
+where standard answers or evaluation metrics do not exist.
+                                                                        costs (Sec. V). Through extensive evaluation with this
+   Motivated by these challenges, we aim to answer the
+                                                                        dataset, we demonstrate TMO’s superior performance in
+following research questions. In the context of device-cloud
+                                                                        response quality, latency, and usage cost compared to
+collaborative LLM systems:
+                                                                        two SOTA exploration-decision and 15 LLM-as-Router
+(RQ1) How can we optimally select the appropriate LLM for               baselines (Sec. VI).
+         inference (i.e., on-device LLM vs. multi-modal cloud
+         LLM)?                                                         This paper is an extension of our previous paper [1].
+(RQ2) How can we identify and utilize the most informative          Building upon the foundation established in [1], this paper
+         and relevant multi-modal data when necessary for           introduces the following key contributions: (i) We propose a
+         tasks in multi-turn conversations, while balancing         novel resource-aware adaptation mechanism that fundamen-
+         response quality, latency, and usage cost?                 tally extends our framework’s capability to handle arbitrary
+(RQ3) How can we achieve robust generalization to arbi-             user-specified resource budgets. By incorporating resource
+         trary user-specified resource budgets, enabling flexible   constraints directly into the state space and employing ran-
+         adaptation during real-world deployment?                   domized resource budgets during training, our approach en-
+(RQ4) How can we effectively address the inherent uncer-            ables robust generalization to diverse budget specifications
+         tainty in LLM inference data during offline training?      unseen during training, addressing the practical challenge
+                                                                    of dynamic resource requirements in real-world deployment
+                                                                    scenarios. (ii) We conduct extensive additional experiments
+B. Summary of Contributions                                         analyzing different budget distribution strategies (uniform,
+   In this paper, we develop TMO, a device-cloud collaborative      normal, and hybrid) and their impact on training performance
+LLM inference system shown in Fig. 1. TMO orchestrates              and generalization capability. Through comprehensive abla-
+“Three-M” Offloading – multi-modal, multi-task, and multi-          tion studies, these experiments reveal how resource awareness
+turn – aimed at enhancing response quality and reducing             in the state space and randomized budget training contribute to
+                                                                                                                                    3
+
+
+
+satisfying arbitrary post-training resource constraints, achiev-     and latency [22]. These works explore diverse methodological
+ing near-zero constraint violations across diverse budget            approaches that can be categorized into network optimization
+configurations. (iii) We provide an in-depth exposition of           strategies, such as confidence-based device-server selection
+our M4A1 dataset, including detailed descriptions of the             [23] and energy-delay considerations for LLM training [24],
+generation principles, comprehensive characterization of the         as well as RL frameworks, such as accuracy-delay-fairness
+multi-modal, multi-task, and multi-turn conversational data,         device-server selection [25] and multi-device offloading with
+and complete generation procedures with systematic quality           quality-latency-energy considerations [26]. Recent works have
+control mechanisms.                                                  also explored LLM routing strategies, such as multi-LLM
+                                                                     routing [27], self-routing [28], and agentic routing [29].
+C. Organization                                                         However, existing hierarchical inference approaches [23],
+   The remainder of this paper is organized as follows. Sec. II      [25], which orchestrate offloading between user devices and
+reviews the related work. Sec. III presents our proposed TMO         cloud servers, only consider model size differences. They
+system, and the design of RCRL is described in Sec. IV.              neglect fundamental distinctions in their input modalities, for
+Sec. V introduces our M4A1 dataset and describes the data            example, one scenario is device-side LLMs being limited
+generation methodology. Sec. VI details the experimental             to text-only inputs, while server-side models can process
+setup and results. Finally, Sec. VII concludes the paper and         multimodal inputs (i.e., RQ1). Furthermore, recall that the
+discusses future research directions.                                unique challenge in our settings is multi-turn conversation
+                                                                     interactions, yet these methods primarily focus on meeting
+                     II. R ELATED W ORK                              specific performance standards or finding immediate optimal
+                                                                     solutions without considering cumulative reward maximiza-
+A. Efficient On-Device and Over-Network LLMs
+                                                                     tion throughout the decision-making process. Recent work
+   The rapid development of LLMs has profoundly influenced           on active inference for LLM inference offloading [21] disre-
+human-AI interaction while introducing significant challenges        garded multi-modal data and multi-task scenarios in multi-turn
+related to operational costs, energy consumption, and envi-          conversations, failing to align with practical LLM applications
+ronmental impact. Researchers propose various solutions to           (i.e., RQ2). Similarly, LLM routing approaches [27] focus on
+enable deployment in resource-constrained devices, such as           single-query routing without considering multimodal inputs,
+architectural optimization [12], quantization [13], on-device        multi-turn conversations, or resource constraints. Moreover,
+speculative decoding [14], and adaptive deployment across            some offloading methods [28] preset fixed offloading ratios
+heterogeneous devices [15]. Furthermore, network-based ap-           that cannot be adjusted post-training, which fundamentally
+proaches have emerged, such as [16] proposed the client-edge         conflicts with users’ expectations for flexibly adapting re-
+co-inference method which partitions LLM into lightweight            source constraints in real-world scenarios (i.e., RQ3). Dif-
+layers running on devices and parameter-heavy layers operat-         ferently from prior works, we implement these concepts in
+ing at the edge, collaborative inference on edge devices [17],       a multi-turn conversation LLM scenario, not only maximiz-
+and edge inference optimization in wireless networks [18] to         ing cumulative rewards and considering the modality-task
+enhance inference efficiency.                                        associations to select optimal LLMs and multi-modal data
+   However, existing frameworks primarily focus on either            sources, but also ensuring robust generalization to arbitrary
+single-modal data sources or single-query accuracy [19],             user-specified resource budgets.
+neglecting the complex trade-off optimization of key resource
+indicators (e.g., response quality, latency, costs) [20] and
+                                                                          III. OVERVIEW OF THE P ROPOSED TMO S YSTEM
+failing to address the intricate relationships between multi-
+modal, multi-task, and multi-turn conversation context (i.e.,        A. Multi-Task Multi-Turn Scenario with Multi-Modal Data
+RQ1 and RQ2). Furthermore, [19], [21] employ datasets with              We consider a setup in which a user is aiming to solve
+fixed evaluation metrics, which may not fully represent the          multiple types of inference tasks through a multi-turn conver-
+complexity in many real-world LLM applications. Moreover,            sation with LLMs, as shown in Fig. 1. Each conversation turn
+online training methods incur prohibitively expensive costs          t involves:
+and lead to irreproducible resource consumption, particularly          • A text prompt Pt which describes the user’s intent, e.g.,
+when considering human subjects or alternative approaches                “Recommend dishes that I can cook with my ingredients,”
+for evaluating LLM inference (i.e., RQ4). In contrast to                 and
+previous work, we propose an offline training approach to              • A set of other modalities Mt ⊆ M, where M repre-
+preserve LLM inference results. While this inevitably intro-             sents all modalities available in the current context (e.g.,
+duces uncertainties in the LLM inference data, we address this           different image views, 3D points, or other data formats
+challenge by further incorporating an uncertainty estimator for          describing the current situation).
+response scores.                                                     During the conversation with LLMs, a user may ask additional
+                                                                     questions using prompts potentially related to the previous
+B. Inference Routing and Offloading Optimization                     turns (e.g., “Where did I put my dishes?” or “Please turn
+   More generally, there is a rich set of literature on strategies   on all the lights in the kitchen”). Here, we assume each
+for optimizing device-edge-cloud inference location selec-           text prompt belongs to one of N different task categories
+tion/offloading, based on metrics such as performance, cost,         (e.g., assistant, recommendation, query, and message editing).
+                                                                                                                                                      4
+
+
+
+
+Fig. 2. Challenges Emerging in the TMO Scenario. (a) Multi-modal data from different perspectives provide complementary information but also contain
+redundancy. (b) Multi-turn conversations present conflicting intuitions under resource constraints: early image uploading may waste resources or improve
+quality, but uncertainty about future turns makes optimal resource allocation unclear.
+
+Moreover, distinct tasks have varying levels of difficulty and                process it on-device, depending on the task’s difficulty and
+require different types of multi-modal information to solve.                  current resource requirements. By offloading computationally
+For example, the prompt “Where did I put my dishes?”                          intensive tasks to the cloud, we preserve on-device resources
+requires additional modalities (e.g., images) for the LLM to                  while still benefiting from the cloud’s powerful computational
+solve the task, while the prompt “Please turn on all the lights               capabilities. This configuration allows each part of the system
+in the kitchen” may not require other sources of data, indi-                  to operate within its respective capacity, optimizing overall
+cating that the task is simpler. These characteristics within a               performance and user experience (e.g., latency and costs).
+multi-task, multi-turn scenario with multi-modal data sources                    Formally, we describe the interaction with either the on-
+distinguish our setup from existing works [19], [21], [30] that               device or cloud LLM at each conversation turn t as follows:
+                                                                                        
+consider simpler settings (e.g., single-turn conversations with                           LLMDevice (Pt ) , for device,
+                                                                                        
+text only), motivating the need for a new solution.                                     
+                                                                                        
+                                                                                        LLMCloud (Pt ) ,       for cloud
+                                                                                                                         text-only,
+                                                                                        
+                                                                                  Rt = LLM                                                 (1)
+                                                                                                     
+                                                                                                                   (m)
+                                                                                                            S
+B. Device-Cloud LLM Inference                                                                  Cloud Pt ,      {D } ,
+                                                                                                           m∈Mt
+                                                                                        
+                                                                                        
+                                                                                        
+   Due to the inherent limitations of on-device hardware                                
+                                                                                                  for cloud with modalities in Mt ,
+in terms of computational resources, memory, and energy
+consumption, deploying large-scale LLM directly on these                      where Rt , Pt , and Mt ⊆ M represent the LLM response,
+devices is often impractical. On the other hand, relying                      text prompt, and the set of selected modalities uploaded to
+exclusively on cloud-based LLMs can introduce latency and                     the cloud, respectively, at conversation turn t. D(m) denotes
+potential usage costs, especially when handling multi-modal                   the data source of modality m ∈ M, while LLMDevice
+data. We propose the device-cloud collaborative LLM infer-                    and LLMCloud indicate the on-device LLM and the cloud
+ence (TMO) system, as shown in Fig. 1, which strategically                    LLM, respectively. LLMs can maintain contextual memory
+distributes tasks between device and cloud platforms to exploit               over extended multi-turn conversations, thereby generating
+their respective strengths. It consists of two different LLMs:                responses for the current prompt based on the accumulated
+the on-device LLM and the cloud LLM. The on-device LLM                        context of all previous prompts and responses. Hence, Eq.
+is a lightweight LLM (e.g., Phi-3-mini [31]) deployed on                      (1) can be rewritten to reflect the cumulative nature of the
+user devices to handle simple tasks efficiently. This model                   prompts. For example, in the case of the cloud LLM with
+is optimized for high-speed text prompt processing, suitable                  multi-modal inputs,
+                                                                                                       t                 t−1
+                                                                                                                                    !
+for tasks such as message editing, setting timers, or adjusting                                       [    [
+                                                                                                                   (m)
+                                                                                                                         [
+air conditioning settings, where a sophisticated understanding                  Rt = LLMCloud Pt ,             {D }, {Pi , Ri } , (2)
+of multi-modal data is not critical. On the other hand, the                                               i=0 m∈Mi              i=0
+
+cloud LLM is a large-scale multi-modal LLM (e.g., GPT-                        where t = 1, 2, . . . , T . In Eq. (2), in addition to the inputs
+4o [32]) situated in the cloud capable of managing complex                    in Eq. (1), we consider the previously selected modalities as
+task and multi-modal data that exceed the processing capabil-                 well as prior prompts and responses from the series of earlier
+ities of user devices. This LLM can integrate multi-modal                     conversation turns i = 0, 1, . . . , t − 1.
+data input, thus providing richer, more accurate responses
+where required. The advantage of the TMO approach is its                      C. Challenges
+flexibility and efficiency. In the TMO system, the user can                   TMO Objective and Rationale. The primary objective of TMO
+flexibly choose to either offload inference to the cloud or                   is to strategically decide (i) whether to use the on-device LLM
+                                                                                                                                         5
+
+
+
+or cloud LLM and (ii) which multi-modal data sources to
+utilize, for each task within multi-turn conversations. This
+decision-making process aims to enhance response quality
+while efficiently managing latency and costs throughout ex-
+tended interactions. The goal is to ensure high response
+quality in complex multi-turn conversational environments,
+particularly under the system constraints (e.g., latency and
+costs).
+Why TMO Decision-Making is Fundamentally Difficult?
+The difficulty of LLM and modality selection stems from the
+intricate interplay of multiple competing objectives. Fig. 2
+summarizes the key challenges of our problem. First, multi-
+                                                                 Fig. 3. Illustration of RCRL within the TMO System. The reward signal
+modal data selection presents inherent challenges due to the     relies on the reference and judge LLMs for the response score and the
+heterogeneous nature of available data sources. As illustrated   pre-trained CLIP model for the association, which together account for the
+in Fig. 2(a), different viewpoints (e.g., first-person, over-    dominant cost of training. These auxiliary invocations are not required at
+                                                                 deployment, where the RL policy outputs actions from the state alone.
+head, and side cameras) capture complementary information
+about the same scenario – each perspective offers unique         State: The state captures the history of previous LLM selec-
+insights into actions and context. However, these multi-modal    tions, uploaded modalities, and task categories over a sliding
+sources also contain substantial redundancy. For instance,       window of the most recent τ turns. Specifically, for each
+while overhead and side views provide scenario informa-          turn t, the state st records: (i) the selected LLM type in
+tion from different angles, they also capture overlapping        the previous turn ℓt−1 ∈ {LLMDevice , LLMCloud }, (ii) the
+visual content of the same objects and spatial layout. This      set of modalities Mℓt available to the selected LLM (where
+creates a fundamental tension: while incorporating multiple      Mℓt = Mt if cloud LLM has been selected, and Mℓt = ∅ for
+modalities can enhance understanding, transmitting redundant     on-device LLM which does not support multi-modal inputs),
+information wastes communication resources and increases         and (iii) the task category nt ∈ {1, ..., N }. The state space
+latency. Second, selecting the appropriate LLM and modalities    S maintains a fixed-length history of τ consecutive turns,
+across consecutive turns introduces compounding complexity,      with each historical entry represented as a tuple (ℓ, Mℓ , n).
+as shown in Fig. 2(b). For example, iPhone users encounter       Formally, the state at turn t is constructed as:
+choices among multiple LLMs (e.g., the on-device Siri and the
+ChatGPT application), while also navigating various multi-          st = [(ℓt−τ , Mℓt−τ +1 , nt−τ +1 ), . . . , (ℓt−1 , Mℓt , nt )],   (3)
+modal data sources on mobile devices (e.g., front camera,        where each tuple corresponds to one turn in the history
+rear camera, and screenshots). While individual queries may      window. For turns where t < τ (i.e., insufficient history is
+appear straightforward (e.g., using on-device LLM for sim-       available), we pad the state with placeholder values (denoted
+ple message editing), three conflicting objectives emerge in     as −1) to maintain a consistent dimensionality. Concretely,
+multi-turn scenarios under resource constraints: (1) uploading   the state evolution can be illustrated as follows:
+images early enables richer context for subsequent turns but
+                                                                  s0 = [ −1, . . . , −1 , (ℓ−1 , Mℓ0 , n0 )],
+may waste resources if the conversation ends or future queries           | {z }
+are simple; (2) deferring uploads preserves resources but                 (τ −1) padding entries
+
+forgoes early context benefits; (3) difficult tasks naturally     s1 = [ −1, . . . , −1 , (ℓ−1 , Mℓ0 , n0 ), (ℓ0 , Mℓ1 , n1 )],
+warrant cloud LLM usage, yet cumulative resource consump-
+                                                                         | {z }
+                                                                          (τ −2) padding entries                                       (4)
+tion across turns complicates when to commit expensive
+                                                                     ..
+operations. The decision-maker must simultaneously balance            .
+response quality, latency, and cost not just for individual        st = [(ℓt−τ , Mℓt−τ +1 , nt−τ +1 ), . . . , (ℓt−1 , Mℓt , nt )]
+turns, but cumulatively throughout extended conversations.
+This multi-objective optimization across multi-modal, multi-                                                         for t ≥ τ − 1,
+task, and multi-turn scenarios presents a formidable decision-   where ℓ−1 denotes a placeholder value (i.e., −1) indicating
+making challenge.                                                no prior action has been taken. As the episode progresses, the
+                                                                 padding is gradually replaced by actual historical observations
+        IV. RL-BASED D ECISION E NGINE IN TMO                    until the full window of τ turns is populated.
+  We propose a resource-constrained RL (RCRL) approach to        Action: The action taken for the next turn consists of the
+make informed decisions regarding the selection between on-      choice between utilizing on-device or cloud LLM services, as
+device and cloud LLM services, as well as the determination      well as the selection of one or multiple data modalities for
+of which data modalities to be uploaded, as shown in Fig. 3      inference processing. Therefore, the action space A can be
+and Alg. 1. The details are described in the following.          described as follows:
+
+A. RL Formulation                                                                              A = (ℓ, Mℓ ),                           (5)
+  We first formulate different components of the RL policy       with the action at = (ℓ, Mℓ )t for turn t consisting of a choice
+as follows.                                                      of LLM and modalities to upload. For notational simplicity,
+                                                                                                                                        6
+
+
+
+we will refer to Mℓ as simply M when cloud LLM is selected           At each conversation turn t, RL algorithms observe the
+with the corresponding modalities, while for on-device LLM,          state st , select an action at , obtain a transition probability
+Mℓ is always empty (text-only input).                                P (st+1 |st , at ), receive a reward rt , and transition to the next
+Reward: In designing the reward function, we consider several        state st+1 ∼ P (·|st , at ). Given the current state st , the action
+key metrics to optimize the decision-making process regarding        at is selected according to a specific policy π as a ∼ π(·|s),
+the choice of LLM service and modalities. Mathematically, the        where π(a|s) represents the probability of selecting action a
+reward function R : S × A → R that we propose is expressed           in state s. The value function V π (s) predicts the expected
+as follows:                                                          discounted rewards of states following the policy π:
+         αSat + βΛ Λat − βψ ψat − βϕ ϕat ,
+                                                                                                  " T                     #
+                                                                                        π
+                                                                                                    X       t
+                                                                                      V (s) = Eπ           γ rt s0 = s                (7)
+      
+      
+      
+                              t−1
+                                                                                                     t=0
+                              X
+                                        Cj (ai ) ≤ ξj , ∀j ∈ J
+      
+                    if
+rt =                      i=max(0,t−τ )
+                                                                     with discount γ > 0. The optimization of policy πθ with re-
+                                                                     spect to its parameterization θ aims to maximize the expected
+      
+      
+      
+      
+                                                                     discounted rewards in LLM inference offloading and modality
+      
+      
+      
+         0,          otherwise                                       selection:
+                                                               (6)
+                                                                                                         "      T
+                                                                                                                 #
+                                                                                                                X
+where:                                                                               max J(θ) ≜ Es,a∼πθ               γ t rt .        (8)
+                                                                                       θ
+                                                                                                                t=0
+ • The response score Sat assesses how effectively the LLM
+    response meets the requirements of the text prompt. Here,        In deep RL optimization, various strategies can be employed
+    the response is generated by the LLM service selected in         to adjust the parameters θ of the policy πθ (a|s) with the goal
+    action at using the chosen modalities. The response score        of maximizing J(θ). To achieve this, a loss function f (θ) is
+    is used solely for RL training purposes and is not required      defined such that minimizing f (θ) leads to maximizing J(θ).
+    during the inference phase. A more detailed description          Taking Advantage Actor Critic (A2C) [33] as an example,
+    of this metric and how we estimate it is provided in             the loss function fA2C (θ) includes both the policy loss and
+    Sec. IV-C.                                                       the value loss, along with an entropy term to encourage
+ • The association metric Λat quantifies the aggregated
+                                                                     exploration:
+    relevance of the multi-modal data to prompt Pt for the                     fA2C (θ) = Es,a∼πθ [− log πθ (a|s)A(s, a)
+    modality   set selected in action at . Formally, Λat =                                1                                        (9)
+                       (m)                                                              + (V πθ (s) − r)2 − ζH(πθ (·|s))],
+    P
+        m∈Mt  Λ(P t, D     ), where Mt is the set of modalities                           2
+    uploaded based on action at . Further details are provided
+                                                                     where A(s, a) = r + γV πθ (s′ ) − V πθ (s) for s′ ̸= s is an
+    in Sec. IV-D.
+                                                                     estimate of the advantage function, providing a measure of
+ • The latency ψat represents the inference latency resulting
+                                                                     the relative value of taking action a in state s. The coefficient
+    from action at . This includes the computation time of the
+                                                                     ζ controls the weight of the entropy bonus H(πθ (·|s)). In
+    on-device LLM or the communication and processing time
+                                                                     Sec. VI-A, we also consider Proximal Policy Optimization
+    with the cloud LLM for the selected data modalities. Refer
+                                                                     (PPO) [34] and Deep Q Network (DQN) [35] versions of
+    to Sec. IV-E for the formal definition.
+                                                                     Eq. (9).
+ • The usage cost ϕat reflects the cost incurred by action
+    at , including the energy consumption of the on-device
+    LLM or the service fee of the cloud LLM for the uploaded         C. Uncertain Response Score Estimation
+    modalities, as described in Sec. IV-F.                              Due to the vast number of parameters in LLMs, offline
+ • The resource constraints ξj ensure that the cumulative            training approaches have become essential to mitigate sub-
+    consumption Cj of each resource type j ∈ J over a time           stantial inference costs and enable future reusability [36]. Sim-
+    window τ does not exceed the user-specified budgets ξj .         ilarly, TMO’s RCRL procedure requires a specialized dataset
+    If any constraint is violated, the reward is set to zero to      for learning and exploration of LLM performance in multi-
+    penalize infeasible actions, as detailed in Sec. IV-G.           modal, multi-task, and multi-turn conversational settings.
+The response score Sat and the association metric Λat are            Moreover, given the nature of multi-task settings, particularly
+positive indicators (higher is better, ↑). In contrast, latency      in generative tasks, there are often no explicit evaluation
+ψat and usage cost ϕat are negative indicators (lower is better,     metrics, such as accuracy, task success rate, or error rate.
+↓). All metrics are normalized to the range [0, 1] to ensure         This creates a significant challenge in assessing the quality of
+commensurability. Variable α controls the overall weight of          LLM responses. Furthermore, the exploratory nature of RL,
+the response score, while βΛ , βψ , and βϕ are weighting factors     which frequently encounters new state-action pairs, presents
+for the remaining components satisfying βΛ + βψ + βϕ = 1.            significant evaluation challenges.
+                                                                        To address these issues, we propose leveraging the notion of
+                                                                     LLM-as-Judge to evaluate response quality. However, LLM-
+B. MDP and Optimization                                              based judges exhibit inherent scoring instability, where identi-
+   Based on our state and action definitions, we model this          cal responses may receive different scores across evaluations.
+problem as a Markov decision process (MDP), where the                To handle this uncertainty, we employ a nearest neighbor
+learning objective is to maximize the cumulative reward.             strategy to estimate and stabilize response scores for outputs
+                                                                                                                                           7
+
+
+
+Algorithm 1 RCRL Training with M4A1 in Our TMO System
+Input: M4A1 Dataset (D), initial policy parameters (πθ ), reward weights (α, βΛ , βψ , βϕ ), discount factor (γ), time span (τ ), number of
+neighbors for response score estimation (k), learning rate (η), budget distributions ({Bj }j∈J )
+Output: Refined policy πθ for LLM and modality selection
+ 1: for each training iteration do
+ 2:     Sample an episode from D including a sequence of states {st }Tt=1 with all association metrics {Λa }.                       ▷ Alg. 2
+ 3:     Sample initial resource budgets: ξj ∼ Bj for all j ∈ J .                                                                  ▷ Eq. (16)
+ 4:     for each time step t in the episode do
+ 5:         Construct resource-aware state sRA
+                                             t  by concatenating remaining budget ξt .                                            ▷ Eq. (15)
+ 6:         Predict action at ∼ πθ (sRA
+                                     t ) via the current policy.
+ 7:         Estimate uncertain response score Sat for state-action pair (sRA
+                                                                          t , at ) via nearest neighbors.                         ▷ Eq. (10)
+ 8:         Retrieve the association metric Λat for action at from the sampled episode data.
+ 9:         Compute the device-side latency ψa or record the real interaction time with the cloud LLM provider.                   ▷ Eq. (12)
+10:         Compute the usage cost ϕat for either the on-device or cloud LLM.                                             ▷ Eqs. (13), (14)
+11:         Compute reward rt based on Sat , Λat , ψat , and ϕat .                                                                 ▷ Eq. (6)
+12:         Update remaining budget ξt+1 based on resource consumption from action at .
+13:     end for
+                                                                                  T
+14:     Calculate the RL loss f (θ) using the episode trajectory {(sRA
+                                                                    t , at , rt )}t=1 .                                            ▷ Eq. (9)
+15:     Update the policy parameters: θ ← θ − η∇θ f (θ).
+16: end for
+
+
+
+ from four LLMs: the on-device LLM, the cloud LLM, a                        binations of LLM selections, input modalities, and task
+ reference LLM, and a judge LLM.                                            types may be underrepresented or entirely absent in the
+     1) Response Quality Evaluation                                         training data, making it challenging to accurately estimate
+    The response score Sat measures the response quality                    their response quality.
+ generated by the selected LLM at each conversation turn. In            In contrast to [38], which aims to avoid selecting OOD
+ multi-task scenarios, evaluating the response quality requires         actions, our goal is to more accurately estimate the response
+ assessing the actual utility of responses in aiding human              quality under OOD actions rather than constrain them. This
+ users, particularly in query tasks. We employ the quantitative         adds flexibility for datasets where the states and actions are
+ evaluation scheme outlined by [37], illustrated on the right           randomly generated (e.g., the current task, selected LLM, and
+ side of Fig. 4. This involves using two additional text-only           selected modality), making it inevitable that some state-action
+ LLMs specifically to assess the quality of candidate LLM               pairs will not appear in the dataset (such as for our M4A1
+ services:                                                              dataset described in Sec. V).
+   • The reference LLM processes a prompt and a reference                  To address these uncertainties, we estimate the response
+     response to produce a polished reference response, serving         score Sa′ for a pending state-action pair (s′ , a′ ) by lever-
+     as a benchmark for evaluation.                                     aging its nearest neighbors in the dataset. Specifically, let
+   • The judge LLM then evaluates both the candidate’s re-              {(si , ai )}ki=1 be the k state-action pairs nearest to (s′ , a′ )
+     sponse and the reference’s response, scoring them based            in Euclidean distance, and let {Si }ki=1 denote their known
+     on helpfulness, relevance, accuracy, and detail.                   response scores. We estimate Sa′ as a weighted average over
+                                                                        its neighbors:
+ The response score Sat for turn t is then calculated as the
+                                                                                  Pk
+ ratio of the candidate’s LLM score to the reference score.                            Si /di
+                                                                            Sa′ = Pi=1
+                                                                                    k
+                                                                                              ,    where   di = [s′ a′ ] − [si ai ]    (10)
+     2) Handling Uncertainty in Response Score Estimation                           i=1 1/di
+    Integrating RCRL directly into real-time LLM inference is
+                                                                        represents the distance between the k nearest state-action pairs
+ impractical, especially in our scenario, where four LLMs oper-
+                                                                        and the pending state-action pair (s′ , a′ ), with [x y] denoting
+ ate in tandem: on-device and cloud LLMs generate responses,
+                                                                        vector concatenation. In this way, we achieve a more robust
+ while reference and judge LLMs evaluate their quality. Conse-
+                                                                        offline estimation of response quality, effectively handling
+ quently, we archive the LLM inference processes into a dataset
+                                                                        both NDE and OOD uncertainties within RCRL for LLM
+ for RCRL training. However, this approach introduces two
+                                                                        inference.
+ main forms of uncertainty:
+ (i) Non-deterministic evaluation (NDE): LLM-based judges
+     exhibit inherent scoring instability, where identical state-       D. Task-Modality Association
+     action pairs (i.e., the same prompt and response) may                 TMO is designed to operate in multi-modal, multi-task
+     receive different quality scores across multiple evaluations.      scenarios. In such settings, quantifying the relevance between
+     This non-determinism stems from the stochastic nature of           users’ text prompts and multi-modal data sources enables
+     LLM inference, including sampling-based generation and             selection of the most pertinent multi-modal data to offload to
+     variations in the judge LLM’s internal reasoning processes.        the cloud LLM. Consequently, we employ feature extractors
+(ii) Out-of-distribution (OOD) state-action pairs: The dataset          to transform both tasks and modalities into feature vectors
+     may contain state-action combinations that were never              of identical dimensionality for similarity computation. Given
+     observed during data collection. For instance, certain com-        this premise, we leverage the pre-trained CLIP model [39],
+                                                                                                                                        8
+
+
+
+a transformer-based architecture with text and image en-                1) On-Device Usage Cost ϕDevice
+coders, to extract features from prompts and multi-modal data           The energy consumption of the on-device LLM is in-
+sources. The pre-trained CLIP has been extensively trained on        fluenced by inference time and the power consumption of
+a vast array of image-text pair data, effectively linking visual     the computing hardware, which are in turn affected by the
+concepts with text. We employ a normalized cross-modality            user device’s computational capacity, the sizes of the prompt
+similarity metric to quantify the association between a text         and response, and the size of the LLM, all encapsulated
+prompt P and a modality set M, which is defined as:                  within the inference time ψDevice . Let the maximum power
+                                                                     consumption for a given user device hardware be Wmax Watts.
+      X                X            ωT (P ), ωI (D(m) )            By utilizing a normalized energy cost factor κ (capturing e.g.,
+Λ=          Λm P, D(m) =                                     ,
+      m∈M                     m∈M
+                                    ∥ωT (P )∥ · ωI (D(m) )           local electricity rates), after appropriate unit conversion, the
+                                                          (11)       on-device LLM usage cost (in USD) is defined as:
+where ωT : P → Rd and ωI : D(m) → Rd represent
+the text and image encoder functions, respectively, mapping                          ϕDevice = ψDevice × Wmax × κ.                   (13)
+inputs to a shared d-dimensional embedding space. Here,
+                                                                        2) Cloud LLM Usage Function ϕCloud
+Λm (P, D(m) ) denotes the association metric between prompt
+                                                                        For cloud-based LLMs, in addition to the inference costs of
+P and individual modality m, with normalization through L2
+                                                                     prompts and responses, the inference costs of data modalities
+norms producing similarity scores bounded in [−1, 1]. The
+                                                                     must also be considered. These costs are typically available on
+total association metric Λ is obtained by summing over all
+                                                                     the service provider’s website. Taking GPT-4o as an example,
+modalities in M.
+                                                                     the prompt cost rate is φP = $0.005/1K tokens, the response
+                                                                     cost rate is φR = $0.015/1K tokens, and the data modality
+                                                                     costs are proportional to their size and resolution at a rate φm
+E. Latency Model
+                                                                     for modality m ∈ M. Therefore, the usage cost of the cloud
+    1) On-Device Computation Latency ψDevice                         LLM can be defined as follows:
+   The computational latency of the on-device LLM, or say                                                  X
+inference time, is influenced not only by the number of                  ϕCloud = φP · |P | + φR · |R| +        φm · D(m) . (14)
+                                                                                                          m∈M
+LLM parameters, but also significantly by the length of the
+prompt, denoted |P |, and of the response, |R|. Following
+[40], we assume that the computational latency is proportional       G. Resource-Awareness and Constraint Generalization
+to the number of parameters, though other latency models                An essential objective of our approach is to ensure
+can be easily applied. If the on-device LLM is comprised             that users can arbitrarily adjust resource budget settings to
+of |LLMDevice | parameters and requires 2|LLMDevice | floating       match their preferences during real-world deployment, with-
+point operations (FLOPs) for forward propagation, the com-           out requiring model retraining. However, achieving this goal
+putational demand for each token in a reference processing           presents significant challenges. Simply penalizing constraint
+                                       Device |
+length |P |ref is calculated as 2|LLM
+                                   |P |ref      FLOPs. The latency   violations in the reward function is insufficient, as it fails
+calculation considers the theoretical peak performance of the        to provide the RCRL with adequate information about the
+user device’s GPU, denoted as Θpeak , measured in TeraFLOPS          resource costs incurred by actions and their relationship to
+(trillion floating-point operations per second). The computa-        the available resource budget. Moreover, training with fixed
+tional latency can be computed as:                                   resource constraints during the learning process leads to
+                          2|LLMDevice |(|P | + |R|)                  overfitting, resulting in poor generalization to arbitrary user-
+              ψDevice =                             .        (12)    specified budgets. To address these fundamental issues, we
+                              |P |ref × Θpeak
+                                                                     propose a dual-pronged strategy that simultaneously enhances
+    2) Cloud Interaction Latency ψCloud                              the RCRL’s awareness of resource consumption and its gener-
+                                                                     alization capabilities across diverse constraint configurations.
+   The interaction time with the cloud LLM encompasses
+the entire process from sending the prompt to receiving the             First, we augment the state space to explicitly incorporate
+response. This includes uploading the prompt and modali-             remaining resources as an integral component of the state
+ties, inference using the cloud LLM, and downloading the             representation, thereby enabling the RCRL to reason about
+response. We directly record the interaction time with the           resource availability when making decisions. Formally, we
+cloud LLM for different sets of uploaded modalities M during         extend the original state space S defined in Eq. (3) to construct
+the creation of our M4A1 dataset.                                    a resource-aware state space S RA . For each conversation turn
+                                                                     t, the resource-aware state sRA t   ∈ S RA is constructed by
+                                                                     concatenating the original state st ∈ S with a remaining
+F. Usage Cost Model                                                  budget vector ξ t ∈ R|J | :
+
+   During the inference process, LLMs incur computational              sRA
+                                                                        t = [st ξ t ],
+                                                                                                                         
+costs. From the user’s perspective, for the on-device LLM,                                             t−1
+                                                                                                       X                             (15)
+this manifests as energy consumption, while for the cloud                      where ξ t = ξj −                   Cj (ai )     ,
+LLM, it translates into the service fee paid to the provider.                                      i=max(0,t−τ )
+                                                                                                                           j∈J
+                                                                                                                                       9
+
+
+
+where [x y] denotes vector concatenation. Each component           Algorithm 2 M4A1 Dataset Generation
+of ξ t represents the remaining budget for the corresponding       Input: Image dataset, instruction dataset, time span (τ )
+resource type j, accounting for resource consumption over          Output: M4A1 dataset
+the most recent τ conversation turns. Here, ξj is the initial       1: while collecting data do
+                                                                    2:     Initialize an episode by randomly selecting a moment in the
+budget for resource type j, and Cj (ai ) is the cost of action         scenario and retrieving its multimodal images.
+ai for that resource type. This remaining budget dynamically        3:     Sample T ∈ {2, . . . , τ } at random
+updates at each turn as actions consume resources, providing        4:     for t = 1 to T do
+the RL policy with real-time awareness of resource availability     5:         Sample a user prompt P from the instruction dataset.
+within the sliding window.                                          6:         Select either the on-device or the cloud LLM at random.
+                                                                    7:         if cloud LLM is selected then
+   Second, to prevent overfitting to specific budgets and culti-    8:              Sample modalities Mt ⊆ M to upload.
+vate robust generalization capabilities, we employ a curricu-       9:         end if
+lum of randomized resource budgets during the RCRL training        10:         Generate a response from the conversation context,
+process. In each episode, we randomly sample initial resource          prompt, and the data D(m) , m ∈ Mt .              ▷ Eqs. (1), (2)
+budgets from predefined distributions, exposing the RL policy      11:         Obtain a reference response via the reference LLM.
+                                                                   12:         Score the response with the judge LLM against the
+to a diverse spectrum of constraint scenarios. This approach
+                                                                       reference.
+addresses a critical challenge in RCRL: policies trained with      13:     end for
+fixed budgets often fail to generalize when deployed under         14:     for each P and D(m) in the episode do
+different resource availability conditions. By training across     15:         Compute association Λm (P, D(m) ) via pre-trained CLIP.
+a distribution of budgets, the RL policy learns resource-                                                                    ▷ Eq. (11)
+                                                                   16:     end for
+aware decision-making strategies rather than budget-specific
+                                                                   17: end while
+heuristics. Specifically, for each resource type j ∈ J , the
+initial budget ξj in each episode is sampled as:
+                           ξj ∼ Bj ,                       (16)    train RL policies through different learning paradigms. For
+                                                                   instance, an expert dataset generated by human specialists
+where Bj denotes a budget distribution for resource type j,        contains predominantly optimal actions, making it well-suited
+such as uniform or normal distributions.                           for imitation learning where the RL policy simply needs to
+                                                                   replicate expert behavior to accomplish the task successfully.
+H. Summary of Reinforcement Learning in TMO                        However, as discussed in Sec. III-C, even humans struggle
+   Recall that in the RCRL framework of TMO, we employ             with decision-making in the TMO system. Recruiting human
+a resource-aware state space S RA to replace the original          experts to generate the M4A1 dataset presents a formidable
+state space S, thereby enabling the RL policy to explicitly        challenge. While we may possess intuitive heuristics, such
+reason about resource availability as defined in Eq. (15). The     as using on-device LLMs for simple tasks and cloud LLMs
+action space A remains unchanged to enable the RL policy           for complex ones, we inevitably face difficulties in multi-
+to select both the appropriate LLM (on-device vs. cloud) and       modal and multi-turn conversation scenarios. The decision of
+the relevant modality(ies) for upload. Revisiting our initially    whether to submit modal data earlier to provide richer context
+defined reward function in Eq. (6), we substitute the direct       or to defer submission until necessary involves inherent trade-
+response score Sat with the estimated response score Sa′ t         offs that lack clear expert consensus. Consequently, we adopt
+defined in Eq. (10) to achieve a more precise representation.      a fundamentally different approach. We design the M4A1
+The association metric is quantified through Eq. (11). Both        dataset with completely randomized actions, where both LLM
+the latency formulations (ψDevice and ψCloud ) and usage cost      selection and modality submission are randomly determined.
+formulations (ϕDevice and ϕCloud ) are incorporated as ψat and     This randomization ensures uniform coverage of the (LLM,
+ϕat in the reward function, respectively. During training, the     modality, task) grid, so that the k-NN response-score estimator
+RL learner collects on-policy rollouts in this environment,        in Eq. (10) is well-defined and low-variance at every action
+where action-dependent state components evolve deterministi-       the policy may select. In contrast, an expert dataset would
+cally via Eq. (15), the task category nt+1 is sampled from the     concentrate samples on a narrow region of the grid and leave
+empirical distribution of M4A1, and the reward at each step        the estimator unreliable for actions outside that region.
+is computed via Eq. (6) using the estimated response score in
+Eq. (10), the analytical latency and usage cost in Eqs. (12)-      B. Overview of Proposed M4A1
+(14), and the precomputed association in Eq. (11). See Alg. 1
+                                                                      To evaluate performance in practical settings, we develop
+for the full procedure.
+                                                                   M4A1, the first multi-modal, multi-task, multi-turn, and
+                                                                   multi-LLM dataset. The data collection method is detailed
+                     V. M4A1 DATASET
+                                                                   in Alg. 2, and an overview of M4A1 is depicted in Fig. 4.
+A. Principles of M4A1 Dataset Generation                           M4A1 consists of 21,014 conversation turns, each metic-
+   Current offline RL datasets can be broadly categorized into     ulously compiled by randomly and sequentially choosing
+three types: random datasets, expert datasets, and mixed-          tasks, prompts, modalities, and candidate LLMs to ensure
+quality datasets, such as D4RL [41], RL Unplugged [42],            comprehensive coverage across different configurations. The
+and RoboMimic [43]. These dataset types are designed to            key characteristics of M4A1 can be summarized as follows:
+                                                                                                                                             10
+
+
+
+                                                                              set of three multi-modal data from ActionSense, paired with
+                                                                              multiple randomly selected prompt and reference response
+                                                                              pairs from the instruction dataset.
+
+                                                                                                     VI. E XPERIMENTS
+                                                                              A. Experiment Setup
+                                                                              Training Setup. The M4A1 dataset is split into a training set
+                                                                              and a test set in an 8:2 ratio. The training set is used to train
+                                                                              RLs while the test set is used to evaluate the performance
+                                                                              at inference. When implementing our approach, we consider
+                                                                              several popular discrete RL algorithms, including PPO [34],
+                                                                              DQN [35], and A2C [33]. We consider these methods with and
+                                                                              without resource constraints, and denote RC-PPO, RC-DQN,
+                                                                              and RC-A2C as the methods with the resource constraints.
+Fig. 4. Illustration of M4A1 Dataset. Each episode combines three
+image views (first-person, side, overhead), one of four tasks (Assistant,
+                                                                              The policies are parameterized by multilayer perceptrons
+Recommendation, Query, Message Editing), multi-turn conversations, and        (MLP), with a total of 30,000 time steps set for training.
+four LLM roles (on-device, cloud, reference, judge), with the reference and   For each experiment, we repeat the process three times and
+judge LLMs scoring the candidate response.
+                                                                              report the standard deviation as the error bar. We implement
+                                                                              the TMO system and the baselines in PyTorch and conducted
+   • Three Multi-Modal Data Sources consist of images
+                                                                              the experiments on an NVIDIA A100 GPU with 40 GB of
+     from different views in a unified scenario, including first-
+                                                                              memory.
+     person, side, and overhead views.
+                                                                              Baselines. We compare the RL policies with three naive
+   • Four Tasks include Assistant, Recommendation, Query,
+                                                                              baselines: Random (with random LLM and modality selec-
+     and Message Editing, represent varying levels of task dif-
+                                                                              tion), On-device (using only the on-device LLM), and Cloud
+     ficulty, relevance to modalities, and the types of actions
+                                                                              (using only the cloud LLM with random modality selection).
+     that the LLM will undertake.
+                                                                              Inspired by recent advances in LLMs for routing [28], [45],
+   • Two to Five Conversation Turns include pairs of text
+                                                                              we substitute RL with LLM-as-Router as TMO’s decision
+     prompts and responses within a continuous context.
+                                                                              engine for the selection of LLMs and modalities. Specifically,
+   • Four LLMs contain a on-device LLM (Phi-3-mini [31]),
+                                                                              current states and possible actions are translated into natural
+     a cloud LLM (GPT-4o), a reference LLM (GPT-4o), and
+                                                                              language descriptions as contextual input for the LLM routers,
+     a judge LLM (GPT-4o [32]).
+                                                                              which then output an action in response to this prompt,
+   • Four Metrics include response score (Sec. IV-C), asso-
+                                                                              following an RL-like procedure. The LLM routers include
+     ciation (Sec. IV-D), latency (Sec. IV-E), and usage cost
+                                                                              Phi-3-mini, Phi-3.5-mini [31], LLaMA-3.2-3B, LLaMA-3.1-
+     (Sec. IV-F).
+                                                                              8B [46], Mistral-7B [47], FLAN-T5-large, FLAN-T5-xl [48],
+                                                                              Gemma-2-2B, Gemma-2-9B [49], GPT-3.5-turbo, GPT-4o-
+C. M4A1 Generation Details                                                    mini, GPT-4o, OpenAI o1-mini, OpenAI o1, and OpenAI
+                                                                              o3-mini [32]. We reiterate that none of the existing works
+   To construct the M4A1 dataset, we integrate two pre-                       can be directly applied to our setting, which features multi-
+determined datasets that provide complementary modalities,                    modal, multi-task, and multi-turn characteristics. Therefore,
+images and text. First, we use the ActionSense dataset [44]                   we reimplement AIwRG [21], an active inference method,
+to provide images, offering various camera views of human                     and PerLLM [30], a bandit-based approach using upper con-
+along with labels for each kitchen activity within the scenario,              fidence bound (UCB) for exploration-exploitation trade-off,
+as illustrated in the bottom left of Fig. 4. ActionSense is a                 integrating the settings introduced in this paper to adapt them
+large dataset of human kitchen activities that includes multi-                to our research problem.
+modal wearable sensor data and environmental camera data,                     Default Settings. The default experimental settings are as
+capturing 20 different kitchen activities such as peeling cu-                 follows unless otherwise stated; we also study the effects of
+cumbers, slicing potatoes, and cleaning plates with a sponge.                 various system parameters. Specifically, we use RC-A2C as
+These annotated kitchen activity labels function as responses                 the RL policy, with α = 1, βΛ = 1/3, βψ = 1/3, and
+to queries such as “What activity am I doing right now?”                      βϕ = 1/3 for the reward function weights, a 30 second
+Given that current LLMs rarely process time-series sensor                     latency constraint, a 0.05 USD usage cost constraint, and
+data (such as data from gyroscopes and accelerometers), we                    Jetson TX2 as the device type. These settings serve as the
+consider three types of image modalities: first-person images                 baseline from which variations are systematically introduced
+from a wearable sensor, and side and overhead views from                      to assess their effects. Additionally, we set the time span
+environmental cameras. Second, the instruction dataset is used                τ = 5, k = 5 nearest neighbors for response score estimation,
+to provide structured text data, enriching the dataset with                   and κ = 4.63 × 10−8 (USD per Joule) based on the average
+linguistic elements crucial for LLM inference and evalua-                     electricity price in the US 1 .
+tion. This dataset provides text for four different tasks with
+prompts. Each sample in M4A1 is constructed based on a                          1 https://www.energybot.com/electricity-rates/
+                                                                                                                                                          11
+
+
+
+                                                             TABLE I
+M AIN R ESULT - TMO WITH RC-A2C OPTIMALLY BALANCES ON - DEVICE / CLOUD LLM S AND ADAPTIVELY SELECTS MODALITIES , OUTPERFORMING IN
+RESPONSE QUALITY, LATENCY, AND COSTS WITHOUT CONSTRAINT VIOLATIONS . T HE HIGHLIGHTED ROW INDICATES THE HIGHEST OVERALL REWARD
+                                               WITHOUT CONSTRAINT VIOLATIONS .
+
+                      Response      Latency        Usage Cost      Overall                Cloud - Num. Selected Modalities    Constraint Violation (↓)
+  Method                                                                        Device
+                      Score (↑)      (s) (↓)     (1e-3 USD) (↓)   Reward (↑)             0 (text-only)  1       2       3      Latency    Usage Cost
+  On-Device           0.74 ±0.04    0.04 ±0.00      0.00 ±0.00     0.74 ±0.04    4203        0          0      0        0     0.00 ±0.00    0.00 ±0.00
+  Cloud               1.04 ±0.01   20.24 ±0.18     25.14 ±0.32     0.75 ±0.01      0        515        1583   1540     544    1.11 ±0.05    2.69 ±0.34
+  Random              0.86 ±0.02   10.00 ±0.25     12.32 ±0.23     0.71 ±0.01    2097       261        775    771      255    0.95 ±0.13    0.89 ±0.83
+                     LLM-as-Router [28], [45] for Inference Offloading (Ignored LLM Router’s Latency and Usage Cost)
+  Phi-3-mini          0.81 ±0.04    5.25 ±0.31      7.54 ±0.44     0.74 ±0.04    3089         0         613    207      295   0.00 ±0.00    0.00 ±0.00
+  Phi-3.5-mini        0.83 ±0.04    5.63 ±0.38      8.39 ±0.57     0.76 ±0.04    3118         0          42   1044       0    0.00 ±0.00    0.00 ±0.00
+  LLaMA-3.2-3B        1.05 ±0.02   22.04 ±0.27     35.08 ±0.39     0.74 ±0.02     78        101         58    2955     1011   2.11 ±0.04    4.02 ±0.16
+  LLaMA-3.1-8B        0.89 ±0.02   10.84 ±0.18     12.41 ±0.31     0.74 ±0.02    1933        381       1017    545      326   1.54 ±0.22    3.79 ±1.02
+  Mistral-7B          0.83 ±0.03   14.46 ±0.28      1.10 ±0.02     0.64 ±0.03    1519       2684          0     0        0    0.00 ±0.00    0.00 ±0.00
+  FLAN-T5-large       1.01 ±0.04   24.45 ±0.28     47.91 ±0.55     0.68 ±0.04      0          0           0     0      4203   4.90 ±0.01    11.14 ±0.36
+  FLAN-T5-xl          0.85 ±0.05   12.95 ±0.15      9.59 ±0.27     0.65 ±0.05    1452       1053       1408     0       289   0.00 ±0.00    0.00 ±0.00
+  Gemma-2-2B          0.74 ±0.04    0.04 ±0.00      0.00 ±0.00     0.74 ±0.04    4203         0           0     0        0    0.00 ±0.00    0.00 ±0.00
+  Gemma-2-9B          0.74 ±0.04    0.04 ±0.00      0.00 ±0.00     0.74 ±0.04    4203         0           0     0        0    0.00 ±0.00    0.00 ±0.00
+  GPT-3.5-turbo       0.99 ±0.02   19.96 ±0.51     33.75 ±0.66     0.73 ±0.01     527        190        504    692     2292   2.97 ±0.15    5.86 ±0.39
+  GPT-4o-mini         0.74 ±0.04    0.04 ±0.00      0.00 ±0.00     0.74 ±0.04    4203         0           0     0        0    0.00 ±0.00    0.00 ±0.00
+  GPT-4o              0.85 ±0.05   12.92 ±0.29      0.98 ±0.02     0.67 ±0.05    1807       2396          0     0        0    2.26 ±0.01    0.00 ±0.00
+  OpenAI o1-mini *    0.77 ±0.03    8.21 ±0.43      0.62 ±0.03     0.66 ±0.03     222        127          0     0        0    1.13 ±0.81    0.00 ±0.00
+  OpenAI o1 *         0.76 ±0.02    5.18 ±0.16      0.39 ±0.01     0.69 ±0.02     269         80          0     0        0    0.38 ±0.54    0.00 ±0.00
+  OpenAI o3-mini *    0.86 ±0.04   16.91 ±1.18      1.28 ±0.09     0.63 ±0.03     87        262          0      0        0    2.09 ±0.06    0.00 ±0.00
+                                            Comparison with SOTA Exploration-Decision Baselines
+  AIwRG [21]          1.02 ±0.05   23.73 ±0.98     44.01 ±3.50     0.69 ±0.06     113        244         0      0      3852   4.68 ±0.18    9.26 ±1.83
+  PerLLM [30]         0.97 ±0.06   21.12 ±0.08      1.60 ±0.01     0.66 ±0.06     281       3922         0      0         0   0.00 ±0.00    0.00 ±0.00
+  TMO (DQN)           1.07 ±0.02   18.42 ±1.17     21.39 ±2.40     0.81 ±0.02     133        370       2291   1153      230   4.64 ±0.44    3.61 ±1.20
+  TMO (RC-DQN)        0.98 ±0.09   11.04 ±1.88     11.90 ±1.78     0.82 ±0.07    1451        15        2572   114       24    0.51 ±0.36    0.00 ±0.00
+  TMO (PPO)           1.04 ±0.06   16.83 ±1.21     19.18 ±2.79     0.80 ±0.04     247        119       2971    803       38   3.36 ±0.16    0.86 ±1.21
+  TMO (RC-PPO)        1.01 ±0.05   13.08 ±0.29     13.72 ±0.30     0.81 ±0.04     884         0        3293     0         0   0.00 ±0.00    0.00 ±0.00
+  TMO (A2C)           1.08 ±0.06   16.69 ±0.15     17.75 ±0.31     0.84 ±0.06      0          0        4083    93        0    4.21 ±0.62    0.00 ±0.00
+  TMO (RC-A2C)        1.06 ±0.04   13.07 ±1.81     13.71 ±1.91     0.86 ±0.02     886         0        3291     0         0   0.00 ±0.00    0.00 ±0.00
+* Due to the considerable inference time and usage cost of OpenAI o1-mini, OpenAI o1, and OpenAI o3-mini, we sample 100 instances for evaluation.
+
+
+
+B. Main Experimental Results                                                    constraints, their response scores and overall rewards do not
+                                                                                confer significant advantages. Thus, these zero-shot LLM
+   Table I presents the main results of this study, with key
+                                                                                routers do not demonstrate clear benefits. This is unsurprising
+takeaways described from four perspectives.
+                                                                                given the inherent complexity of the routing problem. As
+Comparison with Naive Baselines. Compared to the on-                            discussed in Sec. III-C, the decision-making process involves
+device baseline, the proposed methods can significantly im-                     navigating trade-offs between multi-modal redundancy, re-
+prove the response score at the expense of increased latency                    source constraints, and cumulative costs across conversation
+and usage cost, thus enhancing the overall reward. Compared                     turns – challenges that even humans find difficult to optimize.
+to the cloud baseline, we also boost the response score and                     Without exposure to the specific task dynamics, zero-shot
+conserve resources by selecting the appropriate modalities,                     LLMs lack the nuanced understanding required for effec-
+which leads to improved rewards. In contrast to the Random                      tive routing. Consequently, some routers violate constraints,
+baseline, our approach strategically explores the relation-                     whereas others adopt overly conservative strategies.
+ships between tasks/conversation turns and LLMs/modalities,
+thereby optimizing decision-making processes to better align                    Comparison with SOTA Exploration-Decision Baselines.
+with the specific requirements and constraints of each task.                    Existing works do not consider multi-task and multi-turn
+Comparison with SOTA LLM-as-Router Baselines. We                                settings in multi-modal scenarios, and cannot be trivially
+replace the RL policy in TMO with an LLM router for the                         deployed to our setting. For example, AIwRG [21] utilizes a
+decision-making process. Our goal is to evaluate the zero-shot                  benchmark with a fixed evaluation metric Pass@k that mea-
+LLM router’s ability to consider task-modality associations,                    sures success rates. In contrast, our method addresses multi-
+understand contexts, and handle numerically sensitive tasks                     modal, multi-task, and multi-turn conversation settings, which
+(e.g., avoiding resource constraint violations). As shown in                    introduce significant challenges related to response score
+Table I, different LLM routers exhibit substantial variability                  evaluation and uncertainty. From the results, our TMO system
+in performance. Some LLM routers ignore all modalities                          significantly outperforms these SOTA baselines. AIwRG [21]
+(e.g., Mistral-7B, Gemma-2-2b, Gemma-2-9b, GPT-4o-mini,                         fails to efficiently select LLMs and modalities, frequently
+GPT-4o, OpenAI o1-mini, OpenAI o1, and OpenAI o3-mini),                         opting to upload all three types of modality data sources
+while others choose to upload all available modalities for                      for most actions. This results in substantial resource waste
+each task (e.g., FLAN-T5-large). Although some LLM routers                      and redundancy in uploading unnecessary information to the
+(e.g., Phi-3-mini, Phi-3.5-mini, and FLAN-T5-xl) appear to                      cloud. Conversely, PerLLM [30] rarely considers any modality
+select different LLMs and modalities without violating any                      data, relying solely on the on-device LLM and text-only cloud
+                                                                                                                                                                                      12
+
+
+
+                                                                                           TABLE II
+                                                                        A BLATION S TUDY. U SING RC-A2C AS BACKBONE .
+      LLM                   Modality           Resource               Resp. Score         Response       Latency        Usage Cost         Overall         Constraint Violation (↓)
+    Selection               Selection          Awareness              Estimation          Score (↑)       (s) (↓)     (1e-3 USD) (↓)      Reward (↑)        Latency    Usage Cost
+          ✗                                                                               0.86 ±0.06     7.55 ±0.25      7.90 ±0.26        0.76 ±0.06       0.00 ±0.00   0.00 ±0.00
+                               ✗                                                          0.99 ±0.01    15.96 ±0.13     19.76 ±0.11        0.75 ±0.01       0.93 ±0.42   1.83 ±2.60
+                                                      ✗                                   0.90 ±0.04     9.48 ±2.93      9.93 ±3.08        0.76 ±0.02       0.00 ±0.00   0.00 ±0.00
+                                                                           ✗              1.00 ±0.02    14.19 ±0.89     14.90 ±0.93        0.78 ±0.03       0.00 ±0.00   0.00 ±0.00
+         ✓                     ✓                     ✓                     ✓              1.06 ±0.04    13.07 ±1.81     13.71 ±1.91        0.86 ±0.02       0.00 ±0.00   0.00 ±0.00
+
+
+                             TABLE III
+   T RADE - OFF BETWEEN M ETRICS IN R EWARD F UNCTION - VARYING
+     WEIGHTS ILLUSTRATE PREFERENCES FOR DIFFERENT METRICS .
+                               Response     Association    Latency         Usage Cost      Overall
+ (βΛ , βψ , βϕ )   Method
+                               Score (↑)        (↑)         (s) (↓)      (1e-3 USD) (↓)   Reward (↑)
+                   AIwRG       0.99 ±0.03    0.00 ±0.00   22.56 ±0.21       1.71 ±0.02     0.51 ±0.03
+  (0, 0.5, 0.5)    PerLLM      0.97 ±0.04    0.18 ±0.00   13.13 ±0.04      13.78 ±0.04     0.53 ±0.04
+                    Ours       0.71 ±0.04    0.00 ±0.00    0.04 ±0.00       0.00 ±0.00     0.71 ±0.04
+                   AIwRG       0.99 ±0.03    0.00 ±0.00   22.56 ±0.21      1.71 ±0.02      0.97 ±0.03
+  (0.5, 0, 0.5)    PerLLM      0.95 ±0.07    0.06 ±0.08   13.01 ±0.10      5.25 ±6.05      0.94 ±0.07
+                    Ours       1.05 ±0.06    0.18 ±0.01   14.09 ±0.91      14.79 ±0.96     1.04 ±0.06
+                   AIwRG       1.04 ±0.04    0.21 ±0.00   16.63 ±0.15      17.46 ±0.16     0.86 ±0.04
+  (0.5, 0.5, 0)    PerLLM      1.00 ±0.05    0.21 ±0.04   12.91 ±0.29      15.47 ±2.42     0.88 ±0.01
+                    Ours       1.02 ±0.05    0.18 ±0.01   13.82 ±0.94      14.51 ±0.99     0.87 ±0.06
+                   AIwRG       0.99 ±0.03    0.00 ±0.00   22.56 ±0.21      1.71 ±0.02      0.67 ±0.03
+ (1/3, 1/3, 1/3)   PerLLM      1.01 ±0.10    0.12 ±0.08   13.08 ±0.10      9.53 ±6.05      0.81 ±0.10
+                    Ours       1.06 ±0.04    0.17 ±0.02   13.07 ±1.81      13.71 ±1.91     0.86 ±0.02            (a) Latency Constraint                 (b) Usage Cost Constraint
+                                                                                                         Fig. 5. Effect of resource constraints. TMO maintains compliance with
+                                                                                                         both latency and usage cost constraints under different post-training budget
+LLM. Although this approach avoids violating any resource                                                configurations, outperforming baseline methods and demonstrating robust
+constraints, it leads to lower response scores, as the cloud                                             generalization to diverse user-specified resource preferences.
+LLM lacks access to information derived from modality data.
+Analysis of Our TMO System. Most RL methods prefer                                                       LLM selection significantly degrades response scores, as on-
+utilizing the cloud LLM over the on-device LLM, as the gain                                              device LLMs frequently lack the requisite capabilities for
+in response score from the cloud LLM substantially outweighs                                             certain tasks. Similarly, random modality selection fails to
+the resource savings achieved by the on-device LLM. Re-                                                  optimize modality-task alignment, resulting in suboptimal per-
+garding modality selection, few RL methods choose text-only                                              formance. The absence of resource awareness leads to overly
+cloud LLM queries, as they often result in interaction times                                             conservative policies, as the RL policy cannot effectively rea-
+comparable to or even longer than those with multi-modal                                                 son about available resources, and consequently underutilizes
+inputs. This phenomenon depends on the inference speed                                                   resource budgets. Lastly, using average response scores fails
+of the service provider rather than factors such as network                                              to account for contextual information, particularly historical
+bandwidth. A potential explanation is that text-only and multi-                                          modality uploads, leading to biased estimations and degraded
+modal cloud LLMs may operate on different workflows or                                                   performance. These results collectively validate the necessity
+model versions. However, for cases involving multi-modal                                                 of each component in achieving optimal performance across
+inputs, we observe that single-modality selection is often                                               all evaluation metrics.
+preferred by RL methods, as it provides valuable information
+with lower latency and reduced usage costs compared to
+selecting two or three modalities. RC-A2C demonstrates the                                               D. Trade-off Between Metrics
+best response scores and overall rewards while maintaining
+                                                                                                            Table III compares TMO against AIwRG and PerLLM
+compliance with latency and usage cost constraints.
+                                                                                                         across four reward weight configurations, obtained by sweep-
+                                                                                                         ing βΛ , βψ , and βϕ for association, latency, and usage cost
+C. Ablation Study                                                                                        in Eq. (6) with α = 1 fixed. The baselines exhibit clear
+   To validate our approach, we conduct ablation studies                                                 failure modes across weight configurations: AIwRG collapses
+in Table II by systematically removing key components to                                                 to an on-device-only policy in three of the four settings,
+address the following research questions: RQ1: What is                                                   producing nearly identical metrics regardless of (βψ , βϕ ) and
+the impact of LLM selection? RQ2: How does modality                                                      failing to adapt to the specified preferences, while PerLLM
+selection affect performance? RQ3: Is resource awareness                                                 does not consistently track the reward weights either, for
+necessary? RQ4: Does uncertain response score estimation                                                 instance, under (0, 0.5, 0.5) it still incurs a substantial latency
+improve decision-making? Specifically, we evaluate variants                                              and usage cost despite the weighting explicitly penalizing
+where: (i) LLM selection is replaced with random selection,                                              it. In contrast, TMO attains the highest overall reward in
+(ii) modality selection is replaced with random selection, (iii)                                         three of four configurations and is statistically tied in the
+resource awareness is removed by employing the original state                                            fourth, confirming that its advantage holds across the diverse
+space S instead of the resource-aware S RA , and (iv) uncertain                                          application scenarios induced by different weightings (e.g.,
+response score estimation is replaced with average action                                                cost-sensitive vs. latency-sensitive deployments) rather than
+scores. Our findings reveal several critical insights. Random                                            being an artifact of any single weighting.
+                                                                                                                                                     13
+
+
+
+                                 TABLE IV
+                 O N -D EVICE H ARDWARE S PECIFICATIONS .
+                             Performance     Power     Latency    Usage Cost
+  Hardware Platform
+                              (TFLOPS)       (Watts)     (s)      (1e-3 USD)
+  Raspberry Pi-4B               0.0135          8      1.12593      4.17e-4
+  Raspberry Pi-5                0.0314         12      0.48408      2.69e-4
+  Jetson Nano                    0.472         10      0.03220      1.49e-5
+  Jetson TX2                     1.33          15      0.01143      7.94e-6
+  Jetson Xavier NX                21           20      0.00072      6.71e-7
+  Jetson Orin NX                  100          25      0.00015      1.76e-7               (a) Response Score                (b) Overall Reward
+  iPhone 15 (A16)                15.8          15      0.00096      6.69e-7
+  iPhone 15 Pro (A17 Pro)          35          15      0.00043      3.02e-7        Fig. 7. Effect of response quality of on-device LLM. TMO outperforms
+                                                                                   baselines across various deployments of on-device and cloud LLMs.
+
+                                                                                   in these extreme scenarios, hindering its ability to learn
+                                                                                   meaningful trade-offs between response quality and resource
+                                                                                   consumption. In contrast, the normal distribution provides
+                                                                                   moderately constrained budgets that necessitate careful re-
+                                                                                   source management while still allowing sufficient flexibility
+                                                                                   for diverse actions. Second, comparing with baseline methods,
+                                                                                   we observe that w/o Resource Constraint suffers from severe
+                                                                                   constraint violations under tight budgets. The w/o Resource
+        (a) Response Score                       (b) Overall Reward                Awareness baseline, lacking explicit budget information in
+Fig. 6. Effect of user device performance. TMO achieves superior performance
+                                                                                   the state space, leads the policy to adopt overly conservative
+across all device platforms, demonstrating insensitivity to hardware variations.   actions, resulting in lower overall reward. Similarly, w/o
+                                                                                   Constraint Generalization exhibits poor performance under
+E. Effect of Resource Constraints                                                  lower budgets, indicating insufficient robustness to diverse
+                                                                                   budget configurations. In contrast, our method with normal
+   We introduce the key idea of resource constraints in
+                                                                                   distribution achieves near-zero violations across all budget
+Sec. IV-G, which aims to enhance the RCRL’s awareness
+                                                                                   settings while maintaining competitive reward performance,
+of resource constraints and its generalization capability by
+                                                                                   validating the effectiveness of combining resource-aware state
+randomizing resource budgets during training. Specifically,
+                                                                                   representation with constraint generalization.
+the initial resource budget for each episode is sampled from
+a distribution B. Formally, for each resource type j ∈ J ,
+we define the following budget distributions: (i) Uniform                          F. Effect of User Device
+distribution: ξj ∼ Uj provides unbiased coverage across the                           To further validate the robustness of our approach, we
+budget range; (ii) Normal distribution: ξj ∼ Nj concen-                            investigate the effects of deploying TMO on different types
+trates sampling around typical operating budgets; and (iii)                        of user devices in Fig. 6, with detailed on-device hardware
+Hybrid distribution: we construct a hybrid distribution Hj                         specifications provided in Table IV. Our results demonstrate
+as ξj ∼ Hj = 0.5 · Nj + 0.3 · Uj + 0.2 · Ej , where                                that the performance variations across different devices do
+Ej represents a distribution concentrated on extreme budget                        not significantly impact the operation of the TMO system, as
+edge cases (e.g., very low or very high budgets). To validate                      evidenced by the absence of statistically significant differ-
+the effectiveness of our resource-aware design, we compare                         ences in response scores and overall rewards. The underlying
+against three ablation baselines: (i) w/o Resource Constraint:                     rationale is that for any device, latency and usage cost are
+the policy is trained without any resource constraints; (ii)                       normalized through min-max scaling and incorporated into
+w/o Resource Awareness: the policy uses the original state                         the overall reward formulation, ensuring consistent evalua-
+space S instead of the resource-aware state space S RA ; and                       tion across heterogeneous hardware configurations. Through
+(iii) w/o Constraint Generalization: the policy is trained with                    strategic LLM and modality selection, our approach achieves
+fixed resource budgets rather than randomized distributions.                       response quality comparable to or marginally surpassing that
+During evaluation, all methods are tested under identical post-                    of the cloud LLM baseline, while simultaneously incurring
+training budget configurations to assess their generalization                      substantially lower latency and usage cost, thereby yielding
+capabilities.                                                                      significantly superior overall rewards. Consequently, given
+   We evaluate the impact of these distribution strategies                         that the latency and usage cost of on-device LLMs are
+and baseline comparisons on RCRL training performance in                           inherently lower than those of cloud LLMs, a key takeaway
+Fig. 5. First, among the distribution strategies, the normal                       is that the TMO system can operate effectively across diverse
+distribution consistently outperforms both uniform and hybrid                      device platforms without significant performance degradation.
+distributions across all evaluation metrics. This superiority can
+be attributed to the fact that uniform and hybrid distributions
+expose the RL policy to an excessive proportion of edge cases                      G. Effect of On-Device LLM Response Quality
+during training, leading to overly conservative policies. Since                       We evaluate the TMO system’s performance by simulating
+the reward is set to zero whenever resource constraints are                        varying on-device LLM response qualities. Fig. 7 presents
+violated, the RL policy receives limited informative feedback                      these results, where we modify the response scores in the
+                                                                                                                                                                  14
+
+
+
+                                                                TABLE V
+ C LOUD L ATENCY S ENSITIVITY - W ITHOUT RETRAINING , TMO SHIFTS TRAFFIC FROM CLOUD TO DEVICE AS LATENCY DEGRADES , WITH ZERO USAGE
+  COST VIOLATIONS ACROSS ALL SCALING FACTORS AND LATENCY VIOLATIONS ONLY WHEN A SINGLE CLOUD CALL ALONE EXCEEDS THE BUDGET.
+
+  Cloud Latency    Response        Latency          Usage Cost         Overall                Cloud - Num. Selected Modalities         Constraint Violation (↓)
+                                                                                    Device
+   Multipliers     Score (↑)        (s) (↓)       (1e-3 USD) (↓)      Reward (↑)              0 (text-only)  1     2     3              Latency     Usage Cost
+        1×         1.06 ±0.04    13.07 ±1.81        13.71 ±1.91        0.86 ±0.02     886           0         3291    0       0        0.00 ±0.00    0.00 ±0.00
+        2×         1.01 ±0.05    26.12 ±0.12        13.71 ±0.07        0.82 ±0.05     900           0         3291    0       0        0.00 ±0.00    0.00 ±0.00
+        3×         0.94 ±0.05    28.59 ±0.00        10.00 ±0.00        0.79 ±0.05    1791           0         2400    0       0        0.00 ±0.00    0.00 ±0.00
+        5×         0.83 ±0.05    31.77 ±11.22       6.67 ±2.36         0.73 ±0.02    2591           0         1600    0       0        5.88 ±8.31    0.00 ±0.00
+       10×         0.79 ±0.00    47.64 ±0.00         5.00 ±0.00        0.71 ±0.00    2991           0         1200    0       0        17.64 ±0.00   0.00 ±0.00
+
+
+                           TABLE VI
+ E FFECT OF TASK DISTRIBUTION SHIFT. TMO MAINTAINS ITS OVERALL
+ REWARD ADVANTAGE ACROSS ALL TASK - CONCENTRATION LEVELS α.
+
+                  Response       Latency          Usage Cost        Overall
+  α    Method
+                  Score (↑)       (s) (↓)       (1e-3 USD) (↓)     Reward (↑)
+       AIwRG      0.98 ±0.08    22.22 ±1.32       38.51 ±9.56       0.66 ±0.06
+ 0.1   PerLLM     0.99 ±0.05    21.58 ±0.38       40.43 ±0.55       0.68 ±0.05
+        Ours      1.05 ±0.04    13.88 ±0.75       14.57 ±0.79       0.84 ±0.03
+       AIwRG      0.99 ±0.06    25.42 ±2.21      43.80 ±12.68       0.68 ±0.04
+ 0.5   PerLLM     0.99 ±0.04    23.55 ±0.15      43.34 ±0.25        0.69 ±0.04
+        Ours      1.04 ±0.04    14.97 ±0.70       15.71 ±0.73       0.85 ±0.04
+       AIwRG      0.98 ±0.04    25.58 ±2.35      44.15 ±12.90       0.66 ±0.02        (a) Latency vs. Modality Count              (b) Latency vs. Time Span
+ 1.0   PerLLM     0.97 ±0.02    23.41 ±0.05      42.87 ±0.07        0.67 ±0.02
+        Ours      1.03 ±0.06    14.90 ±0.54       15.64 ±0.56       0.84 ±0.05      Fig. 8. Per-decision latency of the decision engine. PerLLM scales with both
+                                                                                    modality count and time span, while AIwRG scales only with modality count
+       AIwRG      0.99 ±0.04    21.34 ±1.54       37.18 ±9.47       0.67 ±0.03
+ 5.0   PerLLM     0.98 ±0.04    19.95 ±0.11       37.51 ±0.20       0.67 ±0.04      since time span does not enter its rollout. TMO performs a single forward pass
+        Ours      1.09 ±0.04    13.06 ±0.42       13.71 ±0.45       0.88 ±0.03      per decision and remains essentially flat.
+
+
+M4A1 dataset by applying specific adjustments (represented                          tency by {1, 2, 3, 5, 10}× at evaluation, with RC-A2C trained
+as the “Gap” in the figure) to simulate different on-device                         once under a 30 s latency budget. As shown in Table V, from
+LLM capabilities. The TMO system consistently outperforms                           1× to 3× the policy reads the remaining budget in sRA     t   and
+all three baselines regardless of the quality gap between                           reroutes traffic from cloud (3291 → 2400 single modality
+on-device and cloud LLMs, demonstrating its effectiveness                           calls) to device (886 → 1791 calls), maintaining zero viola-
+across arbitrary combinations of on-device and cloud LLM                            tions despite a tripled per call latency, which confirms that sRA
+                                                                                                                                                   t
+
+capabilities. When the on-device LLM response quality is                            encodes resource availability rather than a memorized action
+substantially inferior to that of the cloud LLM, TMO con-                           distribution. Beyond 3×, latency violations are arithmetically
+sistently selects the cloud LLM and proceeds with strategic                         unavoidable since a single 10× cloud call (47.64 s) already
+modality selection. As the quality of the on-device LLM                             exceeds the budget, and the observed 17.64 s violation exactly
+response approaches that of the cloud LLM, TMO adaptively                           matches the per call excess 47.64 − 30, with the saturated
+balances between on-device and cloud options to optimize                            cloud calls under 5× and 10× paired with rising device usage
+the overall reward. A representative example is observed at                         corroborating that the policy issues at most one cloud call per
+Gap = 0.2, where the on-device LLM’s response score closely                         episode and falls back to device inference thereafter.
+approximates that of the cloud LLM, while its latency and
+usage cost remain substantially lower. Consequently, TMO ex-                        I. Effect of Task Distribution Shift
+hibits a strong preference for the on-device LLM, resulting in
+slightly lower response scores but still higher overall rewards                        Table VI evaluates robustness to online task-distribution
+due to the favorable resource trade-off. Furthermore, even                          shift: each method is trained on the training set and tested
+in the extreme scenario where identical LLMs are deployed                           on episodes whose task mixtures are drawn from Dir(α14 ),
+both on-device and in the cloud, TMO still achieves superior                        with small α concentrating episodes on fewer of the four
+response quality. This holds under the assumption that the on-                      categories and large α approaching a uniform mixture. Since
+device LLM does not support multi-modal inputs (or, from                            M4A1 samples categories independently per turn, episode-
+a broader perspective, the cloud LLM cannot access user                             level concentration is absent at training time, whereas at
+multi-modal data due to privacy concerns), which reflects                           α = 0.1 roughly 24% of test episodes are dominated by a
+the distinctive challenge described in RQ1. These results                           single category and over 90% contain at most two, while at
+validate our methodology’s applicability across diverse on-                         α = 5 over 60% span three or four. For intuition, a draw at
+device LLM capabilities and demonstrate its robustness to                           α = 0.1 gives mixture (0.03, 0.06, 0.91, 0.00), yielding a 5-
+varying quality gaps between on-device and cloud LLMs.                              turn episode (Assistant, Query, Query, Query, Query), whereas
+                                                                                    a draw at α = 5 gives mixture (0.28, 0.25, 0.26, 0.22),
+                                                                                    yielding (Edit, Assistant, Recommendation, Recommendation,
+H. Effect of Cloud Latency Variations                                               Assistant). Across all α, TMO retains its reward advantage
+  To assess robustness to runtime overheads, network drift,                         over AIwRG and PerLLM, with all three methods varying
+and provider-side changes, we scale the measured cloud la-                          only modestly. The limited sensitivity to α is consistent with
+                                                                                                                                                       15
+
+
+
+the per-turn structure of the routing decision, since episode-                [4] L. Yuan, D.-J. Han, C. Brinton, and S. Brunswicker, “LLMAP: LLM-
+level concentration alters the empirical mixture of turn types                    Assisted Multi-Objective Route Planning with User Preferences,” in
+                                                                                  Findings of the Association for Computational Linguistics: EMNLP
+within an episode without changing the optimal action on any                      2025, 2025, pp. 7866–7894.
+individual turn.                                                              [5] L. Yuan, C. Deng, D.-J. Han, I. Hwang, S. Brunswicker, and C. G.
+                                                                                  Brinton, “Next-Generation LLM for UAV: From Natural Language to
+                                                                                  Autonomous Flight,” arXiv preprint arXiv:2510.21739, 2025.
+J. Runtime Scaling Analysis                                                   [6] N. Su, C. Hu, B. Li, and B. Li, “Titanic: Towards Production Federated
+                                                                                  Learning with Large Language Models,” in IEEE INFOCOM 2024-
+   We profile per-decision latency on an Apple M1 Pro CPU,                        IEEE Conference on Computer Communications. IEEE, 2024, pp.
+averaged over 5,000 trials after 200 warmup iterations, vary-                     611–620.
+                                                                              [7] Z. Wang, Y. Wang, and J. Zhao, “Resource Allocation and Secure
+ing the modality count |M| and time span τ with action-space                      Wireless Communication in the Large Model based Mobile Edge
+size |A| = 2|M| + 1, with results shown in Fig. 8. PerLLM                         Computing System,” in Proceedings of the Twenty-fifth International
+scores every candidate placement under a UCB rule with                            Symposium on Theory, Algorithmic Foundations, and Protocol Design
+                                                                                  for Mobile Networks and Mobile Computing, 2024, pp. 111–120.
+per-arm feasibility checks, sweeping the full action set; its
+                                                                              [8] L. Yuan, W. Fang, S. Wang, and C. G. Brinton, “PAAC:
+τ -dependence arises from the sliding-window aggregation of                       Privacy-Aware Agentic Device-Cloud Collaboration,” arXiv preprint
+latency/usage costs and the associated constraint-slack term,                     arXiv:2605.08646, 2026.
+both recomputed each turn. AIwRG evaluates the expected                       [9] L. Yuan, W. Fang, S. Wang, H. V. Poor, and C. G. Brinton, “Large
+                                                                                  Language Models over Networks: Collaborative Intelligence under
+free energy of every action in A via a batched forward                            Resource Constraints,” arXiv preprint arXiv:2605.08626, 2026.
+through its belief model and takes the argmin. Both baselines                [10] J. Lee, J. Wang, E. Brown, L. Chu, S. S. Rodriguez, and J. E. Froehlich,
+therefore redo work exponential in |M| at every turn. TMO                         “GazePointAR: A Context-Aware Multimodal Voice Assistant for Pro-
+                                                                                  noun Disambiguation in Wearable Augmented Reality,” in Proceedings
+instead avoids enumeration: inference is a single forward pass                    of the CHI Conference on Human Factors in Computing Systems, 2024,
+through a fixed-architecture network of hidden width H with                       pp. 1–20.
+a categorical head over A, so |M| and τ affect only the                      [11] M. Hu, Z. Zhang, S. Zhao, M. Huang, and B. Wu, “Uncertainty in Nat-
+                                                                                  ural Language Processing: Sources, Quantification, and Applications,”
+input and output layer sizes. Across the tested range this                        arXiv preprint arXiv:2306.04459, 2023.
+growth is dominated by the constant hidden-layer cost, leaving               [12] X. Chu, L. Qiao, X. Lin, S. Xu, Y. Yang, Y. Hu, F. Wei, X. Zhang,
+per-decision latency essentially flat; the combinatorial cost is                  B. Zhang, X. Wei et al., “MobileVLM : A Fast, Strong and
+                                                                                  Open Vision Language Assistant for Mobile Devices,” arXiv preprint
+amortized into offline training.                                                  arXiv:2312.16886, 2023.
+                                                                             [13] J. Lin, J. Tang, H. Tang, S. Yang, W.-M. Chen, W.-C. Wang, G. Xiao,
+                                                                                  X. Dang, C. Gan, and S. Han, “AWQ: Activation-aware Weight
+                        VII. C ONCLUSION                                          Quantization for On-Device LLM Compression and Acceleration,”
+   In this paper, we developed TMO, a novel device-cloud LLM                      Proceedings of Machine Learning and Systems, vol. 6, pp. 87–100,
+                                                                                  2024.
+inference offloading system designed specifically for multi-                 [14] D. Xu, W. Yin, H. Zhang, X. Jin, Y. Zhang, S. Wei, M. Xu, and
+modal, multi-task, and multi-turn conversation scenarios. We                      X. Liu, “EdgeLLM: Fast On-Device LLM Inference With Speculative
+formulated the joint LLM and modality selection process as                        Decoding,” IEEE Transactions on Mobile Computing, vol. 24, no. 4,
+                                                                                  pp. 3256–3273, 2024.
+a resource-constrained reinforcement learning (RCRL) prob-                   [15] B. Zhang, J. Zhang, J. Hou, and Y. Wang, “TensAllo: Adaptive
+lem that maximizes long-term cumulative reward (response                          Deployment of LLMs on Resource-Constrained Heterogeneous Edge
+quality, latency, and usage cost) under practical user-specified                  Devices,” in IEEE INFOCOM 2025-IEEE Conference on Computer
+                                                                                  Communications. IEEE, 2025, pp. 1–10.
+resource budgets. Additionally, we curated a novel dataset,                  [16] Y. Shen, J. Shao, X. Zhang, Z. Lin, H. Pan, D. Li, J. Zhang, and K. B.
+M4A1, enabling evaluation of TMO system performance                               Letaief, “Large Language Models Empowered Autonomous Edge AI
+across various configurations of modality availability, tasks,                    for Connected Intelligence,” IEEE Communications Magazine, vol. 62,
+                                                                                  no. 10, pp. 140–146, 2024.
+conversation turns, resource constraints, and LLM response
+                                                                             [17] S. Ye, B. Ouyang, L. Zeng, T. Qian, X. Chu, J. Tang, and X. Chen,
+qualities. We demonstrated improvements in the overall re-                        “Jupiter: Fast and Resource-Efficient Collaborative Inference of Gen-
+ward obtained by TMO over several baselines. Future work                          erative LLMs on Edge Devices,” in IEEE INFOCOM 2025-IEEE
+will extend the policy state with dynamic device- and cloud-                      Conference on Computer Communications. IEEE, 2025, pp. 1–10.
+                                                                             [18] X. Zhang, J. Nie, Y. Huang, G. Xie, Z. Xiong, J. Liu, D. Niyato,
+side runtime conditions, including on-device compute, mem-                        and X. Shen, “Beyond the Cloud: Edge Inference for Generative
+ory, and battery availability, network round-trip times and                       Large Language Models in Wireless Networks,” IEEE Transactions on
+bandwidth, and provider-side load and throttling, to enable                       Wireless Communications, vol. 24, no. 1, pp. 643–658, 2024.
+                                                                             [19] X. Zhang, Z. Huang, E. O. Taga, C. Joe-Wong, S. Oymak, and J. Chen,
+proactive rather than reactive adaptation.                                        “Efficient contextual llm cascades through budget-constrained policy
+                                                                                  learning,” Advances in Neural Information Processing Systems, vol. 37,
+                                                                                  pp. 91 691–91 722, 2024.
+                            R EFERENCES
+                                                                             [20] Q. Dong, X. Chen, and M. Satyanarayanan, “Creating edge ai from
+ [1] L. Yuan, D.-J. Han, S. Wang, and C. Brinton, “Local-Cloud Infer-             cloud-based llms,” in Proceedings of the 25th International Workshop
+     ence Offloading for LLMs in Multi-Modal, Multi-Task, Multi-Dialogue          on Mobile Computing Systems and Applications, 2024, pp. 8–13.
+     Settings,” in Proceedings of the Twenty-sixth International Symposium   [21] Y. He, J. Fang, F. R. Yu, and V. C. Leung, “Large Language Models
+     on Theory, Algorithmic Foundations, and Protocol Design for Mobile           (LLMs) Inference Offloading and Resource Allocation in Cloud-Edge
+     Networks and Mobile Computing, 2025, pp. 201–210.                            Computing: An Active Inference Approach,” IEEE Transactions on
+ [2] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman,          Mobile Computing, vol. 23, no. 12, pp. 11 253–11 264, 2024.
+     D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat et al., “GPT-4       [22] C. Singhal, Y. Wu, F. Malandrino, M. Levorato, and C. F. Chiasserini,
+     Technical Report,” arXiv preprint arXiv:2303.08774, 2023.                    “Resource-aware Deployment of Dynamic DNNs over Multi-tiered
+ [3] W. X. Zhao, K. Zhou, J. Li, T. Tang, X. Wang, Y. Hou, Y. Min,                Interconnected Systems,” in IEEE INFOCOM 2024-IEEE Conference
+     B. Zhang, J. Zhang, Z. Dong et al., “A Survey of Large Language              on Computer Communications. IEEE, 2024, pp. 1621–1630.
+     Models,” arXiv preprint arXiv:2303.18223, vol. 1, no. 2, pp. 1–124,     [23] G. Al-Atat, P. Datta, S. Moharir, and J. P. Champati, “Regret Bounds
+     2023.                                                                        for Online Learning for Hierarchical Inference,” in Proceedings of the
+                                                                                                                                                            16
+
+
+
+     Twenty-fifth International Symposium on Theory, Algorithmic Founda-              Environment,” Advances in Neural Information Processing Systems,
+     tions, and Protocol Design for Mobile Networks and Mobile Computing,             vol. 35, pp. 13 800–13 813, 2022.
+     2024, pp. 281–290.                                                          [45] D. Ding, A. Mallick, C. Wang, R. Sim, S. Mukherjee, V. Rühle,
+[24] C. Liu and J. Zhao, “Resource Allocation for Stable LLM Training in              L. Lakshmanan, and A. H. Awadallah, “Hybrid LLM: Cost-Efficient
+     Mobile Edge Computing,” in Proceedings of the Twenty-fifth Interna-              and Quality-Aware Query Routing,” in International Conference on
+     tional Symposium on Theory, Algorithmic Foundations, and Protocol                Learning Representations, vol. 2024, 2024, pp. 41 348–41 366.
+     Design for Mobile Networks and Mobile Computing, 2024, pp. 81–90.           [46] A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman,
+[25] H. B. Beytur, A. G. Aydin, G. de Veciana, and H. Vikalo, “Optimization           A. Mathur, A. Schelten, A. Yang, A. Fan et al., “The Llama 3 Herd of
+     of Offloading Policies for Accuracy-Delay Tradeoffs in Hierarchical              Models,” arXiv preprint arXiv:2407.21783, 2024.
+     Inference,” in IEEE INFOCOM 2024-IEEE Conference on Computer                [47] A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot,
+     Communications. IEEE, 2024, pp. 1989–1998.                                       D. d. l. Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier et al.,
+[26] N. Chen, S. Zhang, Y. Liang, J. Wu, Y. Chen, Y. Yan, Z. Qian, and                “Mistral 7b,” arXiv preprint arXiv:2310.06825, 2023.
+     S. Lu, “TileSR: Accelerate On-Device Super-Resolution with Parallel         [48] H. W. Chung, L. Hou, S. Longpre, B. Zoph, Y. Tay, W. Fedus, Y. Li,
+     Offloading in Tile Granularity,” in IEEE INFOCOM 2024-IEEE Con-                  X. Wang, M. Dehghani, S. Brahma et al., “Scaling Instruction-Finetuned
+     ference on Computer Communications. IEEE, 2024, pp. 2538–2547.                   Language Models,” Journal of Machine Learning Research, vol. 25,
+[27] H. Zhang, T. Feng, and J. You, “Router-R1: Teaching LLMs Multi-                  no. 70, pp. 1–53, 2024.
+     Round Routing and Aggregation via Reinforcement Learning,” in               [49] Gemma Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupati-
+     Advances in Neural Information Processing Systems, vol. 38, 2025, pp.            raju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé et al., “Gemma 2:
+     141 233–141 265.                                                                 Improving Open Language Models at a Practical Size,” arXiv preprint
+[28] W. Fang, D.-J. Han, L. Yuan, E. Chen, and C. Brinton, “Bridging                  arXiv:2408.00118, 2024.
+     On-Device and Cloud LLMs for Collaborative Reasoning: A Unified
+     Methodology for Local Routing and Post-Training,” in Proceedings of                                 Liangqi Yuan (Student Member, IEEE) received
+     the Forty-third International Conference on Machine Learning, 2026.                                 the B.E. degree in Photo-electronic Information
+[29] W. Fang, L. Yuan, G. Lan, D.-J. Han, and C. G. Brinton, “Iterative                                  Science and Engineering from Beijing Information
+     Critique-and-Routing Controller for Multi-Agent Systems with Hetero-                                Science and Technology University, Beijing, China,
+     geneous LLMs,” arXiv preprint arXiv:2605.08686, 2026.                                               in 2020, and the M.S. degree in Electrical and
+[30] Z. Yang, Y. Yang, C. Zhao, Q. Guo, W. He, and W. Ji, “PerLLM:                                       Computer Engineering from Oakland University,
+     Personalized Inference Scheduling with Edge-Cloud Collaboration for                                 Rochester, MI, USA, in 2022. He is currently pursu-
+     Diverse LLM Services,” arXiv preprint arXiv:2405.14636, 2024.                                       ing the Ph.D. degree in Electrical and Computer En-
+[31] M. Abdin, S. A. Jacobs, A. A. Awan, J. Aneja, A. Awadallah,                                         gineering in the School of Electrical and Computer
+     H. Awadalla, N. Bach, A. Bahree, A. Bakhtiari, H. Behl et al., “Phi-3                               Engineering at Purdue University, West Lafayette,
+     Technical Report: A Highly Capable Language Model Locally on Your                                   IN, USA. His research interests include multimodal
+     Phone,” arXiv preprint arXiv:2404.14219, 2024.                              learning, mobile computing, and machine learning.
+[32] OpenAI, “OpenAI API,” https://openai.com/api/, 2026.
+[33] V. Mnih, A. P. Badia, M. Mirza, A. Graves, T. Lillicrap, T. Harley,                                 Dong-Jun Han (Member, IEEE) received the B.S.
+     D. Silver, and K. Kavukcuoglu, “Asynchronous Methods for Deep Rein-                                 degree in mathematics and electrical engineering
+     forcement Learning,” in International conference on machine learning.                               and the M.S. and Ph.D. degrees in electrical engi-
+     PMLR, 2016, pp. 1928–1937.                                                                          neering from Korea Advanced Institute of Science
+[34] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Proxi-                             and Technology (KAIST), South Korea, in 2016,
+     mal Policy Optimization Algorithms,” arXiv preprint arXiv:1707.06347,                               2018, and 2022, respectively. He is currently an As-
+     2017.                                                                                               sistant Professor with the Department of Computer
+[35] V. Mnih, K. Kavukcuoglu, D. Silver, A. A. Rusu, J. Veness, M. G.                                    Science and Engineering, Yonsei University, South
+     Bellemare, A. Graves, M. Riedmiller, A. K. Fidjeland, G. Ostrovski                                  Korea. His research interests include the intersection
+     et al., “Human-level control through deep reinforcement learning,”                                  of communications, networking, and machine learn-
+     nature, vol. 518, no. 7540, pp. 529–533, 2015.                                                      ing, specifically in distributed/federated machine
+[36] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin,          learning and network optimization.
+     C. Zhang, S. Agarwal, K. Slama, A. Ray et al., “Training language
+     models to follow instructions with human feedback,” Advances in neural                                Shiqiang Wang (Fellow, IEEE) is a Professor of
+     information processing systems, vol. 35, pp. 27 730–27 744, 2022.                                     Artificial Intelligence in the Department of Com-
+[37] H. Liu, C. Li, Q. Wu, and Y. J. Lee, “Visual instruction tuning,”                                     puter Science, University of Exeter, United King-
+     Advances in neural information processing systems, vol. 36, 2024.                                     dom. He was a researcher at IBM T. J. Watson
+[38] Y. Ran, Y.-C. Li, F. Zhang, Z. Zhang, and Y. Yu, “Policy Regulariza-                                  Research Center, NY, United States until Oct. 2025.
+     tion with Dataset Constraint for Offline Reinforcement Learning,” in                                  He received his Ph.D. from Imperial College Lon-
+     International Conference on Machine Learning. PMLR, 2023, pp.                                         don, United Kingdom, in 2015. His research focuses
+     28 701–28 717.                                                                                        on the intersection of artificial intelligence (AI),
+[39] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal,                                     distributed computing, and optimization, with a
+     G. Sastry, A. Askell, P. Mishkin, J. Clark et al., “Learning Transferable                             broad range of applications including large language
+     Visual Models From Natural Language Supervision,” in International                                    models (LLMs), agentic AI, efficient model training
+     conference on machine learning. PMLR, 2021, pp. 8748–8763.                  and inference, and AI in distributed systems. He received the IEEE Communi-
+[40] A. Canziani, A. Paszke, and E. Culurciello, “An Analysis of Deep            cations Society (ComSoc) Leonard G. Abraham Prize in 2021, IEEE ComSoc
+     Neural Network Models for Practical Applications,” arXiv preprint           Best Young Professional Award in Industry in 2021, Best Paper Runner-Up
+     arXiv:1605.07678, 2016.                                                     of ACM MobiHoc 2025, IBM Outstanding Technical Achievement Awards
+[41] J. Fu, A. Kumar, O. Nachum, G. Tucker, and S. Levine, “D4RL:                (OTAA) in 2019, 2021, 2022, and 2023, and multiple Invention Achievement
+     Datasets for Deep Data-Driven Reinforcement Learning,” arXiv preprint       Awards from IBM since 2016. He is an IEEE Fellow in the Class of 2026.
+     arXiv:2004.07219, 2020.
+[42] C. Gulcehre, Z. Wang, A. Novikov, T. Paine, S. Gómez, K. Zolna,                                     Christopher G. Brinton (Senior Member, IEEE) is
+     R. Agarwal, J. S. Merel, D. J. Mankowitz, C. Paduraru et al., “RL                                    the Elmore Associate Professor of ECE at Purdue
+     Unplugged: A Suite of Benchmarks for Offline Reinforcement Learn-                                    University. He received his Ph.D. and M.Sc. in
+     ing,” Advances in neural information processing systems, vol. 33, pp.                                EE from Princeton University in 2016 and 2013,
+     7248–7259, 2020.                                                                                     respectively. He is a recipient of four of the US
+[43] A. Mandlekar, D. Xu, J. Wong, S. Nasiriany, C. Wang, R. Kulkarni,                                    top early career awards, from the National Sci-
+     L. Fei-Fei, S. Savarese, Y. Zhu, and R. Martı́n-Martı́n, “What Matters in                            ence Foundation (CAREER), Office of Naval Re-
+     Learning from Offline Human Demonstrations for Robot Manipulation,”                                  search (YIP), Defense Advanced Research Projects
+     in Conference on Robot Learning. PMLR, 2022, pp. 1678–1690.                                          Agency (YFA), and Air Force Office of Scientific
+[44] J. DelPreto, C. Liu, Y. Luo, M. Foshey, Y. Li, A. Torralba, W. Matusik,                              Research (YIP). He is also a recipient of the In-
+     and D. Rus, “ActionSense: A Multimodal Dataset and Recording                                         tel Rising Star Faculty Award and the Qualcomm
+     Framework for Human Activities Using Wearable Sensors in a Kitchen          Faculty Award.
+

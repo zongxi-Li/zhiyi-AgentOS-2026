@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-18",
+  "topics": {
+    "planner": {
+      "pdfs": 44,
+      "pages": 1001,
+      "all_page_objects_loaded": true,
+      "sha256_matches_manifest": true,
+      "extracted_text_present": true
+    },
+    "differential_privacy": {
+      "pdfs": 18,
+      "pages": 602,
+      "all_page_objects_loaded": true,
+      "sha256_matches_manifest": true,
+      "extracted_text_present": true
+    },
+    "leading_model": {
+      "pdfs": 19,
+      "pages": 296,
+      "all_page_objects_loaded": true,
+      "sha256_matches_manifest": true,
+      "extracted_text_present": true
+    },
+    "intent_model": {
+      "pdfs": 14,
+      "pages": 227,
+      "all_page_objects_loaded": true,
+      "sha256_matches_manifest": true,
+      "extracted_text_present": true
+    },
+    "graph_evolution": {
+      "pdfs": 24,
+      "pages": 686,
+      "all_page_objects_loaded": true,
+      "sha256_matches_manifest": true,
+      "extracted_text_present": true
+    },
+    "skills_evolution": {
+      "pdfs": 27,
+      "pages": 687,
+      "all_page_objects_loaded": true,
+      "sha256_matches_manifest": true,
+      "extracted_text_present": true
+    }
+  },
+  "total_pdfs": 146,
+  "total_pages": 3499,
+  "seed_pdfs": 5,
+  "new_downloads": 141,
+  "markdown_files_checked": 14,
+  "broken_local_links": [],
+  "duplicate_pdf_hashes": [],
+  "model_reproduction": "not_run",
+  "business_code_changed": false
+}

@@ -1,0 +1,765 @@
+{
+  "intent_foundations": {
+    "query": "ti:IntentGPT OR ti:CLAMBER OR ti:PICARD OR ti:RouteLLM OR ti:FrugalGPT OR ti:\"Schema-Guided Dialogue\" OR ti:\"Out-of-Scope Prediction\"",
+    "entries": [
+      {
+        "id": "2002.01359v1",
+        "title": "Schema-Guided Dialogue State Tracking Task at DSTC8",
+        "abstract": "This paper gives an overview of the Schema-Guided Dialogue State Tracking task of the 8th Dialogue System Technology Challenge. The goal of this task is to develop dialogue state tracking models suitable for large-scale virtual assistants, with a focus on data-efficient joint modeling across domains and zero-shot generalization to new APIs. This task provided a new dataset consisting of over 16000 dialogues in the training set spanning 16 domains to highlight these challenges, and a baseline model capable of zero-shot generalization to new APIs. Twenty-five teams participated, developing a range of neural network models, exceeding the performance of the baseline model by a very high margin. The submissions incorporated a variety of pre-trained encoders and data augmentation techniques. This paper describes the task definition, dataset and evaluation methodology. We also summarize the approach and results of the submitted systems to highlight the overall trends in the state-of-the-art.",
+        "published": "2020-02-02T05:59:27Z",
+        "updated": "2020-02-02T05:59:27Z",
+        "authors": [
+          "Abhinav Rastogi",
+          "Xiaoxue Zang",
+          "Srinivas Sunkara",
+          "Raghav Gupta",
+          "Pranav Khaitan"
+        ],
+        "url": "https://arxiv.org/abs/2002.01359v1",
+        "pdf": "https://arxiv.org/pdf/2002.01359v1"
+      },
+      {
+        "id": "2006.09035v1",
+        "title": "The SPPD System for Schema Guided Dialogue State Tracking Challenge",
+        "abstract": "This paper introduces one of our group's work on the Dialog System Technology Challenges 8 (DSTC8), the SPPD system for Schema Guided dialogue state tracking challenge. This challenge, named as Track 4 in DSTC8, provides a brand new and challenging dataset for developing scalable multi-domain dialogue state tracking algorithms for real world dialogue systems. We propose a zero-shot dialogue state tracking system for this task. The key components of the system is a number of BERT based zero-shot NLU models that can effectively capture semantic relations between natural language descriptions of services' schemas and utterances from dialogue turns. We also propose some strategies to make the system better to exploit information from longer dialogue history and to overcome the slot carryover problem for multi-domain dialogues. The experimental results show that the proposed system achieves a significant improvement compared with the baseline system.",
+        "published": "2020-06-16T09:57:40Z",
+        "updated": "2020-06-16T09:57:40Z",
+        "authors": [
+          "Miao Li",
+          "Haoqi Xiong",
+          "Yunbo Cao"
+        ],
+        "url": "https://arxiv.org/abs/2006.09035v1",
+        "pdf": "https://arxiv.org/pdf/2006.09035v1"
+      },
+      {
+        "id": "2207.00828v1",
+        "title": "A Multi-Task BERT Model for Schema-Guided Dialogue State Tracking",
+        "abstract": "Task-oriented dialogue systems often employ a Dialogue State Tracker (DST) to successfully complete conversations. Recent state-of-the-art DST implementations rely on schemata of diverse services to improve model robustness and handle zero-shot generalization to new domains [1], however such methods [2, 3] typically require multiple large scale transformer models and long input sequences to perform well. We propose a single multi-task BERT-based model that jointly solves the three DST tasks of intent prediction, requested slot prediction and slot filling. Moreover, we propose an efficient and parsimonious encoding of the dialogue history and service schemata that is shown to further improve performance. Evaluation on the SGD dataset shows that our approach outperforms the baseline SGP-DST by a large margin and performs well compared to the state-of-the-art, while being significantly more computationally efficient. Extensive ablation studies are performed to examine the contributing factors to the success of our model.",
+        "published": "2022-07-02T13:27:59Z",
+        "updated": "2022-07-02T13:27:59Z",
+        "authors": [
+          "Eleftherios Kapelonis",
+          "Efthymios Georgiou",
+          "Alexandros Potamianos"
+        ],
+        "url": "https://arxiv.org/abs/2207.00828v1",
+        "pdf": "https://arxiv.org/pdf/2207.00828v1"
+      },
+      {
+        "id": "2602.18764v2",
+        "title": "The Convergence of Schema-Guided Dialogue Systems and the Model Context Protocol",
+        "abstract": "This paper establishes a fundamental convergence: Schema-Guided Dialogue (SGD) and the Model Context Protocol (MCP) represent two manifestations of a unified paradigm for deterministic, auditable LLM-agent interaction. SGD, designed for dialogue-based API discovery (2019), and MCP, now the de facto standard for LLM-tool integration, share the same core insight -- that schemas can encode not just tool signatures but operational constraints and reasoning guidance. By analyzing this convergence, we extract five foundational principles for schema design: (1) Semantic Completeness over Syntactic Precision, (2) Explicit Action Boundaries, (3) Failure Mode Documentation, (4) Progressive Disclosure Compatibility, and (5) Inter-Tool Relationship Declaration. These principles reveal three novel insights: first, SGD's original design was fundamentally sound and should be inherited by MCP; second, both frameworks leave failure modes and inter-tool relationships unexploited -- gaps we identify and resolve; third, progressive disclosure emerges as a critical production-scaling insight under real-world token constraints. We provide concrete design patterns for each principle. These principles position schema-driven governance as a scalable mechanism for AI system oversight without requiring proprietary system inspection -- central to Software 3.0.",
+        "published": "2026-02-21T09:02:35Z",
+        "updated": "2026-03-04T20:28:56Z",
+        "authors": [
+          "Andreas Schlapbach"
+        ],
+        "url": "https://arxiv.org/abs/2602.18764v2",
+        "pdf": "https://arxiv.org/pdf/2602.18764v2"
+      },
+      {
+        "id": "1909.05855v2",
+        "title": "Towards Scalable Multi-domain Conversational Agents: The Schema-Guided Dialogue Dataset",
+        "abstract": "Virtual assistants such as Google Assistant, Alexa and Siri provide a conversational interface to a large number of services and APIs spanning multiple domains. Such systems need to support an ever-increasing number of services with possibly overlapping functionality. Furthermore, some of these services have little to no training data available. Existing public datasets for task-oriented dialogue do not sufficiently capture these challenges since they cover few domains and assume a single static ontology per domain. In this work, we introduce the the Schema-Guided Dialogue (SGD) dataset, containing over 16k multi-domain conversations spanning 16 domains. Our dataset exceeds the existing task-oriented dialogue corpora in scale, while also highlighting the challenges associated with building large-scale virtual assistants. It provides a challenging testbed for a number of tasks including language understanding, slot filling, dialogue state tracking and response generation. Along the same lines, we present a schema-guided paradigm for task-oriented dialogue, in which predictions are made over a dynamic set of intents and slots, provided as input, using their natural language descriptions. This allows a single dialogue system to easily support a large number of services and facilitates simple integration of new services without requiring additional training data. Building upon the proposed paradigm, we release a model for dialogue state tracking capable of zero-shot generalization to new APIs, while remaining competitive in the regular setting.",
+        "published": "2019-09-12T17:57:57Z",
+        "updated": "2020-01-29T18:57:49Z",
+        "authors": [
+          "Abhinav Rastogi",
+          "Xiaoxue Zang",
+          "Srinivas Sunkara",
+          "Raghav Gupta",
+          "Pranav Khaitan"
+        ],
+        "url": "https://arxiv.org/abs/1909.05855v2",
+        "pdf": "https://arxiv.org/pdf/1909.05855v2"
+      },
+      {
+        "id": "2105.08049v1",
+        "title": "SGD-QA: Fast Schema-Guided Dialogue State Tracking for Unseen Services",
+        "abstract": "Dialogue state tracking is an essential part of goal-oriented dialogue systems, while most of these state tracking models often fail to handle unseen services. In this paper, we propose SGD-QA, a simple and extensible model for schema-guided dialogue state tracking based on a question answering approach. The proposed multi-pass model shares a single encoder between the domain information and dialogue utterance. The domain's description represents the query and the dialogue utterance serves as the context. The model improves performance on unseen services by at least 1.6x compared to single-pass baseline models on the SGD dataset. SGD-QA shows competitive performance compared to state-of-the-art multi-pass models while being significantly more efficient in terms of memory consumption and training performance. We provide a thorough discussion on the model with ablation study and error analysis.",
+        "published": "2021-05-17T17:54:32Z",
+        "updated": "2021-05-17T17:54:32Z",
+        "authors": [
+          "Yang Zhang",
+          "Vahid Noroozi",
+          "Evelina Bakhturina",
+          "Boris Ginsburg"
+        ],
+        "url": "https://arxiv.org/abs/2105.08049v1",
+        "pdf": "https://arxiv.org/pdf/2105.08049v1"
+      },
+      {
+        "id": "2110.06800v3",
+        "title": "SGD-X: A Benchmark for Robust Generalization in Schema-Guided Dialogue Systems",
+        "abstract": "Zero/few-shot transfer to unseen services is a critical challenge in task-oriented dialogue research. The Schema-Guided Dialogue (SGD) dataset introduced a paradigm for enabling models to support any service in zero-shot through schemas, which describe service APIs to models in natural language. We explore the robustness of dialogue systems to linguistic variations in schemas by designing SGD-X - a benchmark extending SGD with semantically similar yet stylistically diverse variants for every schema. We observe that two top state tracking models fail to generalize well across schema variants, measured by joint goal accuracy and a novel metric for measuring schema sensitivity. Additionally, we present a simple model-agnostic data augmentation method to improve schema robustness.",
+        "published": "2021-10-13T15:38:29Z",
+        "updated": "2022-08-23T17:28:58Z",
+        "authors": [
+          "Harrison Lee",
+          "Raghav Gupta",
+          "Abhinav Rastogi",
+          "Yuan Cao",
+          "Bin Zhang",
+          "Yonghui Wu"
+        ],
+        "url": "https://arxiv.org/abs/2110.06800v3",
+        "pdf": "https://arxiv.org/pdf/2110.06800v3"
+      },
+      {
+        "id": "2303.09905v1",
+        "title": "More Robust Schema-Guided Dialogue State Tracking via Tree-Based Paraphrase Ranking",
+        "abstract": "The schema-guided paradigm overcomes scalability issues inherent in building task-oriented dialogue (TOD) agents with static ontologies. Instead of operating on dialogue context alone, agents have access to hierarchical schemas containing task-relevant natural language descriptions. Fine-tuned language models excel at schema-guided dialogue state tracking (DST) but are sensitive to the writing style of the schemas. We explore methods for improving the robustness of DST models. We propose a framework for generating synthetic schemas which uses tree-based ranking to jointly optimise lexical diversity and semantic faithfulness. The generalisation of strong baselines is improved when augmenting their training data with prompts generated by our framework, as demonstrated by marked improvements in average joint goal accuracy (JGA) and schema sensitivity (SS) on the SGD-X benchmark.",
+        "published": "2023-03-17T11:43:08Z",
+        "updated": "2023-03-17T11:43:08Z",
+        "authors": [
+          "A. Coca",
+          "B. H. Tseng",
+          "W. Lin",
+          "B. Byrne"
+        ],
+        "url": "https://arxiv.org/abs/2303.09905v1",
+        "pdf": "https://arxiv.org/pdf/2303.09905v1"
+      },
+      {
+        "id": "1909.02027v1",
+        "title": "An Evaluation Dataset for Intent Classification and Out-of-Scope Prediction",
+        "abstract": "Task-oriented dialog systems need to know when a query falls outside their range of supported intents, but current text classification corpora only define label sets that cover every example. We introduce a new dataset that includes queries that are out-of-scope---i.e., queries that do not fall into any of the system's supported intents. This poses a new challenge because models cannot assume that every query at inference time belongs to a system-supported intent class. Our dataset also covers 150 intent classes over 10 domains, capturing the breadth that a production task-oriented agent must handle. We evaluate a range of benchmark classifiers on our dataset along with several different out-of-scope identification schemes. We find that while the classifiers perform well on in-scope intent classification, they struggle to identify out-of-scope queries. Our dataset and evaluation fill an important gap in the field, offering a way of more rigorously and realistically benchmarking text classification in task-driven dialog systems.",
+        "published": "2019-09-04T18:04:56Z",
+        "updated": "2019-09-04T18:04:56Z",
+        "authors": [
+          "Stefan Larson",
+          "Anish Mahendran",
+          "Joseph J. Peper",
+          "Christopher Clarke",
+          "Andrew Lee",
+          "Parker Hill",
+          "Jonathan K. Kummerfeld",
+          "Kevin Leach",
+          "Michael A. Laurenzano",
+          "Lingjia Tang",
+          "Jason Mars"
+        ],
+        "url": "https://arxiv.org/abs/1909.02027v1",
+        "pdf": "https://arxiv.org/pdf/1909.02027v1"
+      },
+      {
+        "id": "2008.12335v1",
+        "title": "A Fast and Robust BERT-based Dialogue State Tracker for Schema-Guided Dialogue Dataset",
+        "abstract": "Dialog State Tracking (DST) is one of the most crucial modules for goal-oriented dialogue systems. In this paper, we introduce FastSGT (Fast Schema Guided Tracker), a fast and robust BERT-based model for state tracking in goal-oriented dialogue systems. The proposed model is designed for the Schema-Guided Dialogue (SGD) dataset which contains natural language descriptions for all the entities including user intents, services, and slots. The model incorporates two carry-over procedures for handling the extraction of the values not explicitly mentioned in the current user utterance. It also uses multi-head attention projections in some of the decoders to have a better modelling of the encoder outputs. In the conducted experiments we compared FastSGT to the baseline model for the SGD dataset. Our model keeps the efficiency in terms of computational and memory consumption while improving the accuracy significantly. Additionally, we present ablation studies measuring the impact of different parts of the model on its performance. We also show the effectiveness of data augmentation for improving the accuracy without increasing the amount of computational resources.",
+        "published": "2020-08-27T18:51:18Z",
+        "updated": "2020-08-27T18:51:18Z",
+        "authors": [
+          "Vahid Noroozi",
+          "Yang Zhang",
+          "Evelina Bakhturina",
+          "Tomasz Kornuta"
+        ],
+        "url": "https://arxiv.org/abs/2008.12335v1",
+        "pdf": "https://arxiv.org/pdf/2008.12335v1"
+      },
+      {
+        "id": "2306.09340v1",
+        "title": "Span-Selective Linear Attention Transformers for Effective and Robust Schema-Guided Dialogue State Tracking",
+        "abstract": "In schema-guided dialogue state tracking models estimate the current state of a conversation using natural language descriptions of the service schema for generalization to unseen services. Prior generative approaches which decode slot values sequentially do not generalize well to variations in schema, while discriminative approaches separately encode history and schema and fail to account for inter-slot and intent-slot dependencies. We introduce SPLAT, a novel architecture which achieves better generalization and efficiency than prior approaches by constraining outputs to a limited prediction space. At the same time, our model allows for rich attention among descriptions and history while keeping computation costs constrained by incorporating linear-time attention. We demonstrate the effectiveness of our model on the Schema-Guided Dialogue (SGD) and MultiWOZ datasets. Our approach significantly improves upon existing models achieving 85.3 JGA on the SGD dataset. Further, we show increased robustness on the SGD-X benchmark: our model outperforms the more than 30$\\times$ larger D3ST-XXL model by 5.0 points.",
+        "published": "2023-06-15T17:59:31Z",
+        "updated": "2023-06-15T17:59:31Z",
+        "authors": [
+          "Björn Bebensee",
+          "Haejun Lee"
+        ],
+        "url": "https://arxiv.org/abs/2306.09340v1",
+        "pdf": "https://arxiv.org/pdf/2306.09340v1"
+      },
+      {
+        "id": "2207.07276v1",
+        "title": "A Flexible Schema-Guided Dialogue Management Framework: From Friendly Peer to Virtual Standardized Cancer Patient",
+        "abstract": "A schema-guided approach to dialogue management has been shown in recent work to be effective in creating robust customizable virtual agents capable of acting as friendly peers or task assistants. However, successful applications of these methods in open-ended, mixed-initiative domains remain elusive -- particularly within medical domains such as virtual standardized patients, where such complex interactions are commonplace -- and require more extensive and flexible dialogue management capabilities than previous systems provide. In this paper, we describe a general-purpose schema-guided dialogue management framework used to develop SOPHIE, a virtual standardized cancer patient that allows a doctor to conveniently practice for interactions with patients. We conduct a crowdsourced evaluation of conversations between medical students and SOPHIE. Our agent is judged to produce responses that are natural, emotionally appropriate, and consistent with her role as a cancer patient. Furthermore, it significantly outperforms an end-to-end neural model fine-tuned on a human standardized patient corpus, attesting to the advantages of a schema-guided approach.",
+        "published": "2022-07-15T03:52:00Z",
+        "updated": "2022-07-15T03:52:00Z",
+        "authors": [
+          "Benjamin Kane",
+          "Catherine Giugno",
+          "Lenhart Schubert",
+          "Kurtis Haut",
+          "Caleb Wohn",
+          "Ehsan Hoque"
+        ],
+        "url": "https://arxiv.org/abs/2207.07276v1",
+        "pdf": "https://arxiv.org/pdf/2207.07276v1"
+      },
+      {
+        "id": "2406.18665v4",
+        "title": "RouteLLM: Learning to Route LLMs with Preference Data",
+        "abstract": "Large language models (LLMs) exhibit impressive capabilities across a wide range of tasks, yet the choice of which model to use often involves a trade-off between performance and cost. More powerful models, though effective, come with higher expenses, while less capable models are more cost-effective. To address this dilemma, we propose several efficient router models that dynamically select between a stronger and a weaker LLM during inference, aiming to optimize the balance between cost and response quality. We develop a training framework for these routers leveraging human preference data and data augmentation techniques to enhance performance. Our evaluation on widely-recognized benchmarks shows that our approach significantly reduces costs-by over 2 times in certain cases-without compromising the quality of responses. Interestingly, our router models also demonstrate significant transfer learning capabilities, maintaining their performance even when the strong and weak models are changed at test time. This highlights the potential of these routers to provide a cost-effective yet high-performance solution for deploying LLMs.",
+        "published": "2024-06-26T18:10:22Z",
+        "updated": "2025-02-23T08:50:33Z",
+        "authors": [
+          "Isaac Ong",
+          "Amjad Almahairi",
+          "Vincent Wu",
+          "Wei-Lin Chiang",
+          "Tianhao Wu",
+          "Joseph E. Gonzalez",
+          "M Waleed Kadous",
+          "Ion Stoica"
+        ],
+        "url": "https://arxiv.org/abs/2406.18665v4",
+        "pdf": "https://arxiv.org/pdf/2406.18665v4"
+      },
+      {
+        "id": "2411.10670v1",
+        "title": "IntentGPT: Few-shot Intent Discovery with Large Language Models",
+        "abstract": "In today's digitally driven world, dialogue systems play a pivotal role in enhancing user interactions, from customer service to virtual assistants. In these dialogues, it is important to identify user's goals automatically to resolve their needs promptly. This has necessitated the integration of models that perform Intent Detection. However, users' intents are diverse and dynamic, making it challenging to maintain a fixed set of predefined intents. As a result, a more practical approach is to develop a model capable of identifying new intents as they emerge. We address the challenge of Intent Discovery, an area that has drawn significant attention in recent research efforts. Existing methods need to train on a substantial amount of data for correctly identifying new intents, demanding significant human effort. To overcome this, we introduce IntentGPT, a novel training-free method that effectively prompts Large Language Models (LLMs) such as GPT-4 to discover new intents with minimal labeled data. IntentGPT comprises an \\textit{In-Context Prompt Generator}, which generates informative prompts for In-Context Learning, an \\textit{Intent Predictor} for classifying and discovering user intents from utterances, and a \\textit{Semantic Few-Shot Sampler} that selects relevant few-shot examples and a set of known intents to be injected into the prompt. Our experiments show that IntentGPT outperforms previous methods that require extensive domain-specific data and fine-tuning, in popular benchmarks, including CLINC and BANKING, among others.",
+        "published": "2024-11-16T02:16:59Z",
+        "updated": "2024-11-16T02:16:59Z",
+        "authors": [
+          "Juan A. Rodriguez",
+          "Nicholas Botzer",
+          "David Vazquez",
+          "Christopher Pal",
+          "Marco Pedersoli",
+          "Issam Laradji"
+        ],
+        "url": "https://arxiv.org/abs/2411.10670v1",
+        "pdf": "https://arxiv.org/pdf/2411.10670v1"
+      },
+      {
+        "id": "2405.12063v2",
+        "title": "CLAMBER: A Benchmark of Identifying and Clarifying Ambiguous Information Needs in Large Language Models",
+        "abstract": "Large language models (LLMs) are increasingly used to meet user information needs, but their effectiveness in dealing with user queries that contain various types of ambiguity remains unknown, ultimately risking user trust and satisfaction. To this end, we introduce CLAMBER, a benchmark for evaluating LLMs using a well-organized taxonomy. Building upon the taxonomy, we construct ~12K high-quality data to assess the strengths, weaknesses, and potential risks of various off-the-shelf LLMs. Our findings indicate the limited practical utility of current LLMs in identifying and clarifying ambiguous user queries, even enhanced by chain-of-thought (CoT) and few-shot prompting. These techniques may result in overconfidence in LLMs and yield only marginal enhancements in identifying ambiguity. Furthermore, current LLMs fall short in generating high-quality clarifying questions due to a lack of conflict resolution and inaccurate utilization of inherent knowledge. In this paper, CLAMBER presents a guidance and promotes further research on proactive and trustworthy LLMs. Our dataset is available at https://github.com/zt991211/CLAMBER",
+        "published": "2024-05-20T14:34:01Z",
+        "updated": "2024-06-01T07:35:26Z",
+        "authors": [
+          "Tong Zhang",
+          "Peixin Qin",
+          "Yang Deng",
+          "Chen Huang",
+          "Wenqiang Lei",
+          "Junhong Liu",
+          "Dingnan Jin",
+          "Hongru Liang",
+          "Tat-Seng Chua"
+        ],
+        "url": "https://arxiv.org/abs/2405.12063v2",
+        "pdf": "https://arxiv.org/pdf/2405.12063v2"
+      },
+      {
+        "id": "2305.05176v1",
+        "title": "FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance",
+        "abstract": "There is a rapidly growing number of large language models (LLMs) that users can query for a fee. We review the cost associated with querying popular LLM APIs, e.g. GPT-4, ChatGPT, J1-Jumbo, and find that these models have heterogeneous pricing structures, with fees that can differ by two orders of magnitude. In particular, using LLMs on large collections of queries and text can be expensive. Motivated by this, we outline and discuss three types of strategies that users can exploit to reduce the inference cost associated with using LLMs: 1) prompt adaptation, 2) LLM approximation, and 3) LLM cascade. As an example, we propose FrugalGPT, a simple yet flexible instantiation of LLM cascade which learns which combinations of LLMs to use for different queries in order to reduce cost and improve accuracy. Our experiments show that FrugalGPT can match the performance of the best individual LLM (e.g. GPT-4) with up to 98% cost reduction or improve the accuracy over GPT-4 by 4% with the same cost. The ideas and findings presented here lay a foundation for using LLMs sustainably and efficiently.",
+        "published": "2023-05-09T05:11:02Z",
+        "updated": "2023-05-09T05:11:02Z",
+        "authors": [
+          "Lingjiao Chen",
+          "Matei Zaharia",
+          "James Zou"
+        ],
+        "url": "https://arxiv.org/abs/2305.05176v1",
+        "pdf": "https://arxiv.org/pdf/2305.05176v1"
+      },
+      {
+        "id": "2602.19152v2",
+        "title": "Picard bundles and Twisted Picard bundles on the Jacobian of a curve",
+        "abstract": "Let $Y$ denote an irreducible projective curve with at most nodes as singularities and defined over an algebraically closed field of characteristic zero. We study the restriction of the twisted Picard bundles on the compactified Jacobian $\\overline{J}(Y)$ of $Y$ to the embedded curve in $\\overline{J}(Y)$. As an application, we show that for $g =2$ and each integer $r \\ge 3$, there is a two-dimensional family of stable ACM bundles on the compactified Jacobian which has the Picard bundle in its limit. We define an embedding $α_Y$ of the (generalised) Jacobian $J(Y)$ in the moduli space $U^s_Y(n,d)$ of stable vector bundles on $Y$ using a twisted restriction $E_Y$ of a Picard bundle to $Y \\subset J(Y)$. We show that (under suitable conditions) the restriction of the universal bundle $\\mathcal{U}$ to $Y \\times J(Y)$ is stable for suitable polarisation. For the embedding of a smooth curve $Y$ given by $E_Y \\otimes B, B$ a line bundle of degree $b$, we show that the restriction of the Picard bundle on $U^s_Y(n, d+nb)$ to $J(Y)$ is $θ$-semistable for $b \\ge 2g-1$ and $θ$-stable for $b \\ge 2g$. We also determine the relation between the restriction of the theta divisor on $U^s_Y(n,d+nb)$ to $J(Y)$ and the theta divisor $θ$ on $\\overline{J}(Y)$.",
+        "published": "2026-02-22T12:33:33Z",
+        "updated": "2026-10-21T03:47:03Z",
+        "authors": [
+          "Usha N. Bhosle"
+        ],
+        "url": "https://arxiv.org/abs/2602.19152v2",
+        "pdf": "https://arxiv.org/pdf/2602.19152v2"
+      },
+      {
+        "id": "1402.0409v1",
+        "title": "The Picard Scheme",
+        "abstract": "This article introduces, informally, the substance and the spirit of Grothendieck's theory of the Picard scheme, highlighting its elegant simplicity, natural generality, and ingenious originality against the larger historical record.",
+        "published": "2014-02-03T15:59:37Z",
+        "updated": "2014-02-03T15:59:37Z",
+        "authors": [
+          "Steven L. Kleiman"
+        ],
+        "url": "https://arxiv.org/abs/1402.0409v1",
+        "pdf": "https://arxiv.org/pdf/1402.0409v1"
+      },
+      {
+        "id": "1301.6940v2",
+        "title": "Helioseismology with PICARD",
+        "abstract": "PICARD is a CNES micro-satellite launched in June 2010 (Thuillier at al. 2006). Its main goal is to measure the solar shape, total and spectral irradiance during the ascending phase of the activity cycle. The SODISM telescope onboard PICARD also allows us to conduct a program for helioseismology in intensity at 535.7 nm (Corbard et al. 2008). One-minute cadence low-resolution full images are available for a so-called medium-$l$ program, and high-resolution images of the limb recorded every 2 minutes are used to study mode amplification near the limb in the perspective of g-mode search. First analyses and results from these two programs are presented here.",
+        "published": "2013-01-29T15:01:55Z",
+        "updated": "2013-03-02T14:11:59Z",
+        "authors": [
+          "T. Corbard",
+          "D. Salabert",
+          "P. Boumier",
+          "T. Appourchaux",
+          "A. Hauchecorne",
+          "P. Journoud",
+          "A. Nunge",
+          "B. Gelly",
+          "J. F. Hochedez",
+          "A. Irbah",
+          "M. Meftah",
+          "C. Renaud",
+          "S. Turck-Chièze"
+        ],
+        "url": "https://arxiv.org/abs/1301.6940v2",
+        "pdf": "https://arxiv.org/pdf/1301.6940v2"
+      },
+      {
+        "id": "0504020v1",
+        "title": "The Picard scheme",
+        "abstract": "We develop in detail most of the theory of the Picard scheme that Grothendieck sketched in two Bourbaki talks and in commentaries on them. Also, we review in brief much of the rest of the theory developed by Grothendieck and by others. But we begin with a twelve-page historical introduction, which traces the development of the ideas from Bernoulli to Grothendieck, and which may appeal to a wider audience.",
+        "published": "2005-04-01T14:37:52Z",
+        "updated": "2005-04-01T14:37:52Z",
+        "authors": [
+          "Steven L. Kleiman"
+        ],
+        "url": "https://arxiv.org/abs/0504020v1",
+        "pdf": "https://arxiv.org/pdf/0504020v1"
+      },
+      {
+        "id": "2608.31054v1",
+        "title": "Revisiting Picard's proof of the Picard--Weber--Weck selection theorem",
+        "abstract": "Revisiting the rationale provided by Picard in the seminal paper [13], we provide an independent, self-contained proof of the Maxwell compactness property for weak Lipschitz domains in the Euclidean setting, detouring technical complications like the differential forms setting, Gaffney's inequality for smooth domains, Calderon's extension theorem or regularity theory for PDEs, or systems thereof, on smooth domains that are used in this context. As a by-product we provide an independent proof of the classical Gaffney estimate for cubes using only $L^2$-completeness of the Fourier bases.",
+        "published": "2026-08-31T16:32:42Z",
+        "updated": "2026-08-31T16:32:42Z",
+        "authors": [
+          "Yi-Sheng Lim",
+          "Timo Sprekeler",
+          "Marcus Waurick"
+        ],
+        "url": "https://arxiv.org/abs/2608.31054v1",
+        "pdf": "https://arxiv.org/pdf/2608.31054v1"
+      },
+      {
+        "id": "0104170v2",
+        "title": "Deformations of the Picard Bundle",
+        "abstract": "Let X be a nonsingular projective algebraic curve of genus g\\ge3. We consider the moduli space M of stable bundles of fixed determinant with rank n and degree d coprime and d>n(2g-2). There is a universal bundle on XxM and we consider the direct image of this bundle on M. With the given restriction on d, this is a bundle W called the Picard bundle. Our main object in this paper is to compute the infinitesimal deformations of W. We show also that W possesses a moduli space and that the connected component of this moduli space containing W is isomorphic as a polarised variety to the Jacobian of X.",
+        "published": "2001-04-17T18:15:47Z",
+        "updated": "2002-06-10T16:46:49Z",
+        "authors": [
+          "I. Biswas",
+          "L. Brambila-Paz",
+          "P. E. Newstead"
+        ],
+        "url": "https://arxiv.org/abs/0104170v2",
+        "pdf": "https://arxiv.org/pdf/0104170v2"
+      },
+      {
+        "id": "1110.1867v1",
+        "title": "Local Picard Groups",
+        "abstract": "We use our extension of the Noether-Lefschetz theorem to describe generators of the class groups at the local rings of singularities of very general hypersurfaces containing a fixed base locus. We give several applications, including (1) every subgroup of the class group of the completed local ring of a rational double point arises as the class group of such a singularity on a surface in complex projective 3-space and (2) every complete local ring arising from a normal hypersurface singularity over the complex numbers is the completion of a unique factorization domain of essentially finite type over the complex numbers.",
+        "published": "2011-10-09T18:47:41Z",
+        "updated": "2011-10-09T18:47:41Z",
+        "authors": [
+          "John Brevik",
+          "Scott Nollet"
+        ],
+        "url": "https://arxiv.org/abs/1110.1867v1",
+        "pdf": "https://arxiv.org/pdf/1110.1867v1"
+      },
+      {
+        "id": "2412.07716v3",
+        "title": "On The Telescopic Picard Group",
+        "abstract": "We prove that for any prime $p$ and height $n \\ge 1$, the telescopic Picard group $\\mathrm{Pic}(\\mathrm{Sp}_{Tn})$ contains a subgroup of the form $\\mathbb{Z}_p \\times \\mathbb{Z}/a_p(p^n-1)$, where $a_p = 1$ if $p = 2$ and $a_p = 2$ if $p$ is odd. Using Kummer theory, we obtain an $(\\mathbb{F}_{p^n}^\\times \\rtimes \\mathbb{Z}/n)$-Galois extension of $\\mathbb{S}_{T(n)}$, obtaining the first example of a lift of a non-Abelian Galois extension of the $K(n)$-local sphere to the telescopic world, at arbitrary positive height and prime. Our proof proceeds by setting up a higher categorical framework for the periodicity theorem, utilizing the symmetries of this framework to construct Picard elements.",
+        "published": "2024-12-10T18:09:27Z",
+        "updated": "2024-12-13T05:16:40Z",
+        "authors": [
+          "Shai Keidar"
+        ],
+        "url": "https://arxiv.org/abs/2412.07716v3",
+        "pdf": "https://arxiv.org/pdf/2412.07716v3"
+      },
+      {
+        "id": "2404.07040v6",
+        "title": "The Restricted Picard Functor",
+        "abstract": "We prove in significant generality the (almost-)representability of the Picard functor when restricted to smooth test schemes. The novelty lies in the fact that we prove such (almost-)representability beyond the proper setting.",
+        "published": "2024-04-10T14:31:25Z",
+        "updated": "2026-07-19T12:52:08Z",
+        "authors": [
+          "Zev Rosengarten"
+        ],
+        "url": "https://arxiv.org/abs/2404.07040v6",
+        "pdf": "https://arxiv.org/pdf/2404.07040v6"
+      },
+      {
+        "id": "2012.07673v1",
+        "title": "Picard modular forms and the cohomology of local systems on a Picard modular surface",
+        "abstract": "We formulate a detailed conjectural Eichler-Shimura type formula for the cohomology of local systems on a Picard modular surface associated to the group of unitary similitudes $\\mathrm{GU}(2,1,\\mathbb{Q}(\\sqrt{-3}))$. The formula is based on counting points over finite fields on curves of genus three which are cyclic triple covers of the projective line. Assuming the conjecture we are able to calculate traces of Hecke operators on spaces of Picard modular forms. We provide ample evidence for the conjectural formula. Along the way we prove new results on characteristic polynomials of Frobenius acting on the first cohomology group of cyclic triple covers of any genus, dimension formulas for spaces of Picard modular forms and formulas for the numerical Euler characteristics of the local systems.",
+        "published": "2020-12-14T16:23:02Z",
+        "updated": "2020-12-14T16:23:02Z",
+        "authors": [
+          "Jonas Bergström",
+          "Gerard van der Geer"
+        ],
+        "url": "https://arxiv.org/abs/2012.07673v1",
+        "pdf": "https://arxiv.org/pdf/2012.07673v1"
+      },
+      {
+        "id": "2006.15388v1",
+        "title": "On a quaternionic Picard theorem",
+        "abstract": "The classical theorem of Picard states that a non-constant holomorphic function $f:\\mathbb{C}\\to\\mathbb{C}$ can avoid at most one value. We investigate how many values a non-constant slice regular function of a quaternionic variable $f:\\mathbb{H}\\to\\mathbb{H}$ may avoid.",
+        "published": "2020-06-27T15:49:59Z",
+        "updated": "2020-06-27T15:49:59Z",
+        "authors": [
+          "Cinzia Bisi",
+          "Joerg Winkelmann"
+        ],
+        "url": "https://arxiv.org/abs/2006.15388v1",
+        "pdf": "https://arxiv.org/pdf/2006.15388v1"
+      },
+      {
+        "id": "1807.07683v1",
+        "title": "The Rickman-Picard Theorem",
+        "abstract": "We give a new and conceptually simple proof of the Rickman-Picard theorem for quasiregular maps based on potential-theoretic methods.",
+        "published": "2018-07-20T01:25:18Z",
+        "updated": "2018-07-20T01:25:18Z",
+        "authors": [
+          "Mario Bonk",
+          "Pietro Poggi-Corradini"
+        ],
+        "url": "https://arxiv.org/abs/1807.07683v1",
+        "pdf": "https://arxiv.org/pdf/1807.07683v1"
+      },
+      {
+        "id": "1308.6191v2",
+        "title": "Picard--Vessiot structures",
+        "abstract": "We demonstrate existence and uniqueness of Picard--Vessiot extensions satisfying prescribed properties, for systems of linear differential equations over a field satisfying the same properties, under some closure assumptions on the field of constants. An example includes the case of a equations over a real field, with a real-closed field of constants. The result is obtained through a model theoretic approach.",
+        "published": "2013-08-28T15:47:20Z",
+        "updated": "2018-08-24T01:06:52Z",
+        "authors": [
+          "Moshe Kamensky"
+        ],
+        "url": "https://arxiv.org/abs/1308.6191v2",
+        "pdf": "https://arxiv.org/pdf/1308.6191v2"
+      },
+      {
+        "id": "0512442v3",
+        "title": "The Picard Group of Corings",
+        "abstract": "We introduce the Picard group of corings. We extend the well-known exact sequence from algebras and coalgebras over fields to corings. We extend the Aut-Pic property to corings and we give some new examples of corings having this property. Finally, we give the corresponding exact sequences for the category of entwined modules over an entwining structure, the category of Doi-Koppinen-Hopf modules over a Doi-Koppinen structure, and the category of graded modules by a $G$-set, where $G$ is a group.",
+        "published": "2005-12-19T19:21:44Z",
+        "updated": "2006-03-17T19:15:36Z",
+        "authors": [
+          "Mohssin Zarouali-Darkaoui"
+        ],
+        "url": "https://arxiv.org/abs/0512442v3",
+        "pdf": "https://arxiv.org/pdf/0512442v3"
+      },
+      {
+        "id": "2601.16505v1",
+        "title": "Computing Picard Schemes",
+        "abstract": "We present an algorithm to compute the torsion component $\\mathrm{Pic}^τX$ of the Picard scheme of a smooth projective variety $X$ over a field $k$. Specifically, we describe $\\mathrm{Pic}^τX$ as a closed subscheme of a projective space defined by explicit homogeneous polynomials. Furthermore, we compute the group scheme structure on $\\mathrm{Pic}^τX$. As applications, we provide algorithms to compute various homological invariants. Among these, we compute the abelianization of the geometric étale fundamental group $π^{\\mathrm{{e}t}}_1(X_{\\bar{k}}, x)^{\\mathrm{ab}}$. Moreover, we determine the Galois module structure of the first étale cohomology groups $H^1_{\\mathrm{{e}t}}(X_{\\bar{k}}, \\mathbb{Z}/n\\mathbb{Z})$ without requiring $n$ to be prime to the characteristic of $k$.",
+        "published": "2026-01-23T07:08:37Z",
+        "updated": "2026-01-23T07:08:37Z",
+        "authors": [
+          "Hyuk Jun Kweon",
+          "Madhavan Venkatesh"
+        ],
+        "url": "https://arxiv.org/abs/2601.16505v1",
+        "pdf": "https://arxiv.org/pdf/2601.16505v1"
+      },
+      {
+        "id": "2108.05161v1",
+        "title": "A generalization of the Picard theorem",
+        "abstract": "We recall the notions of conformal and quasiconformal mappings \\textit{in the sense of Gromov}, extending the classical notions of conformal and quasiconformal mappings, and prove the following theorem. {\\em If the mapping $ F: \\mathbb{R}^{n} \\to \\mathbb{R}^{2} $, where $ n \\geq 2 $, quasiconformal in the sense of Gromov, omits more than one value on the plane $\\mathbb{R}^{2} $, then it is a constant mapping.}",
+        "published": "2021-08-11T11:24:55Z",
+        "updated": "2021-08-11T11:24:55Z",
+        "authors": [
+          "V. A. Zorich"
+        ],
+        "url": "https://arxiv.org/abs/2108.05161v1",
+        "pdf": "https://arxiv.org/pdf/2108.05161v1"
+      },
+      {
+        "id": "2407.20958v2",
+        "title": "On Hopkins' Picard group",
+        "abstract": "We compute the algebraic Picard group of the category of $K(n)$-local spectra, for all heights $n$ and all primes $p$. In particular, we show that it is always finitely generated over $\\mathbb{Z}_p$ and, whenever $n \\geq 2$, is of rank $2$, thereby confirming a prediction made by Hopkins in the early 1990s. In fact, with the exception of the anomalous case $n=p=2$, we provide a full set of topological generators for these groups. Our arguments rely on recent advances in $p$-adic geometry to translate the problem to a computation on Drinfeld's symmetric space, which can then be solved using results of Colmez--Dospinescu--Niziol.",
+        "published": "2024-07-30T16:34:42Z",
+        "updated": "2025-12-23T14:24:08Z",
+        "authors": [
+          "Tobias Barthel",
+          "Tomer M. Schlank",
+          "Nathaniel Stapleton",
+          "Jared Weinstein"
+        ],
+        "url": "https://arxiv.org/abs/2407.20958v2",
+        "pdf": "https://arxiv.org/pdf/2407.20958v2"
+      },
+      {
+        "id": "2009.13157v1",
+        "title": "New classes of Picard operators",
+        "abstract": "In this paper, we give new results concerning the existence of Picard operators on complete metric spaces.",
+        "published": "2020-09-28T09:11:40Z",
+        "updated": "2020-09-28T09:11:40Z",
+        "authors": [
+          "Pasc Gavruta",
+          "Laura Manolescu"
+        ],
+        "url": "https://arxiv.org/abs/2009.13157v1",
+        "pdf": "https://arxiv.org/pdf/2009.13157v1"
+      },
+      {
+        "id": "1902.09624v1",
+        "title": "Conductor and discriminant of Picard curves",
+        "abstract": "We describe normal forms and minimal models of Picard curves, discussing various arithmetic aspects of these. We determine all so-called special Picard curves over $\\mathbb{Q}$ with good reduction outside 2 and 3, and use this to determine the smallest possible conductor a special Picard curve may have. We also collect a database of Picard curves over $\\mathbb{Q}$ of small conductor.",
+        "published": "2019-02-25T21:19:25Z",
+        "updated": "2019-02-25T21:19:25Z",
+        "authors": [
+          "Irene I. Bouw",
+          "Angelos Koutsianas",
+          "Jeroen Sijsling",
+          "Stefan Wewers"
+        ],
+        "url": "https://arxiv.org/abs/1902.09624v1",
+        "pdf": "https://arxiv.org/pdf/1902.09624v1"
+      }
+    ]
+  },
+  "split_foundations": {
+    "query": "ti:\"Split learning for health\" OR ti:\"Distributed Deep Neural Networks\" OR ti:\"Neurosurgeon\"",
+    "entries": [
+      {
+        "id": "1612.00521v2",
+        "title": "Performance Modeling of Distributed Deep Neural Networks",
+        "abstract": "During the past decade, machine learning has become extremely popular and can be found in many aspects of our every day life. Nowayadays with explosion of data while rapid growth of computation capacity, Distributed Deep Neural Networks (DDNNs) which can improve their performance linearly with more computation resources, have become hot and trending. However, there has not been an in depth study of the performance of these systems, and how well they scale. In this paper we analyze CNTK, one of the most commonly used DDNNs, by first building a performance model and then evaluating the system two settings: a small cluster with all nodes in a single rack connected to a top of rack switch, and in large scale using Blue Waters with arbitary placement of nodes. Our main focus was the scalability of the system with respect to adding more nodes. Based on our results, this system has an excessive initialization overhead because of poor I/O utilization which dominates the whole execution time. Because of this, the system does not scale beyond a few nodes (4 in Blue Waters). Additionally, due to a single server-multiple worker design the server becomes a bottleneck after 16 nodes limiting the scalability of the CNTK.",
+        "published": "2016-12-02T00:07:24Z",
+        "updated": "2016-12-14T23:36:40Z",
+        "authors": [
+          "Sayed Hadi Hashemi",
+          "Shadi A. Noghabi",
+          "William Gropp",
+          "Roy H Campbell"
+        ],
+        "url": "https://arxiv.org/abs/1612.00521v2",
+        "pdf": "https://arxiv.org/pdf/1612.00521v2"
+      },
+      {
+        "id": "1909.02873v1",
+        "title": "Big Data Intelligence Using Distributed Deep Neural Networks",
+        "abstract": "Large amount of data is often required to train and deploy useful machine learning models in industry. Smaller enterprises do not have the luxury of accessing enough data for machine learning, For privacy sensitive fields such as banking, insurance and healthcare, aggregating data to a data warehouse poses a challenge of data security and limited computational resources. These challenges are critical when developing machine learning algorithms in industry. Several attempts have been made to address the above challenges by using distributed learning techniques such as federated learning over disparate data stores in order to circumvent the need for centralised data aggregation. This paper proposes an improved algorithm to securely train deep neural networks over several data sources in a distributed way, in order to eliminate the need to centrally aggregate the data and the need to share the data thus preserving privacy. The proposed method allows training of deep neural networks using data from multiple de-linked nodes in a distributed environment and to secure the representation shared during training. Only a representation of the trained models (network architecture and weights) are shared. The algorithm was evaluated on existing healthcare patients data and the performance of this implementation was compared to that of a regular deep neural network trained on a single centralised architecture. This algorithm will pave a way for distributed training of neural networks on privacy sensitive applications where raw data may not be shared directly or centrally aggregating this data in a data warehouse is not feasible.",
+        "published": "2019-09-04T06:52:52Z",
+        "updated": "2019-09-04T06:52:52Z",
+        "authors": [
+          "Felix Ongati",
+          "Eng. Lawrence Muchemi"
+        ],
+        "url": "https://arxiv.org/abs/1909.02873v1",
+        "pdf": "https://arxiv.org/pdf/1909.02873v1"
+      },
+      {
+        "id": "2105.02019v1",
+        "title": "ScissionLite: Accelerating Distributed Deep Neural Networks Using Transfer Layer",
+        "abstract": "Industrial Internet of Things (IIoT) applications can benefit from leveraging edge computing. For example, applications underpinned by deep neural networks (DNN) models can be sliced and distributed across the IIoT device and the edge of the network for improving the overall performance of inference and for enhancing privacy of the input data, such as industrial product images. However, low network performance between IIoT devices and the edge is often a bottleneck. In this study, we develop ScissionLite, a holistic framework for accelerating distributed DNN inference using the Transfer Layer (TL). The TL is a traffic-aware layer inserted between the optimal slicing point of a DNN model slice in order to decrease the outbound network traffic without a significant accuracy drop. For the TL, we implement a new lightweight down/upsampling network for performance-limited IIoT devices. In ScissionLite, we develop ScissionTL, the Preprocessor, and the Offloader for end-to-end activities for deploying DNN slices with the TL. They decide the optimal slicing point of the DNN, prepare pre-trained DNN slices including the TL, and execute the DNN slices on an IIoT device and the edge. Employing the TL for the sliced DNN models has a negligible overhead. ScissionLite improves the inference latency by up to 16 and 2.8 times when compared to execution on the local device and an existing state-of-the-art model slicing approach respectively.",
+        "published": "2021-05-05T12:38:58Z",
+        "updated": "2021-05-05T12:38:58Z",
+        "authors": [
+          "Hyunho Ahn",
+          "Munkyu Lee",
+          "Cheol-Ho Hong",
+          "Blesson Varghese"
+        ],
+        "url": "https://arxiv.org/abs/2105.02019v1",
+        "pdf": "https://arxiv.org/pdf/2105.02019v1"
+      },
+      {
+        "id": "2010.13234v1",
+        "title": "DistPrivacy: Privacy-Aware Distributed Deep Neural Networks in IoT surveillance systems",
+        "abstract": "With the emergence of smart cities, Internet of Things (IoT) devices as well as deep learning technologies have witnessed an increasing adoption. To support the requirements of such paradigm in terms of memory and computation, joint and real-time deep co-inference framework with IoT synergy was introduced. However, the distribution of Deep Neural Networks (DNN) has drawn attention to the privacy protection of sensitive data. In this context, various threats have been presented, including black-box attacks, where a malicious participant can accurately recover an arbitrary input fed into his device. In this paper, we introduce a methodology aiming to secure the sensitive data through re-thinking the distribution strategy, without adding any computation overhead. First, we examine the characteristics of the model structure that make it susceptible to privacy threats. We found that the more we divide the model feature maps into a high number of devices, the better we hide proprieties of the original image. We formulate such a methodology, namely DistPrivacy, as an optimization problem, where we establish a trade-off between the latency of co-inference, the privacy level of the data, and the limited-resources of IoT participants. Due to the NP-hardness of the problem, we introduce an online heuristic that supports heterogeneous IoT devices as well as multiple DNNs and datasets, making the pervasive system a general-purpose platform for privacy-aware and low decision-latency applications.",
+        "published": "2020-10-25T22:05:22Z",
+        "updated": "2020-10-25T22:05:22Z",
+        "authors": [
+          "Emna Baccour",
+          "Aiman Erbad",
+          "Amr Mohamed",
+          "Mounir Hamdi",
+          "Mohsen Guizani"
+        ],
+        "url": "https://arxiv.org/abs/2010.13234v1",
+        "pdf": "https://arxiv.org/pdf/2010.13234v1"
+      },
+      {
+        "id": "1709.01921v1",
+        "title": "Distributed Deep Neural Networks over the Cloud, the Edge and End Devices",
+        "abstract": "We propose distributed deep neural networks (DDNNs) over distributed computing hierarchies, consisting of the cloud, the edge (fog) and end devices. While being able to accommodate inference of a deep neural network (DNN) in the cloud, a DDNN also allows fast and localized inference using shallow portions of the neural network at the edge and end devices. When supported by a scalable distributed computing hierarchy, a DDNN can scale up in neural network size and scale out in geographical span. Due to its distributed nature, DDNNs enhance sensor fusion, system fault tolerance and data privacy for DNN applications. In implementing a DDNN, we map sections of a DNN onto a distributed computing hierarchy. By jointly training these sections, we minimize communication and resource usage for devices and maximize usefulness of extracted features which are utilized in the cloud. The resulting system has built-in support for automatic sensor fusion and fault tolerance. As a proof of concept, we show a DDNN can exploit geographical diversity of sensors to improve object recognition accuracy and reduce communication cost. In our experiment, compared with the traditional method of offloading raw sensor data to be processed in the cloud, DDNN locally processes most sensor data on end devices while achieving high accuracy and is able to reduce the communication cost by a factor of over 20x.",
+        "published": "2017-09-06T04:00:18Z",
+        "updated": "2017-09-06T04:00:18Z",
+        "authors": [
+          "Surat Teerapittayanon",
+          "Bradley McDanel",
+          "H. T. Kung"
+        ],
+        "url": "https://arxiv.org/abs/1709.01921v1",
+        "pdf": "https://arxiv.org/pdf/1709.01921v1"
+      },
+      {
+        "id": "2309.00244v1",
+        "title": "NeuroSurgeon: A Toolkit for Subnetwork Analysis",
+        "abstract": "Despite recent advances in the field of explainability, much remains unknown about the algorithms that neural networks learn to represent. Recent work has attempted to understand trained models by decomposing them into functional circuits (Csordás et al., 2020; Lepori et al., 2023). To advance this research, we developed NeuroSurgeon, a python library that can be used to discover and manipulate subnetworks within models in the Huggingface Transformers library (Wolf et al., 2019). NeuroSurgeon is freely available at https://github.com/mlepori1/NeuroSurgeon.",
+        "published": "2023-09-01T04:26:55Z",
+        "updated": "2023-09-01T04:26:55Z",
+        "authors": [
+          "Michael A. Lepori",
+          "Ellie Pavlick",
+          "Thomas Serre"
+        ],
+        "url": "https://arxiv.org/abs/2309.00244v1",
+        "pdf": "https://arxiv.org/pdf/2309.00244v1"
+      },
+      {
+        "id": "1907.04246v1",
+        "title": "Security for Distributed Deep Neural Networks Towards Data Confidentiality & Intellectual Property Protection",
+        "abstract": "Current developments in Enterprise Systems observe a paradigm shift, moving the needle from the backend to the edge sectors of those; by distributing data, decentralizing applications and integrating novel components seamlessly to the central systems. Distributively deployed AI capabilities will thrust this transition. Several non-functional requirements arise along with these developments, security being at the center of the discussions. Bearing those requirements in mind, hereby we propose an approach to holistically protect distributed Deep Neural Network (DNN) based/enhanced software assets, i.e. confidentiality of their input & output data streams as well as safeguarding their Intellectual Property. Making use of Fully Homomorphic Encryption (FHE), our approach enables the protection of Distributed Neural Networks, while processing encrypted data. On that respect we evaluate the feasibility of this solution on a Convolutional Neuronal Network (CNN) for image classification deployed on distributed infrastructures.",
+        "published": "2019-07-09T15:29:42Z",
+        "updated": "2019-07-09T15:29:42Z",
+        "authors": [
+          "Laurent Gomez",
+          "Marcus Wilhelm",
+          "José Márquez",
+          "Patrick Duverger"
+        ],
+        "url": "https://arxiv.org/abs/1907.04246v1",
+        "pdf": "https://arxiv.org/pdf/1907.04246v1"
+      },
+      {
+        "id": "1812.00564v1",
+        "title": "Split learning for health: Distributed deep learning without sharing raw patient data",
+        "abstract": "Can health entities collaboratively train deep learning models without sharing sensitive raw data? This paper proposes several configurations of a distributed deep learning method called SplitNN to facilitate such collaborations. SplitNN does not share raw data or model details with collaborating institutions. The proposed configurations of splitNN cater to practical settings of i) entities holding different modalities of patient data, ii) centralized and local health entities collaborating on multiple tasks and iii) learning without sharing labels. We compare performance and resource efficiency trade-offs of splitNN and other distributed deep learning methods like federated learning, large batch synchronous stochastic gradient descent and show highly encouraging results for splitNN.",
+        "published": "2018-12-03T05:43:20Z",
+        "updated": "2018-12-03T05:43:20Z",
+        "authors": [
+          "Praneeth Vepakomma",
+          "Otkrist Gupta",
+          "Tristan Swedish",
+          "Ramesh Raskar"
+        ],
+        "url": "https://arxiv.org/abs/1812.00564v1",
+        "pdf": "https://arxiv.org/pdf/1812.00564v1"
+      },
+      {
+        "id": "2007.11831v2",
+        "title": "DBS: Dynamic Batch Size For Distributed Deep Neural Network Training",
+        "abstract": "Synchronous strategies with data parallelism, such as the Synchronous StochasticGradient Descent (S-SGD) and the model averaging methods, are widely utilizedin distributed training of Deep Neural Networks (DNNs), largely owing to itseasy implementation yet promising performance. Particularly, each worker ofthe cluster hosts a copy of the DNN and an evenly divided share of the datasetwith the fixed mini-batch size, to keep the training of DNNs convergence. In thestrategies, the workers with different computational capability, need to wait foreach other because of the synchronization and delays in network transmission,which will inevitably result in the high-performance workers wasting computation.Consequently, the utilization of the cluster is relatively low. To alleviate thisissue, we propose the Dynamic Batch Size (DBS) strategy for the distributedtraining of DNNs. Specifically, the performance of each worker is evaluatedfirst based on the fact in the previous epoch, and then the batch size and datasetpartition are dynamically adjusted in consideration of the current performanceof the worker, thereby improving the utilization of the cluster. To verify theeffectiveness of the proposed strategy, extensive experiments have been conducted,and the experimental results indicate that the proposed strategy can fully utilizethe performance of the cluster, reduce the training time, and have good robustnesswith disturbance by irrelevant tasks. Furthermore, rigorous theoretical analysis hasalso been provided to prove the convergence of the proposed strategy.",
+        "published": "2020-07-23T07:31:55Z",
+        "updated": "2022-11-03T08:15:20Z",
+        "authors": [
+          "Qing Ye",
+          "Yuhao Zhou",
+          "Mingjia Shi",
+          "Yanan Sun",
+          "Jiancheng Lv"
+        ],
+        "url": "https://arxiv.org/abs/2007.11831v2",
+        "pdf": "https://arxiv.org/pdf/2007.11831v2"
+      },
+      {
+        "id": "2003.03009v2",
+        "title": "Communication optimization strategies for distributed deep neural network training: A survey",
+        "abstract": "Recent trends in high-performance computing and deep learning have led to the proliferation of studies on large-scale deep neural network training. However, the frequent communication requirements among computation nodes drastically slows the overall training speeds, which causes bottlenecks in distributed training, particularly in clusters with limited network bandwidths. To mitigate the drawbacks of distributed communications, researchers have proposed various optimization strategies. In this paper, we provide a comprehensive survey of communication strategies from both an algorithm viewpoint and a computer network perspective. Algorithm optimizations focus on reducing the communication volumes used in distributed training, while network optimizations focus on accelerating the communications between distributed devices. At the algorithm level, we describe how to reduce the number of communication rounds and transmitted bits per round. In addition, we elucidate how to overlap computation and communication. At the network level, we discuss the effects caused by network infrastructures, including logical communication schemes and network protocols. Finally, we extrapolate the potential future challenges and new research directions to accelerate communications for distributed deep neural network training.",
+        "published": "2020-03-06T02:32:54Z",
+        "updated": "2020-11-23T02:48:04Z",
+        "authors": [
+          "Shuo Ouyang",
+          "Dezun Dong",
+          "Yemao Xu",
+          "Liquan Xiao"
+        ],
+        "url": "https://arxiv.org/abs/2003.03009v2",
+        "pdf": "https://arxiv.org/pdf/2003.03009v2"
+      },
+      {
+        "id": "1805.07891v2",
+        "title": "Parameter Hub: a Rack-Scale Parameter Server for Distributed Deep Neural Network Training",
+        "abstract": "Distributed deep neural network (DDNN) training constitutes an increasingly important workload that frequently runs in the cloud. Larger DNN models and faster compute engines are shifting DDNN training bottlenecks from computation to communication. This paper characterizes DDNN training to precisely pinpoint these bottlenecks. We found that timely training requires high performance parameter servers (PSs) with optimized network stacks and gradient processing pipelines, as well as server and network hardware with balanced computation and communication resources. We therefore propose PHub, a high performance multi-tenant, rack-scale PS design. PHub co-designs the PS software and hardware to accelerate rack-level and hierarchical cross-rack parameter exchange, with an API compatible with many DDNN training frameworks. PHub provides a performance improvement of up to 2.7x compared to state-of-the-art distributed training techniques for cloud-based ImageNet workloads, with 25% better throughput per dollar.",
+        "published": "2018-05-21T04:55:04Z",
+        "updated": "2020-01-17T21:18:51Z",
+        "authors": [
+          "Liang Luo",
+          "Jacob Nelson",
+          "Luis Ceze",
+          "Amar Phanishayee",
+          "Arvind Krishnamurthy"
+        ],
+        "url": "https://arxiv.org/abs/1805.07891v2",
+        "pdf": "https://arxiv.org/pdf/1805.07891v2"
+      },
+      {
+        "id": "2606.09175v1",
+        "title": "CANS: Accelerating Multiuser Collaborative Edge Inference via Cooperative Autodidactic NeuroSurgeon",
+        "abstract": "Recently, mobile edge computing (MEC)-enabled collaborative deep neural network (DNN) inference has emerged as a promising approach for delivering intelligent services to resource-constrained mobile devices. A representative scenario is multi-user collaborative edge inference, where distinct devices independently partition their DNN models and offload backend computation to a common edge server over wireless networks. However, determining the optimal DNN partition for each device is challenging due to unknown and time-varying system conditions, including fluctuating wireless links and diverse device capabilities. To address this problem, we propose Cooperative Autodidactic NeuroSurgeon (CANS), a collaborative edge inference framework that enables devices to adaptively learn optimal DNN partitions by sharing informative feedback during online inference. To handle the challenge of device heterogeneity and better leverage offline inference experience, we integrate a novel FedLinUCB-DW algorithm that groups devices of the same type and warm-starts online exploration using local offline early-exit inference experience. Furthermore, we provide theoretical guarantees for FedLinUCB-DW by deriving the regret upper bound. We also validate our method on both a simulated environment and a hardware prototype system. Empirical evaluations demonstrate that CANS achieves lower inference latency compared to state-of-the-art baselines. Especially, in prototype experiments on two edge devices, the proposed CANS reduced average inference latency by up to 50% compared to the non-cooperative baseline.",
+        "published": "2026-06-08T08:14:22Z",
+        "updated": "2026-06-08T08:14:22Z",
+        "authors": [
+          "Zheshun Wu",
+          "Ziyang Zhang",
+          "Changyao Lin",
+          "Zenglin Xu",
+          "Jie Liu"
+        ],
+        "url": "https://arxiv.org/abs/2606.09175v1",
+        "pdf": "https://arxiv.org/pdf/2606.09175v1"
+      },
+      {
+        "id": "1801.09805v3",
+        "title": "Parameter Box: High Performance Parameter Servers for Efficient Distributed Deep Neural Network Training",
+        "abstract": "Most work in the deep learning systems community has focused on faster inference, but arriving at a trained model requires lengthy experiments. Accelerating training lets developers iterate faster and come up with better models. DNN training is often seen as a compute-bound problem, best done in a single large compute node with many GPUs. As DNNs get bigger, training requires going distributed. Distributed deep neural network (DDNN) training constitutes an important workload on the cloud. Larger DNN models and faster compute engines shift the training performance bottleneck from computation to communication. Our experiments show existing DNN training frameworks do not scale in a typical cloud environment due to insufficient bandwidth and inefficient parameter server software stacks.We propose PBox, a balanced, scalable central PS hardware that balances compute and communication resources, and PHub, a high performance parameter server (PS) software design that provides an optimized network stack and a streamlined gradient processing pipeline to benefit common PS setups to utilize PBox. We show that in a typical cloud environment, PBox can achieve up to 3.8x speedup over state-of-the-art designs when training ImageNet. We discuss future directions of integrating PBox with programmable switches for in-network aggregation during training, leveraging the datacenter network topology to reduce bandwidth usage and localize data movement.",
+        "published": "2018-01-30T00:10:18Z",
+        "updated": "2020-01-17T21:19:42Z",
+        "authors": [
+          "Liang Luo",
+          "Jacob Nelson",
+          "Luis Ceze",
+          "Amar Phanishayee",
+          "Arvind Krishnamurthy"
+        ],
+        "url": "https://arxiv.org/abs/1801.09805v3",
+        "pdf": "https://arxiv.org/pdf/1801.09805v3"
+      },
+      {
+        "id": "1807.03474v1",
+        "title": "Phase reconstruction from amplitude spectrograms based on von-Mises-distribution deep neural network",
+        "abstract": "This paper presents a deep neural network (DNN)-based phase reconstruction from amplitude spectrograms. In audio signal and speech processing, the amplitude spectrogram is often used for processing, and the corresponding phase spectrogram is reconstructed from the amplitude spectrogram on the basis of the Griffin-Lim method. However, the Griffin-Lim method causes unnatural artifacts in synthetic speech. Addressing this problem, we introduce the von-Mises-distribution DNN for phase reconstruction. The DNN is a generative model having the von Mises distribution that can model distributions of a periodic variable such as a phase, and the model parameters of the DNN are estimated on the basis of the maximum likelihood criterion. Furthermore, we propose a group-delay loss for DNN training to make the predicted group delay close to a natural group delay. The experimental results demonstrate that 1) the trained DNN can predict group delay accurately more than phases themselves, and 2) our phase reconstruction methods achieve better speech quality than the conventional Griffin-Lim method.",
+        "published": "2018-07-10T04:14:55Z",
+        "updated": "2018-07-10T04:14:55Z",
+        "authors": [
+          "Shinnosuke Takamichi",
+          "Yuki Saito",
+          "Norihiro Takamune",
+          "Daichi Kitamura",
+          "Hiroshi Saruwatari"
+        ],
+        "url": "https://arxiv.org/abs/1807.03474v1",
+        "pdf": "https://arxiv.org/pdf/1807.03474v1"
+      },
+      {
+        "id": "2102.02638v1",
+        "title": "Autodidactic Neurosurgeon: Collaborative Deep Inference for Mobile Edge Intelligence via Online Learning",
+        "abstract": "Recent breakthroughs in deep learning (DL) have led to the emergence of many intelligent mobile applications and services, but in the meanwhile also pose unprecedented computing challenges on resource-constrained mobile devices. This paper builds a collaborative deep inference system between a resource-constrained mobile device and a powerful edge server, aiming at joining the power of both on-device processing and computation offloading. The basic idea of this system is to partition a deep neural network (DNN) into a front-end part running on the mobile device and a back-end part running on the edge server, with the key challenge being how to locate the optimal partition point to minimize the end-to-end inference delay. Unlike existing efforts on DNN partitioning that rely heavily on a dedicated offline profiling stage to search for the optimal partition point, our system has a built-in online learning module, called Autodidactic Neurosurgeon (ANS), to automatically learn the optimal partition point on-the-fly. Therefore, ANS is able to closely follow the changes of the system environment by generating new knowledge for adaptive decision making. The core of ANS is a novel contextual bandit learning algorithm, called $μ$LinUCB, which not only has provable theoretical learning performance guarantee but also is ultra-lightweight for easy real-world implementation. We implement our system on a video stream object detection testbed to validate the design of ANS and evaluate its performance. The experiments show that ANS significantly outperforms state-of-the-art benchmarks in terms of tracking system changes and reducing the end-to-end inference delay.",
+        "published": "2021-02-02T18:50:06Z",
+        "updated": "2021-02-02T18:50:06Z",
+        "authors": [
+          "Letian Zhang",
+          "Lixing Chen",
+          "Jie Xu"
+        ],
+        "url": "https://arxiv.org/abs/2102.02638v1",
+        "pdf": "https://arxiv.org/pdf/2102.02638v1"
+      },
+      {
+        "id": "2606.07658v1",
+        "title": "What neurosurgeons need to see: synthetic intra-operative MRI from ultrasound for brain-shift compensation in brain tumour surgery",
+        "abstract": "Maximal safe resection is the primary objective in glioma surgery. Neuronavigation guidance is progressively degraded by brain shift after dural opening. Intraoperative MRI can compensate but needs dedicated infrastructure and is rarely available, whereas intraoperative ultrasound (ioUS) is inexpensive, repeatable, and compatible with routine workflows. Navigation systems combining ioUS with preoperative MRI usually rely on rigid registration; even deformable multimodal registration is limited by ultrasound speckle contrast, a narrow field of view, and the inability to represent structures absent from the preoperative scan, most critically the resection cavity and residual tumor. We propose an end-to-end pipeline that generates a new whole-brain MRI volume in the preoperative imaging space by merging the preoperative MRI, a synthetic MRI generated from the ioUS, and a deformable registration anchored on that synthetic image. It integrates a 2.5D residual-transformer synthesis backbone (ResViT-2.5D) and a two-stage registration coupling NiftyReg with a synthesis-anchored SynthMorph stage, operating directly on raw scanner inputs. On a post-resection ReMIND cohort, ResViT-2.5D produced synthetic images closely matching the intraoperative T2 across structural, intensity, and perceptual metrics. In 14 subjects with 215 expert landmarks, the synthesis-anchored registration reduced the mean target registration error from 6.27 to 5.86 mm, matching a strong classical NiftyReg baseline (5.85 mm) while yielding a diffeomorphic deformation field in every subject. The contribution is not a gain in registration accuracy but the integrated volume itself, which inside the ultrasound field of view it reflects the intraoperative post-resection state. This provides the surgeon with an MRI-like update of the operative field with potential for integration into surgical-navigation workflows.",
+        "published": "2026-06-03T11:17:47Z",
+        "updated": "2026-06-03T11:17:47Z",
+        "authors": [
+          "Santiago Cepeda",
+          "Olga Esteban-Sinovas",
+          "Ignacio Arrese",
+          "Rosario Sarabia"
+        ],
+        "url": "https://arxiv.org/abs/2606.07658v1",
+        "pdf": "https://arxiv.org/pdf/2606.07658v1"
+      }
+    ]
+  }
+}

@@ -1,0 +1,134 @@
+[
+  {
+    "figure": "fig01",
+    "language": "en",
+    "vertices": 26,
+    "semantic_nodes": 9,
+    "edges": 9,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig02",
+    "language": "en",
+    "vertices": 20,
+    "semantic_nodes": 9,
+    "edges": 7,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig03",
+    "language": "en",
+    "vertices": 19,
+    "semantic_nodes": 6,
+    "edges": 8,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig04",
+    "language": "en",
+    "vertices": 22,
+    "semantic_nodes": 9,
+    "edges": 7,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig05",
+    "language": "en",
+    "vertices": 37,
+    "semantic_nodes": 9,
+    "edges": 11,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig06",
+    "language": "en",
+    "vertices": 25,
+    "semantic_nodes": 10,
+    "edges": 6,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig01",
+    "language": "zh",
+    "vertices": 26,
+    "semantic_nodes": 9,
+    "edges": 9,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig02",
+    "language": "zh",
+    "vertices": 20,
+    "semantic_nodes": 9,
+    "edges": 7,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig03",
+    "language": "zh",
+    "vertices": 19,
+    "semantic_nodes": 6,
+    "edges": 8,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig04",
+    "language": "zh",
+    "vertices": 22,
+    "semantic_nodes": 9,
+    "edges": 7,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig05",
+    "language": "zh",
+    "vertices": 37,
+    "semantic_nodes": 9,
+    "edges": 11,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  },
+  {
+    "figure": "fig06",
+    "language": "zh",
+    "vertices": 25,
+    "semantic_nodes": 10,
+    "edges": 6,
+    "unique_ids": true,
+    "valid_edge_endpoints": true,
+    "vertices_inside_canvas": true,
+    "node_overlap_pairs": []
+  }
+]

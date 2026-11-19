@@ -1,0 +1,1100 @@
+                                                     E VO G UARD: Mitigating Degradation in Online Skill Evolution
+
+                                                  Yanli Wang1, 2, 3, ⋄ , Zichen Bai1, ⋄ , Tianyue Jiang2 , Kunming Shao4 , Junhao Shi1
+                                                        Xueqin Liu1 , Jinguo Sun1 , Muye Li1 , Tingting Bi3 , Yanlin Wang2
+                                                    Shaoqiang Zheng1, † , Xuefei Diao1 , Zhuwei Zeng1 , Nan Duan1 , Peng Cao1
+                                                            1
+                                                                JD.Com 2 Sun Yat-sen University 3 The University of Melbourne
+                                                                     4
+                                                                       The Hong Kong University of Science and Technology
+
+
+                                                                    Abstract                                In this setting a deployed agent updates its skill
+                                                                                                            after every task.
+                                                Skills let language agents reuse experience
+                                                                                                                Gap 1: Offline multi-trajectory evolution does
+arXiv:2611.06444v1 [cs.CL] 4 Nov 2026
+
+
+
+
+                                                across tasks as natural-language documents.
+                                                Recent work evolves skills from interaction, but
+                                                                                                            not match deployment. Most methods update a
+                                                existing methods have limitations when skills               skill offline from a batch of trajectories (Xia et al.,
+                                                evolve online. Prior methods update a skill of-             2026; Yang et al., 2026b). The update runs in a
+                                                fline from a batch of trajectories collected over           training phase before deployment. It analyzes tra-
+                                                many tasks. Some then adopt the new skill                   jectories from many tasks at once. A deployed
+                                                without any check, which can degrade the skill              agent rarely works this way. Each task arrives once
+                                                over time. Others keep it only if it improves               and is attempted once. The next task is usually a
+                                                performance on a held-out validation set, which
+                                                                                                            different one. The skill must therefore be revised
+                                                is too slow and costly to run after every update.
+                                                We introduce E VO G UARD, a pairwise skill se-              from a single trajectory and then reused by later
+                                                lector that mitigates skill degradation at low              tasks. SkillRise carries a skill across tasks in this
+                                                latency and cost. We first run the agent itera-             way (Yao et al., 2026). However, it trains the execu-
+                                                tively to build pools of skills and score each              tor jointly with skill curation and does not check
+                                                skill on a private test set to obtain utility labels.       individual updates.
+                                                We pair the skills and use rejection sampling                   Gap 2: Adopting every new skill causes degra-
+                                                to keep only pairs with a clear utility gap. The
+                                                                                                            dation. A rewrite based on one trajectory can over-
+                                                selector is trained on the logits of two label
+                                                tokens to pick the better skill. At deployment
+                                                                                                            fit that trajectory. A failed search may add a rule
+                                                it decides in a single forward pass, which is               tied to one room. Even a successful episode may
+                                                significantly faster than evaluation on the pri-            add redundant or misleading advice. This risk is
+                                                vate test set. Compared with adopting every                 measurable. We collect single-trajectory rewrites
+                                                new skill, E VO G UARD improves success by                  on ALFWorld and score every skill on a private test
+                                                11.0% on ALFWorld, 5.9% on ScienceWorld,                    set of its task family (Figure 1).
+                                                and 2.7% on LiveCodeBench.                                      Figure 1(a) shows that the success rates of these
+                                                                                                            skills spread over a wide range. Skills of very dif-
+                                        1       Introduction
+                                                                                                            ferent quality therefore coexist. Figure 1(b) shows
+                                        Language agents increasingly face streams of re-                    the change in success rate after one rewrite, com-
+                                        lated tasks. Solving each task from scratch wastes                  puted as the rewrite minus the skill it came from.
+                                        what earlier interactions have revealed. A skill                    The empty skill also counts as a parent. Among the
+                                        packages such experience as a reusable natural-                     1,137 rewrites written by the base generator, 42.2%
+                                        language document. It records procedures, decision                  score below their parent. Another 7.7% tie, and
+                                        rules, and recovery strategies. A frozen agent can                  50.0% improve. A rewrite is thus nearly neutral on
+                                        then adapt through external text instead of weight                  average. However, 7.7% of rewrites lose at least
+                                        updates (Wang et al., 2024a; Anthropic, 2025; Xu                    10%, and 11.3% gain at least 10%. A stronger gen-
+                                        and Yan, 2026). Recent work builds and evolves                      erator does not remove the problem. Of the 900
+                                        skills from interaction (Xia et al., 2026; Yang et al.,             rewrites written by an expert generator, which is
+                                        2026b; Yao et al., 2026). However, existing meth-                   trained with reinforcement learning, 40.0% also
+                                        ods face three limitations when skills evolve online.               score below their parent. Adopting every rewrite
+                                            ⋄
+                                                JD Tech Genius Team                                         therefore lets the skill drift. This motivates an ex-
+                                            †
+                                                Corresponding author                                        plicit acceptance step.
+
+                                                                                                        1
+                                                 (a) Skill Success Rates                                                       (b) Change in Success Rate
+                                 100
+                                                                                                                       30
+                                  80
+                                                                                                                       25
+
+
+
+
+                                                                                               Share of rewrites (%)
+              Success rate (%)
+                                  60                                                                                   20
+
+                                                                                                                       15
+                                  40
+                                                                                                                       10
+                                  20
+                                                                                                                        5
+
+                                   0                                                                                    0
+                                       Pick   Pick2   Clean   Heat      Cool        Look                                 −50     −25     0     25     50
+                                                                     Base-written          Expert-written
+
+
+Figure 1: (a) Success rate of the base-written and expert-written skills on the private test set for each task family. (b)
+Change in success rate after a single-trajectory rewrite (child minus parent). The shaded region marks degradation.
+
+   Gap 3: Validating every update is too costly.                                        We evaluate E VO G UARD on ALFWorld (Shrid-
+Some methods guard against bad updates (Alzubi                                       har et al., 2021) with three executors. The baselines
+et al., 2026; Yang et al., 2026b). They keep a new                                   include running without skills and adopting every
+skill only if it improves performance on a held-out                                  new skill. They also include random selection from
+validation set. This requires many extra rollouts for                                the skill history and three LLM-Judge variants.
+every update. Each check thus costs far more than                                    On skill pairs unseen during training, E VO G UARD
+the task that triggered the update. An online agent                                  picks the better skill 95.0% of the time. Online, it
+cannot afford this cost after every task.                                            outperforms every other method in all six settings.
+   To address these gaps, we propose E VO G UARD,                                    Its average success with the Qwen3-4B and Qwen3-
+a pairwise skill selector that amortizes validation.                                 8B executors is 56.5%. Adopting every new skill
+Tasks are grouped into task families, and each fam-                                  reaches 45.5%, and running without skills reaches
+ily keeps one skill. After each task, a fixed gen-                                   36.7%. The Qwen3-32B executor contributes no
+erator writes a new skill from the latest trajectory.                                training labels. With this executor E VO G UARD
+E VO G UARD then decides whether this new skill                                      still reaches 69.2% against 54.9% without skills.
+replaces the current skill. This decision only re-                                   On ScienceWorld (Wang et al., 2022), E VO G UARD
+quires the relative order of the two skills, not their                               raises success from 10.2% to 15.3%. Our main
+absolute utilities. We therefore cast it as a pairwise                               contributions are as follows.
+preference problem. We pay the cost of validation
+once before deployment and use it to train the se-                                         • We formulate online skill evolution as a
+lector. After that, each decision only compares two                                          per-update acceptance problem. After each
+skill texts.                                                                                 single-trajectory rewrite, the agent must de-
+   E VO G UARD works in three stages (Figure 2). (1)                                         cide whether the new skill replaces the cur-
+Multi-source skill pool construction. We run the                                             rent skill. We show that this decision matters.
+rewrite loop on training tasks with a base generator                                         On ALFWorld, 42% of rewrites lower perfor-
+and an expert generator, and collect the generated                                           mance on a private test set.
+skills into a pool. (2) Utility-grounded pairwise
+                                                                                           • We propose E VO G UARD, a pairwise skill se-
+preference learning. We estimate the utility of ev-
+                                                                                             lector that amortizes validation. Validation
+ery skill on a private test set of its family. Rejection
+                                                                                             runs once offline to supervise the selector.
+sampling keeps pairs from the same family with a
+                                                                                             Each online decision then needs one forward
+clear utility gap. We then train a pairwise selector
+                                                                                             pass over two skill texts. It generates no to-
+to predict which skill in a pair has the higher utility.
+                                                                                             kens and runs no extra rollouts.
+(3) Online skill selection. After every task, the
+frozen selector reads the family description and the                                       • E VO G UARD achieves the highest success
+two skills. It keeps the skill it predicts to be bet-                                        among all methods on ALFWorld, Science-
+ter. This takes one forward pass and runs no extra                                           World, and LiveCodeBench. It also transfers
+rollouts in the environment.                                                                 to an executor unseen during selector training.
+
+                                                                               2
+2   Related Work                                              A fixed generator G then writes a new skill from
+                                                              the current skill, the trajectory, and the outcome:
+Skill evolution. Skills package reusable experi-
+                                                                                s̃t = G(sft , τt , rt ).            (2)
+ence as executable code or structured documents
+(Wang et al., 2024a; Anthropic, 2025; Xu and Yan,             A format check v(s̃t ) ∈ {0, 1} tests whether the
+2026). Recent work evolves skills from interac-               new skill is well formed. If v(s̃t ) = 1, a selector C
+tion. SkillRL integrates recursive skill evolution            chooses the next skill of the family:
+with reinforcement learning (Xia et al., 2026). Skil-                   sft ← C(ft , sft , s̃t ) ∈ {sft , s̃t }.    (3)
+lOpt treats a skill as the external state of a frozen         Otherwise the current skill is kept. The skills of
+agent and optimizes it under feedback (Yang et al.,           other families do not change. The selected skill
+2026b). SkillRise is the closest work to ours (Yao            serves later tasks of the same family. It cannot
+et al., 2026). It also carries an evolving skill across       change the outcome of the task that has just fin-
+distinct tasks and trains the executor jointly with           ished.
+skill curation through reinforcement learning. How-
+ever, our method keeps both the executor and the              Information boundary. The executor observes
+generator frozen. It only decides whether a single-           the current task and the environment feedback. The
+trajectory rewrite should replace the current skill.          generator observes the current skill, the latest tra-
+This decision is learned from supervised pairwise             jectory, and its outcome. The selector observes
+labels without policy optimization. E VO G UARD is            only the family name, a generic family description,
+thus a separate module that can be attached to any            and the two skill texts. It does not see the latest
+rewrite loop.                                                 task, its trajectory, or its outcome.
+                                                              Objective. Let Df be the task distribution of fam-
+Guarding skill updates. Several methods check
+                                                              ily f . Let r(x, s) denote the outcome of E(x, s).
+an update before they keep it. EvoSkill and Skil-
+                                                              We define the utility of a skill s as the expected
+lOpt keep an update only if it improves perfor-
+                                                              outcome of the executor with this skill:
+mance on a held-out validation set (Alzubi et al.,
+2026; Yang et al., 2026b). SkillEvo adds a gover-                           uf (s) = Ex∼Df [r(x, s)] .              (4)
+nance layer that repairs degraded skills instead of           We omit E from the notation because the executor
+only rejecting them (Yan et al., 2026). SkillEvoReg           is fixed. The selector should keep the skill with the
+regularizes skill evolution against overfitting and           higher utility. This utility is unknown at deploy-
+tests each candidate for regressions (Nie et al.,             ment. We therefore learn the relative order of skills
+2026). These methods execute additional tasks for             from measurements made before deployment. In
+every update. However, our method pays the valida-            this paper, cross-task transfer means transfer be-
+tion cost only once before deployment. Each online            tween different tasks of the same family. It does
+decision then needs only a single forward pass over           not mean transfer between families.
+two skill texts. Other work chooses which skill
+to read from a library during an episode (Li et al.,          4     Method
+2026a). Our method instead decides whether a new              Figure 2 shows the workflow of E VO G UARD. Be-
+skill should replace the current one. Appendix C              fore deployment, we first construct a multi-source
+discusses agent memory, learned skill writers, and            skill pool with the rewrite loop. We then estimate
+further related work.                                         the utility of every skill on a private test set. Finally,
+                                                              we train a pairwise selector on pairs of scored skills.
+3   Problem Setting                                           At deployment the frozen selector decides after ev-
+                                                              ery task whether the new skill replaces the current
+Tasks arrive one at a time. Let F be the set of
+                                                              one. We drop the task index t in this section.
+task families. The t-th task is xt , and its family
+is ft ∈ F. Each family f keeps one textual skill              4.1   Single-Trajectory Skill Rewriting
+sf . Every skill starts as the empty document ∅. A            A skill is a SKILL.md document. It has YAML
+frozen executor E attempts xt with the current skill          metadata and four Markdown sections. The sec-
+sft . It returns a trajectory τt and an outcome rt that       tions are When to use, Workflow, Decision rules,
+measures task success:                                        and Recovery and pitfalls. After each task, the gen-
+               (τt , rt ) = E(xt , sft ).          (1)        erator G rewrites the whole document. Its inputs
+
+                                                          3
+          (a) Multi-Source Skill Pool Construction                                                                           (b) Utility-Grounded Pairwise Preference Learning
+                                                                                                              62%                         Rejection Sampling
+                                                                         skill pool
+                                                                                                                                       62% vs          35%       gap 27
+                              trajectory    base generator         add                                        35%
+
+                                                                                                              48%                      48% vs          43%       gap 5
+                                                                                                                                                                                                                   A B
+ training tasks   executor                                                                                                                                                             EvoGuard                 label-token
+                                                                                                                                                                                      “The better skill            logits
+                                            expert generator                                                  43%                                                                       is Skill  ”
+                                                                                                                                      keep pairs with a clear utility gap                                                            Bradley–Terry
+                                        sample a parent skill                                                                                                                                                                        preference loss
+                                                                                           utility on private test set                      same-family pairs
+
+
+                                                                                                    (c) Online Skill Selection                                                                       one forward pass, no extra rollouts
+
+         Task 1: heat a potato                                                            Task 2: heat an egg                                                               Task 3: heat a cup
+                                                                    new skill                                                                       new skill                                                                           new skill
+                  > go to cabinet 3                                                              > open fridge 1                                                                   > take cup 2 from shelf 1
+                  > open cabinet 3                                                               > take egg 1 from fridge 1                                                        > open microwave 1
+                  > go to drawer 2                                                               > heat egg 1 with microwave 1                                                     > heat cup 2 with microwave 1
+                  ... step limit                                                                 > move egg 1 to countertop 1                                                      > move cup 2 to cabinet 1
+    executor                                           generator                      executor                                        generator                       executor                                           generator
+                           trajectory                                                                     trajectory                                                                        trajectory
+
+            rewrite                + add                                                     rewrite            ~ modify                                                      rewrite                – delete
+            + open closed containers                                                         – open closed containers                                                         – start at cabinet 3
+            + search nearby surfaces                                                         + open fridge 1                                                                  – the potato is in drawer 2
+
+
+
+                                           old skill               accept                                                 old skill                reject                                                  old skill                  accept
+
+                     empty skill                                         v1                                                                             v1 (kept)                                                                          v2
+
+
+
+
+Figure 2: Overview of E VO G UARD. (a) A rewrite loop on training tasks fills a skill pool from two sources, a base
+generator and an expert generator. (b) The utility of every skill is estimated on a private test set. Rejection sampling
+keeps same-family pairs with a clear utility gap to train a pairwise selector. (c) At deployment the frozen selector
+accepts or rejects each rewrite in one forward pass.
+
+are the current skill s, the trajectory τ of actions                                                                         fill the pool from two sources. The first source is
+and observations, and the outcome r:                                                                                         the base generator G itself. The second source is
+                   s̃ = G(s, τ, r).               (5)                                                                        an expert generator, a stronger model that writes
+The format check v(s̃) is purely structural. It re-                                                                          skills of higher quality. Section 5 gives the expert
+quires the family-specific name and a nonempty                                                                               generator of each benchmark.
+description. It also requires each of the four sec-                                                                          4.3             Skill Utility Estimation
+tions to appear exactly once with nonempty content.
+The check does not test whether the skill helps. A                                                                           We evaluate every valid skill once on each task
+rewrite with v(s̃) = 0 is discarded, and the current                                                                         of Hf . We also evaluate the empty skill of each
+skill stays.                                                                                                                 family. The empirical utility of a skill is its mean
+                                                                                                                             outcome on the private test set:
+4.2        Multi-Source Skill Pool Construction                                                                                                   1 X
+                                                                                                                                       ûf (s) =              r(x, s).         (7)
+For each family f , we split the training tasks into                                                                                             |Hf |
+                                                                                                                                                                                            x∈Hf
+two parts. A small part serves as the private test set
+                                                                                                                             The tasks in Hf are never used to generate skills.
+Hf . The other part is used to build the skill pool
+                                                                                                                             They are also disjoint from the online evaluation
+Pf . The pool is filled by the rewrite loop itself.
+                                                                                                                             tasks.
+The first few tasks run without a skill, and their
+valid rewrites initialize the pool. For every later                                                                          4.4             Pairwise Preference Learning
+task x, we draw a parent skill s uniformly from the
+                                                                                                                             Skill-level split. We split the scored skills into
+pool. The executor attempts x with s and returns
+                                                                                                                             training skills and validation skills. The split is
+(τ, r) = E(x, s). The generator then rewrites s.
+                                                                                                                             stratified by family and source. The empty skills
+The new skill joins the pool if it passes the format
+                                                                                                                             stay on the training side. A validation skill never
+check:
+                                                                                                                             appears in a training pair.
+            Pf ← Pf ∪ {G(s, τ, r)}.                (6)
+We record s as the parent of the new skill.                                                                                  Rejection sampling of pairs. We draw two train-
+                                                                                                                             ing skills si and sj of the same family. We keep
+Two skill sources. The pool should contain both                                                                              the pair only if their utilities are clearly apart:
+good and poor skills with clear utility gaps between
+them. Such gaps give the selector informative train-                                                                                                            |ûf (si ) − ûf (sj )| ≥ δ.                                                        (8)
+ing pairs. Skills from a single generator tend to                                                                            Each utility is estimated from a finite set of tasks.
+cover only a narrow quality range. We therefore                                                                              Pairs with a smaller gap therefore have unreliable
+
+                                                                                                                         4
+labels, and we reject them. No unordered pair is              is served, and Appendix A.5 gives the full online
+kept twice. We place the two skills at positions A            loop.
+and B in random order. The label y ∈ {A, B} is
+the position of the skill with the higher utility. A          5     Experimental Setup
+pair does not need to consist of a parent and its
+child.                                                        5.1    Benchmarks
+
+Pairwise preference objective. We cast the com-               We evaluate on four benchmarks and use their test
+parison as pairwise preference learning over two              sets for online evaluation. ALFWorld (Shridhar
+label tokens. The selector is a cross-encoder that            et al., 2021) is a text-based household environment.
+reads both skills in one prompt. The prompt                   An agent completes tasks such as finding, heat-
+names the family and describes its generic task.              ing, or cleaning objects through text commands.
+It then presents the two texts as Skill A and Skill           Its tasks fall into six families, namely Pick, Look,
+B. The prompt ends with the assistant prefix The              Clean, Heat, Cool, and Pick2. We use its seen and
+better skill is Skill. The answer is                          unseen test splits with 140 and 134 tasks. Science-
+thus the next token. Both A and B are single                  World (Wang et al., 2022) is a text-based environ-
+tokens in the vocabulary. Let hθ ∈ Rd be the final-           ment for elementary science experiments. Each
+layer hidden state at the last prompt position. Here          of its 30 task types forms a family. We draw at
+θ denotes the trainable parameters. Let wA and                most 30 test tasks per type, which gives 651 test
+wB be the rows of the unembedding matrix for the              tasks. LiveCodeBench (Jain et al., 2025) collects
+two label tokens. The selector uses only the logits           competitive programming problems over time. We
+of these two tokens instead of the full next-token            use the 175 problems added in its sixth release as
+distribution:                                                 the test set. Codex with GPT-6.1-sol assigns each
+                ⊤                   ⊤
+                                                              problem to one of nine algorithmic categories (Ap-
+          zA = wA hθ ,        zB = wB hθ .         (9)        pendix A.1). These categories serve as families.
+We renormalize over the two tokens to obtain the              WebShop (Yao et al., 2022) simulates online shop-
+probability that the skill at position y is better. We        ping. An agent searches a store and buys a product
+then minimize its negative log-likelihood:                    that matches an instruction. Its five product cat-
+         L(θ) = − log
+                               exp zy
+                                             .     (10)       egories serve as families, and we use its 500 test
+                         exp zA + exp zB                      tasks.
+This probability equals σ(zy − zȳ ), where ȳ is the
+other position. The loss thus depends only on the             5.2    Evaluation Metrics
+margin between the two logits and has the form                On ALFWorld, we report the success rate of each
+of a Bradley–Terry preference loss (Bradley and               family and of the whole split. On ScienceWorld, we
+Terry, 1952).                                                 report the success rate and the mean environment
+4.5   Online Skill Selection                                  score. The score ranges from 0 to 100 and also
+                                                              credits partial progress. On LiveCodeBench, we
+At deployment every family starts from the empty              report the pass rate. A problem counts as passed
+skill. Consider a task of family f whose rewrite s̃           if the generated program passes all hidden tests.
+passes the format check. We place the current skill           On WebShop, we report the success rate and the
+sf and s̃ at positions A and B in random order, as            mean purchase score. The score rates the purchased
+in training. The selector is then queried once. It            product on its type, attributes, options, and price.
+returns the position with the larger logit. The skill
+at that position becomes the family skill:                    5.3    Baselines
+          (
+            A if zA ≥ zB ,                                    No-Skill runs the executor with an empty skill on
+     ⋆
+    a =                           sf ← sa⋆ . (11)
+            B otherwise,                                      every task.
+This rule implements the selector C in Eq. (3). The           Accept-All adopts every valid rewrite.
+prompt is the same as in training. One decision               Random samples a skill uniformly from all valid
+costs one forward pass. It generates no tokens and            rewrites of the family so far, including the empty
+runs no extra rollouts. Neither the selector nor the          skill.
+executor is updated online. Appendix A.2 gives the            LLM-Judge gives the selector prompt to the un-
+prompts, Appendix A.4 describes how the selector              trained backbone and lets it generate A or B.
+
+                                                          5
+LLM-Judge (Think) does the same with thinking                four settings, E VO G UARD reaches 56.5%. Accept-
+enabled, so the model reasons before it answers.             All and the three LLM-Judge baselines all average
+LLM-Judge (Logit) applies our assistant prefix and           about 45.5%. The executor alone averages 36.7%.
+our A/B logit rule to the untrained backbone.
+                                                             An executor without training labels. No train-
+5.4    Implementation Details                                ing label comes from Qwen3-32B. Its rows there-
+Training. To build pairs with clear utility gaps,            fore test transfer to an unseen executor. E VO -
+we sample skills from generators of different qual-          G UARD reaches 66.7% on seen and 71.6% on un-
+ity. Skills from different generators follow differ-         seen tasks. The strongest baselines reach 59.3%
+ent distributions and cover different quality levels.        and 68.7%. The executor alone reaches 51.7% and
+We use Qwen3-4B (Yang et al., 2025) as the gen-              58.2%.
+erator. However, its skills are of limited quality.          Effect of training. LLM-Judge (Logit) uses the
+Its skills alone rarely form pairs with clear utility        same prompt and the same decision rule as E VO -
+gaps. We therefore add a second source of skills.            G UARD. The comparison between the two thus
+On ALFWorld, ScienceWorld, and WebShop, the                  isolates the effect of training. E VO G UARD im-
+second source is an expert generator. We train it            proves over LLM-Judge (Logit) by 6.4% to 16.9%
+from Qwen3-4B with GRPO on the training tasks.               in overall success.
+On LiveCodeBench, the second source is GPT-6.1-
+sol. The second source samples more high-quality             Per-family results. The gains differ across task
+skills. Together with the base skills, it yields pairs       families. They are largest on families that need
+with clear utility gaps.                                     multi-step procedures. With the 4B executor on
+   All experiments run on a server with four                 seen tasks, E VO G UARD raises Heat from 10.4%
+NVIDIA H200 GPUs. The selector backbone stays                without skills to 54.2%. It raises Cool from 1.3% to
+frozen, and we train LoRA adapters (Hu et al.,               37.3%. On Pick, every method already reaches at
+2022) on all attention and feed-forward projections.         least 75%, which leaves little room for skills. On a
+The adapters have rank 32 and scaling factor 64.             few families, skills even hurt. On Pick2 with the 8B
+We use AdamW with a learning rate of 10−4 and                executor, the executor alone reaches 61.1% on seen
+a cosine schedule. We train for one epoch and                tasks, while E VO G UARD reaches 50.0%. On Heat
+use the final checkpoint. Appendix A.3 gives the             with the 32B executor, the executor alone reaches
+remaining details.                                           50.7% on unseen tasks, while E VO G UARD reaches
+                                                             33.3%. The selector can only choose among the
+Evaluation. The online evaluation samples at
+                                                             rewrites it receives. It cannot repair a family where
+temperature 1.0. An episode has at most 30 ac-
+                                                             written skills do not help.
+tions on ALFWorld, ScienceWorld, and WebShop.
+Each setting is run three times with different sam-          Acceptance behavior. Table 2 reports how each
+pling seeds. We report the mean over the three runs.         method treats the rewrites. Almost all rewrites
+WebShop results are reported in Appendix B.1.                pass the format check. Only LLM-Judge and LLM-
+                                                             Judge (Think) see a few invalid ones. E VO G UARD
+6     Experimental Results                                   accepts only 42.3% and 43.2% of the valid rewrites.
+6.1    Main Performance                                      The LLM-Judge baselines accept 68.4% to 72.0%.
+                                                             The skill in use is also shorter under E VO G UARD.
+Table 1 reports online success on ALFWorld. We
+                                                             It averages 361 to 371 tokens, against 528 to 567
+train the selector once. We then evaluate the same
+                                                             tokens under Accept-All and the LLM-Judge base-
+selector with executors built on three backbones,
+                                                             lines. Yet E VO G UARD achieves the best overall
+namely Qwen3-4B, Qwen3-8B, and Qwen3-32B.
+                                                             success with these shorter skills. This reveals that
+Overall success. E VO G UARD achieves the best               E VO G UARD tends to keep content that is general
+overall success with every executor. With the 4B             and useful, rather than content that is specific to
+executor, it reaches 55.7% on seen and 62.4% on              individual cases.
+unseen tasks. The strongest baselines reach 44.8%
+and 51.2%. With the 8B executor, E VO G UARD                 6.2   Performance on Other Benchmarks
+reaches 53.3% and 54.7%. The strongest base-                 We also report results on ScienceWorld and Live-
+lines reach 44.3% and 48.3%. Averaged over these             CodeBench in Table 3.
+
+                                                         6
+                                                     Seen                                                  Unseen
+Method                    Pick Look Clean Heat Cool Pick2 All                        Pick Look Clean Heat Cool Pick2 All
+                          (35) (13) (27) (16) (25) (24) (140)                        (24) (18) (31) (23) (21) (17) (134)
+Executor: Qwen3-4B
+No-Skill           82.9            10.3     23.5 10.4          1.3    48.6 36.0      81.9   29.6    29.0 13.0       11.1    23.5 32.3
+Accept-All         90.5            20.5     27.2 29.2         14.7    30.6 41.0      86.1   11.1    78.5 30.4       54.0    19.6 51.2
+Random             87.6            12.8     37.0 33.3         16.0    30.6 42.1      75.0   16.7    58.1 30.4       44.4    25.5 44.5
+LLM-Judge          82.9             5.1     35.8 25.0         29.3    38.9 42.9      77.8   20.4    78.5 21.7       60.3    23.5 51.0
+LLM-Judge (Think) 91.4             15.4     42.0 39.6         24.0    18.1 44.3      76.4    1.9    67.7 47.8       50.8    19.6 48.3
+LLM-Judge (Logit) 85.7             12.8     45.7 22.9         22.7    38.9 44.8      84.7   11.1    67.7 20.3       57.1    23.5 47.8
+E VO G UARD        87.6            33.3     46.9 54.2         37.3    51.4 55.7      84.7   24.1    76.3 68.1       65.1    35.3 62.4
+Executor: Qwen3-8B
+No-Skill           85.7            23.1     34.6 8.3           8.0    61.1 43.1      86.1   22.2    32.3 5.8        12.7    51.0 35.3
+Accept-All         89.5            20.5     37.0 2.1          30.7    41.7 44.3      86.1   22.2    68.8 2.9        39.7    35.3 45.5
+Random             88.6            35.9     35.8 4.2          17.3    47.2 44.0      87.5   24.1    61.3 8.7        50.8    35.3 47.0
+LLM-Judge          79.0            23.1     37.0 8.3          34.7    40.3 43.1      87.5   29.6    72.0 2.9        23.8    35.3 45.0
+LLM-Judge (Think) 81.9             20.5     42.0 4.2          10.7    56.9 42.6      79.2   33.3    73.1 1.4        50.8    25.5 47.0
+LLM-Judge (Logit) 85.7             20.5     28.4 2.1          32.0    37.5 41.2      84.7   33.3    77.4 1.4        39.7    33.3 48.3
+E VO G UARD        88.6            30.8     51.9 16.7         44.0    50.0 53.3      86.1   31.5    75.3 20.3       52.4    47.1 54.7
+Executor: Qwen3-32B
+No-Skill           89.5            66.7     33.3 29.2         22.7    54.2 51.7      88.9   50.0    49.5 50.7 57.1 51.0 58.2
+Accept-All         90.5            71.8     38.3 10.4         42.7    47.2 53.6      86.1   57.4    80.6 15.9 76.2 37.3 61.2
+Random             88.6            76.9     56.8 29.2         30.7    59.7 59.3      90.3   63.0    68.8 21.7 85.7 51.0 64.2
+LLM-Judge          87.6            84.6     33.3 14.6         40.0    43.1 52.4      86.1   79.6    88.2 15.9 81.0 52.9 68.7
+LLM-Judge (Think) 89.5             74.4     44.4 14.6         45.3    62.5 58.3      86.1   66.7    88.2 7.2 66.7 39.2 61.4
+LLM-Judge (Logit) 88.6             74.4     35.8 8.3          21.3    52.8 49.8      88.9   70.4    81.7 7.2 77.8 49.0 63.9
+E VO G UARD        96.2            76.9     51.9 33.3         52.0    72.2 66.7      91.7   79.6    87.1 33.3 77.8 51.0 71.6
+
+Table 1: Online success rate (%, ↑) on ALFWorld by task family for three executors. Each value is the mean of
+three runs. Bold marks the best value in each column for each executor.
+
+                          Qwen3-4B                   Qwen3-8B                                      ScienceWorld LiveCodeBench
+Method            Valid Accepted Tokens Valid Accepted Tokens
+                                                                            Method                 Success Score           Pass Rate
+Accept-All        100.0    100.0      553    100.0    100.0     567
+Random            100.0     12.8      303    100.0    13.0      307         No-Skill                10.2     20.6            26.1
+LLM-Judge          99.8     68.9      541     99.9    70.9      536
+LLM-Judge (Think) 98.4      68.4      565     99.1     68.8     548         Accept-All               9.4     21.2            25.7
+LLM-Judge (Logit) 100.0     69.0      543    100.0     72.0     528         Random                  10.0     20.7            25.7
+E VO G UARD       100.0     42.3      371    100.0     43.2     361         LLM-Judge               10.0     21.6            26.7
+                                                                            LLM-Judge (Think)       10.8     21.3            25.3
+Table 2: Acceptance statistics of the runs in Table 1.                      LLM-Judge (Logit)        9.6     22.0            27.0
+Valid is the share of rewrites that pass the format check                   E VO G UARD             15.3     27.3            28.4
+(%). Accepted is the share of valid rewrites that are
+adopted (%). Tokens is the mean length of the skill in                      Table 3: Online results on ScienceWorld and Live-
+use.                                                                        CodeBench (%). ScienceWorld reports the success rate
+                                                                            and the mean score. LiveCodeBench reports the pass
+ScienceWorld. E VO G UARD reaches 15.3% suc-                                rate. Bold marks the best value in each column.
+cess and a score of 27.3. Without skills, the execu-
+tor reaches 10.2% and 20.6. The other methods that                          below it on both benchmarks. These methods can-
+use skills reach between 9.4% and 10.8% success.                            not evolve the skill in a stable way. Good rewrites
+None of them is clearly better than using no skill.                         are mixed with harmful ones, and the gains of the
+Accept-All even falls below it.                                             former are cancelled by the latter. E VO G UARD fil-
+                                                                            ters out the harmful rewrites before they replace the
+LiveCodeBench. E VO G UARD achieves the best                                current skill. The skill can therefore improve over
+pass rate of 28.4%. This is 2.3% higher than run-                           the task stream instead of drifting. These results
+ning without skills. In contrast, Accept-All and                            show that E VO G UARD mitigates skill degradation
+Random both drop slightly to 25.7%. The LLM-                                during evolution, and that this benefit is not limited
+Judge baselines reach between 25.3% and 27.0%,                              to ALFWorld.
+which is close to running without skills.
+Analysis. The two benchmarks show the same                                  6.3   Training Performance
+pattern. The other methods that use skills stay close                       Figure 3 tracks the selector during training. On
+to the executor without skills, and Accept-All falls                        validation pairs, the untrained Qwen3-4B reaches
+
+                                                                        7
+                100                                                                                           Qwen3-4B       Qwen3-8B
+                                                                                     Variant                 Seen Unseen Seen Unseen Avg.
+                                                                                     E VO G UARD              55.7   62.4   53.3   54.7   56.5
+ Accuracy (%)
+
+
+                 80                                                                   w/o expert-written pool 47.1   58.2   48.3   54.5   52.0
+                                                                                      w/o rejection sampling 49.5    57.0   48.3   54.7   52.4
+
+                 60                                             Train                Table 4: Ablation study of E VO G UARD, reported as
+                                                                Validation           overall online success (%).
+                                                                Parent-child
+                 40
+                       0    100      200     300     400      500   600              removes the expert-written skills from the pool.
+                                           Training step                             The pool then lacks high-quality skills, because
+                                                                                     the base generator writes skills of limited quality.
+Figure 3: Selector accuracy during training on the train-                            These skills are also generated by the same back-
+ing batches (Train), on validation pairs (Validation), and                           bone as the selector, so their distribution is close to
+on parent-child validation pairs (Parent-child).                                     that of the selector backbone itself. The resulting
+                                                                                     pairs are difficult to distinguish and provide only a
+                                                     random
+LLM-Judge (Logit)                                      55.6                          weak training signal. w/o rejection sampling draws
+                                                                                     pairs at random and discards only ties. As a result,
+                      EvoGuard                                            98.3
+                                                                                     44% of the training pairs differ by less than 10%
+                                 0      25        50        75       100             in utility, and their labels are dominated by estima-
+                                     Agreement after swapping A/B (%)                tion noise. Rejection sampling retains only pairs
+Figure 4: Share of validation pairs for which the selector                           with a clear utility gap, which allows the selector
+keeps the same skill after the two skills swap positions.                            to learn the features that separate good skills from
+The dashed line marks a random choice.                                               poor ones. Both components are thus needed to
+                                                                                     obtain informative training pairs.
+48.2%. This is no better than chance, because it
+answers A for 72% of the prompts. Accuracy rises                                     7   Conclusion
+to 89.6% after 100 steps. It reaches 95.0% at the                                    Online skill evolution lets a deployed agent im-
+final step. Parent-child pairs match the comparison                                  prove its skill after every task. However, each
+of the online loop. On these pairs, accuracy rises                                   rewrite is based on a single trajectory and can de-
+from 58.1% to 86.3%.                                                                 grade the skill. Adopting every rewrite lets the skill
+                                                                                     drift, while validating every update is too costly.
+6.4              Position Stability
+                                                                                     We propose E VO G UARD, a pairwise skill selector
+Pairwise LLM judges are known to suffer from                                         for skill selection. We first build a dataset of skills
+position bias (Wang et al., 2024b; Zheng et al.,                                     with utility labels through iterative rollouts and skill
+2023). We test this bias on the validation pairs.                                    rewriting. Each label is the empirical utility of the
+For each pair, we swap the positions of the two                                      skill on a private test set. Rejection sampling then
+skills and check whether the selector keeps the                                      keeps high-confidence pairs with clear utility gaps
+same skill. Figure 4 reports this agreement rate.                                    as preference supervision. We cast the comparison
+The untrained LLM-Judge (Logit) agrees on only                                       between the current skill and the new one as pair-
+55.6% of the pairs. This is close to the 50% of a                                    wise preference learning. The selector takes only
+random choice. The untrained backbone thus can-                                      the logits of the two label tokens and renormalizes
+not judge reliably which of the two skills is better.                                over them. It aligns this conditional distribution
+Our training places the two skills in random order                                   with the preference labels. At deployment, each
+and optimizes the two label logits. This calibrates                                  decision needs a single forward pass and generates
+the logits and makes the decision nearly invariant                                   no tokens. Its cost and latency are therefore low.
+to the order of the inputs. E VO G UARD agrees on                                    Experiments on two agent benchmarks and one
+98.3% of the pairs.                                                                  code benchmark confirm the effectiveness of E VO -
+                                                                                     G UARD. On ALFWorld, it reaches 56.5% average
+6.5              Ablation Study                                                      success against 45.5% for adopting every rewrite.
+Table 4 removes one component of the training                                        On ScienceWorld, it raises success from 10.2% to
+data at a time. Both variants reduce the average                                     15.3%. On LiveCodeBench, it achieves the best
+success by more than 4%. w/o expert-written pool                                     pass rate of 28.4%.
+
+                                                                                 8
+Limitations                                                  Yuzheng Cai, Siqi Cai, Yuchen Shi, Zihan Xu, Lichao
+                                                               Chen, Yulei Qin, Xiaoyu Tan, Gang Li, Zongyi
+Our experiments cover text-based agent environ-                Li, Haojia Lin, Yong Mao, Ke Li, and Xing Sun.
+ments and one code generation benchmark. Ex-                   2025. Training-free group relative policy optimiza-
+tending E VO G UARD to multimodal or embodied                  tion. arXiv preprint arXiv:2510.08191.
+settings is left for future work. All executors come         Chishui Chen, Jiaye Lin, Te Sun, Yi Yang, Junxi Wang,
+from one model family. Other model families may                Cong Qin, Yangen Hu, Lu Pan, and Ke Zeng. 2026.
+rank skills somewhat differently. Building and scor-           Skill or skip? learning selective skill invocation in
+ing the skill pool requires offline computation be-            agentic tasks via dual-granularity preference learning.
+                                                               arXiv preprint arXiv:2606.00510.
+fore deployment. This cost is paid once and is
+shared by all later decisions. We train one selec-           Chenhao Dang, Siyuan Xiong, Conghui He, and Weijia
+tor per benchmark. A single selector that transfers            Li. 2026. SKILLER: Language-level reinforcement
+across domains would further reduce the setup cost.            learning for reusable skill extraction in small lan-
+                                                               guage models. arXiv preprint arXiv:2608.10538.
+The selector compares the current skill with one
+new skill at a time. Richer update rules, such as            Aniket Didolkar, Nicolas Ballas, Sanjeev Arora, and
+keeping several versions or reverting to an earlier            Anirudh Goyal. 2025. Metacognitive reuse: Turn-
+one, may bring further gains. Finally, the selector            ing recurring LLM reasoning into concise behaviors.
+can only choose among the rewrites it receives. Its            arXiv preprint arXiv:2509.13237.
+benefit is therefore smaller in settings where skills        Gen Dong, Yanjie Gao, Liqun Li, Tianyin Xu, Yu Hua,
+offer little help.                                             and Fan Yang. 2026. Agent skills can be harmful:
+                                                               An empirical study of skill-induced failures in LLM
+Ethical Considerations                                         agents. arXiv preprint arXiv:2608.11888.
+
+Our experiments use public benchmarks in sim-                Yuyao Ge, Yiwei Wang, Yuchen He, Baolong Bi, Lin-
+ulated environments and model-generated trajec-                grui Mei, Jiayu Yao, Lizhe Chen, and Shenghua Liu.
+tories. They involve no human subjects and no                  2026. SkillForge: Co-evolving skills and agents via
+                                                               dynamic skill lifecycles. In Advances in Neural In-
+private user data. The selector is supervised by task          formation Processing Systems.
+success, which does not guarantee that a skill is safe
+outside these environments. A reusable skill may             Shuang Guo, Xiaobo Sui, Fei Jiang, Ruixin Li, Manx-
+also carry incorrect instructions to later tasks. Real         iang Li, Rong Li, and Ziyang Ou. 2026. Towards
+                                                               strategy-level RSI for skill-augmented agents: Learn-
+deployments should therefore add safety checks                 ing when to reuse skills from execution feedback.
+suited to their domain and keep a record of skill              arXiv preprint arXiv:2609.26863.
+versions. We use all benchmarks and models in
+accordance with their licenses. Generative AI as-            Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan
+                                                               Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and
+sisted with literature search and with drafting and            Weizhu Chen. 2022. LoRA: Low-rank adaptation of
+editing this manuscript.                                       large language models. In International Conference
+                                                               on Learning Representations.
+
+References                                                   Siyuan Huang, Pengyu Cheng, Haotian Liu, Tao Chen,
+                                                               Yihao Liu, Jingwei Ni, Shijie Zhou, Ziyi Yang, Gang-
+Salaheddin Alzubi, Noah Provenzano, Jaydon Bing-               wei Jiang, Mengyu Zhou, Yu Cheng, Xiaoxi Jiang,
+  ham, Christian Alexander Calvo, Weiyuan Chen, and             and Guanjun Jiang. 2026. Skill self-play: Pushing
+  Tu Vu. 2026. EvoSkill: Automated skill discovery              the frontier of LLM capability with co-evolving skills.
+  for multi-agent systems. In Third Conference on               arXiv preprint arXiv:2607.22529.
+  Language Modeling.
+Anthropic. 2025. Equipping agents for the real world         Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia
+  with Agent Skills. Anthropic Engineering Blog.               Yan, Tianjun Zhang, Sida Wang, Armando Solar-
+                                                               Lezama, Koushik Sen, and Ion Stoica. 2025. Live-
+Ralph Allan Bradley and Milton E. Terry. 1952. Rank            CodeBench: Holistic and contamination free evalua-
+  analysis of incomplete block designs: I. The method          tion of large language models for code. In Interna-
+  of paired comparisons. Biometrika, 39(3/4):324–              tional Conference on Learning Representations.
+  345.
+                                                             Guanyu Jiang, Zhaochen Su, Xiaoye Qu, and Yi R. Fung.
+Tianle Cai, Xuezhi Wang, Tengyu Ma, Xinyun Chen,               2026a. XSkill: Continual learning from experience
+  and Denny Zhou. 2024. Large language models as               and skills in multimodal agents. In Proceedings of
+  tool makers. In International Conference on Learn-           the 43rd International Conference on Machine Learn-
+  ing Representations.                                         ing.
+
+
+                                                         9
+Pengcheng Jiang, Jiacheng Lin, Zhiyi Shi, Zifeng Wang,             memory. In International Conference on Learning
+  Luxi He, Yichen Wu, Ming Zhong, Peiyang Song,                    Representations.
+  Qizheng Zhang, Heng Wang, Xueqiang Xu, Hanwen
+  Xu, Pengrui Han, Dylan Zhang, Jiashuo Sun, Chaoqi              Libin Qiu, Zhirong Gao, Junfu Chen, Yuhang Ye,
+  Yang, Kun Qian, Tian Wang, Changran Hu, and 15                   Liangyu Li, Weizhi Huang, Xiaobo Xue, Wenkai
+  others. 2025. Adaptation of agentic AI: A survey                 Qiu, and Shuo Tang. 2026. AutoRefine: Compiling
+  of post-training, memory, and skills. arXiv preprint             trajectories into validated typed agent artifacts. arXiv
+  arXiv:2512.16301.                                                preprint arXiv:2601.22758.
+
+Yanna Jiang, Delong Li, Haiyu Deng, Baihe Ma,                    Junhao Shen, Zhanqiu Zhang, Yiwen Guo, and Hong
+  Xu Wang, Qin Wang, and Guangsheng Yu. 2026b.                     Cheng. 2026.      Progressive agent skill genera-
+  SoK: Agentic skills — beyond tool use in LLM                     tion via reinforcement learning. arXiv preprint
+  agents. arXiv preprint arXiv:2602.20867.                         arXiv:2608.01678.
+
+Qingyao Li, Wenxiang Jiao, Shuai Shao, Kangning                  Yaorui Shi, Yuxin Chen, Zhengxi Lu, Yuchun Miao,
+  Zhang, Yuan Lu, Yi Guo, Weiwen Liu, Weinan                       Shugui Liu, Qi GU, Xunliang Cai, Xiang Wang, and
+  Zhang, and Yong Yu. 2026a. SkillGate: Training in-               An Zhang. 2026. Skill1: Unified evolution of skill-
+  policy skill selection in long-horizon agents. arXiv             augmented agents via reinforcement learning. arXiv
+  preprint arXiv:2608.18852.                                       preprint arXiv:2605.06130.
+
+Xiangyi Li, Yimin Liu, Wenbo Chen, Bingran You,                  Noah Shinn, Federico Cassano, Ashwin Gopinath,
+  Zonglin Di, Yifeng He, Shenghan Zheng, Ky-                       Karthik Narasimhan, and Shunyu Yao. 2023. Re-
+  oung Whan Choe, Jiankai Sun, Shuyi Wang, Chujun                  flexion: Language agents with verbal reinforcement
+  Tao, Binxu Li, Xuandong Zhao, Hejia Geng, Xiao-                  learning. In Advances in Neural Information Pro-
+  jun Wu, Junwei Zhou, Xiaokun Chen, Hanwen Xing,                  cessing Systems, volume 36.
+  Yubo Li, and 59 others. 2026b. SkillsBench: Bench-
+  marking how well agent skills work across diverse              Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté,
+  tasks. arXiv preprint arXiv:2602.12670.                         Yonatan Bisk, Adam Trischler, and Matthew
+                                                                  Hausknecht. 2021. ALFWorld: Aligning text and
+Zhiwei Li and Yong Hu. 2026. SkillHone: A harness                 embodied environments for interactive learning. In
+  for continual agent skill evolution through persistent          International Conference on Learning Representa-
+  decision history. arXiv preprint arXiv:2606.08671.              tions.
+Zhengxi Lu, Zhiyuan Yao, Jinyang Wu, Chengcheng                  Shuzheng Si, Haozhe Zhao, Yu Lei, Qingyi Wang,
+  Han, Qi Gu, Xunliang Cai, Weiming Lu, Jun                        Dingwei Chen, Zhitong Wang, Zhenhailong Wang,
+  Xiao, Yueting Zhuang, and Yongliang Shen. 2026.                  Kangyang Luo, Zheng Wang, Gang Chen, Fanchao
+  SKILL0: In-context agentic reinforcement learn-                  Qi, Minjia Zhang, and Maosong Sun. 2026. From
+  ing for skill internalization.   arXiv preprint                  context to skills: Can language models learn from
+  arXiv:2604.02268.                                                context skillfully? arXiv preprint arXiv:2604.27660.
+Jingwei Ni, Yihao Liu, Xinpeng Liu, Yutao Sun,                   Charlie Snell, Dan Klein, and Ruiqi Zhong. 2022.
+   Mengyu Zhou, Pengyu Cheng, Dexin Wang, Er-                      Learning by distilling context. arXiv preprint
+   chao Zhao, Xiaoxi Jiang, and Guanjun Jiang.                     arXiv:2209.15189.
+   2026. Trace2Skill: Distill trajectory-local lessons
+   into transferable agent skills.     arXiv preprint            Chenxi Wang, Zhuoyun Yu, Xin Xie, Wuguannan
+   arXiv:2603.25158.                                               Yao, Runnan Fang, Shuofei Qiao, Kexin Cao,
+                                                                   Guozhou Zheng, Xiang Qi, Peng Zhang, and Shumin
+Guanyu Nie, Fangzhou Zhu, Shixiong Kai, Xiong-                     Deng. 2026a. SkillX: Automatically constructing
+  wei Han, Tao Zhong, and Mingxuan Yuan. 2026.                     skill knowledge bases for agents. arXiv preprint
+  SkillEvoReg: Regularizing agent skill evolution                  arXiv:2604.04804.
+  against overfitting. arXiv preprint arXiv:2609.30861.
+                                                                 Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-
+Siru Ouyang, Jun Yan, Yanfei Chen, Rujun Han,                      dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and An-
+   Zifeng Wang, Bhavana Dalvi Mishra, Rui Meng,                    ima Anandkumar. 2024a. Voyager: An open-ended
+   Chun-Liang Li, Yizhu Jiao, Kaiwen Zha, Maohao                   embodied agent with large language models. Trans-
+   Shen, Vishy Tirumalashetty, George Lee, Jiawei                  actions on Machine Learning Research.
+   Han, Tomas Pfister, and Chen-Yu Lee. 2026a. Skil-
+   lOS: Learning skill curation for self-evolving agents.        Hanyu Wang, Yifan Lan, Bochuan Cao, Lu Lin,
+   arXiv preprint arXiv:2605.06614.                                and Jinghui Chen. 2026b. SkillGrad: Optimizing
+                                                                   agent skills like gradient descent. arXiv preprint
+Siru Ouyang, Jun Yan, I-Hung Hsu, Yanfei Chen,                     arXiv:2605.27760.
+   Ke Jiang, Zifeng Wang, Rujun Han, Long Le, Samira
+   Daruki, Xiangru Tang, Vishy Tirumalashetty, George            Jiongxiao Wang, Qiaojing Yan, Yawei Wang, Yijun
+   Lee, Mahsan Rofouei, Hangfei Lin, Jiawei Han,                    Tian, Soumya Smruti Mishra, Zhichao Xu, Megha
+   Chen-Yu Lee, and Tomas Pfister. 2026b. Reason-                   Gandhi, Panpan Xu, and Lin Lee Cheong. 2026c. Re-
+   ingBank: Scaling agent self-evolving with reasoning              inforcement learning for self-improving agent with
+
+
+                                                            10
+  skill library. In Proceedings of the 64th Annual Meet-          and Bin Cui. 2024. Buffer of thoughts: Thought-
+  ing of the Association for Computational Linguistics            augmented reasoning with large language models. In
+  (Volume 1: Long Papers), pages 1529–1550.                       Advances in Neural Information Processing Systems,
+                                                                  volume 37.
+Peiyi Wang, Lei Li, Liang Chen, Zefan Cai, Dawei Zhu,
+  Binghuai Lin, Yunbo Cao, Lingpeng Kong, Qi Liu,               Min Yang, Jinghua Piao, Xu Xia, Xiaochong Lan, Jiaju
+  Tianyu Liu, and Zhifang Sui. 2024b. Large language              Chen, Yongshun Gong, and Yong Li. 2026a. Skill-
+  models are not fair evaluators. In Proceedings of the           Master: Toward autonomous skill mastery in LLM
+  62nd Annual Meeting of the Association for Compu-               agents. arXiv preprint arXiv:2605.08693.
+  tational Linguistics (Volume 1: Long Papers), pages
+  9440–9450.                                                    Yifan Yang, Ziyang Gong, Weiquan Huang, Qihao
+                                                                  Yang, Ziwei Zhou, Zisu Huang, Yan Li, Xuemei
+Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and               Gao, Qi Dai, Bei Liu, Kai Qiu, Yuqing Yang, Dong-
+  Prithviraj Ammanabrolu. 2022. ScienceWorld: Is                  dong Chen, Xue Yang, and Chong Luo. 2026b. Skil-
+  your agent smarter than a 5th grader? In Proceedings            lOpt: Executive strategy for self-evolving agent skills.
+  of the 2022 Conference on Empirical Methods in                  arXiv preprint arXiv:2605.23904.
+  Natural Language Processing, pages 11279–11298.
+                                                                Yutao Yang, Junsong Li, Qianjun Pan, Bihao Zhan, Yux-
+Zifei Wang, Wei Wen, Qiang Ji, Keyu Chen, Ruizhi                  uan Cai, Lin Du, Jie Zhou, Kai Chen, Qin Chen,
+   Qiao, and Xing Sun. 2026d. Skill is not document:              Xin Li, Bo Zhang, and Liang He. 2026c. AutoSkill:
+   Query-conditioned compatibility for LLM agent skill            Experience-driven lifelong learning via skill self-
+   routing. arXiv preprint arXiv:2606.03565.                      evolution. arXiv preprint arXiv:2603.01145.
+
+Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and                Shunyu Yao, Howard Chen, John Yang, and Karthik
+  Graham Neubig. 2025. Agent workflow memory. In                  Narasimhan. 2022. WebShop: Towards scalable real-
+  Proceedings of the 42nd International Conference on             world web interaction with grounded language agents.
+  Machine Learning.                                               In Advances in Neural Information Processing Sys-
+                                                                  tems, volume 35.
+Tianxin Wei, Noveen Sachdeva, Benjamin Coleman,
+  Zhankui He, Yuanchen Bei, Xuying Ning, Mengt-                 Zhiyuan Yao, Yuxin Chen, Zhengxi Lu, Zishan Xu,
+  ing Ai, Yunzhe Li, Jingrui He, Ed H. Chi, Chi                   Yueqing Sun, Yifu Guo, Yuquan Lu, Zhengzhou
+  Wang, Shuo Chen, Fernando Pereira, Wang-Cheng                   Cai, Kangning Zhang, Zhuowen Han, Zi-Han Wang,
+  Kang, and Derek Zhiyuan Cheng. 2025. Evo-                       Ziang Ye, Qi Gu, Xunliang Cai, Weiwen Liu, and
+  Memory: Benchmarking LLM agent test-time learn-                 Yongliang Shen. 2026. SkillRise: Agentic reinforce-
+  ing with self-evolving memory. arXiv preprint                   ment learning for cross-task skill evolution. arXiv
+  arXiv:2511.20857.                                               preprint arXiv:2607.26784.
+
+Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu,                Tianzhu Ye, Li Dong, Xun Wu, Shaohan Huang, and
+  Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou, Xu-                Furu Wei. 2026. On-policy context distillation for
+  jiang Zhao, Haifeng Chen, Zeyu Zheng, Cihang Xie,               language models. arXiv preprint arXiv:2602.12275.
+  and Huaxiu Yao. 2026. SkillRL: Evolving agents via
+  recursive skill-augmented reinforcement learning. In          Simon Yu, Gang Li, Weiyan Shi, and Peng Qi. 2026.
+  Advances in Neural Information Processing Systems.              PolySkill: Learning generalizable skills through poly-
+                                                                  morphic abstraction for continual learning. In Inter-
+Renjun Xu and Yang Yan. 2026. Agent skills for                    national Conference on Learning Representations.
+  large language models: Architecture, acquisition,
+  security, and the path forward. arXiv preprint                Hanrong Zhang, Shicheng Fan, Henry Peng Zou, Yankai
+  arXiv:2602.12430.                                               Chen, Zhenting Wang, Jiayu Zhou, Chengze Li, Wei-
+                                                                  Chieh Huang, Yifei Yao, Kening Zheng, Xue Liu,
+Qianxi Yan, Chunrong Chen, Jiuzhou Zhao, Min                      Xiaoxiao Li, and Philip S. Yu. 2026a. CoEvoSkills:
+  Zhang, Yongzhou Xu, and Xiaochuan Xu. 2026.                     Self-evolving agent skills via co-evolutionary verifi-
+  SkillEvo: Self-renewing evolution gradients from                cation. In Third Conference on Language Modeling.
+  multi-turn interaction feedback. arXiv preprint
+  arXiv:2608.13120.                                             Qizheng Zhang, Changran Hu, Shubhangi Upasani,
+                                                                  Boyuan Ma, Fenglu Hong, Vamsidhar Kamanuru,
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang,                  Jay Rainton, Chen Wu, Mengmeng Ji, Hanchen Li,
+  Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao,                     Urmish Thakker, James Zou, and Kunle Olukotun.
+  Chengen Huang, Chenxu Lv, Chujie Zheng, Dayi-                   2026b. Agentic context engineering: Evolving con-
+  heng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge,                 texts for self-improving language models. In Inter-
+  Haoran Wei, Huan Lin, Jialong Tang, and 41 oth-                 national Conference on Learning Representations.
+  ers. 2025. Qwen3 technical report. arXiv preprint
+  arXiv:2505.09388.                                             Zhiwei Zhang, Yudi Lin, Nikki Lijing Kuang, Linlin Wu,
+                                                                  Xiaomin Li, Songtao Liu, and Fenglong Ma. 2026c.
+Ling Yang, Zhaochen Yu, Tianjun Zhang, Shiyi Cao,                 Co-evolving skill generation and policy optimization.
+  Minkai Xu, Wentao Zhang, Joseph E. Gonzalez,                    arXiv preprint arXiv:2606.08755.
+
+
+                                                           11
+Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu                  prompt starts with the instruction to answer from
+  Lin, Yong-Jin Liu, and Gao Huang. 2024. ExpeL:                 the given text only, to run no commands, and to
+  LLM agents are experiential learners. In Proceedings
+                                                                 reply with one JSON value. The model sees the
+  of the AAAI Conference on Artificial Intelligence,
+  volume 38, pages 19632–19642.                                  title, the statement, and the starter code of a prob-
+                                                                 lem. The hidden tests are never shown to it. The
+Boyuan Zheng, Michael Y. Fatemi, Xiaolong Jin,                   training and the test problems go through the same
+  Zora Zhiruo Wang, Apurva Gandhi, Yueqi Song,
+  Yu Gu, Jayanth Srinivasa, Gaowen Liu, Graham Neu-              procedure, which has two steps.
+  big, and Yu Su. 2025. SkillWeaver: Web agents can                  In the first step, the model tags the problems
+  self-improve by discovering and honing skills. arXiv           in batches of 20. The prompt is followed by the
+  preprint arXiv:2504.07079.                                     problems:
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan                Below are {N} competitive programming problems. For
+  Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin,                        each one, name the algorithmic topics a solver
+  Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang,                    needs for the intended solution: 1 to 3 short
+                                                                      lower-case tags (for example "dynamic
+  Joseph E. Gonzalez, and Ion Stoica. 2023. Judging                   programming", "greedy", "graph traversal",
+  LLM-as-a-judge with MT-Bench and Chatbot Arena.                     "simulation"), the most specific that still
+  In Advances in Neural Information Processing Sys-                   describe a family of problems, and which one
+                                                                      of them is the primary topic.
+  tems, volume 36.
+                                                                 Reply with a JSON array with one object per
+Yifan Zhou, Zhentao Zhang, Ziming Cheng, Shuo                         problem, in the same order: {"id": "<problem
+                                                                      id>", "tags": ["<tag>", ...], "primary": "<one
+  Zhang, Qizhen Lan, Zhangquan Chen, Zhi Yang,                        of the tags>"}
+  Qianyu Xu, Ronghao Chen, Huacan Wang, and Sen
+  Hu. 2026a. SkillGenBench: Benchmarking skill gen-                 An answer is kept only if the primary topic is
+  eration pipelines for LLM agents. arXiv preprint
+  arXiv:2605.18693.
+                                                                 one of the listed tags. This step yields 206 distinct
+                                                                 primary tags.
+Yingli Zhou, Wang Shu, Yaodong Su, Wenchuan                         In the second step, one call merges these tags
+  Du, Yixiang Fang, and Xuemin Lin. 2026b. A                     into categories. The prompt is followed by every
+  comprehensive survey on agent skills: Taxon-
+  omy, techniques, and applications. arXiv preprint              tag with its number of problems:
+  arXiv:2605.07358.                                              {N} competitive programming problems (LeetCode and
+                                                                      AtCoder) were each given one primary topic
+Jiapeng Zhu, Jianxiang Yu, Yibo Zhao, Chengcheng                      tag. Below is every tag with its number of
+   Han, Qi Gu, Xunliang Cai, Xiang Li, and Wein-                      problems. Merge the tags into 8 to 12
+                                                                      categories so that problems of one category
+   ing Qian. 2026. Skill0.5: Joint skill internalization              are solved with a shared set of techniques and
+   and utilization for out-of-distribution generalization             a note written for the category could help on
+   in agentic reinforcement learning. arXiv preprint                  each of its problems. Every tag goes to
+                                                                      exactly one category; no category should hold
+   arXiv:2605.28424.                                                  fewer than about 4% of the problems.
+
+
+A     Additional Implementation Details
+                                                                 Reply with a JSON object: {"categories": [{"name":
+                                                                      "<lower-case-kebab-case id>", "title": "<short
+                                                                      title>", "description": "<one sentence in the
+This appendix gives the problem categories of Live-                   imperative saying what such problems ask for,
+                                                                      e.g. Find an optimal value by filling a table
+CodeBench, the prompts, the training of the selec-                    over subproblems.>"}, ...], "tags": {"<tag>":
+                                                                      "<category name>", ...}}
+tor, its use at inference, and the full online loop.
+
+A.1    LiveCodeBench Problem Categories                            We accept the answer only if it has 8 to 12 cate-
+                                                                 gories and assigns every tag to one of them. Each
+LiveCodeBench provides no grouping of its prob-                  problem then belongs to the category of its pri-
+lems into task families. We therefore group the                  mary tag. The one-sentence description of a cate-
+problems by the kind of algorithm they need, so                  gory serves as its family description in the selector
+that problems of one category can share a skill. We              prompt.
+use the 879 problems released up to version 5 that
+have sample tests as the training set and the 175                Category distribution. The procedure yields
+problems added in version 6 as the test set (Jain                nine categories. Figure 5 shows their sizes in the
+et al., 2025).                                                   training and the test set. The categories are reason-
+                                                                 ably balanced. The largest one, Greedy and order-
+Labeling procedure. We label all 1,054 prob-                     ing, holds 158 problems (15.0%), and the smallest
+lems with GPT-6.1-sol through the Codex                          one, Graphs and connectivity, holds 72 (6.8%). No
+command-line interface. Every call runs in an                    category falls below the 4% floor requested in the
+empty directory with a read-only sandbox. The                    prompt. The four largest categories are Greedy and
+
+                                                            12
+ordering, Dynamic programming, Range counting                                                look around; look at {object}; look in {object}; go
+and search, and Mathematics and geometry. To-                                                     {location}; open {object}; close {object};
+                                                                                                  pick up {object}; put down {object}; move
+gether they cover 56.8% of the problems. The test                                                 {object} to {object}; pour {object} in
+                                                                                                  {object}; dunk {object} in {object}; mix
+set follows a similar distribution. Every category                                                {object}; activate {object}; deactivate
+                                                                                                  {object}; use {object} on {object}; connect
+has at least 11 test problems, so each skill is up-                                               {object} to {object}; disconnect {object};
+dated several times during the online evaluation.                                                 read {object}; focus on {object}; eat
+                                                                                                  {object}; flush {object}; inventory; task;
+                                                                                                  wait; wait1
+
+ Range counting and search                                         130         22
+
+                                                               127               31
+                                                                                               The executor prompt, which is the same for every
+      Greedy and ordering
+
+                                                             119               33
+                                                                                             method, also carries the following advice on the
+    Dynamic programming
+
+ Mathematics and geometry                               112               25
+                                                                                             action format:
+   Simulation and traversal                            108           13                      Write the action exactly as one of the action
+                                                                                                  templates, with every OBJ replaced by one of
+         Exhaustive search                        96           14                                 the listed objects. Only the listed objects
+            Data structures            65        14                                               can be used from here: to reach a room that is
+                                                                                                  not listed, go to a listed room on the way,
+                   Strings         62        11                                                   opening its door first if it is closed. If the
+                                                                                Train
+                                                                                                  last observation says that no known action
+   Graphs and connectivity         60       12                                  Test              matches, that action cannot work here, so do
+                                                                                                  not repeat it. If the observation asks for a
+                              0   50              100                     150                     number to choose among actions, answer with
+                                            Problems                                              that number alone.
+
+Figure 5: Number of LiveCodeBench problems per                                                 WebShop.         The domain wording be-
+category in the training and the test set.
+                                                                                             comes “WebShop online-shopping tasks of
+                                                                                             the product category”, and the skill is named
+A.2      Prompts                                                                             webshop-{family}. The command list of the
+                                                                                             rewrite prompt is:
+Figure 6 shows the two prompts of E VO G UARD
+on ALFWorld. The selector prompt names the task                                              search[{query}]; click[{product id}]; click[{option
+                                                                                                  value}]; click[next >]; click[< prev];
+family and gives its generic description. It then                                                 click[back to search]; click[description];
+presents the two skills within <skill_a> and                                                      click[features]; click[reviews]; click[buy now]
+
+<skill_b> delimiters and asks which one should
+                                                                                               Two sentences follow the command list:
+be kept. An empty skill is shown as (empty
+skill). E VO G UARD and LLM-Judge (Logit) ap-                                                The skill serves every task of this category, and
+                                                                                                  each task asks for a different product: do not
+pend the assistant prefix The better skill                                                        write this task’s product, attributes, option
+                                                                                                  values or price into the skill; refer to them
+is Skill, so that the answer is the next token.                                                   as what the instruction asks for.
+LLM-Judge and LLM-Judge (Think) use no pre-
+                                                                                             How the pages work: a search opens a results page,
+                                                                                                  where the way forward is to click a product
+fix and generate their answer. The rewrite prompt                                                 id; "buy now" exists only on a product page. A
+                                                                                                  product page lists its options (such as size,
+gives the generator the current skill and the latest                                              color or flavor) as clickable values: the
+                                                                                                  options the instruction asks for must be
+attempt. It asks for the complete updated skill in                                                clicked before "buy now". The purchase ends
+the format of §4.1.                                                                               the task and is scored on product type,
+                                                                                                  attributes, selected options and price.
+
+Prompts on the other benchmarks. The other
+                                                                                                LiveCodeBench. There is no command list. The
+benchmarks reuse the two prompts of Figure 6.
+                                                                                             selector prompt opens with:
+Only the parts listed below change.
+   ScienceWorld.        The domain wording be-                                               An agent solves competitive programming problems in
+                                                                                                  Python of type "{category title}": {category
+comes        “ScienceWorld     science-experiment                                                 description}
+tasks of type”, and the skill is named                                                       It reads one reusable skill before every problem of
+                                                                                                  this type. Keep the better of the two skills
+scienceworld-{family}. The command                                                                below, the one with which the agent’s programs
+                                                                                                  will pass the hidden tests more often on
+list of the rewrite prompt is:                                                                    future problems of this type.
+
+
+                                                                                                The rewrite prompt uses the same do-
+                                                                                             main wording, and the skill is named
+                                                                                             livecode-{category}.               In place of a
+                                                                                             trajectory, it shows the problem statement, the
+                                                                                             program of the agent, and its results on the sample
+
+
+                                                                                        13
+(a) Selector prompt
+An agent solves ALFWorld household tasks of type "{family}": {family description}
+It reads one reusable skill at the start of every task of this type. Keep the better of the two skills
+     below, the one with which the agent will succeed more often on future tasks of this type.
+
+Skill A:
+<skill_a>
+{skill A, or "(empty skill)"}
+</skill_a>
+
+Skill B:
+<skill_b>
+{skill B, or "(empty skill)"}
+</skill_b>
+
+Which skill should be kept? Answer with A or B.
+
+
+Assistant prefix of E VO G UARD:
+The better skill is Skill
+
+
+(b) Rewrite prompt
+You maintain a reusable skill for an agent that solves ALFWorld household tasks of type "{family}": {family
+     description}
+The agent reads the skill at the start of every task of this type.
+
+Current skill:
+{current skill, or "(none yet)"}
+
+The agent just attempted one task with the current skill:
+{task, outcome, and the action and observation of every step}
+
+Write the updated skill for future tasks of this type, using what this attempt shows.
+Available commands: look; inventory; go to {receptacle}; open {receptacle}; close {receptacle}; take
+     {object} from {receptacle}; move {object} to {receptacle}; examine {target}; use {lamp}; heat {object}
+     with {microwave}; clean {object} with {sink}; cool {object} with {fridge}; slice {object} with {knife}.
+
+Output the complete skill as a standard SKILL.md document inside <skill> and </skill>, at most 1500 tokens,
+     and nothing else:
+<skill>
+---
+name: alfworld-{family}
+description: <what the skill does and when to use it>
+---
+# ALFWorld {family}
+## When to use
+...
+## Workflow
+...
+## Decision rules
+...
+## Recovery and pitfalls
+...
+</skill>
+
+
+Figure 6: The two prompts of E VO G UARD on ALFWorld. Braces mark inserted content. (a) The selector reads the
+family description and the two skills. It compares the next-token logits of A and B after the assistant prefix. (b) The
+generator rewrites the skill after every task. In the prompt the four section headings are separated by blank lines.
+
+tests. The instruction to the generator becomes:               learning rate warms up linearly over the first 3%
+Write the updated skill for future problems of this
+                                                               of training and then follows a cosine decay. Gra-
+     type, using what this attempt shows. The next             dients are clipped at norm 1.0. On ALFWorld, the
+     problems are different problems of the same
+     type, so the skill must not depend on this                private test set Hf of each family holds 100 tasks.
+     problem’s statement.
+                                                               The rejection threshold in Eq. (8) is δ = 0.1, so
+                                                               the two skills of a pair differ by at least 10% in
+A.3    Selector Training                                       success rate. Each batch holds 36 pairs, six from
+                                                               every family, and training makes one pass over the
+The selector backbone is Qwen3-4B. We train
+                                                               24,000 training pairs. We use the final checkpoint.
+LoRA adapters with rank 32, scaling factor 64,
+                                                               The validation skills serve for reporting only. They
+and no dropout on all attention and feed-forward
+                                                               are not used to select a checkpoint or to tune hy-
+projections. We optimize with AdamW at a learn-
+                                                               perparameters. The backbone runs in BF16 with
+ing rate of 10−4 and without weight decay. The
+                                                               FlashAttention-2. The adapter weights, the label-
+
+                                                          14
+token logits, the loss, and the optimizer states are                                  Qwen3-4B           Qwen3-8B
+kept in FP32.                                                 Method                Success Score Success Score
+A.4    Inference                                              No-Skill                14.7    53.7       16.1    54.9
+                                                              Accept-All              15.8    55.6       18.1    55.5
+At deployment, we merge the trained adapter into              Random                  16.0    55.0       16.9    54.3
+the backbone and serve the merged model. For each             LLM-Judge               15.6    55.3       18.1    55.3
+query, the server returns the log-probabilities of the        LLM-Judge (Think)       15.3    55.1       16.9    54.8
+                                                              LLM-Judge (Logit)       15.5    54.8       17.5    55.1
+two label tokens at the next position. Both values            E VO G UARD             16.2    55.9       18.5    57.1
+share the same normalization term. Comparing
+them is therefore equivalent to comparing the logits          Table 5: Online results on WebShop with two executors.
+zA and zB in Eq. (11).                                        Success is the success rate (%) and Score is the mean
+                                                              purchase score. Bold marks the best value in each col-
+A.5    Online Loop                                            umn.
+Algorithm 1 gives the online selection loop of §4.5.
+                                                              B.2   Combination with Other Methods
+Every family starts from the empty skill. After
+each task, the generator rewrites the skill of the            E VO G UARD only decides which of two skill docu-
+family, and the selector decides whether the rewrite          ments to keep. It can therefore be attached to other
+replaces it.                                                  skill evolution methods without further training.
+                                                              We attach it to SkillRise (Yao et al., 2026), which
+Algorithm 1 Online skill selection with E VO -                trains one policy both to solve tasks and to curate
+G UARD                                                        the skill document. SkillRise keeps every curated
+Require: frozen executor E, generator G, trained              document. With E VO G UARD, the selector instead
+    selector C, tasks x1 , . . . , xT                         chooses between the old document and the curated
+ 1: sf ← ∅ for every family f                                 one. The selector and its prompt are unchanged.
+ 2: for t = 1, . . . , T do                                      Table 6 reports the results on ALFWorld. E VO -
+ 3:     f ← family of xt ; (τ, r) ← E(xt , sf )               G UARD improves our reproduction of SkillRise on
+ 4:     s̃ ← G(sf , τ, r)                                     both splits. Success rises from 86.0% to 86.4% on
+ 5:     if s̃ passes the format check then                    seen tasks and from 77.9% to 80.1% on unseen
+ 6:           place sf , s̃ at A/B in random order            tasks. The selector thus also benefits a method
+ 7:           sf ← the skill with the larger A/B logit        whose executor it was not trained with.
+    under C(f, ·, ·)
+ 8:     end if                                                       Method                      Seen Unseen
+                                                                                                 (140) (134)
+ 9: end for
+                                                                     SkillRise (our reproduction) 86.0    77.9
+                                                                       + E VO G UARD              86.4    80.1
+
+B     Further Experimental Results                            Table 6: E VO G UARD attached to our reproduction of
+                                                              SkillRise on ALFWorld, reported as overall success rate
+B.1    Results on WebShop                                     (%).
+Table 5 reports the online results on WebShop. The
+selector is trained with Qwen3-4B as the execu-
+tor, and the Qwen3-8B columns change only the                 B.3   Efficiency
+online executor. E VO G UARD achieves the high-               Table 7 compares the cost of one selection. E VO -
+est success rate and the highest score with both              G UARD reads two logits from one forward pass and
+executors. With Qwen3-4B, it reaches 16.2% suc-               generates no tokens. It returns a decision in 24 ms.
+cess and a score of 55.9, against 14.7% and 53.7              LLM-Judge generates about 16 tokens and needs
+without skills. With Qwen3-8B, it reaches 18.5%               71 ms. LLM-Judge (Think) generates 1,144 tokens
+and 57.1, against 16.1% and 54.9. The gains are               and needs 4,184 ms. E VO G UARD is thus about 3
+smaller than on ALFWorld. A likely reason is                  times faster than LLM-Judge and 174 times faster
+that the Qwen3-4B generator lacks the capability              than LLM-Judge (Think).
+to write high-quality skills for this environment,
+which limits what the selector can choose from.
+
+
+
+                                                         15
+      Method              Tokens Latency (ms)                 our method decides whether one rewrite replaces
+      LLM-Judge           15.7        71                      its predecessor.
+      LLM-Judge (Think)   1,144      4,184
+      LLM-Judge (Logit)     0         26                      Internalizing skills. SKILL0 withdraws contex-
+      E VO G UARD           0          24                     tual skills during reinforcement learning to inter-
+Table 7: Cost of one selection during the online runs:        nalize their behavior (Lu et al., 2026). Skill0.5 uses
+generated tokens and latency.                                 privileged distillation (Zhu et al., 2026). Context
+                                                              distillation trains a model to reproduce its prompted
+C    Additional Related Work                                  behavior without the prompt (Snell et al., 2022; Ye
+                                                              et al., 2026). These methods move guidance into
+Skill learning and optimization. Beyond                       model parameters. However, our method keeps the
+SkillRL and SkillRise, further methods combine                skill as text and leaves the executor unchanged.
+policy learning with the construction or revision of
+a skill library (Huang et al., 2026; Shi et al., 2026;        Agent memory and context adaptation. Reflex-
+Ge et al., 2026; Zhang et al., 2026c; Wang et al.,            ion uses verbal feedback to improve subsequent
+2026c). Other methods keep the executor fixed and             attempts (Shinn et al., 2023). ExpeL extracts in-
+revise the skill text through prompted optimization           sights from past trajectories (Zhao et al., 2024).
+(Li and Hu, 2026; Ni et al., 2026; Zhang et al.,              Agent Workflow Memory stores reusable work-
+2026a; Wang et al., 2026b). These methods focus               flows (Wang et al., 2025). ReasoningBank orga-
+on how a skill is produced or improved. However,              nizes experience as reasoning memory (Ouyang
+our method does not change how skills are written.            et al., 2026b), and Buffer of Thoughts keeps
+It only decides whether a rewrite replaces the                reusable thought templates (Yang et al., 2024).
+current skill.                                                ACE treats context as an evolving resource (Zhang
+                                                              et al., 2026b). Training-Free GRPO and Metacog-
+Skill construction and evaluation. LATM sepa-                 nitive Reuse improve contextual guidance without
+rates tool making from tool use (Cai et al., 2024).           updating model parameters (Cai et al., 2025; Di-
+A line of work constructs and reuses skills in dif-           dolkar et al., 2025). Evo-Memory evaluates evolv-
+ferent settings (Zheng et al., 2025; Yu et al., 2026;         ing memory in sequential task streams (Wei et al.,
+Yang et al., 2026c; Jiang et al., 2026a; Wang et al.,         2025). These methods retrieve, accumulate, or con-
+2026a; Qiu et al., 2026; Si et al., 2026). Several            solidate general memory. However, our method
+surveys organize the area (Zhou et al., 2026b; Jiang          keeps one skill document per task family and only
+et al., 2026b, 2025). SkillsBench and SkillGen-               decides between the current skill and one new
+Bench benchmark the effect of skills and of skill             skill.
+generation pipelines (Li et al., 2026b; Zhou et al.,
+2026a). An empirical study documents failures in-
+duced by skills (Dong et al., 2026). These works
+construct or benchmark skills and show that a plau-
+sible skill can still hurt execution. However, our
+method uses the measured utility of skills as su-
+pervision for a selector that guards every online
+update.
+Learned writers and skill selection. Skill-α,
+SkillOS, and SKILLER learn or prompt the writer
+of the skill with feedback from a frozen executor
+(Shen et al., 2026; Ouyang et al., 2026a; Dang
+et al., 2026). SkillMaster uses a counterfactual
+probe to decide which edits to retain during train-
+ing (Yang et al., 2026a). Other work learns when
+to invoke a skill or to which skill a query is routed
+(Guo et al., 2026; Chen et al., 2026; Wang et al.,
+2026d). These methods shape how a skill is written
+or choose among the skills of a library. However,
+
+
+                                                         16
+

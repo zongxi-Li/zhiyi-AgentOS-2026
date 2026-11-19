@@ -1,0 +1,667 @@
+                                         InfoDecom: Decomposing Information for Defending Against Privacy Leakage in
+                                                                      Split Inference
+                                                                                   Ruijun Deng1 , Zhihui Lu1 * , Qiang Duan2
+                                                                     1
+                                                                         College of Computer Science and Artificial Intelligence, Fudan University
+                                                                                            2
+                                                                                              Pennsylvania State University
+                                                                                     {rjdeng18,lzh}@fudan.edu.cn,qduan@psu.edu
+
+
+                                                                     Abstract                                    Client     Bottom Model          Top Model            Server
+arXiv:2511.13365v2 [cs.CR] 3 Jan 2026
+
+
+
+
+                                          Split inference (SI) enables users to access deep learning
+                                          (DL) services without directly transmitting raw data. How-
+                                          ever, recent studies reveal that data reconstruction attacks
+                                          (DRAs) can recover the original inputs from the smashed data
+                                          sent from the client to the server, leading to significant privacy
+                                          leakage. While various defenses have been proposed, they of-
+                                          ten result in substantial utility degradation, particularly when          Private Input      Smashed Data            Label
+                                          the client-side model is shallow. We identify a key cause of
+                                          this trade-off: existing defenses apply excessive perturbation        Figure 1: A general framework of two-party split inference.
+                                          to redundant information in the smashed data. To address this
+                                          issue in computer vision tasks, we propose InfoDecom, a de-
+                                          fense framework that first decomposes and removes redun-
+                                          dant information and then injects noise calibrated to provide            However, recent works show that SI is susceptible to pri-
+                                          theoretically guaranteed privacy. Experiments demonstrate             vacy attacks, e.g., the data reconstruction attacks (DRAs)
+                                          that InfoDecom achieves a superior utility-privacy trade-off          (He, Zhang, and Lee 2019; Li et al. 2023). A malicious
+                                          compared to existing baselines.                                       DRA adversary (e.g., the untrusted server) can reconstruct
+                                                                                                                the raw input from the smashed data, posing a great threat to
+                                        Code — https://github.com/SASA-cloud/InfoDecom                          the user’s privacy, as once successfully conducted, the whole
+                                        Extended version — https://arxiv.org/abs/2511.13365                     dataset rather than specific private properties will leak.
+                                                                                                                   To mitigate these privacy threats, defensive works mainly
+                                                                                                                use perturbation-based methods to defend against inference
+                                                                 Introduction                                   attacks in SI (Singh et al. 2024; Chen et al. 2024). These
+                                        Machine learning (ML) has achieved breakthroughs in many                methods follow two lines: i) Regularization (Arevalo et al.
+                                        areas of computer vision. Given the rising size of deep learn-          2024; Zhang et al. 2025; Duan et al. 2024), which optimizes
+                                        ing (DL) models and substantial costs associated with model             the model or the parameterized noise/mask to output per-
+                                        accommodation, it is challenging to implement DL infer-                 turbed smashed data with heuristic regularization terms; and
+                                        ence applications on the resource-constrained user/edge de-             ii) closed-form noise calculations (Singh et al. 2023; Deng,
+                                        vices (e.g., mobile phones or smart cameras). This has led              Lu, and Duan 2025; Tan et al. 2024), which rely on the-
+                                        to the emergence of ML as a service (MLaaS) (Chen et al.                ories like metric Differential Privacy (metric-DP), Mutual
+                                        2024), a paradigm that allows enterprises with sufficient re-           Information (MI), Fisher Information (FI) and conditional
+                                        sources to accept the inference request from user devices,              entropy, for obtaining analytical solutions of the perturb-
+                                        execute on the server, and return the results. Split inference          ing noise scale that satisfies the desired security level. The
+                                        (SI) or collaborative inference (Duan et al. 2024; Deng et al.          regularization defenses have no stringent provable privacy
+                                        2023; Yu et al. 2024) is one widely employed way to achieve             guarantees, as they optimize the heuristic objectives (e.g.,
+                                        MLaaS, where a DL model is divided into two parts. Fig-                 minimize the similarity between the raw input and the re-
+                                        ure 1 shows a two-party SI scenario, where the first part (bot-         constructed one from the DRA adversary (Sun et al. 2021)).
+                                        tom model) is shallow and deployed on the user device or the            Closed-form noise calculations solve this by establishing the
+                                        client, while the remaining layers (top model) are offloaded            analytical relationship between certain privacy metrics/bud-
+                                        to the server. This division allows the client to submit only           gets and the perturbation noise scale.
+                                        the output of the bottom model, i.e., the smashed data or the              However, when the bottom model is shallow, neither
+                                        representation, to the server, instead of the raw input data,           method can achieve a good utility-privacy trade-off (UPT),
+                                        and is thus expected to preserve feature privacy.                       as shown in our results. Deeper bottom models inherently fil-
+                                          * Corresponding authors.
+                                        Copyright © 2026, Association for the Advancement of Artificial         Intelligence (www.aaai.org). All rights reserved.
+ter out task-irrelevant information through non-linear trans-      formance (Goal 2). A detailed summary of the regulariza-
+formations, making them more privacy-resilient and easier          tion loss terms from previous works is presented in the Ap-
+to balance utility and privacy. In contrast, when the bot-         pendix.
+tom model is shallow—a common scenario due to resource-               Heuristic strategies. Some methods adopt heuristic op-
+constrained user devices (Deng et al. 2023), it retains more       timization targets on smashed data. For example, Soteria
+input information in the smashed data, requiring heavy ob-         (Sun et al. 2021) achieves Goal 1 by minimizing the neg-
+fuscation to ensure privacy, which in turn degrades task per-      ative Lp norm of raw input data x and the reconstructed
+formance. Hence, current defense mechanisms struggle to            one x̂, and Goal 2 by constraining the difference Lq norm
+perform well under shallow client models, highlighting the         of original smashed data and the perturbed one. ML-ARL
+need for more effective and adaptive privacy-preserving so-        (Roy and Boddeti 2019) formulates an adversarial represen-
+lutions in realistic deployment settings.                          tation learning problem that achieves Goal 1 by maximiz-
+   In this study, we propose InfoDecom, a defense method           ing the uncertainty (entropy) of the adversary and achieves
+against DRAs to protect user data privacy in SI systems            Goal 2 by minimizing the Kullback-Leibler (KL) divergence
+for visual tasks. Our goal is to provide strong, theoretically     between the distribution of ground truth and the predicted
+grounded privacy protection for shallow client models with-        one. Nopeek (Vepakomma et al. 2020) reduces the distance
+out significantly compromising task accuracy. We argue that        correlation between input data and smashed data as well as
+the limited UPT in existing defenses stems from the need           the normal classification cross-entropy loss.
+to protect excessive input information in the smashed data.           Mutual Information Optimization. Mutual information
+However, much of this information is task-irrelevant or has        (MI) is a widely adopted regularization guidance. Cloak
+minimal impact on the final prediction, and existing defenses      (Mireshghallah et al. 2021) trains the noise mask on in-
+waste perturbation on it. InfoDecom decomposes and filters         put data by suppressing the MI between the perturbed input
+out such redundant information, reducing the volume of sen-        and the redundant features while enhancing the MI between
+sitive content that needs protection. As a result, less noise is   the perturbed input and the task-useful features. Shredder
+required to achieve a given theoretical privacy level, leading     (Mireshghallah et al. 2020) minimizes the MI between the
+to reduced performance degradation and improved UPT.               smashed data and the raw input (with a signal-to-noise ratio
+   To generate privacy-preserving smashed data, InfoDecom          approximation) as well as the cross-entropy loss. Inf2Guard
+incorporates three key components. First, input images are         (Noorbakhsh et al. 2024) minimizes similar MI terms with
+transformed into the frequency domain, retaining only chan-        Shredder but uses Jensen-Shannon divergence (JSD) to ap-
+nels that are non-essential for human perception. Second,          proximate the MI. TAPPFL (Arevalo et al. 2024) adopts the
+the remaining information is further suppressed using regu-        same MI approximation methods as Inf2Guard, but it fo-
+larization terms inspired by the Information Bottleneck (IB)       cuses on the MI between the private attribute instead of the
+principle. Third, we apply a closed-form calculation to deter-     raw input and the smashed data. DPFE (Osia et al. 2020)
+mine the appropriate Gaussian noise scale, ensuring a guar-        minimizes the MI between smashed data and the private fea-
+anteed privacy level is met. The main contributions of this        ture while maximizing the MI between smashed data and the
+study are summarized as follows:                                   task label. It employs the kernel density estimation for MI
+                                                                   approximation. InfoScissors (Duan et al. 2024) restricts the
+ • Guaranteed privacy with good utility-privacy trade-
+                                                                   MI between smashed data and the input by minimizing the
+   off: InfoDecom considers the information redundancy in
+                                                                   upper bound (CLUB (Cheng et al. 2020)) of the MI. ARPRL
+   smashed data, achieving theoretical privacy guarantees
+                                                                   (Zhang et al. 2025) has the same goal as TAPPFL.
+   against DRAs in shallow-client SI vision systems while
+   maintaining high task utility.                                  Closed-Form Noise Calculation
+ • Simple yet effective defense design: InfoDecom adopts           All the aforementioned studies only rely on optimizations to
+   a two-stage approach to remove redundant information            get perturbed smashed data. However, these empirical ap-
+   and applies noise perturbation to enforce a target privacy      proaches forgo theoretical guarantees of bounding privacy
+   level.                                                          leakage. The provable defenses, e.g., DP-SGD (Abadi et al.
+ • Superior performance over state-of-the-art (SOTA)               2016), are predominantly centered around differential pri-
+   defenses: Experiments on multiple vision benchmarks             vacy (DP) (Dwork 2006) for theoretically bounding the ad-
+   show that InfoDecom consistently outperforms existing           versary’s reconstruction error and protecting data identity
+   methods in defending against DRAs while preserving              (Singh et al. 2024; Tan et al. 2024). However, the vanilla DP
+   model performance.                                              is not applicable for the SI system, as it requires that out-
+                                                                   puts of any two samples are indistinguishable (Singh et al.
+                      Related Work                                 2023; Deng, Lu, and Duan 2025). Therefore, other theoreti-
+                                                                   cal privacy metrics (e.g., Fisher information (Martens 2020))
+Regularization                                                     are derived for analyzing the robustness of SI. Just like the
+Defense methods falling into this type add regularization          privacy budget ϵ in DP, privacy metrics quantitatively mea-
+terms to loss functions during model training, guiding the         sure the privacy leakage level of a system and are proven to
+(perturbed) smashed data to have the desired properties.           bound the adversaries’ error.
+Typically, these terms can be categorized into two goals: re-         Given a privacy metric or budget, the corresponding
+ducing privacy leakage (Goal 1) and maintaining task per-          closed-form noise scale (e.g., the standard deviation of a
+                                                                   only the signal light rather than the full image is sufficient.
+                                                                   Moreover, SCA (Dibbo et al. 2024) examines model ar-
+                                                                   chitectures and shows that incorporating a sparse coding
+                                                                   layer—which filters out task-irrelevant details and retains
+                                                                   only essential information—enhances robustness against
+                                                                   DRAs while maintaining model accuracy. These observa-
+           Syntactic information   Semantic information            tions suggest that reducing input-space redundancy can ef-
+                                                                   fectively mitigate privacy leakage from DRAs with minimal
+ Figure 2: Example of semantic-oriented communication.             impact on task performance.
+
+                                                                   Redundancy in Semantic Communication
+Gaussian distribution) can be directly computed based on
+model analysis over the given dataset (Maeng et al. 2023;          While semantic-oriented communication removes irrelevant
+Deng, Lu, and Duan 2025; Singh et al. 2023; Tan et al.             input details, it remains unclear how effectively the retained
+2024). For example, dFIL (Maeng et al. 2023) is a privacy          meaning contributes to the task objective. The Informa-
+metric that relies on Fisher information about raw input in        tion Bottleneck (IB) framework (Tishby, Pereira, and Bialek
+smashed data. According to its definition, the scale of the        2000) addresses this by formulating the problem as:
+Gaussian distribution that needs to be added to achieve a                            min λI(X; Z) − I(Y ; Z),                    (3)
+certain dFIL is                                                                       Z
+
+                                                                   where X, Y , and Z denote the input, output, and interme-
+                         s
+                           Tr(Jf⊤θ1 Jfθ1 )
+                    σ=                     ,            (1)        diate representation (i.e., smashed data) of a DNN, respec-
+                             d × dFIL                              tively. I(·; ·) denotes mutual information (Cover 1999), and
+where fθ1 is the bottom model and x is the input with di-          λ > 0 balances compression and relevance. The IB principle
+mensions of d. Similarly, the noise scale to achieve a certain     aims to learn a minimal yet sufficient representation of the
+privacy metric FSInfo (Deng, Lu, and Duan 2025) is                 input that preserves task-relevant (i.e., pragmatic) informa-
+                                             1
+                                                                   tion, thereby reducing communication overhead compared
+                         det(Jf⊤θ1 Jfθ1 )) 2d                      to syntactic or purely semantic approaches. This principle
+                   σ=                    1       .          (2)    provides a theoretical foundation for guiding the client-side
+                           eFSInfo (2πe) 2
+                                                                   model to produce smashed data that retains task-relevant in-
+   However, when the client-side bottom model is shallow,          formation while suppressing task-irrelevant content.
+leaving substantial information in smashed data, these de-
+fenses tend to obtain a large noise scale from the desired                           Design of InfoDecom
+privacy leakage level or metrics. Therefore, they encounter
+substantial model performance degradation to achieve a de-         In this section, we introduce InfoDecom, a novel framework
+cent defense performance. To address the aforementioned            for privacy-preserving split inference that decomposes and
+issues, we propose InfoDecom by decomposing the utility-           reduces redundant and private information.
+and privacy-related information to gain a decent and theo-
+                                                                   Overview
+retically guaranteed privacy robustness without huge perfor-
+mance degradation on the shallow bottom model.                     SI System. W.l.o.g., Figure 1 illustrates a two-party SI sys-
+                                                                   tem comprising a client C with private data D and a server
+                        Motivations                                S. The deep learning model fθ (·) = (fθ2 ◦ fθ1 )(·) =
+                                                                   fθ2 (fθ1 (·)) is partitioned into a bottom model fθ1 deployed
+Triple Definitions of Communication                                on C and a top model fθ2 on S. The split point (SP) p ∈
+DNN inference is an information processing procedure               1, 2, . . . , L denotes the last layer of fθ1 , where L is the to-
+where data communications occur between adjacent lay-              tal number of layers. During inference, C takes input x and
+ers. Semiotics of communication can be defined as a triple         sends the smashed data z = fθ1 (x) to S, which completes
+combination of syntactics, semantics, and pragmatics (Yang         the inference by computing y = fθ2 (z). Notably, the bottom
+et al. 2022b). Syntactics focuses on the communication sym-        model fθ1 is usually shallow on the resource-constrained
+bols or formal features of signs (visual and linguistic), ensur-   client devices.
+ing that each data bit is transmitted. Semantics specializes in       Threat Model. In this paper, both C and S are assumed
+the meaning of the signs. Pragmatics concentrates on the           to strictly follow the learning protocol. However, the server
+contribution of communicated information to the task.              is considered honest-but-curious, aiming to infer private in-
+                                                                   formation from the received intermediate representations z.
+Redundancy in Syntactic Communication                              We focus on the DRA setting, where the untrusted server at-
+Syntactic communication—such as feeding raw images di-             tempts to reconstruct the original input x via an attack func-
+rectly into a DNN—often transmits excessive redundant in-          tion g: x̂ = gϕ (z), with x̂ denoting the reconstructed input.
+formation that is eventually discarded during inference. In        In the vision domain, we treat the visual recognizability of
+contrast, semantic-oriented communication focuses on con-          x as the private information rather than a certain attribute.
+veying only the task-relevant meaning. As illustrated in Fig-         We follow the assumptions of the SOTA DRAs (Li et al.
+ure 2, for tasks like traffic signal recognition, transmitting     2023; Yin et al. 2023; He, Zhang, and Lee 2019) about
+        Client           Visual Information          Mutual Information                                        Server
+                                                                              Noise Perturbation
+                             Removal                   Suppression
+                                                                               Gaussian Noise
+                                                           Bottom Model
+                                                                              Satisfying FSInfo
+
+
+                                    FDCT
+
+                                                       Update                                                      Update
+
+
+
+
+                                              Figure 3: The overview of InfoDecom.
+
+
+the adversaries’ knowledge and capabilities. The adversary                                 Block           Block
+                                                                                             1               4
+A is allowed to have auxiliary information, such as a sur-                                                         DC AC01   AC07
+rogate bottom model (including parameters and the archi-                          divide
+tecture), a dataset with a similar distribution to D, and
+some prior information about D. The adversary can alle-
+viate the optimization-based, learning-based, or combined             Raw Input                H   W   C
+DRA methods to reconstruct the raw input after seeing the
+smashed data z. However, it cannot interfere with the normal
+inference process.
+   Workflow. Our approach is based on the observation of
+the redundancy of information flow in the DNN. Figure 3                                                            AC70      AC77
+illustrates the InfoDecom workflow: a two-stage informa-
+tion elimination—targeting visual and mutual information—
+followed by closed-form noise perturbation. First, the input       Figure 4: Visual information removal for raw input. The raw
+is decomposed in the frequency domain into essential (low-         input is divided into blocks, with each block being trans-
+frequency) and non-essential (high-frequency) components           formed to 8×8 DCT coefficients.
+for visual perception, and the essential (private) channels are
+discarded. Next, based on the IB principle, the smashed data
+is further decomposed into task-relevant and task-irrelevant       sufficient semantic information for DNNs to complete clas-
+information. The bottom model is guided to retain the for-         sification tasks. Motivated by this, we initiate our informa-
+mer while suppressing the latter. Finally, closed-form Gaus-       tion decomposition from the visual dimension—removing
+sian noise is added to the smashed data to provide theoret-        private, visually sensitive low-frequency channels and re-
+ical privacy guarantees. During inference, high-frequency-         taining less private, high-frequency ones in the frequency-
+only inputs are passed through the updated bottom model to         domain representation.
+produce regularized smashed data, which is then perturbed             To transform the images to the frequency domain, we
+before transmission to the server.                                 follow the building blocks in standard JPEG compression
+                                                                   (Wallace 1991). First, we transform the image from RGB
+Visual Information Removal                                         to YUV color space. Then, each component (e.g., the two-
+To perform image classification, DNNs require access to pri-       dimensional luma Y) is further divided into 8 × 8 blocks,
+vate inputs. Most SI systems transmit the entire image to          which will be grouped as the input for the Forward Discrete
+the DNN, forming a syntactic communication pattern. How-           Cosine Transform (FDCT) process. The FDCT decomposes
+ever, as previously discussed, syntactic communication of-         each 8 × 8 block into 64 orthogonal frequency signals or
+ten contains redundancy. For instance, prior work (Jin et al.      “DCT coefficients”, with each capturing one frequency of
+2024) shows that many frequency channels can be removed            the 8 × 8 spatial signals. As shown in Figure 4, the DCT
+with minimal impact on face recognition accuracy. Process-         coefficients contain one “DC coefficient” and 63 “AC co-
+ing images in the frequency domain has long been used for          efficients”. When ordered into the “zig-zag” sequence, the
+image compression, retaining low-frequency components              more likely non-zero low-frequency coefficients are placed
+crucial for human visual perception while discarding high-         before the near-zero high-frequency coefficients.
+frequency details (e.g., subtle textures) that are less notice-       Following DuetFace (Mi et al. 2022), we delete the
+able (Wallace 1991). However, DuetFace (Mi et al. 2022)            K DCT coefficients with the highest amplitude, i.e., the
+demonstrates that high-frequency components still carry            low-frequency coefficients Xl , and only reserve the high-
+frequency coefficients Xh for the DNN to perform task                    or to have smaller pairwise distance, thereby reducing their
+learning, as illustrated in Figure 4. Therefore, most visual             distinguishability and enhancing privacy:
+information is discarded, and sufficient semantic informa-                                              N
+tion is obtained.                                                                                   1 X
+                                                                                            Lcl =         ∥zi − zj ∥22 ,              (6)
+                                                                                                    N i=1
+Mutual Information Suppression                                           where ∥ · ∥2 is the L2-norm, z is the smashed data and index
+Although some visual details have been removed, the                      j is uniformly sampled from {1, 2, . . . , N }.
+remaining frequency components Xh may still contain                         Minimize −I(Y ; Z). Barber-Agakov (BA) lower bound
+privacy-sensitive information exploitable by DRA adver-                  (Barber and Agakov 2004) of I(Y ; Z) is:
+saries. To this end, we perform decomposition in the mu-                                                  N
+                                                                                                       1 X
+tual information plane and introduce regularization terms                       IˆBA (Y ; Z) = H(Y ) +       log q2 (yi |zi ),        (7)
+that encourage the bottom model to extract pragmatic rep-                                              N i=1
+resentations, i.e., those informative for the task, while sup-           where q2 (Y |Z) is a variational approximation of the true
+pressing task-irrelevant private information before feeding it           conditional distribution p(Y |Z).
+into the top model.                                                         H(Y ) is a constant, and we omit this term during max-
+   Formal Goals. We use the IB principles (see Equation 3)               imization. Similarly, to avoid the variational distribution
+to remove the information redundancy in smashed data. The                (q2 (Y |Z)) approximation, we follow (Mireshghallah et al.
+optimization problem is formulated as:                                   2021; Zhang et al. 2025; Noorbakhsh et al. 2024) to replace
+                 min     λI(Xh ; Z) − I(Y ; Z),                   (4)    the second term of Equation 7 with the negative empirical
+                  Z                                                      cross-entropy loss. To minimize −I(Y ; Z), we optimize the
+                                                                         following loss:
+where the I(Xh ; Z) represents the information of the high-
+                                                                                                  N   K
+frequency coefficients Xh contained in Z, the more of which                                  1 X X (k)
+indicates higher privacy leakage. Similarly, the I(Y ; Z) rep-                    Lce = −          yi log(fθ2 (zi ))(k) ,             (8)
+                                                                                             N i=1
+resents the contribution of Z to the task goal Y . λ is a hy-                                         k=1
+perparameter controlling the trade-offs.                                 which is the expected cross-entropy loss, with the number of
+   Minimize I(Xh ; Z). Calculating the closed-form MI of                 classes denoted by K.
+high-dimensional random variables with arbitrary distribu-                  Noise Perturbation for Theoretical Guarantees. The
+tions is still an open problem (Deng, Lu, and Duan 2025;                 two-stage information decomposition extracts the pragmatic
+Duan et al. 2024; Cheng et al. 2020). There are attempts for             information while reducing privacy leakage. However, these
+lower- and upper-bound MI estimation. CLUB (Cheng et al.                 mechanisms alone do not provide theoretical guarantees on
+2020) is an MI upper bound, where MI is estimated by the                 the privacy robustness of SI systems. FSInfo (Deng, Lu, and
+difference between positive and negative sample pairs (in                Duan 2025), a state-of-the-art privacy metric, quantifies the
+a contrastive learning manner). The MI upper bound mini-                 leakage in SI systems and offers a provable lower bound
+mization with the variational version of CLUB (vCLUB) is:                on the adversarial reconstruction error in DRA settings. A
+                                                                         lower FSInfo means less privacy leakage. We leverage FS-
+                             N                                           Info to derive the scale of Gaussian noise applied to the
+   ˆ                     1 X
+   IvCLU B (X; Z) =             log q1 (zi |xi ) − log q1 (zj |xi ),     smashed data:
+                         N i=1
+                                                                   (5)                             Z̃ = Z + δ,                         (9)
+where q1 (Z|X) is a variational approximation of true con-                             
+                                                                                                     T     1
+                                                                                                               
+ditional distribution p(Z|X), N is the dataset size, and j is            where δ ∼ N       0, Fdet(J
+                                                                                                SInf o
+                                                                                                       J) 2d
+                                                                                                             1  , and J is the Jacobian of
+                                                                                             e        (2πe) 2
+uniformly sampled from {1, 2, . . . , N }.
+                                                                         Z with respect to the raw input X. This provides a closed-
+   In most machine learning tasks, both conditional dis-
+                                                                         form solution for the noise required to achieve a target FS-
+tributions (p(Z|X) and q1 (Z|X)) are inaccessible. Previ-
+                                                                         Info level (e.g., −1), ensuring a quantifiable privacy guaran-
+ous works using the reparameterization trick (Kingma and
+                                                                         tee.
+Welling 2013), training a neural network to approximate
+                                                                            Note that, without the proposed two-level information de-
+q1 (z|x). However, this needs a laborious training stage, and
+                                                                         composition, adding noise directly to the vanilla smashed
+the estimation may have a large bias due to suboptimal hy-
+                                                                         data can also achieve the same level of F SInf o. However,
+perparameters. To avoid this, we use CLUB as a guidance
+                                                                         this will cause a huge performance degradation as the cal-
+for designing a tractable loss term. The CLUB loss penal-
+                                                                         culated noise scale of δ is large for protecting all the task-
+izes the model for assigning a high conditional likelihood
+                                                                         irrelated information, as shown in experimental results.
+to the true smashed data zi given input xi , while encour-
+                                                                            Overall Loss. By combining Equations 6,8-9, the total
+aging higher conditional likelihoods for mismatched pairs
+                                                                         loss L becomes:
+(xi , zi ), j ̸= i, thereby increasing ambiguity in the condi-
+tional distribution and impeding adversarial inversion from                                     L = λLcl + Lce ,                   (10)
+latent representations back to original inputs.                          where λ is the weighting factor. During the training phase,
+   Following this, we design the clustering loss Lcl to push             the top model is optimized by Lce , and the bottom model is
+the smashed data zi of different input xi to be entangled                optimized by both λLcl and Lce .
+    Model                       Architecture                                      CIFAR-10                  CelebA
+                C64 (default)-AP-[BB64]*2-[BB128]*2 -                     |Xh |    Acc.       MSE       Acc.       MSE
+  ResNet-18
+                  [BB256]*2-[BB512]*2-AAP-FC10                             54     0.7329     0.0843    0.9693     0.1984
+                                                                           41     0.6905     0.1497    0.8036     0.3273
+Table 1: Statistics of ResNet-18. Convolutional layers are                 32     0.3645     0.2337    0.6135     1.1024
+denoted by C, followed by the number of filters; Average-                  18     0.1004     0.2492    0.6135     1.1022
+Pooling and Adaptive AveragePooling layers are AP and
+AAP; Fully Connected layer is FC with the number of neu-          Table 2: The effects of the number of retained coefficients
+rons; Basic Block of ResNet is BB with the channel size.          |Xh | in visual information removal.
+
+                      Experiments                                                 CIFAR-10                 CelebA
+
+Experiment Implementation                                                   λ     Acc.      MSE        Acc.       MSE
+Datasets and Models. We evaluated on CIFAR-10                              1      0.7570    0.0822     0.9515    0.1925
+(Krizhevsky, Hinton et al. 2009) and CelebA (Liu et al.                    10     0.7329    0.0843     0.9693    0.1942
+2015). For CIFAR-10, we do the traditional decuplet-                       20     0.7250    0.0854     0.8997    0.1950
+classification task. For CelebA, we built the binary attrac-               60     0.5964    0.0887     0.8673    0.2128
+tiveness classification task following (Li et al. 2023). We use
+ResNet-18 (He et al. 2016) as the backbone model for both         Table 3: The effects of the number of weighing factor λ for
+CIFAR-10 and CelebA. deployed on the client side. Table 1         L in mutual information suppression.
+shows the critical layers and the default SP for the adopted
+model.                                                                            CIFAR-10                    CelebA
+   Attack Methods. Existing DRAs can be categorized into
+DL-based (He, Zhang, and Lee 2019; Yin et al. 2023;                      FSInfo     Acc.       MSE        Acc.      MSE
+Li et al. 2023) and regularized maximum likelihood-based                  -0.5     0.7356     0.0837    0.9298     0.1741
+(rMLE) (He, Zhang, and Lee 2019). Empirical evidence                       -1      0.7329     0.0843    0.9693     0.1942
+demonstrates superior reconstruction quality of NN-based                  -1.5     0.7162     0.0874    0.8823     0.2197
+methods compared to MLE-based approaches (Yin et al.                       -2      0.6874     0.0878    0.8371     0.2450
+2023). Therefore, we use the DL-based methods invNet (He,
+Zhang, and Lee 2019) to reconstruct the input data. More de-      Table 4: The effects of the number of the desired privacy
+tails can be found in the Appendix.                               leakage level F SInf o for closed-form noise perturbation.
+   Baselines. We compare InfoDecom with four baselines: i)
+inv dFIL def (Maeng et al. 2023), ii) Nopeek (Vepakomma
+et al. 2020), iii) Shredder (Mireshghallah et al. 2020), and      the experiments for CelebA are performed on four NVIDIA
+iv) FSInfoGuard (Deng, Lu, and Duan 2025). The details of         A100 80GB GPUs.
+these defense methods can be found in the Appendix.
+   Evaluation Metrics. We follow the previous common              The Effect of Information Controller
+settings for choosing metrics. For evaluating the model util-     Three controllers in InfoDecom adjust the amount of infor-
+ity, we use the classification accuracy (Acc.) on test data as    mation transmitted to the server. In this section, we inves-
+the metric. For evaluating the privacy robustness, we use the     tigate the impact of them on the utility–privacy tradeoff of
+mean squared error (MSE), between the reconstructed data          InfoDecom by varying their values.
+and the raw input and the visual invertibility as the metric,        Impact of the Number of Retained Coefficients |Xh |.
+                           Pd
+where M SE(x, x̂) = d1 i (xi − x̂i )2 and visual invertibil-      In the visual information removal stage, we retain only the
+ity is the similarity of raw and reconstructed inputs by hu-      high-frequency coefficients Xh (out of 64 total) for bottom
+man perception (Sun et al. 2024). A higher MSE and lower          model inference, where a larger |Xh | indicates more visu-
+visual invertibility mean better privacy protection.              ally relevant information is preserved. As shown in Table 2,
+   Hyperparameters. Following common pre-process (Jin             with F SInf o set to −1 and λ to 10, reducing |Xh | limits
+et al. 2024), the CelebA images are rescaled to 112 × 112.        the visual information available to the bottom model. Over-
+Then, both images (CelebA and CIFAR-10) are rescaled to           all, as |Xh | decreases, task accuracy drops while MSE
+[0,1]. Finally, we normalize them with a variance and mean        increases across both datasets. This indicates that retain-
+of 0.5, adjusting their range of values to [-1,1]. We apply       ing more input information improves utility but also makes
+Adam with a learning rate of 3 × e−4 and a weight decay of        it harder to obscure private information. Additionally, on the
+0.01. The number of global training epochs E is 150. The          CelebA dataset, when |Xh | is reduced to 32 or 18, the in-
+batch size B is set to 128. All of the defensive methods are      put retains too little visual information for the binary classi-
+implemented with Pytorch 2.4.1 and Python 3.10. The ex-           fier to perform effectively, resulting in near-random predic-
+periments for CIFAR-10 are performed on a server equipped         tions. Meanwhile, the images reconstructed by the attacker
+with two NVIDIA GeForce RTX 4090 24GB GPUs, and                   become nearly unrecognizable—often appearing as entirely
+       0.8                                                                                       Method         Acc.       MSE
+                                               0.9                                            InfoDecom        0.7329     0.0843
+       0.7
+Accuracy
+
+
+
+
+                                        Accuracy
+                                                                                             w/o Vis. Rem.     0.6273     0.0849
+                                               0.8                                              w/o Lcl        0.7453     0.0835
+       0.6                                                                                    w/o FSInfo       0.7274     0.0826
+                                               0.7
+              0.05        0.10      0.15             0.1       0.2      0.3                  Table 5: CIFAR-10 on ResNet-18
+                         MSE                                  MSE
+                  (a) CIFAR-10                             (b) CelebA
+           FSInfoGuard           inv_dFIL_def          raw           shredder
+           InfoDecom             nopeek                                         trade-off parameter of each to obtain different points
+                                                                                on its curve. Specifically, for inv dFIL def we use
+Figure 5: Model accuracy v.s. MSE on CIFAR-10 and                               lb = {0.01, 0.08, 0.2, 0.4, 1}; for FSInfoGuard, we use
+CelebA against DRAs.                                                            F SInf o = {−1.5, −1, −0.5, 0.1, 1}; for Nopeek, we use
+                                                                                α = {0.5, 0.6, 0.7, 0.8, 0.9} (CelebA and CIFAR-10); for
+                                                                                Shredder, we use coeff = {0.5, 1, 1.5, 2, 2.5} (CelebA
+                                                                                and CIFAR-10). For InfoDecom, we vary the |Xh | (within
+                                                                                {54, 41}, the λ (within [1,100]), and the F SInf o (within
+                                                                                {−0.5, −1, −1.5, −2}). The results are shown in Figure 5.
+                                                                                The InfoDecom achieves the best utility-privacy trade-
+                                                                                off. The reason is that it decomposes redundant information
+Figure 6: Images reconstructed by the DRAs along with the                       and retains only the necessary information to be protected.
+task accuracy on CIFAR-10 for different defenses.                                  To perceptually demonstrate the effectiveness of InfoDe-
+                                                                                com, we show the reconstructed images by DRAs on
+                                                                                CIFAR-10 after applying the defenses in Figure 6. The raw
+red or blue, with no discernible features.                                      input is also given for reference. We see that, when the mod-
+   Impact of the Weighting Factor λ. In mutual informa-                         els have similar task accuracy, InfoDecom can better defend
+tion suppression, a higher λ means letting the loss term that                   against privacy leakage.
+aims to reduce I(Xh ; Z) dominate the update of the bottom
+model, thus decreasing the transmitted information about                        Ablation Studies
+Xh . As shown in Table 3, where |Xh | is fixed at 54 and
+F SInf o is set to −1, increasing λ leads to a decline in                       In this subsection, we demonstrate how each component in
+utility but enhances privacy protection. However, on the                        InfoDecom contributes to the overall improvement of the
+CelebA dataset, we observe that the accuracy at λ = 1 is                        utility-privacy trade-off. We present the results in Table 5.
+slightly lower than at λ = 10. This counterintuitive result                     The default value for |Xh |, λ, and F SInf o is 54, 10, and
+stems from the fact that, to meet the same privacy guarantee                    -1. We can observe that, i) without visual information re-
+(F SInf o = −1), more noise is required when λ is smaller,                      moval, the accuracy decreases. We find this is because noise
+which in turn degrades model performance.                                       with a larger scale is added to the smashed data to satisfy
+   Impact of the Privacy Leakage Level F SInf o.                                the required F SInf o = −1. ii) Without the mutual infor-
+F SInf o specifies the privacy leakage level of the SI sys-                     mation suppression, although the model’s predictive perfor-
+tem. To achieve less privacy leakage or a smaller F SInf o,                     mance is largely preserved, the reduced regularization on
+a larger scale of Gaussian noise is needed. As shown in Ta-                     smashed data may facilitate more accurate reconstructions
+ble 4, where the |Xh | is set to 54 and the λ is set to 10.                     by the attacker. iii) Without the FSInfo-guided noise pertur-
+We observe that decreasing F SInf o or the target pri-                          bation, the level of privacy protection may fall short of the
+vacy leakage impairs the utility but improves the pri-                          theoretically guaranteed bound.
+vacy protection. Similarly, there is an exception when the
+F SInf o = −0.5 on CelebA has similar but lower accu-                                                  Conclusion
+racy compared with that when F SInf o = −1. This may                            We propose InfoDecom, a defense method designed to miti-
+be because the protection provided by the mutual informa-                       gate user data leakage in split inference (SI) for vision tasks
+tion suppression term with λ = 10 has already exceeded the                      by removing private information that is not essential for
+privacy level of F SInf o = −0.5, therefore impairing the                       task performance. InfoDecom conducts a two-stage process
+accuracy slightly.                                                              to reduce redundant visual and mutual information. This is
+                                                                                followed by a closed-form noise perturbation that ensures
+Comparing Utility-Privacy Trade-off.                                            a theoretically guaranteed level of privacy protection. Ex-
+We compare InfoDecom with four baselines in the utility-                        perimental results show that InfoDecom achieves the best
+privacy plane, where the x-axis denotes MSE (privacy                            utility–privacy trade-off among the evaluated baselines. Al-
+leakage) and the y-axis denotes task accuracy (utility),                        though this work focuses on vision tasks, future research
+using both CelebA and CIFAR-10. Results of the un-                              can explore the application of similar redundancy reduction
+defended model (raw) are also included. We vary the                             strategies in natural language processing tasks.
+                    Acknowledgments                                  where only aggregated parameters or gradients are acces-
+This work is supported by Yangtze River Delta Science and            sible, MLE-based methods are predominant, typically opti-
+Technology Innovation Community Joint Research Project               mizing gradient matching objectives using Euclidean or co-
+(YDZX20233100004031).                                                sine similarity (Zhang et al. 2023; Geiping et al. 2020; Jin
+                                                                     et al. 2021).
+         Regularization Terms of Defenses                               In contrast, SI scenarios favor NN-based attacks, as the
+                                                                     one-to-one correspondence between raw inputs and smashed
+                                                                     data offers abundant training pairs for inverse models, lead-
+Table 6: Regularization terms of existing methods. x is the          ing to superior performance over MLE-based techniques
+raw input data, z is smashed data, y is the true task label, z̃ is   (Yin et al. 2023; Pasquini, Ateniese, and Bernaschi 2021).
+the perturbed smashed data, δ is the noise whose scale is σ, x̂      Recent advances in NN-based DRAs focus on mitigat-
+is the reconstructed input, u is the private attribute (e.g., the    ing performance degradation in practical settings by adapt-
+gender), U is the uniform distribution, xc is the obfuscated         ing the training set, loss functions, and decoder architec-
+input, ∥ · ∥p and ∥ · ∥q represents the p-norm and q-norm,           tures—particularly when adversaries lack auxiliary datasets
+and DCOR is the distance correlation (Vepakomma et al.               (Yin et al. 2023) or must contend with defense mechanisms
+2020).                                                               (Yang et al. 2022a).
+                                                                        We adopt a permissive threat model where adversaries are
+   Methods             Goal 1                   Goal 2               allowed to use a standard yet effective inverse network (He,
+                                                                     Zhang, and Lee 2019) in our experiments. We use trans-
+    Soteria     −∥x − x̂∥p       s.t., ∥z − z̃∥q ≤ ϵ                 posed convolutional layers (Dumoulin and Visin 2016) to
+  ML-ARL      KL(g(u|z)||U )    KL(p(y|x)||f (y|z))                  construct the decoder.
+    Cloak        I(xc ; u)            −I(xc ; y)
+                                                                     Baselines
+   Nopeek     DCOR(X, Z)            cross-entropy
+                      1                                              inv dFIL def (Maeng et al. 2023). The Fisher information
+   Shredder        σ 2 (n)          cross-entropy
+                                                                     in the perturbed smashed data z about the raw input x is:
+  Inf2Guard I(r + δ; x) − H(δ) −I(r + δ; y) + I(r; y)
+                                                                              Iz (x) = E[∇x log p(z; x)∇x log p(z; x)⊤ ]       (11)
+   TAPPFL         I(z; u)             −I(x; z|u)
+                                                                                         1 ⊤
+   ARPRL          I(z; u)             −I(x; z|u)                                     = 2 Jfθ1 Jfθ1 ,                           (12)
+    DPFE           I(z; u)             −I(z; y)                                         σ
+                                                                     where the σ is the scale of Gaussian noise, and Jfθ1 is the Ja-
+ InfoScissors     I(z; x)           cross-entropy
+                                                                     cobian of the bottom model fθ1 w.r.t. x. Being viewed as the
+                                                                     parameter estimation from z to x, the data reconstruction at-
+                                                                     tacker’s estimation error can be bound by Fisher information
+     Detailed Experimental Implementation                            as follows:
+                                                                                                            1
+Setups and Hyperparameters                                                             E[∥x̂ − x∥22 /d] ≥                      (13)
+                                                                                                          dF IL
+We use a server with Debian 6.1.119-1. InfoDecom has
+                                                                                         dF IL = T r(Iz (x))/d,                (14)
+primarily focused on computer vision tasks so far. To this
+end, we adopt two widely adopted datasets: CIFAR-10                  where the dimension of input x is d, T r(·) denotes the ma-
+(Krizhevsky, Hinton et al. 2009) and CelebA (Liu et al.              trix trace, x̂ is the reconstructed input. From Equation 12-14,
+2015). CIFAR-10 is a simple and small dataset that allows            we can solve the Gaussian noise scale to achieve a certain
+rapid validation of methods, while the larger CelebA in-             dFIL:                       s
+cludes face images, a common privacy concern in the visual                                          T r(Jf⊤θ1 Jfθ1 )
+field, demonstrating the generalizability of the method on a                                σ=                       .          (15)
+                                                                                                     d × dF IL
+complex dataset.
+   There are three main hyperparameters in InfoDecom.                (Maeng et al. 2023) calculate this noise scale in each train-
+The number of retained coefficients |Xh | ∈ {1, . . . , 64},         ing epoch and add the noise on smashed data. During split
+the weighting factor λ ∈ [0, +∞], and the F SInf o ∈                 inference, the noise scale is similarly calculated and applied.
+[−∞, +∞]. We chose hyperparameters that have generally                  FSInfoGuard (Deng, Lu, and Duan 2025). FSInfoGuard
+performed well in multiple experiments.                              has a similar procedure to inv dFIL def. However, the noise
+                                                                     to be added is on a scale of:
+                                                                                                                1
+Attack Methods                                                                                det(Jf⊤θ1 Jfθ1 ) 2d
+                                                                                                                1 ,             (16)
+Data Reconstruction Attacks (DRAs) generally fall into                                         eF SInf o (2πe) 2
+two categories: neural network (NN)-based methods, which
+learn direct mappings from observable outputs to raw in-             to achieve a certain privacy leakage, F SInf o.
+puts, and maximum likelihood estimation (MLE)-based                     Nopeek (Vepakomma et al. 2020). Nopeek introduces
+approaches that rely on optimization techniques such as              such a regularization term to constrain the distance correla-
+stochastic gradient descent (He, Zhang, and Lee 2019). In            tion between the input x and smashed data z during training:
+federated learning or centralized machine learning systems,                    L = αDCOR(X; Z) + cross-entropy,                (17)
+             No-     Shred-    FSInfo-    inv dFIL-     Info                            References
+ Forward
+             peek     der       Guard         def      Decom     Abadi, M.; Chu, A.; Goodfellow, I.; McMahan, H. B.;
+   0.26      0.94     0.45       4.52        4.90        6.64    Mironov, I.; Talwar, K.; and Zhang, L. 2016. Deep learn-
+                                                                 ing with differential privacy. In Proceedings of the 2016
+Table 7: Inference time (ms) for one sample on ResNet-18         ACM SIGSAC conference on computer and communications
+and CelebA. Forward means the feed-forward time of the           security, 308–318.
+bottom model.                                                    Arevalo, C. A.; Noorbakhsh, S. L.; Dong, Y.; Hong, Y.; and
+                                                                 Wang, B. 2024. Task-Agnostic Privacy-Preserving Repre-
+                                                                 sentation Learning for Federated Learning against Attribute
+where the DCOR(·, ·) is the distance correlation and α is a      Inference Attacks. In Proceedings of the AAAI Conference
+scalar weighting factor.                                         on Artificial Intelligence, volume 38, 10909–10917.
+   Shredder (Mireshghallah et al. 2020). Shredder analyzes       Barber, D.; and Agakov, F. 2004. The im algorithm: a vari-
+the mutual information I(x; z) between x and z and de-           ational approach to information maximization. Advances in
+fines a substitute version of it to regularize the bottom        neural information processing systems, 16(320): 201.
+model. Shredder uses the reverse of the signal-to-noise ratio    Chen, G.; Qin, Z.; Yang, M.; Zhou, Y.; Fan, T.; Du, T.; and
+                                          2
+                                            ]
+(1/SNR) as a proxy, where SN R = E[z   σ 2 , with σ the noise    Xu, Z. 2024. Unveiling the vulnerability of private fine-
+scale. The overall loss function during defensive training is:   tuning in split-based frameworks for large language models:
+                 L = cross-entropy − α|δ|,               (18)    A bidirectionally enhanced attack. In Proceedings of the
+                                                                 2024 on ACM SIGSAC Conference on Computer and Com-
+where the |δ| is the norm of the noise.                          munications Security, 2904–2918.
+                                                                 Cheng, P.; Hao, W.; Dai, S.; Liu, J.; Gan, Z.; and Carin, L.
+              Computational Efficiency                           2020. Club: A contrastive log-ratio upper bound of mutual
+We examine the computational efficiency of InfoDecom in          information. In International conference on machine learn-
+this section. InfoDecom introduces overheads for achiev-         ing, 1779–1788. PMLR.
+ing better privacy-utility trade-off, which is a common
+                                                                 Cover, T. M. 1999. Elements of information theory. John
+cost incurred by Jacobin-based methods (e.g., FSInfo-
+                                                                 Wiley & Sons.
+Guard, inv dFIL def). Methods that avoid Jacobians (e.g.,
+Nopeek, Shredder) are more efficient but may typically suf-      Deng, R.; Du, X.; Lu, Z.; Duan, Q.; Huang, S.-C.; and Wu,
+fer worse privacy-utility tradeoffs. We employ some tech-        J. 2023. HSFL: Efficient and Privacy-Preserving Offloading
+niques (Deng, Lu, and Duan 2025) to reduce the overheads:        for Split and Federated Learning in IoT Services. In 2023
+input downsampling, diagonal approximation of the Fisher         IEEE International Conference on Web Services (ICWS),
+Information Matrix, and parallel processing. For an input di-    658–668. IEEE.
+mension of d and the number of client model parameters P,        Deng, R.; Lu, Z.; and Duan, Q. 2025.                Quanti-
+the complexity is approximately O(dP). Also, we present the      fying Privacy Leakage in Split Inference via Fisher-
+run-time measurements in Table 7.                                Approximated Shannon Information Analysis.            arXiv
+   The delay of InfoDecom is comparable to that of other         preprint arXiv:2504.10016.
+Jacobian-based methods. The absolute additional delay (6̃        Dibbo, S. V.; Breuer, A.; Moore, J.; and Teti, M. 2024. Im-
+ms) introduced by InfoDecom is acceptable for typical split      proving robustness to model inversion attacks via sparse
+learning applications such as financial risk detection and       coding architectures. In European Conference on Computer
+personalized recommendation. These scenarios prioritize          Vision, 117–136. Springer.
+data privacy and security over ultra-low latency, and a few      Duan, L.; Sun, J.; Jia, J.; Chen, Y.; and Gorlatova, M.
+milliseconds of extra delay do not affect normal functional-     2024. Reimagining mutual information for enhanced de-
+ity or user experience. We also plan to explore more efficient   fense against data leakage in collaborative inference. Ad-
+Jacobian approximation strategies in future work to further      vances in Neural Information Processing Systems, 37:
+reduce client-side overhead.                                     44479–44500.
+                    More than Images                             Dumoulin, V.; and Visin, F. 2016. A guide to con-
+                                                                 volution arithmetic for deep learning. arXiv preprint
+The proposed InfoDecom consists of three components: vi-         arXiv:1603.07285.
+sual information removal (VIR), mutual information sup-
+pression (MIS), and noise perturbation (NP). While VIR           Dwork, C. 2006. Differential privacy. In International col-
+currently targets image data, MIS and NP are modality-           loquium on automata, languages, and programming, 1–12.
+agnostic.                                                        Springer.
+   More importantly, the ”decompose-then-noise” frame-           Geiping, J.; Bauermeister, H.; Dröge, H.; and Moeller, M.
+work and the insight that redundant information harms            2020. Inverting gradients-how easy is it to break privacy
+the privacy–utility tradeoff are general and form our main       in federated learning? Advances in neural information pro-
+contribution. Future work can replace VIR with broader           cessing systems, 33: 16937–16947.
+redundancy-removal modules (e.g., for text or multimodal         He, K.; Zhang, X.; Ren, S.; and Sun, J. 2016. Deep resid-
+data) to extend InfoDecom beyond images.                         ual learning for image recognition. In Proceedings of the
+IEEE conference on computer vision and pattern recogni-           against Inference Attacks. In 33rd USENIX Security Sympo-
+tion, 770–778.                                                    sium (USENIX Security 24), 2405–2422. Philadelphia, PA:
+He, Z.; Zhang, T.; and Lee, R. B. 2019. Model inversion at-       USENIX Association.
+tacks against collaborative inference. In Proceedings of the      Osia, S. A.; Taheri, A.; Shamsabadi, A. S.; Katevas, K.; Had-
+35th Annual Computer Security Applications Conference,            dadi, H.; and Rabiee, H. R. 2020. Deep Private-Feature Ex-
+148–162. New York, NY, USA: Association for Computing             traction. IEEE Transactions on Knowledge & Data Engi-
+Machinery.                                                        neering, 32(01): 54–66.
+Jin, S.; Wang, H.; Wang, Z.; Xiao, F.; Hu, J.; He, Y.;            Pasquini, D.; Ateniese, G.; and Bernaschi, M. 2021. Un-
+Zhang, W.; Ba, Z.; Fang, W.; Yuan, S.; et al. 2024.               leashing the tiger: Inference attacks on split learning. In
+{FaceObfuscator}: Defending deep learning-based privacy           Proceedings of the 2021 ACM SIGSAC Conference on Com-
+attacks with gradient descent-resistant features in face          puter and Communications Security, 2113–2129. New York,
+recognition. In 33rd USENIX Security Symposium (USENIX            NY, USA: Association for Computing Machinery.
+Security 24), 6849–6866.                                          Roy, P. C.; and Boddeti, V. N. 2019. Mitigating informa-
+Jin, X.; Chen, P.-Y.; Hsu, C.-Y.; Yu, C.-M.; and Chen, T.         tion leakage in image representations: A maximum entropy
+2021. Cafe: Catastrophic data leakage in vertical federated       approach. In Proceedings of the IEEE/CVF Conference on
+learning. Advances in Neural Information Processing Sys-          Computer Vision and Pattern Recognition, 2586–2594.
+tems, 34: 994–1006.                                               Singh, A.; Sharma, V.; Sukumaran, R.; Mose, J.; Chiu,
+Kingma, D. P.; and Welling, M. 2013. Auto-encoding varia-         J.; Yu, J.; and Raskar, R. 2024. SIMBA: Split Infer-
+tional bayes. arXiv preprint arXiv:1312.6114.                     ence—Mechanisms, Benchmarks and Attacks. In European
+                                                                  Conference on Computer Vision, 214–232. Springer.
+Krizhevsky, A.; Hinton, G.; et al. 2009. Learning multiple
+layers of features from tiny images.                              Singh, A.; Vepakomma, P.; Sharma, V.; and Raskar, R. 2023.
+                                                                  Posthoc privacy guarantees for collaborative inference with
+Li, Z.; Yang, M.; Liu, Y.; Wang, J.; Hu, H.; Yi, W.; and Xu,      modified Propose-Test-Release. Advances in Neural Infor-
+X. 2023. GAN you see me? enhanced data reconstruction             mation Processing Systems, 36: 26438–26451.
+attacks against split inference. Advances in neural informa-
+                                                                  Sun, J.; Li, A.; Wang, B.; Yang, H.; Li, H.; and Chen, Y.
+tion processing systems, 36: 54554–54566.
+                                                                  2021. Soteria: Provable defense against privacy leakage in
+Liu, Z.; Luo, P.; Wang, X.; and Tang, X. 2015. Deep Learn-        federated learning from representation perspective. In Pro-
+ing Face Attributes in the Wild. In Proceedings of Interna-       ceedings of the IEEE/CVF conference on computer vision
+tional Conference on Computer Vision (ICCV).                      and pattern recognition, 9311–9319.
+Maeng, K.; Guo, C.; Kariyappa, S.; and Suh, G. E. 2023.           Sun, X.; Gazagnadou, N.; Sharma, V.; Lyu, L.; Li, H.; and
+Bounding the invertibility of privacy-preserving instance en-     Zheng, L. 2024. Privacy assessment on reconstructed im-
+coding using fisher information. Advances in Neural Infor-        ages: are existing evaluation metrics faithful to human per-
+mation Processing Systems, 36: 51904–51925.                       ception? Advances in Neural Information Processing Sys-
+Martens, J. 2020. New insights and perspectives on the natu-      tems, 36: 10223–10237.
+ral gradient method. Journal of Machine Learning Research,        Tan, Q.; Li, Q.; Zhao, Y.; Liu, Z.; Guo, X.; and Xu, K. 2024.
+21(146): 1–76.                                                    Defending Against Data Reconstruction Attacks in Feder-
+Mi, Y.; Huang, Y.; Ji, J.; Liu, H.; Xu, X.; Ding, S.; and Zhou,   ated Learning: An Information Theory Approach. In 33rd
+S. 2022. Duetface: Collaborative privacy-preserving face          USENIX Security Symposium (USENIX Security 24), 325–
+recognition via channel splitting in the frequency domain.        342. Philadelphia, PA: USENIX Association.
+In Proceedings of the 30th ACM International Conference           Tishby, N.; Pereira, F. C.; and Bialek, W. 2000. The infor-
+on Multimedia, 6755–6764.                                         mation bottleneck method. arXiv preprint physics/0004057.
+Mireshghallah, F.; Taram, M.; Jalali, A.; Elthakeb, A. T. T.;     Vepakomma, P.; Singh, A.; Gupta, O.; and Raskar, R. 2020.
+Tullsen, D.; and Esmaeilzadeh, H. 2021. Not all features are      NoPeek: Information leakage reduction to share activations
+equal: Discovering essential features for preserving predic-      in distributed deep learning. In 2020 International Confer-
+tion privacy. In Proceedings of the Web Conference 2021,          ence on Data Mining Workshops (ICDMW), 933–942. IEEE.
+669–680.                                                          Wallace, G. K. 1991. The JPEG still picture compression
+Mireshghallah, F.; Taram, M.; Ramrakhyani, P.; Jalali, A.;        standard. Communications of the ACM, 34(4): 30–44.
+Tullsen, D.; and Esmaeilzadeh, H. 2020. Shredder: Learn-          Yang, M.; Li, Z.; Wang, J.; Hu, H.; Ren, A.; Xu, X.; and Yi,
+ing noise distributions to protect inference privacy. In Pro-     W. 2022a. Measuring data reconstruction defenses in collab-
+ceedings of the Twenty-Fifth International Conference on          orative inference systems. Advances in Neural Information
+Architectural Support for Programming Languages and Op-           Processing Systems, 35: 12855–12867.
+erating Systems, 3–18. New York, NY, USA: Association for         Yang, W.; Du, H.; Liew, Z. Q.; Lim, W. Y. B.; Xiong, Z.;
+Computing Machinery.                                              Niyato, D.; Chi, X.; Shen, X.; and Miao, C. 2022b. Seman-
+Noorbakhsh, S. L.; Zhang, B.; Hong, Y.; and Wang, B.              tic communications for future internet: Fundamentals, appli-
+2024. {Inf2Guard}: An {Information-Theoretic} Frame-              cations, and challenges. IEEE Communications Surveys &
+work for Learning {Privacy-Preserving} Representations            Tutorials, 25(1): 213–250.
+Yin, Y.; Zhang, X.; Zhang, H.; Li, F.; Yu, Y.; Cheng, X.; and
+Hu, P. 2023. Ginver: Generative model inversion attacks
+against collaborative inference. In Proceedings of the ACM
+Web Conference 2023, 2122–2131. New York, NY, USA:
+Association for Computing Machinery.
+Yu, D.; Du, X.; Jiang, L.; Tong, W.; and Deng, S. 2024. EC-
+SNN: Splitting Deep Spiking Neural Networks for Edge De-
+vices. In Larson, K., ed., Proceedings of the Thirty-Third
+International Joint Conference on Artificial Intelligence,
+IJCAI-24, 5389–5397. International Joint Conferences on
+Artificial Intelligence Organization. Main Track.
+Zhang, B.; Noorbakhsh, S. L.; Dong, Y.; Hong, Y.; and
+Wang, B. 2025. Learning Robust and Privacy-Preserving
+Representations via Information Theory. In Proceedings of
+the AAAI Conference on Artificial Intelligence, volume 39,
+22363–22371.
+Zhang, R.; Guo, S.; Wang, J.; Xie, X.; and Tao, D. 2023. A
+Survey on Gradient Inversion: Attacks, Defenses and Future
+Directions. In Proceedings of the Thirty-First International
+Joint Conference on Artificial Intelligence, 5678–685.
+

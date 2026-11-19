@@ -1,0 +1,724 @@
+{
+  "intent_clarification": {
+    "query": "ti:\"IntentGPT\" OR ti:\"CLAMBER\" OR ti:\"Schema-Guided Dialogue\" OR ti:\"PICARD\" OR ti:\"RouteLLM\" OR ti:\"FrugalGPT\" OR ti:\"AskBench\" OR (ti:\"clarification\" AND all:\"language model\")",
+    "sort": "relevance",
+    "limit": 45,
+    "total": "965",
+    "entries": [
+      {
+        "id": "2412.10291v1",
+        "title": "Still \"Talking About Large Language Models\": Some Clarifications",
+        "abstract": "My paper \"Talking About Large Language Models\" has more than once been interpreted as advocating a reductionist stance towards large language models. But the paper was not intended that way, and I do not endorse such positions. This short note situates the paper in the context of a larger philosophical project that is concerned with the (mis)use of words rather than metaphysics, in the spirit of Wittgenstein's later writing.",
+        "published": "2024-12-13T17:21:29Z",
+        "updated": "2024-12-13T17:21:29Z",
+        "authors": [
+          "Murray Shanahan"
+        ],
+        "url": "https://arxiv.org/abs/2412.10291v1",
+        "pdf": "https://arxiv.org/pdf/2412.10291v1"
+      },
+      {
+        "id": "2212.07769v2",
+        "title": "CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models",
+        "abstract": "Users often ask dialogue systems ambiguous questions that require clarification. We show that current language models rarely ask users to clarify ambiguous questions and instead provide incorrect answers. To address this, we introduce CLAM: a framework for getting language models to selectively ask for clarification about ambiguous user questions. In particular, we show that we can prompt language models to detect whether a given question is ambiguous, generate an appropriate clarifying question to ask the user, and give a final answer after receiving clarification. We also show that we can simulate users by providing language models with privileged information. This lets us automatically evaluate multi-turn clarification dialogues. Finally, CLAM significantly improves language models' accuracy on mixed ambiguous and unambiguous questions relative to SotA.",
+        "published": "2022-12-15T12:47:18Z",
+        "updated": "2023-02-20T11:19:08Z",
+        "authors": [
+          "Lorenz Kuhn",
+          "Yarin Gal",
+          "Sebastian Farquhar"
+        ],
+        "url": "https://arxiv.org/abs/2212.07769v2",
+        "pdf": "https://arxiv.org/pdf/2212.07769v2"
+      },
+      {
+        "id": "2405.15784v1",
+        "title": "CLARINET: Augmenting Language Models to Ask Clarification Questions for Retrieval",
+        "abstract": "Users often make ambiguous requests that require clarification. We study the problem of asking clarification questions in an information retrieval setting, where systems often face ambiguous search queries and it is challenging to turn the uncertainty in the retrieval model into a natural language question. We present CLARINET, a system that asks informative clarification questions by choosing questions whose answers would maximize certainty in the correct candidate. Our approach works by augmenting a large language model (LLM) to condition on a retrieval distribution, finetuning end-to-end to generate the question that would have maximized the rank of the true candidate at each turn. When evaluated on a real-world retrieval dataset of users searching for books, our system outperforms traditional heuristics such as information gain on retrieval success by 17% and vanilla-prompted LLMs by 39% relative.",
+        "published": "2024-04-28T18:21:31Z",
+        "updated": "2024-04-28T18:21:31Z",
+        "authors": [
+          "Yizhou Chi",
+          "Jessy Lin",
+          "Kevin Lin",
+          "Dan Klein"
+        ],
+        "url": "https://arxiv.org/abs/2405.15784v1",
+        "pdf": "https://arxiv.org/pdf/2405.15784v1"
+      },
+      {
+        "id": "2311.08718v2",
+        "title": "Decomposing Uncertainty for Large Language Models through Input Clarification Ensembling",
+        "abstract": "Uncertainty decomposition refers to the task of decomposing the total uncertainty of a predictive model into aleatoric (data) uncertainty, resulting from inherent randomness in the data-generating process, and epistemic (model) uncertainty, resulting from missing information in the model's training data. In large language models (LLMs) specifically, identifying sources of uncertainty is an important step toward improving reliability, trustworthiness, and interpretability, but remains an important open research question. In this paper, we introduce an uncertainty decomposition framework for LLMs, called input clarification ensembling, which can be applied to any pre-trained LLM. Our approach generates a set of clarifications for the input, feeds them into an LLM, and ensembles the corresponding predictions. We show that, when aleatoric uncertainty arises from ambiguity or under-specification in LLM inputs, this approach makes it possible to factor an (unclarified) LLM's predictions into separate aleatoric and epistemic terms, using a decomposition similar to the one employed by Bayesian neural networks. Empirical evaluations demonstrate that input clarification ensembling provides accurate and reliable uncertainty quantification on several language processing tasks. Code and data are available at https://github.com/UCSB-NLP-Chang/llm_uncertainty.",
+        "published": "2023-11-15T05:58:35Z",
+        "updated": "2024-06-10T21:17:24Z",
+        "authors": [
+          "Bairu Hou",
+          "Yujian Liu",
+          "Kaizhi Qian",
+          "Jacob Andreas",
+          "Shiyu Chang",
+          "Yang Zhang"
+        ],
+        "url": "https://arxiv.org/abs/2311.08718v2",
+        "pdf": "https://arxiv.org/pdf/2311.08718v2"
+      },
+      {
+        "id": "2609.02054v1",
+        "title": "A Tri-Agent Framework for Evaluating and Aligning Question Clarification Capabilities of Large Language Models",
+        "abstract": "Large Language Models (LLMs) are increasingly deployed in interactive systems where understanding user intent precisely is paramount. A key capability for such systems is effective question clarification, especially when user queries are ambiguous or underspecified. This paper introduces a novel tri-agent framework for the robust evaluation of an LLM's ability to engage in clarifying dialogue. Our framework comprises three distinct LLM-based agents: (1) a Question Clarifying Agent (QCA), the system under evaluation, tasked with identifying ambiguities and posing clarifying questions; (2) a Respondent Agent (RA), designed to simulate human user responses, potentially including irrelevant or challenging replies; and (3) an Evaluator Agent (EA), an LLM-as-a-judge, which assesses the quality of the dialogue based on a comprehensive set of metrics. We detail a methodology for synthetic data generation in the supply chain domain as an example. We propose metrics evaluating ambiguity handling, question quality, dialogue efficiency, language appropriateness, and final intent alignment. We also briefly discuss the validation of the EA against human judgments. This work provides a structured approach to benchmark, validate, and improve the clarification capabilities of conversational LLM applications.",
+        "published": "2026-09-02T03:33:40Z",
+        "updated": "2026-09-02T03:33:40Z",
+        "authors": [
+          "Yikai Zhao",
+          "Saurabh Pandey",
+          "Pradeep Kumar Misra"
+        ],
+        "url": "https://arxiv.org/abs/2609.02054v1",
+        "pdf": "https://arxiv.org/pdf/2609.02054v1"
+      },
+      {
+        "id": "2305.13626v2",
+        "title": "Prompting and Evaluating Large Language Models for Proactive Dialogues: Clarification, Target-guided, and Non-collaboration",
+        "abstract": "Conversational systems based on Large Language Models (LLMs), such as ChatGPT, show exceptional proficiency in context understanding and response generation. However, despite their impressive capabilities, they still possess limitations, such as providing randomly-guessed answers to ambiguous queries or failing to refuse users' requests, both of which are considered aspects of a conversational agent's proactivity. This raises the question of whether LLM-based conversational systems are equipped to handle proactive dialogue problems. In this work, we conduct a comprehensive analysis of LLM-based conversational systems, specifically focusing on three aspects of proactive dialogue systems: clarification, target-guided, and non-collaborative dialogues. To trigger the proactivity of LLMs, we propose the Proactive Chain-of-Thought prompting scheme, which augments LLMs with the goal planning capability over descriptive reasoning chains. Empirical findings are discussed to promote future studies on LLM-based proactive dialogue systems.",
+        "published": "2023-05-23T02:49:35Z",
+        "updated": "2023-10-14T06:36:05Z",
+        "authors": [
+          "Yang Deng",
+          "Lizi Liao",
+          "Liang Chen",
+          "Hongru Wang",
+          "Wenqiang Lei",
+          "Tat-Seng Chua"
+        ],
+        "url": "https://arxiv.org/abs/2305.13626v2",
+        "pdf": "https://arxiv.org/pdf/2305.13626v2"
+      },
+      {
+        "id": "2512.21120v1",
+        "title": "ClarifyMT-Bench: Benchmarking and Improving Multi-Turn Clarification for Conversational Large Language Models",
+        "abstract": "Large language models (LLMs) are increasingly deployed as conversational assistants in open-domain, multi-turn settings, where users often provide incomplete or ambiguous information. However, existing LLM-focused clarification benchmarks primarily assume single-turn interactions or cooperative users, limiting their ability to evaluate clarification behavior in realistic settings. We introduce \\textbf{ClarifyMT-Bench}, a benchmark for multi-turn clarification grounded in a five-dimensional ambiguity taxonomy and a set of six behaviorally diverse simulated user personas. Through a hybrid LLM-human pipeline, we construct 6,120 multi-turn dialogues capturing diverse ambiguity sources and interaction patterns. Evaluating ten representative LLMs uncovers a consistent under-clarification bias: LLMs tend to answer prematurely, and performance degrades as dialogue depth increases. To mitigate this, we propose \\textbf{ClarifyAgent}, an agentic approach that decomposes clarification into perception, forecasting, tracking, and planning, substantially improving robustness across ambiguity conditions. ClarifyMT-Bench establishes a reproducible foundation for studying when LLMs should ask, when they should answer, and how to navigate ambiguity in real-world human-LLM interactions.",
+        "published": "2025-12-24T11:39:00Z",
+        "updated": "2025-12-24T11:39:00Z",
+        "authors": [
+          "Sichun Luo",
+          "Yi Huang",
+          "Mukai Li",
+          "Shichang Meng",
+          "Fengyuan Liu",
+          "Zefa Hu",
+          "Junlan Feng",
+          "Qi Liu"
+        ],
+        "url": "https://arxiv.org/abs/2512.21120v1",
+        "pdf": "https://arxiv.org/pdf/2512.21120v1"
+      },
+      {
+        "id": "2504.16331v2",
+        "title": "Can Code Language Models Learn Clarification-Seeking Behaviors?",
+        "abstract": "Large language models (LLMs) have demonstrated remarkable capabilities in code generation tasks. However, a gap remains between their output and the problem-solving strategies of human developers. Unlike humans, who spend substantial time disambiguating requirements through iterative dialogue, LLMs often generate code despite ambiguities in natural language requirements, leading to unreliable solutions. Different from prior work, we study whether a Code LLM can be fine-tuned to learn clarification-seeking behavior. While recent work has focused on LLM-based agents for iterative code generation, we argue that the ability to recognize and query ambiguous requirements should be intrinsic to the models themselves, especially in agentic AI where models and humans collaborate. We present ClarifyCoder, a framework with synthetic data generation and instruction-tuning that fine-tunes an LLM to identify ambiguities and request clarification before code generation. Our approach has two components: (1) a data synthesis technique that augments programming datasets with scenarios requiring clarification to generate clarification-aware training data, and (2) a fine-tuning strategy that teaches models to prioritize seeking clarification over immediate code generation when faced with incomplete or ambiguous requirements. We also provide an empirical analysis of integrating ClarifyCoder with standard fine-tuning for joint optimization of clarification-awareness and coding ability. Experimental results show that ClarifyCoder achieves a 63% communication rate (40% absolute increase) and a 52% good question rate (30% absolute increase) on ambiguous tasks, significantly improving LLMs' communication capabilities while maintaining code generation performance.",
+        "published": "2025-04-23T00:34:39Z",
+        "updated": "2025-09-26T05:13:28Z",
+        "authors": [
+          "Jie JW Wu",
+          "Manav Chaudhary",
+          "Davit Abrahamyan",
+          "Arhaan Khaku",
+          "Anjiang Wei",
+          "Fatemeh H. Fard"
+        ],
+        "url": "https://arxiv.org/abs/2504.16331v2",
+        "pdf": "https://arxiv.org/pdf/2504.16331v2"
+      },
+      {
+        "id": "2608.11631v1",
+        "title": "CLAIM: Leading Open-domain Active Clarification of Large Language Models with Uncertainty Measurement",
+        "abstract": "In open-domain human-computer interaction scenarios, large language models (LLMs) frequently encounter user queries that are ambiguous or incomplete. In such cases, directly producing an answer often leads to overgeneralized, erroneous, or low-information responses. In contrast, asking clarifying questions can substantially improve interaction quality. However, existing approaches still rely heavily on manually annotated data or preference alignment to address two fundamental challenges: when clarification is necessary, and which aspect of the query should be clarified. This reliance incurs high annotation costs and limits generalization. To address these challenges, we propose CLAIM, an uncertainty-driven framework for active clarification learning in open-domain settings. CLAIM eliminates the need for explicit human preference annotations by quantifying query uncertainty through the entropy induced by answer disagreements across multiple models. This uncertainty signal is then used to construct high-quality synthetic data, enabling the training of a unified clarification decision model through a combination of supervised learning and reinforcement learning. Specifically, we propose an entropy-driven synthetic data generation pipeline that integrates entropy-based uncertainty estimation with semantic clustering and reasoning-based judgments, enabling reliable automatic annotation of clarification requirements. To train CLAIM, we formulate the clarification process as a structured decision generation problem and adopt a training paradigm that combines supervised fine-tuning (SFT) with group-relative policy optimization (GRPO). Experimental results demonstrate that CLAIM can learn stable and generalizable clarification strategies without relying on manually labeled data, offering a low-cost and robust solution for proactive understanding in real-world open-domain interactions with LLMs.",
+        "published": "2026-08-12T04:27:45Z",
+        "updated": "2026-08-12T04:27:45Z",
+        "authors": [
+          "Kuangzhao Yang",
+          "Ziliang Zhao",
+          "Zhicheng Dou"
+        ],
+        "url": "https://arxiv.org/abs/2608.11631v1",
+        "pdf": "https://arxiv.org/pdf/2608.11631v1"
+      },
+      {
+        "id": "2405.12059v2",
+        "title": "STYLE: Improving Domain Transferability of Asking Clarification Questions in Large Language Model Powered Conversational Agents",
+        "abstract": "Equipping a conversational search engine with strategies regarding when to ask clarification questions is becoming increasingly important across various domains. Attributing to the context understanding capability of LLMs and their access to domain-specific sources of knowledge, LLM-based clarification strategies feature rapid transfer to various domains in a post-hoc manner. However, they still struggle to deliver promising performance on unseen domains, struggling to achieve effective domain transferability. We take the first step to investigate this issue and existing methods tend to produce one-size-fits-all strategies across diverse domains, limiting their search effectiveness. In response, we introduce a novel method, called Style, to achieve effective domain transferability. Our experimental results indicate that Style bears strong domain transferability, resulting in an average search performance improvement of ~10% on four unseen domains.",
+        "published": "2024-05-20T14:28:25Z",
+        "updated": "2024-06-01T07:38:37Z",
+        "authors": [
+          "Yue Chen",
+          "Chen Huang",
+          "Yang Deng",
+          "Wenqiang Lei",
+          "Dingnan Jin",
+          "Jia Liu",
+          "Tat-Seng Chua"
+        ],
+        "url": "https://arxiv.org/abs/2405.12059v2",
+        "pdf": "https://arxiv.org/pdf/2405.12059v2"
+      },
+      {
+        "id": "2212.09885v2",
+        "title": "Python Code Generation by Asking Clarification Questions",
+        "abstract": "Code generation from text requires understanding the user's intent from a natural language description and generating an executable code snippet that satisfies this intent. While recent pretrained language models demonstrate remarkable performance for this task, these models fail when the given natural language description is under-specified. In this work, we introduce a novel and more realistic setup for this task. We hypothesize that the under-specification of a natural language description can be resolved by asking clarification questions. Therefore, we collect and introduce a new dataset named CodeClarQA containing pairs of natural language descriptions and code with created synthetic clarification questions and answers. The empirical results of our evaluation of pretrained language model performance on code generation show that clarifications result in more precisely generated code, as shown by the substantial improvement of model performance in all evaluation metrics. Alongside this, our task and dataset introduce new challenges to the community, including when and what clarification questions should be asked. Our code and dataset are available on GitHub.",
+        "published": "2022-12-19T22:08:36Z",
+        "updated": "2023-05-26T16:03:08Z",
+        "authors": [
+          "Haau-Sing Li",
+          "Mohsen Mesgar",
+          "André F. T. Martins",
+          "Iryna Gurevych"
+        ],
+        "url": "https://arxiv.org/abs/2212.09885v2",
+        "pdf": "https://arxiv.org/pdf/2212.09885v2"
+      },
+      {
+        "id": "2603.26233v3",
+        "title": "Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents",
+        "abstract": "As Large Language Model (LLM) agents are increasingly deployed in open-ended domains like software engineering, they frequently encounter underspecified instructions that lack crucial context. While human developers naturally resolve underspecification by asking clarifying questions, current agents are largely optimized for autonomous execution. In this work, we systematically evaluate the clarification-seeking abilities of LLM agents on an underspecified variant of SWE-bench Verified. We propose an uncertainty-aware multi-agent scaffold that decouples underspecification detection from code execution. Across both proprietary and open-weight frontier LLMs, our scaffold achieves a 69.40% task resolve rate, significantly outperforming a standard single-agent setup and closing the performance gap with agents operating on fully specified instructions. Furthermore, we find that the multi-agent system exhibits well-calibrated information-seeking behavior, conserving queries on simple tasks while proactively seeking information on more complex issues. These findings indicate that current models can be turned into proactive collaborators, where agents independently recognize when to ask questions to elicit missing information in real-world, underspecified tasks.",
+        "published": "2026-03-27T09:56:26Z",
+        "updated": "2026-09-07T12:26:50Z",
+        "authors": [
+          "Nicholas Edwards",
+          "Sebastian Schuster"
+        ],
+        "url": "https://arxiv.org/abs/2603.26233v3",
+        "pdf": "https://arxiv.org/pdf/2603.26233v3"
+      },
+      {
+        "id": "2601.11722v1",
+        "title": "RAC: Retrieval-Augmented Clarification for Faithful Conversational Search",
+        "abstract": "Clarification questions help conversational search systems resolve ambiguous or underspecified user queries. While prior work has focused on fluency and alignment with user intent, especially through facet extraction, much less attention has been paid to grounding clarifications in the underlying corpus. Without such grounding, systems risk asking questions that cannot be answered from the available documents. We introduce RAC (Retrieval-Augmented Clarification), a framework for generating corpus-faithful clarification questions. After comparing several indexing strategies for retrieval, we fine-tune a large language model to make optimal use of research context and to encourage the generation of evidence-based question. We then apply contrastive preference optimization to favor questions supported by retrieved passages over ungrounded alternatives. Evaluated on four benchmarks, RAC demonstrate significant improvements over baselines. In addition to LLM-as-Judge assessments, we introduce novel metrics derived from NLI and data-to-text to assess how well questions are anchored in the context, and we demonstrate that our approach consistently enhances faithfulness.",
+        "published": "2026-01-16T19:16:38Z",
+        "updated": "2026-01-16T19:16:38Z",
+        "authors": [
+          "Ahmed Rayane Kebir",
+          "Vincent Guigue",
+          "Lynda Said Lhadj",
+          "Laure Soulier"
+        ],
+        "url": "https://arxiv.org/abs/2601.11722v1",
+        "pdf": "https://arxiv.org/pdf/2601.11722v1"
+      },
+      {
+        "id": "2310.14696v1",
+        "title": "Tree of Clarifications: Answering Ambiguous Questions with Retrieval-Augmented Large Language Models",
+        "abstract": "Questions in open-domain question answering are often ambiguous, allowing multiple interpretations. One approach to handling them is to identify all possible interpretations of the ambiguous question (AQ) and to generate a long-form answer addressing them all, as suggested by Stelmakh et al., (2022). While it provides a comprehensive response without bothering the user for clarification, considering multiple dimensions of ambiguity and gathering corresponding knowledge remains a challenge. To cope with the challenge, we propose a novel framework, Tree of Clarifications (ToC): It recursively constructs a tree of disambiguations for the AQ -- via few-shot prompting leveraging external knowledge -- and uses it to generate a long-form answer. ToC outperforms existing baselines on ASQA in a few-shot setup across the metrics, while surpassing fully-supervised baselines trained on the whole training set in terms of Disambig-F1 and Disambig-ROUGE. Code is available at https://github.com/gankim/tree-of-clarifications.",
+        "published": "2023-10-23T08:42:49Z",
+        "updated": "2023-10-23T08:42:49Z",
+        "authors": [
+          "Gangwoo Kim",
+          "Sungdong Kim",
+          "Byeongguk Jeon",
+          "Joonsuk Park",
+          "Jaewoo Kang"
+        ],
+        "url": "https://arxiv.org/abs/2310.14696v1",
+        "pdf": "https://arxiv.org/pdf/2310.14696v1"
+      },
+      {
+        "id": "2601.07820v2",
+        "title": "Reference Games as a Testbed for the Alignment of Model Uncertainty and Clarification Requests",
+        "abstract": "In human conversation, both interlocutors play an active role in maintaining mutual understanding. When listeners are uncertain about what speakers mean, for example, they can request clarification. It is an open question for language models whether they can assume a similar listener role, recognizing and expressing their own uncertainty through clarification. We argue that reference games are a suitable testbed to approach this question as they are controlled, self-contained, and make clarification needs explicit and measurable. To test this, we evaluate three vision-language models comparing a baseline reference resolution task to an experiment where the models are instructed to request clarification when uncertain. The results suggest that even in such simple tasks, models often struggle to recognize internal uncertainty and translate it into adequate clarification behavior. This demonstrates the value of reference games as testbeds for interaction qualities of (vision and) language models.",
+        "published": "2026-01-12T18:53:09Z",
+        "updated": "2026-05-15T13:41:18Z",
+        "authors": [
+          "Manar Ali",
+          "Judith Sieker",
+          "Sina Zarrieß",
+          "Hendrik Buschmeier"
+        ],
+        "url": "https://arxiv.org/abs/2601.07820v2",
+        "pdf": "https://arxiv.org/pdf/2601.07820v2"
+      },
+      {
+        "id": "2610.20052v1",
+        "title": "What Is a Clarification? Estimating Model-Dependent Input Ambiguity",
+        "abstract": "Ambiguous inputs can admit multiple interpretations, each potentially yielding a different answer. Existing work largely treats this ambiguity as a property of the input, yet for a particular language model, only some alternatives may be known and answerable. We therefore distinguish world ambiguity, capturing all alternatives admitted by an input, from model ambiguity, capturing those accessible to the responding model. To characterize these alternatives, we formalize natural-language clarifications through three desiderata: \\emph{uniqueness}, \\emph{faithfulness}, and \\emph{answer equivalence}. We show that these desiderata induce a one-to-one correspondence between valid answers and equivalence classes of clarifications, implying that any interpretation can be represented either by its answer or by the clarifications that uniquely express it. We leverage this correspondence to introduce \\circleclar{}, a black-box method that estimates the set of answers available to a model by checking consistency along an answer--clarification--answer cycle. Across open-domain QA and executable Text-to-SQL, \\circleclar{} achieves strong recovery of these answer sets. In QA, the recovered support yields the strongest overall performance in model-dependent ambiguity detection and enables effective selection among answering, clarifying, and abstaining. Together, these results demonstrate the practical value of a model-dependent view of ambiguity and its characterization through an answer-clarification correspondence.",
+        "published": "2026-10-14T11:54:42Z",
+        "updated": "2026-10-14T11:54:42Z",
+        "authors": [
+          "Jingqin Tang",
+          "Tim Tomov",
+          "Sebastian Schmidt",
+          "Dominik Fuchsgruber",
+          "Stephan Günnemann"
+        ],
+        "url": "https://arxiv.org/abs/2610.20052v1",
+        "pdf": "https://arxiv.org/pdf/2610.20052v1"
+      },
+      {
+        "id": "2606.19559v1",
+        "title": "Uncertainty Decomposition for Clarification Seeking in LLM Agents",
+        "abstract": "Recent position papers argue that the classical aleatoric/epistemic uncertainty framework is insufficient for interactive large language model (LLM) agents and call for underspecification-aware, decomposed, and communicable uncertainty representations that can unlock new agent capabilities such as proactive clarification seeking and shared mental-model building. Practical deployment constraints -- black-box APIs, interactive latency budgets, and the absence of labeled trajectories -- rule out logprob-based, multi-sampling, and training-based methods, leaving prompt-based estimation as the most viable family for surfacing such signals at deployment time. We answer this call with a simple prompt-based decomposition that separates action confidence from request uncertainty (u), enabling the agent to ask for clarification when the task specification is ambiguous. To evaluate it, we introduce two clarification-augmented benchmarks (WebShop-Clarification and ALFWorld-Clarification) in which 50% of tasks are deliberately underspecified, and systematically compare the proposed decomposition against ReAct+UE and Uncertainty-Aware Memory (UAM) across five LLM backbones (GPT-5.1, DeepSeek-v3.2-exp, GLM-4.7, Qwen3.5-35B, GPT-OSS-120B) on these variants together with the standard WebShop, ALFWorld, and REAL benchmarks for fault detection. Averaged across the five backbones, the proposed decomposition improves clarification F1 on ALFWorld-Clarification by 73% over ReAct+UE and by 36% over UAM, and leads clarification F1 on every backbone on WebShop-Clarification and on four of five backbones on ALFWorld-Clarification, indicating that the gains generalize beyond a single LLM.",
+        "published": "2026-06-17T19:59:32Z",
+        "updated": "2026-06-17T19:59:32Z",
+        "authors": [
+          "Gregory Matsnev"
+        ],
+        "url": "https://arxiv.org/abs/2606.19559v1",
+        "pdf": "https://arxiv.org/pdf/2606.19559v1"
+      },
+      {
+        "id": "2605.25404v2",
+        "title": "Proactive for Uncertainty: Cause-Aware Error Diagnosis and Interactive Clarification for Spoken Dialogue Systems",
+        "abstract": "Cascaded Automatic Speech Recognition - Large Language Model (ASR-LLM) pipelines remain popular for industrial Spoken Dialogue Systems (SDS), primarily because their decoupled design ensures perceptual verifiability. However, cascaded systems suffer from error propagation, as transcription failures inevitably cascade to subsequent components, thereby degrading the final interaction quality. Although ASR confidence scores offer a simple filter for unreliable inputs, this approach is fundamentally limited because it typically fails to detect deletion errors or to distinguish between acoustic (inability to hear clearly) and linguistic (inability to understand) mismatches, both of which require targeted recovery strategies. In this paper, we propose a cause-aware error recovery paradigm that fundamentally rethinks robustness in SDS. Unlike traditional confidence filtering, we introduce a suite of small precision-focused detectors that exploit deep ASR latent representations to disentangle token-level errors into perception, comprehension, and deletion failures. This fine-grained diagnostic intelligence empowers the LLM to orchestrate targeted, multi-turn clarification strategies, effectively transforming ambiguous signals into seamless user interactions. Experimental results validate the precision of our approach, which more than doubles the recall on domain-shift errors (57.96% vs. 23.66%) compared to baselines. Crucially, this diagnostic precision yields up to a 31% reduction in WER and a 19% improvement on the downstream task across diverse accents, distortions, and domains.",
+        "published": "2026-05-25T03:57:38Z",
+        "updated": "2026-09-24T07:43:38Z",
+        "authors": [
+          "Yizhou Peng",
+          "Ziyang Ma",
+          "Changsong Liu",
+          "Yi-Wen Chao",
+          "Xie Chen",
+          "Eng Siong Chng"
+        ],
+        "url": "https://arxiv.org/abs/2605.25404v2",
+        "pdf": "https://arxiv.org/pdf/2605.25404v2"
+      },
+      {
+        "id": "2503.20791v1",
+        "title": "ECLAIR: Enhanced Clarification for Interactive Responses in an Enterprise AI Assistant",
+        "abstract": "Large language models (LLMs) have shown remarkable progress in understanding and generating natural language across various applications. However, they often struggle with resolving ambiguities in real-world, enterprise-level interactions, where context and domain-specific knowledge play a crucial role. In this demonstration, we introduce ECLAIR (Enhanced CLArification for Interactive Responses), a multi-agent framework for interactive disambiguation. ECLAIR enhances ambiguous user query clarification through an interactive process where custom agents are defined, ambiguity reasoning is conducted by the agents, clarification questions are generated, and user feedback is leveraged to refine the final response. When tested on real-world customer data, ECLAIR demonstrates significant improvements in clarification question generation compared to standard few-shot methods.",
+        "published": "2025-03-19T23:13:34Z",
+        "updated": "2025-03-19T23:13:34Z",
+        "authors": [
+          "John Murzaku",
+          "Zifan Liu",
+          "Vaishnavi Muppala",
+          "Md Mehrab Tanjim",
+          "Xiang Chen",
+          "Yunyao Li"
+        ],
+        "url": "https://arxiv.org/abs/2503.20791v1",
+        "pdf": "https://arxiv.org/pdf/2503.20791v1"
+      },
+      {
+        "id": "2602.11199v2",
+        "title": "When and What to Ask: AskBench and Rubric-Guided RLVR for LLM Clarification",
+        "abstract": "Large language models (LLMs) often respond even when prompts omit critical details or include misleading information, leading to hallucinations or reinforced misconceptions. We study how to evaluate and improve LLMs' ability to decide when and what to ask for clarification without sacrificing task performance. We introduce AskBench, an interactive benchmark that converts standard QA pairs into multi-turn interactions with explicit checkpoints. A unified judge loop evaluates final answers and simulates user responses as needed. AskBench covers two settings: AskMind, with intent-deficient queries requiring clarification, and AskOverconfidence, with queries containing false premises that must be identified and corrected. We further propose rubric-guided reinforcement learning with verifier-based rewards (RLVR), which uses structured rubrics to encourage targeted clarification. Experiments show consistent improvements in accuracy, rubric adherence, and interaction efficiency, with strong generalization to unseen domains.",
+        "published": "2026-02-04T02:21:01Z",
+        "updated": "2026-04-20T19:24:57Z",
+        "authors": [
+          "Jiale Zhao",
+          "Ke Fang",
+          "Lu Cheng"
+        ],
+        "url": "https://arxiv.org/abs/2602.11199v2",
+        "pdf": "https://arxiv.org/pdf/2602.11199v2"
+      },
+      {
+        "id": "2604.10159v2",
+        "title": "ODUTQA-MDC: A Task for Open-Domain Underspecified Tabular QA with Multi-turn Dialogue-based Clarification",
+        "abstract": "The advancement of large language models (LLMs) has enhanced tabular question answering (Tabular QA), yet they struggle with open-domain queries exhibiting underspecified or uncertain expressions. To address this, we introduce the ODUTQA-MDC task and the first comprehensive benchmark to tackle it. This benchmark includes: (1) a large-scale ODUTQA dataset with 209 tables and 25,105 QA pairs; (2) a fine-grained labeling scheme for detailed evaluation; and (3) a dynamic clarification interface that simulates user feedback for interactive assessment. We also propose MAIC-TQA, a multi-agent framework that excels at detecting ambiguities, clarifying them through dialogue, and refining answers. Experiments validate our benchmark and framework, establishing them as a key resource for advancing conversational, underspecification-aware Tabular QA research.",
+        "published": "2026-04-11T11:11:54Z",
+        "updated": "2026-04-18T03:22:44Z",
+        "authors": [
+          "Zhensheng Wang",
+          "ZhanTeng Lin",
+          "Wenmian Yang",
+          "Kun Zhou",
+          "Yiquan Zhang",
+          "Weijia Jia"
+        ],
+        "url": "https://arxiv.org/abs/2604.10159v2",
+        "pdf": "https://arxiv.org/pdf/2604.10159v2"
+      },
+      {
+        "id": "2502.07904v1",
+        "title": "Intelligent Legal Assistant: An Interactive Clarification System for Legal Question Answering",
+        "abstract": "The rise of large language models has opened new avenues for users seeking legal advice. However, users often lack professional legal knowledge, which can lead to questions that omit critical information. This deficiency makes it challenging for traditional legal question-answering systems to accurately identify users' actual needs, often resulting in imprecise or generalized advice. In this work, we develop a legal question-answering system called Intelligent Legal Assistant, which interacts with users to precisely capture their needs. When a user poses a question, the system requests that the user select their geographical location to pinpoint the applicable laws. It then generates clarifying questions and options based on the key information missing from the user's initial question. This allows the user to select and provide the necessary details. Once all necessary information is provided, the system produces an in-depth legal analysis encompassing three aspects: overall conclusion, jurisprudential analysis, and resolution suggestions.",
+        "published": "2025-02-11T19:19:08Z",
+        "updated": "2025-02-11T19:19:08Z",
+        "authors": [
+          "Rujing Yao",
+          "Yiquan Wu",
+          "Tong Zhang",
+          "Xuhui Zhang",
+          "Yuting Huang",
+          "Yang Wu",
+          "Jiayin Yang",
+          "Changlong Sun",
+          "Fang Wang",
+          "Xiaozhong Liu"
+        ],
+        "url": "https://arxiv.org/abs/2502.07904v1",
+        "pdf": "https://arxiv.org/pdf/2502.07904v1"
+      },
+      {
+        "id": "2606.03135v1",
+        "title": "Uncertainty-Aware Clarification in LLM Agents with Information Gain",
+        "abstract": "Large Language Model (LLM) agents often operate under underspecified user instructions, where latent uncertainty over user intent leads to erroneous tool actions. To address this challenge, we propose a goal-oriented clarification framework that aligns clarification behavior with ambiguity resolution. Central to our approach is the Information Gain Reward, a metric that quantifies the utility of clarification questions by measuring the Bayesian belief update towards the ground-truth goal induced by the clarification exchange. We train the clarifier (LLM) using this reward to optimize for high information gain, ensuring that clarifications effectively reduce uncertainty and improve task completion within the agent-tool-user environment. We validate our framework within a clarification-enhanced $τ$-Bench environment, conducting cross-agent evaluations across five heterogeneous backbones. Empirical results demonstrate that our method consistently improves the success rate by 3.7\\% over the no-clarification baseline, while adding only 0.3 total interaction steps on average.",
+        "published": "2026-06-02T04:23:59Z",
+        "updated": "2026-06-02T04:23:59Z",
+        "authors": [
+          "Mengyi Deng",
+          "Zhiwei Li",
+          "Xin Li",
+          "Tingyu Zhu",
+          "Ying Zhao",
+          "Zhijiang Guo",
+          "Wei Wang"
+        ],
+        "url": "https://arxiv.org/abs/2606.03135v1",
+        "pdf": "https://arxiv.org/pdf/2606.03135v1"
+      },
+      {
+        "id": "2311.02737v1",
+        "title": "CIRCLE: Multi-Turn Query Clarifications with Reinforcement Learning",
+        "abstract": "Users often have trouble formulating their information needs into words on the first try when searching online. This can lead to frustration, as they may have to reformulate their queries when retrieved information is not relevant. This can be due to a lack of familiarity with the specific terminology related to their search topic, or because queries are ambiguous and related to multiple topics. Most modern search engines have interactive features that suggest clarifications or similar queries based on what others have searched for. However, the proposed models are either based on a single interaction or evaluated on search logs, hindering the naturalness of the interactions. In this paper, we introduce CIRCLE, a generative model for multi-turn query Clarifications wIth ReinforCement LEarning that leverages multi-turn interactions through a user simulation framework. Our model aims at generating a diverse set of query clarifications using a pretrained language model fine-tuned using reinforcement learning. We evaluate it against well established google suggestions using a user simulation framework.",
+        "published": "2023-11-05T19:03:06Z",
+        "updated": "2023-11-05T19:03:06Z",
+        "authors": [
+          "Pierre Erbacher",
+          "Laure Soulier"
+        ],
+        "url": "https://arxiv.org/abs/2311.02737v1",
+        "pdf": "https://arxiv.org/pdf/2311.02737v1"
+      },
+      {
+        "id": "2611.05517v1",
+        "title": "When to Ask, When to Answer: Strategic Clarification for Ambiguous Reference Resolution in Dialogue",
+        "abstract": "For humans, referential disambiguation is a collaborative process involving clarification questions asked when they will meaningfully change the outcome. However, large language models (LLMs) have been shown to be biased toward premature answering, preferring definite single-turn responses over more clarification exchanges. In this paper, we study the problem of \"strategic clarification\" -- asking clarification questions in a reference game when their answers will narrow the set of candidate referents. We construct a controlled test environment from the SIMMC 2.1 dataset that records how many questions each ambiguous reference needs to be successfully resolved, and examine how baseline LLM behavior and common post-training methods ask clarifying questions vs. attempt to answer the referent. We also propose BACE (Belief-Aware Critic with Epistemic tracking), a lightweight action chooser method on top of a frozen LM backbone, and show that BACE more consistently chooses the optimal number of clarifying questions than methods such as GRPO and ArCHer.",
+        "published": "2026-11-03T19:14:42Z",
+        "updated": "2026-11-03T19:14:42Z",
+        "authors": [
+          "Ibrahim Khebour",
+          "Nikhil Krishnaswamy"
+        ],
+        "url": "https://arxiv.org/abs/2611.05517v1",
+        "pdf": "https://arxiv.org/pdf/2611.05517v1"
+      },
+      {
+        "id": "2604.17073v1",
+        "title": "Abstain-R1: Calibrated Abstention and Post-Refusal Clarification via Verifiable RL",
+        "abstract": "Reinforcement fine-tuning improves the reasoning ability of large language models, but it can also encourage them to answer unanswerable queries by guessing or hallucinating missing information. Existing abstention methods either train models to produce generic refusals or encourage follow-up clarifications without verifying whether those clarifications identify the key missing information. We study queries that are clear in meaning but cannot be reliably resolved from the given information, and argue that a reliable model should not only abstain, but also explain what is missing. We propose a clarification-aware RLVR reward that, while rewarding correct answers on answerable queries, jointly optimizes explicit abstention and semantically aligned post-refusal clarification on unanswerable queries. Using this reward, we train Abstain-R1, a 3B model that improves abstention and clarification on unanswerable queries while preserving strong performance on answerable ones. Experiments on Abstain-Test, Abstain-QA, and SelfAware show that Abstain-R1 substantially improves over its base model and achieves unanswerable-query behavior competitive with larger systems including DeepSeek-R1, suggesting that calibrated abstention and clarification can be learned through verifiable rewards rather than emerging from scale alone.",
+        "published": "2026-04-18T17:21:40Z",
+        "updated": "2026-04-18T17:21:40Z",
+        "authors": [
+          "Skylar Zhai",
+          "Jingcheng Liang",
+          "Dongyeop Kang"
+        ],
+        "url": "https://arxiv.org/abs/2604.17073v1",
+        "pdf": "https://arxiv.org/pdf/2604.17073v1"
+      },
+      {
+        "id": "2310.11571v3",
+        "title": "Alexpaca: Learning Factual Clarification Question Generation Without Examples",
+        "abstract": "Real-life tasks such as giving legal or technical advice often lack complete context at the outset and can have disparate answers depending thereon. The ability to derive missing factual information by asking clarifying questions (ACQ) is an important element of real-life collaboration on such reasoning tasks. Existing factual clarification question challenges evaluate generations based on word overlap or human evaluations. Recent work explores generating a response to the clarifying question then evaluating its utility directly. So far, these tasks are limited to disambiguating the user's intent rather than concrete facts about the situation. The factual domain presents unique challenges since responses to clarification questions must be factually true for accurate evaluation. To enable evaluation of factual domain clarification question generation, We present a new task that focuses on the ability to elicit missing information in multi-hop reasoning tasks. The task, HotpotQA-FLM, can be evaluated automatically, making it convenient for benchmarking language models. We observe that humans outperform GPT-4 by a large margin, while Llama 3 8B Instruct does not even beat the dummy baseline in some metrics. Finally, we find by fine-tuning Llama 3 8B Instruct on its own generations, filtered via rejection sampling, we can improve information recovery by 27.6 percent.",
+        "published": "2023-10-17T20:40:59Z",
+        "updated": "2024-10-11T22:37:24Z",
+        "authors": [
+          "Matthew Toles",
+          "Yukun Huang",
+          "Zhou Yu",
+          "Luis Gravano"
+        ],
+        "url": "https://arxiv.org/abs/2310.11571v3",
+        "pdf": "https://arxiv.org/pdf/2310.11571v3"
+      },
+      {
+        "id": "2509.26594v1",
+        "title": "Clarification as Supervision: Reinforcement Learning for Vision-Language Interfaces",
+        "abstract": "Recent text-only models demonstrate remarkable mathematical reasoning capabilities. Extending these to visual domains requires vision-language models to translate images into text descriptions. However, current models, trained to produce captions for human readers, often omit the precise details that reasoning systems require. This creates an interface mismatch: reasoners often fail not due to reasoning limitations but because they lack access to critical visual information. We propose Adaptive-Clarification Reinforcement Learning (AC-RL), which teaches vision models what information reasoners need through interaction. Our key insight is that clarification requests during training reveal information gaps; by penalizing success that requires clarification, we create pressure for comprehensive initial captions that enable the reasoner to solve the problem in a single pass. AC-RL improves average accuracy by 4.4 points over pretrained baselines across seven visual mathematical reasoning benchmarks, and analysis shows it would cut clarification requests by up to 39% if those were allowed. By treating clarification as a form of implicit supervision, AC-RL demonstrates that vision-language interfaces can be effectively learned through interaction alone, without requiring explicit annotations.",
+        "published": "2025-09-30T17:46:46Z",
+        "updated": "2025-09-30T17:46:46Z",
+        "authors": [
+          "John Gkountouras",
+          "Ivan Titov"
+        ],
+        "url": "https://arxiv.org/abs/2509.26594v1",
+        "pdf": "https://arxiv.org/pdf/2509.26594v1"
+      },
+      {
+        "id": "2503.01940v2",
+        "title": "AskToAct: Enhancing LLMs Tool Use via Self-Correcting Clarification",
+        "abstract": "Large language models (LLMs) have demonstrated remarkable capabilities in tool learning. In real-world scenarios, user queries are often ambiguous and incomplete, requiring effective clarification. However, existing interactive clarification approaches face two critical limitations: reliance on manually constructed datasets, which inherently constrains training data scale and diversity, and lack of error correction mechanisms during multi-turn clarification, leading to error accumulation that compromises both accuracy and efficiency. We present AskToAct, which addresses these challenges by exploiting the structural mapping between queries and their tool invocation solutions. Our key insight is that tool parameters naturally represent explicit user intents. By systematically removing key parameters from queries while retaining them as ground truth, we enable automated construction of high-quality training data. We further enhance model robustness through error-correction pairs and selective masking, enabling dynamic error detection during clarification interactions. Comprehensive experiments demonstrate that AskToAct significantly outperforms existing approaches, achieving above 57% accuracy in recovering critical unspecified intents and enhancing clarification efficiency by an average of 10.46% while maintaining high accuracy in tool invocation. Our framework exhibits robust performance across different model architectures and successfully generalizes to entirely unseen APIs without additional training, achieving performance comparable to GPT-4o with substantially fewer computational resources.",
+        "published": "2025-03-03T12:55:49Z",
+        "updated": "2025-06-11T12:06:37Z",
+        "authors": [
+          "Xuan Zhang",
+          "Yongliang Shen",
+          "Zhe Zheng",
+          "Linjuan Wu",
+          "Wenqi Zhang",
+          "Yuchen Yan",
+          "Qiuying Peng",
+          "Jun Wang",
+          "Weiming Lu"
+        ],
+        "url": "https://arxiv.org/abs/2503.01940v2",
+        "pdf": "https://arxiv.org/pdf/2503.01940v2"
+      },
+      {
+        "id": "2608.09072v1",
+        "title": "A Unified Issue Resolution Benchmark for Requirement Clarification, Planning, and Code Generation for Coding Agents",
+        "abstract": "Large language model-powered coding agents are increasingly used to modify existing code repositories, for example, by adding features or fixing bugs. Yet existing repository-level benchmarks typically evaluate only whether the final patch passes tests. Satisfying a user request requires a long chain of interdependent reasoning and decisions: an agent must recover explicit and implicit requirements, formulate a repository-grounded implementation plan, and translate it into correct code. A pass/fail outcome cannot characterize how an unsuccessful trajectory diverges from the requirements and implementation process needed for a correct patch. To address this gap, we introduce SWE-RPG, a repository-level benchmark that combines executable patch evaluation with validated ground-truth references (GTs) for (1) Requirement Clarification and (2) Implementation Planning. These intermediate GTs support retrospective, GT-aligned diagnosis of complete coding-agent trajectories across clarification, planning, code generation, and artifact submission. SWE-RPG comprises 163 tasks from 31 Python and Java repositories, including 113 bug fixes and 50 feature additions. We evaluate 3 coding agents, including Claude Code, Codex, and OpenCode, with 6 large language model backends, including Claude-Sonnet-5 and GPT-5.6-Terra. Results show that the evaluated popular coding agents still struggle to implement user requests in existing repositories, achieving an average resolved rate of only 31.5% on SWE-RPG. Intermediate-GT diagnosis further identifies implicit requirement recovery as the main bottleneck, accounting for 24.5%--46.0% of agent runs. This result suggests implicit-requirement recovery as a key candidate direction for improving coding agents. The benchmark data and evaluation code are available at https://github.com/Xin-Zhou-smu/SWE-RPG-Bench.",
+        "published": "2026-08-10T03:22:04Z",
+        "updated": "2026-08-10T03:22:04Z",
+        "authors": [
+          "Xin Zhou",
+          "Chun Yong Chong",
+          "Kisub Kim",
+          "Yun Peng",
+          "Rui Shu",
+          "Zihan Wu",
+          "Xu Han",
+          "Guowen Yuan",
+          "Zeyang Zhuang",
+          "Jounghoon Kim",
+          "Jeongjin Ju",
+          "Seongmin Ju",
+          "Taein Yoon",
+          "David Lo"
+        ],
+        "url": "https://arxiv.org/abs/2608.09072v1",
+        "pdf": "https://arxiv.org/pdf/2608.09072v1"
+      },
+      {
+        "id": "2504.09665v1",
+        "title": "CLEAR-KGQA: Clarification-Enhanced Ambiguity Resolution for Knowledge Graph Question Answering",
+        "abstract": "This study addresses the challenge of ambiguity in knowledge graph question answering (KGQA). While recent KGQA systems have made significant progress, particularly with the integration of large language models (LLMs), they typically assume user queries are unambiguous, which is an assumption that rarely holds in real-world applications. To address these limitations, we propose a novel framework that dynamically handles both entity ambiguity (e.g., distinguishing between entities with similar names) and intent ambiguity (e.g., clarifying different interpretations of user queries) through interactive clarification. Our approach employs a Bayesian inference mechanism to quantify query ambiguity and guide LLMs in determining when and how to request clarification from users within a multi-turn dialogue framework. We further develop a two-agent interaction framework where an LLM-based user simulator enables iterative refinement of logical forms through simulated user feedback. Experimental results on the WebQSP and CWQ dataset demonstrate that our method significantly improves performance by effectively resolving semantic ambiguities. Additionally, we contribute a refined dataset of disambiguated queries, derived from interaction histories, to facilitate future research in this direction.",
+        "published": "2025-04-13T17:34:35Z",
+        "updated": "2025-04-13T17:34:35Z",
+        "authors": [
+          "Liqiang Wen",
+          "Guanming Xiong",
+          "Tong Mo",
+          "Bing Li",
+          "Weiping Li",
+          "Wen Zhao"
+        ],
+        "url": "https://arxiv.org/abs/2504.09665v1",
+        "pdf": "https://arxiv.org/pdf/2504.09665v1"
+      },
+      {
+        "id": "2601.14944v3",
+        "title": "The GDN-CC Dataset: Automatic Corpus Clarification for AI-enhanced Democratic Citizen Consultations",
+        "abstract": "LLMs are ubiquitous in modern NLP, and while their applicability extends to texts produced for democratic activities such as online deliberations or large-scale citizen consultations, ethical questions have been raised for their usage as analysis tools. We continue this line of research with two main goals: (a) to develop resources that can help standardize citizen contributions in public forums at the pragmatic level, and make them easier to use in topic modeling and political analysis; (b) to study how well this standardization can reliably be performed by small, open-weights LLMs, i.e. models that can be run locally and transparently with limited resources. Accordingly, we introduce Corpus Clarification as a preprocessing framework for large-scale consultation data that transforms noisy, multi-topic contributions into structured, self-contained argumentative units ready for downstream analysis. We present GDN-CC, a manually-curated dataset of 1,231 contributions to the French Grand Débat National, comprising 2,285 argumentative units annotated for argumentative structure and manually clarified. We then show that finetuned Small Language Models match or outperform LLMs on reproducing these annotations, and measure their usability for an opinion clustering task. We finally release GDN-CC-large, an automatically annotated corpus of 240k contributions, the largest annotated democratic consultation dataset to date.",
+        "published": "2026-01-21T12:43:07Z",
+        "updated": "2026-04-20T09:02:20Z",
+        "authors": [
+          "Pierre-Antoine Lequeu",
+          "Léo Labat",
+          "Laurène Cave",
+          "Gaël Lejeune",
+          "François Yvon",
+          "Benjamin Piwowarski"
+        ],
+        "url": "https://arxiv.org/abs/2601.14944v3",
+        "pdf": "https://arxiv.org/pdf/2601.14944v3"
+      },
+      {
+        "id": "2606.27669v2",
+        "title": "When Search Agents Should Ask: DiscoBench for Clarification-Aware Deep Search",
+        "abstract": "Search agents powered by large language models (LLMs) are increasingly used to solve complex information-seeking tasks, requiring multi-step retrieval and reasoning to fulfill user goals. However, existing benchmarks often assume that user queries are complete and explicit, overlooking the fact that real-world search requests are frequently vague, underspecified, or even factually incorrect. In deep search scenarios, such ambiguity can propagate along multi-step reasoning chains and lead agents toward incorrect search trajectories. To address this gap, we introduce DiscoBench, a benchmark for clarification-aware deep search, designed to evaluate whether search agents can proactively identify ambiguity, ask effective clarification questions, and recover correct reasoning paths through user interaction. DiscoBench contains 211 samples and 463 ambiguity instances across 11 real-world domains, covering four ambiguity types. We further design a user simulator for multi-turn interaction and evaluate model performance from four perspectives: task utility, ambiguity detection, interaction strategy, and cost efficiency. Experiments on representative LLMs show that ambiguity detection and effective clarification are distinct capabilities, and that repeatedly searching instead of asking for clarification often performs worse than direct guessing, highlighting a critical gap between retrieval ability and interactive problem-solving in current search agents.",
+        "published": "2026-06-26T02:57:15Z",
+        "updated": "2026-07-01T06:56:27Z",
+        "authors": [
+          "Yiling Tao",
+          "Shihan Deng",
+          "Meiling Tao",
+          "Pengzhi Wei",
+          "Zhichao Hu",
+          "Zhihao Zhu"
+        ],
+        "url": "https://arxiv.org/abs/2606.27669v2",
+        "pdf": "https://arxiv.org/pdf/2606.27669v2"
+      },
+      {
+        "id": "2503.00179v1",
+        "title": "Zero-Shot and Efficient Clarification Need Prediction in Conversational Search",
+        "abstract": "Clarification need prediction (CNP) is a key task in conversational search, aiming to predict whether to ask a clarifying question or give an answer to the current user query. However, current research on CNP suffers from the issues of limited CNP training data and low efficiency. In this paper, we propose a zero-shot and efficient CNP framework (Zef-CNP), in which we first prompt large language models (LLMs) in a zero-shot manner to generate two sets of synthetic queries: ambiguous and specific (unambiguous) queries. We then use the generated queries to train efficient CNP models. Zef-CNP eliminates the need for human-annotated clarification-need labels during training and avoids the use of LLMs with high query latency at query time. To further improve the generation quality of synthetic queries, we devise a topic-, information-need-, and query-aware chain-of-thought (CoT) prompting strategy (TIQ-CoT). Moreover, we enhance TIQ-CoT with counterfactual query generation (CoQu), which guides LLMs first to generate a specific/ambiguous query and then sequentially generate its corresponding ambiguous/specific query. Experimental results show that Zef-CNP achieves superior CNP effectiveness and efficiency compared with zero- and few-shot LLM-based CNP predictors.",
+        "published": "2025-02-28T20:49:18Z",
+        "updated": "2025-02-28T20:49:18Z",
+        "authors": [
+          "Lili Lu",
+          "Chuan Meng",
+          "Federico Ravenda",
+          "Mohammad Aliannejadi",
+          "Fabio Crestani"
+        ],
+        "url": "https://arxiv.org/abs/2503.00179v1",
+        "pdf": "https://arxiv.org/pdf/2503.00179v1"
+      },
+      {
+        "id": "2609.24002v1",
+        "title": "FinInteract: Benchmarking Clarification and Intent Integration in Ambiguous Financial Question Answering",
+        "abstract": "Large language model agents increasingly answer financial questions by searching regulatory filings. Such questions are often deceptively under-specified: Meta Platforms' \"operating income\" is $46.75B consolidated but $62.87B for the Family of Apps segment, and each reading is exactly verifiable against the filing. A capable agent should recognize the ambiguity and ask, rather than commit to a plausible but unintended reading. Existing financial benchmarks cannot measure this, because one gold answer per question cannot separate agents that resolve the ambiguity from those that guess the common reading, a blind spot we call the single-gold illusion. We release FinInteract, a bilingual (English/Chinese) benchmark of 173 instances that pairs each question with a default and an intended interpretation across a five-category ambiguity taxonomy, and grades whether an agent elicits the right clarification and then integrates it. Re-grading identical outputs against the default rather than the intended reading inflates GPT-4o's accuracy by 3.1 times, confirming the illusion. Beyond it, we find that models answer above 90% once the interpretation is supplied but at most 28.9% when they must elicit it themselves, that targeting is uneven across a taxonomy well powered for entity scope and metric definition and exploratory elsewhere, and that conditioning on the ambiguity category improves resolution at both inference and training time.",
+        "published": "2026-09-21T02:06:45Z",
+        "updated": "2026-09-21T02:06:45Z",
+        "authors": [
+          "Xinyu Wang",
+          "Tung Sum Thomas Kwok",
+          "Zhenghan Tai",
+          "Guang Cheng"
+        ],
+        "url": "https://arxiv.org/abs/2609.24002v1",
+        "pdf": "https://arxiv.org/pdf/2609.24002v1"
+      },
+      {
+        "id": "2507.21285v1",
+        "title": "Curiosity by Design: An LLM-based Coding Assistant Asking Clarification Questions",
+        "abstract": "Large Language Models (LLMs) are increasingly used as coding assistants. However, the ambiguity of the developer's prompt often leads to incorrect code generation, as current models struggle to infer user intent without extensive prompt engineering or external context. This work aims to build an LLM-based coding assistant that mimics the human code review process by asking clarification questions when faced with ambiguous or under-specified queries. Our end-to-end system includes (1) a query classifier trained to detect unclear programming-related queries and (2) a fine-tuned LLM that generates clarification questions. Our evaluation shows that the fine-tuned LLM outperforms standard zero-shot prompting in generating useful clarification questions. Furthermore, our user study indicates that users find the clarification questions generated by our model to outperform the baseline, demonstrating that our coding assistant produces more accurate and helpful code responses compared to baseline coding assistants.",
+        "published": "2025-07-28T19:10:57Z",
+        "updated": "2025-07-28T19:10:57Z",
+        "authors": [
+          "Harsh Darji",
+          "Thibaud Lutellier"
+        ],
+        "url": "https://arxiv.org/abs/2507.21285v1",
+        "pdf": "https://arxiv.org/pdf/2507.21285v1"
+      },
+      {
+        "id": "2610.22608v1",
+        "title": "ProactGen: Learning Proactive Clarification for Video Generation",
+        "abstract": "Recent advances in video generation let users create high-quality videos from natural language descriptions, yet obtaining results that match user intent remains time-consuming: individual generations are computationally expensive, and underspecified prompts force repeated cycles of generation, inspection, and revision. Existing video prompt optimization methods improve generation through automatic rewriting, but cannot supply the ideas and preferences that were not in the initial description. We propose ProactGen, a video generation framework that learns proactive clarification, eliciting user intent through questions grounded in generated video drafts. Specifically, we train a vision-language model as a questioning policy with reinforcement learning: observing the initial prompt and a video draft, it learns to ask the questions most valuable to downstream generation, rewarded by the alignment between the final generated video and a target reference. We further find that effective questioning does not require drafts of final-output quality, and exploit this property by generating drafts with fewer denoising steps, keeping the added cost of clarification low. Experiments show that ProactGen improves target alignment over direct generation by at least 1.8x the gain of the strongest baselines. Moreover, a single round of ProactGen already exceeds the alignment that the strongest baseline reaches after four refinement rounds, in 29% of its time.",
+        "published": "2026-10-15T20:14:11Z",
+        "updated": "2026-10-15T20:14:11Z",
+        "authors": [
+          "Zhixiao Wang",
+          "Yang Chen",
+          "Yifan Xu",
+          "Chenbin Li",
+          "Yue Chang",
+          "Kai Long",
+          "Fengming Dong",
+          "Limin Wang"
+        ],
+        "url": "https://arxiv.org/abs/2610.22608v1",
+        "pdf": "https://arxiv.org/pdf/2610.22608v1"
+      },
+      {
+        "id": "2603.06025v1",
+        "title": "Sensitivity-Aware Retrieval-Augmented Intent Clarification",
+        "abstract": "In conversational search systems, a key component is to determine and clarify the intent behind complex queries. We view intent clarification in light of the exploratory search paradigm, where users, through an iterative, evolving process of selection, exploration and retrieval, transform a visceral or conscious need into a formalized one. Augmenting the clarification component with a retrieval step (retrieval-augmented intent clarification) can seriously enhance clarification performance, especially in domains where Large Language Models (LLMs) lack parametric knowledge. However, in more sensitive domains, such as healthcare, government (e.g. FOIA search) or legal contexts, the retrieval database may contain sensitive information that needs protection. In this paper, we explore the research challenge of developing a retrieval-augmented conversational agent that can act as a mediator and gatekeeper for the sensitive collection. To do that, we also need to know what we are protecting and against what. We propose to tackle this research challenge in three steps: 1) define an attack model, 2) design sensitivity-aware defenses on the retrieval level and 3) develop evaluation methods to measure the trade-off between the level of protection and the system's utility.",
+        "published": "2026-03-06T08:21:02Z",
+        "updated": "2026-03-06T08:21:02Z",
+        "authors": [
+          "Maik Larooij"
+        ],
+        "url": "https://arxiv.org/abs/2603.06025v1",
+        "pdf": "https://arxiv.org/pdf/2603.06025v1"
+      },
+      {
+        "id": "2504.12113v2",
+        "title": "Clarifying Ambiguities: on the Role of Ambiguity Types in Prompting Methods for Clarification Generation",
+        "abstract": "In information retrieval (IR), providing appropriate clarifications to better understand users' information needs is crucial for building a proactive search-oriented dialogue system. Due to the strong in-context learning ability of large language models (LLMs), recent studies investigate prompting methods to generate clarifications using few-shot or Chain of Thought (CoT) prompts. However, vanilla CoT prompting does not distinguish the characteristics of different information needs, making it difficult to understand how LLMs resolve ambiguities in user queries. In this work, we focus on the concept of ambiguity for clarification, seeking to model and integrate ambiguities in the clarification process. To this end, we comprehensively study the impact of prompting schemes based on reasoning and ambiguity for clarification. The idea is to enhance the reasoning abilities of LLMs by limiting CoT to predict first ambiguity types that can be interpreted as instructions to clarify, then correspondingly generate clarifications. We name this new prompting scheme Ambiguity Type-Chain of Thought (AT-CoT). Experiments are conducted on various datasets containing human-annotated clarifying questions to compare AT-CoT with multiple baselines. We also perform user simulations to implicitly measure the quality of generated clarifications under various IR scenarios.",
+        "published": "2025-04-16T14:21:02Z",
+        "updated": "2025-04-26T10:56:44Z",
+        "authors": [
+          "Anfu Tang",
+          "Laure Soulier",
+          "Vincent Guigue"
+        ],
+        "url": "https://arxiv.org/abs/2504.12113v2",
+        "pdf": "https://arxiv.org/pdf/2504.12113v2"
+      },
+      {
+        "id": "2609.05258v2",
+        "title": "Ask Before You Optimize: Dynamic Pre-Formulation Clarification for Interactive Optimization",
+        "abstract": "Large language models (LLMs) are increasingly used to formulate optimization models from natural-language problem descriptions, yet realistic operations research (OR) requests are often incomplete: missing objectives, constraints, or business rules can change the resulting mathematical program. Existing evaluations largely assume a complete specification and therefore overlook whether an agent knows when clarification is needed before modeling. We introduce OR-Clarify, a benchmark for pre-formulation clarification. Each task presents a partial public problem description, withholds structured hidden slots, and evaluates agents through bounded interaction with a simulated user. The benchmark supports both openended and choice-based clarification, and measures slot recovery, stopping behavior, silent assumptions, and interaction cost. We further propose Interactive Optimization (InterOPT), a two-stage framework that identifies unresolved formulation-critical gaps and uses them to guide whether to ask the next question or to stop. In our choice-based experiments, InterOPT substantially outperforms all baselines in exact slot recovery; in the open-ended setting, it remains competitive with strong prior methods. Together, OR-Clarify and InterOPT reframe OR assistance as a selective completeness decision: clarify when needed, stop when ready, and quantify what remains missing.",
+        "published": "2026-09-04T15:19:38Z",
+        "updated": "2026-09-08T05:46:50Z",
+        "authors": [
+          "Sihan Ge",
+          "Yichen Lin",
+          "Chenyu Zhou",
+          "Jianghao Lin",
+          "Tao Yao",
+          "Dongdong Ge"
+        ],
+        "url": "https://arxiv.org/abs/2609.05258v2",
+        "pdf": "https://arxiv.org/pdf/2609.05258v2"
+      },
+      {
+        "id": "2402.01934v2",
+        "title": "Clarifying the Path to User Satisfaction: An Investigation into Clarification Usefulness",
+        "abstract": "Clarifying questions are an integral component of modern information retrieval systems, directly impacting user satisfaction and overall system performance. Poorly formulated questions can lead to user frustration and confusion, negatively affecting the system's performance. This research addresses the urgent need to identify and leverage key features that contribute to the classification of clarifying questions, enhancing user satisfaction. To gain deeper insights into how different features influence user satisfaction, we conduct a comprehensive analysis, considering a broad spectrum of lexical, semantic, and statistical features, such as question length and sentiment polarity. Our empirical results provide three main insights into the qualities of effective query clarification: (1) specific questions are more effective than generic ones; (2) the subjectivity and emotional tone of a question play a role; and (3) shorter and more ambiguous queries benefit significantly from clarification. Based on these insights, we implement feature-integrated user satisfaction prediction using various classifiers, both traditional and neural-based, including random forest, BERT, and large language models. Our experiments show a consistent and significant improvement, particularly in traditional classifiers, with a minimum performance boost of 45\\%. This study presents invaluable guidelines for refining the formulation of clarifying questions and enhancing both user satisfaction and system performance.",
+        "published": "2024-02-02T22:16:56Z",
+        "updated": "2026-01-31T20:08:40Z",
+        "authors": [
+          "Hossein A. Rahmani",
+          "Xi Wang",
+          "Mohammad Aliannejadi",
+          "Mohammadmehdi Naghiaei",
+          "Emine Yilmaz"
+        ],
+        "url": "https://arxiv.org/abs/2402.01934v2",
+        "pdf": "https://arxiv.org/pdf/2402.01934v2"
+      },
+      {
+        "id": "2507.00543v1",
+        "title": "Reliable Annotations with Less Effort: Evaluating LLM-Human Collaboration in Search Clarifications",
+        "abstract": "Despite growing interest in using large language models (LLMs) to automate annotation, their effectiveness in complex, nuanced, and multi-dimensional labelling tasks remains relatively underexplored. This study focuses on annotation for the search clarification task, leveraging a high-quality, multi-dimensional dataset that includes five distinct fine-grained annotation subtasks. Although LLMs have shown impressive capabilities in general settings, our study reveals that even state-of-the-art models struggle to replicate human-level performance in subjective or fine-grained evaluation tasks. Through a systematic assessment, we demonstrate that LLM predictions are often inconsistent, poorly calibrated, and highly sensitive to prompt variations. To address these limitations, we propose a simple yet effective human-in-the-loop (HITL) workflow that uses confidence thresholds and inter-model disagreement to selectively involve human review. Our findings show that this lightweight intervention significantly improves annotation reliability while reducing human effort by up to 45%, offering a relatively scalable and cost-effective yet accurate path forward for deploying LLMs in real-world evaluation settings.",
+        "published": "2025-07-01T08:04:58Z",
+        "updated": "2025-07-01T08:04:58Z",
+        "authors": [
+          "Leila Tavakoli",
+          "Hamed Zamani"
+        ],
+        "url": "https://arxiv.org/abs/2507.00543v1",
+        "pdf": "https://arxiv.org/pdf/2507.00543v1"
+      },
+      {
+        "id": "2605.01209v1",
+        "title": "ClarifySTL: An Interactive LLM Agent Framework for STL Transformation through Requirements Clarification",
+        "abstract": "Signal Temporal Logic (STL) is a formal language for specifying real-time behaviors of cyber-physical systems (CPS). Automatically transforming natural language requirements into STL specifications has received growing attention. Recent efforts leveraging large language models (LLMs) have demonstrated impressive performance, but some natural language requirements in practice contain vague or ambiguous information, which remains challenging for LLMs to handle. To address these challenges, we propose ClarifySTL, an interactive LLM-agent framework that enhances STL transformation through requirements clarification. ClarifySTL first detects vague expressions that indicate underspecified information in a requirement. If any vagueness is detected, it generates targeted clarification queries to guide users in supplementing the requirement until all necessary details are provided. Subsequently, if ClarifySTL detects ambiguities, it formulates focused ambiguity clarification queries and updates the requirements based on user feedback until all ambiguities are resolved. Finally, the requirements with vagueness and ambiguity clarified are transformed into STL specifications using LLMs. This interactive framework ensures that the resulting STL formulas faithfully capture user intent while reducing the burden on the user. We evaluate ClarifySTL on the representative benchmarks DeepSTL and STL-DivEn, as well as our newly introduced AmbiEval benchmark, which is specifically designed to assess the performance of the agents in handling vagueness and ambiguity, including both detection and query generation. The experimental results show that ClarifySTL is effective.",
+        "published": "2026-05-02T02:55:06Z",
+        "updated": "2026-05-02T02:55:06Z",
+        "authors": [
+          "Yue Fang",
+          "Zhi Jin",
+          "Jie An",
+          "Hongshen Chen",
+          "Xiaohong Chen",
+          "Naijun Zhan"
+        ],
+        "url": "https://arxiv.org/abs/2605.01209v1",
+        "pdf": "https://arxiv.org/pdf/2605.01209v1"
+      },
+      {
+        "id": "2604.02382v2",
+        "title": "Interactive Clarification for Cloud Infrastructure-as-Code Synthesis",
+        "abstract": "The scale and complexity of modern cloud infrastructure have made \"Infrastructure-as-Code\" (IaC) essential for managing deployments through declarative configurations. While large language models (LLMs) are increasingly used to generate IaC configurations from natural language, user requests are often ambiguous and underspecified. Unlike traditional code generation, it is costly and time-consuming to test IaC configurations during the synthesis, forcing the LLMs into an almost one-shot regime. We observe that ambiguity in IaC synthesis exhibits a compositional structure: configurations decompose into three axes (resources, topology, attributes) where higher-level decisions constrain lower-level ones. We propose a training-free, multi-level disambiguation framework that generates diverse candidate specifications, identifies structural disagreements across these axes, ranks them by informativeness, and produces targeted clarification questions that progressively narrow the configuration space. We further introduce Ambig-IaC, an expert-verified benchmark of 300 validated IaC tasks with ambiguous requests, and define evaluation metrics based on graph edit distance and exact attribute matching. Comprehensive experiments show that our method outperforms existing interactive clarification baselines, with gains that scale with the interaction budget and generalize across models. Extensive ablation studies and analyses further demonstrate its robustness for interactive IaC synthesis.",
+        "published": "2026-04-01T20:27:43Z",
+        "updated": "2026-08-29T18:19:02Z",
+        "authors": [
+          "Zhenning Yang",
+          "Kaden Gruizenga",
+          "Tongyuan Miao",
+          "Patrick Tser Jern Kon",
+          "Hui Guan",
+          "Andrew Barto",
+          "Ang Chen"
+        ],
+        "url": "https://arxiv.org/abs/2604.02382v2",
+        "pdf": "https://arxiv.org/pdf/2604.02382v2"
+      },
+      {
+        "id": "2611.04708v1",
+        "title": "CLARA: A Cognitively-Driven Clarification Framework for Grounding Ambiguous Requests",
+        "abstract": "Robotics and AI systems are increasingly deploying large vision-language models (LVLMs) to follow high-level instructions, from routine household chores to more complex organizational tasks. Yet, broad directives like \"clean the room\" or \"organize the desk\" frequently omit crucial details about user preferences and specific arrangement of objects that influence the desired outcome. Without any further guidance, such models tend to overestimate their grasp of ambiguous instructions and frequently assume they have sufficient understanding despite missing important details. In this paper, we propose CLARA (Conversational cLArification for Robotic Arrangement), a cognitively-driven clarification framework that proactively elicits key information from users, in a similar fashion as humans' clarification seeking behavior. Through targeted questioning, CLARA refines ambiguous requests into structured, detailed instructions describing precisely how objects should be organized or rearranged, according to the user's preferences. These clarifications then guide a diffusion-based image generation pipeline, producing realistic visual renderings of the final, desired scene. This final rendering also serves as a visual confirmation of the system's understanding from the user. Experimental results and user studies demonstrate that CLARA leads to more accurate and consistent outcomes compared to another State-of-the-Art LVLM system, highlighting the importance of interactive clarification for bridging the gap between vague directives and fully grounded task specifications.",
+        "published": "2026-11-03T11:28:33Z",
+        "updated": "2026-11-03T11:28:33Z",
+        "authors": [
+          "Dimitrios Bekris",
+          "Marios Glytsos",
+          "Panagiotis P. Filntisis",
+          "Niki Efthymiou",
+          "George Retsinas",
+          "Petros Maragos"
+        ],
+        "url": "https://arxiv.org/abs/2611.04708v1",
+        "pdf": "https://arxiv.org/pdf/2611.04708v1"
+      }
+    ]
+  }
+}

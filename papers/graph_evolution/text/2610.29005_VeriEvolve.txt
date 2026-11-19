@@ -1,0 +1,1613 @@
+                                                   VeriEvolve: Evaluator-First Evolution for Tool-Using Agents
+
+
+                                                                     Yueshen Li1 Kamer Ali Yuksel2 Gokhan Tur1
+                                                                         Dilek Hakkani-Tür1 João Pedro Maia2
+                                                                   1
+                                                                     University of Illinois Urbana-Champaign 2 aiXplain
+
+
+
+
+                                                                Abstract                                equivalent fitness function. Instead, agents must
+                                                                                                        translate natural-language instructions into struc-
+                                             A central obstacle to self-improving agents is
+arXiv:2610.29005v1 [cs.SE] 21 Oct 2026
+
+
+
+
+                                                                                                        tured changes across filesystems, databases, repos-
+                                             the absence of a reliable fitness signal for realis-
+                                                                                                        itories, productivity platforms, and browsers. Ex-
+                                             tic stateful tasks. We introduce V ERI E VOLVE,
+                                             an evaluator-first evolution framework that con-
+                                                                                                        tending self-improvement to these settings there-
+                                             structs this missing evaluation layer before op-           fore requires not only better search but also the
+                                             timizing the agent. From each task instruction,            scalable construction of deterministic, machine-
+                                             VeriEvolve synthesizes instruction-grounded                checkable evaluators.
+                                             challenge states and an executable evaluator                  This evaluation bottleneck is especially pro-
+                                             that checks them. During each round of work-               nounced in stateful, create–read–update–delete
+                                             flow evolution, the evaluator is frozen and                (CRUD) workflows. Correctness is determined by
+                                             serves as the fitness signal. Between rounds,
+                                                                                                        the resulting environment state rather than the final
+                                             VeriEvolve revises the evaluator by converting
+                                             the end states of strong and weak runs into a              natural-language response, and may depend jointly
+                                             pair of counterfactual test cases.                         on artifact existence, content, hierarchy, consis-
+                                                                                                        tency, preservation, and the absence of unintended
+                                             Across all 30 MCPMark Filesystem tasks, Ver-
+                                             iEvolve constructs 30 evaluators with 141 chal-
+                                                                                                        side effects. These constraints are implied by the
+                                             lenge states, achieving 141/141 agreement on               instruction but are generally not supplied as a com-
+                                             the generated suites and 113/122 agreement                 plete executable specification. Human-authored
+                                             on held-out states produced by executor agents.            verification scripts can represent them reliably, but
+                                             Evaluator-guided evolution increases externally            they are costly to design and validate; MCPMark re-
+                                             verified success from 6/30 to 18/30 for GLM-               ports several hours of expert effort for constructing
+                                             5.2 and from 27/30 to 30/30 for Claude; re-                each task and its verifier (Wu et al., 2026). LLM-
+                                             finement removes all three false positives that
+                                                                                                        based judges are easier to scale, but semantic as-
+                                             the weak executor exposes. Cross-environment
+                                             studies on PostgreSQL, Playwright, Notion,                 sessment alone cannot reliably establish that all
+                                             and GitHub further expose complementary lim-               required properties of the final state hold.
+                                             its from observability, state representation, and             We study whether this missing evaluation layer
+                                             search/execution capacity. These results show              can itself be constructed by agents. Our cen-
+                                             that executable evaluators can be synthesized              tral question is: Can an agent synthesize a task-
+                                             and used to guide search when task success is              grounded executable evaluator that is informative
+                                             observable and an external verifier is available
+                                                                                                        enough to guide workflow improvement without
+                                             for calibration.
+                                                                                                        access to an externally authored verifier during
+                                         1   Introduction                                               search? Our goal is not to reproduce an expert ver-
+                                                                                                        ifier perfectly in one step. Instead, we ask whether
+                                         A self-improving agent can optimize only what its              an initially constructed evaluator can bootstrap use-
+                                         evaluator can reliably measure. In program synthe-             ful optimization, and whether the resulting execu-
+                                         sis, formal reasoning, and scientific optimization,            tion states can subsequently reveal missing con-
+                                         candidate quality is often supplied through unit               straints and support sharper evaluation artifacts.
+                                         tests, proof checkers, or explicit numerical objec-            We treat this as a feasibility question in a deliber-
+                                         tives (Romera-Paredes et al., 2024; Novikov et al.,            ately favorable setting: task success is observable
+                                         2025; Zhang et al., 2026a; Wang et al., 2026b).                through the environment state, and an independent
+                                         Realistic tool-use workflows rarely come with an               benchmark verifier exists, which we use only out-
+
+                                                                                                    1
+side the search loop: to admit evaluators, identify          gaps that the strong executor solves at round 0,
+false positives, and measure outcomes.                       while neither executor reaches internal convergence
+   We introduce V ERI E VOLVE, an evaluator-first            on the remaining 12 eligible tasks within the config-
+framework with four model-backed roles: a                    ured limits. Playwright, Notion, and GitHub stress
+Test-Suite Generator, Verifier Evolver, Workflow             tests further expose complementary limits imposed
+Evolver, and Workflow Executor. In Stage 1, the              by observability and state representation.
+framework derives positive, negative, and adver-                Our contributions are:
+sarial challenge states from the task instruction
+and observable initial environment. Determinis-                  • We identify the scalable construction of deter-
+tic category adapters materialize these specifica-                 ministic, machine-checkable evaluators as a
+tions, and the Verifier Evolver constructs a task-                 missing prerequisite for self-improving agents
+specific executable evaluator that is frozen after                 in realistic stateful tool-use workflows.
+passing internal gates. In Stage 2, this evaluator               • We introduce V ERI E VOLVE, which constructs
+supplies a stationary fitness signal for evolving a                task-grounded challenge states and executable
+tool-use workflow whose nodes retain persistent be-                evaluators before evolving persistent multi-
+havioral alternatives. Stage 3 then compares high-                 alternative workflows under a frozen fitness
+confidence strong-executor states with internally                  signal, and revises an evaluator from differ-
+accepted weak-executor states, mines instruction-                  ences between strong- and weak-executor fi-
+grounded differences into paired counterfactual                    nal states.
+cases, and promotes a revised evaluator only af-
+ter cumulative regression. The revised evaluator                 • On MCPMark, we show that the synthesized
+is frozen before workflow search resumes. The                      evaluators agree with the external verifier on
+external MCPMark verifier is never shown to a                      their own challenge states and on held-out
+model-backed role and never ranks workflows or                     agent-produced states, that they guide exter-
+edits an evaluator. It is used outside the loop for                nally measured workflow improvement for a
+three purposes: admitting evaluators to Stage 2,                   strong and a weak executor, and that state-
+identifying which accepted states are false posi-                  difference refinement removes all three false
+tives and therefore enter Stage 3, and measuring                   positives the external verifier exposed.
+results.
+   Our primary controlled study covers all 30 MCP-               • We will release the framework code and the
+Mark Filesystem tasks. Stage 1 constructs 30/30                    resulting artifacts upon publication: challenge
+evaluators with 141 challenge states, including 62                 states and frozen evaluators for 30 Filesys-
+adversarial near-misses, with 141/141 agreement                    tem and 18 PostgreSQL tasks, the 258 agent-
+against the external verifier on the generated suites.             produced states with internal and external
+On 122 distinct states later produced by the ex-                   labels used for held-out evaluation, and the
+ecutor agents, which no evaluator saw during con-                  evolved workflows.
+struction, agreement is 113/122. Under the weaker
+                                                             2    Related Work
+GLM-5.2 executor, workflow evolution increases
+externally verified success from 6/30 at round 0             Self-improving agents and their evaluators.
+to 18/30; under Claude, it increases success from            Language models are increasingly used as search
+27/30 to 30/30. Three internally accepted GLM-5.2            operators over programs and agents. FunSearch
+states nevertheless fail external verification, show-        and AlphaEvolve evolve programs against auto-
+ing that an evaluator can guide effective search             matically computed objectives (Romera-Paredes
+while remaining incomplete. In all three cases,              et al., 2024; Novikov et al., 2025); the Darwin and
+strong–weak state differences yield regression-              Huxley Gödel Machines evolve self-modifying cod-
+verified evaluator revisions that eliminate the orig-        ing agents scored on coding benchmarks (Zhang
+inal false positives; for structure_mirror, the              et al., 2026a; Wang et al., 2026b); and HyperAgents
+weak executor reaches an externally valid state af-          jointly represent task-solving and self-modification
+ter a single revision. An expanded PostgreSQL                roles (Zhang et al., 2026b). These systems start
+study covers all 21 standard tasks: 15 synthesized           from a supplied benchmark or utility. Recent
+evaluators meet the Stage 2 admission threshold,             work allows the evaluation criterion to change:
+and workflow evolution closes three weak-executor            the Red Queen Gödel Machine co-evolves agents
+
+                                                         2
+with learned evaluators, freezing each evaluator             a partial score r(s) ∈ [0, 1], and check-level evi-
+within an epoch and promoting challengers against            dence. VeriEvolve builds E from x, O(s0 ), a set
+held-out ground-truth anchors (Iacob et al., 2026);          of synthesized challenge states with instruction-
+self-modifying Lean agents co-evolve their bench-            derived labels, C = {(si , yi )}, and deterministic ex-
+mark while keeping Lean as a fixed trusted veri-             ecution feedback; it does not use the benchmark’s
+fier (Li et al., 2026); and the Verification Horizon         verifier. Workflow search maximizes r(sW ) while
+argues that verification must develop alongside in-          E is held fixed, and a workflow is internally con-
+creasingly capable generators (Wang et al., 2026a).          verged when ŷ(sW ) = 1.
+In each case, an improved evaluator is still vali-
+dated against an external benchmark, formal veri-            Refinement. Evaluators           are       versioned
+fier, ground-truth anchor, or human judgment. Ver-             (0)    (1)
+                                                             E , E , . . . together with their challenge
+iEvolve shares this dependence: it builds evaluators         sets C (k) . Refinement round k compares a
+for stateful tool-use tasks without the benchmark’s          reference state F + produced by a strong ex-
+verifier but uses that verifier afterward to admit           ecutor with a weak-executor state Fk− that
+evaluators, select false positives for refinement, and       E (k) accepts.      Their observable       difference
+                                                               (k)              +         −
+                                                                                            
+measure their performance.                                   ∆ = Diff O(F ), O(Fk ) is turned into new
+                                                             labeled challenge states, giving C (k+1) , and into a
+Evaluation of stateful tool use. LLM judges                  revised evaluator E (k+1) ; weak-executor search is
+scale feedback for open-ended text and dialogue              then rerun. F + is treated as one high-confidence
+(Liu et al., 2023; Zheng et al., 2023), but a seman-         valid execution, not as a ground-truth oracle, so
+tic judgment cannot establish that every required            a revision may add only instruction-grounded
+state invariant holds. Agent benchmarks therefore            distinctions and must preserve all earlier verdicts.
+check the resulting artifacts or the environment
+state programmatically (Jimenez et al., 2024; Yao
+et al., 2025; Xie et al., 2024; El Hattami et al.,           4     VeriEvolve Framework
+2025; Wu et al., 2026), and agent harnesses build
+                                                             Figure 1 operationalizes the objects defined in Sec-
+on such executable feedback (Ning et al., 2026).
+                                                             tion 3. Model-backed roles propose challenge
+These checks are written by hand: MCPMark re-
+                                                             states, evaluator revisions, and workflow alterna-
+ports several hours of expert effort per task and ver-
+                                                             tives, while deterministic components materialize
+ifier (Wu et al., 2026). LLMs can generate tests and
+                                                             states, execute and gate evaluators, compute state
+checks from source code, formal specifications, or
+                                                             differences, and version the resulting artifacts. The
+agent traces (Wang et al., 2025; Cunha and Macedo,
+                                                             evaluator is frozen within each workflow-search
+2026; Kohl et al., 2026); VeriEvolve instead syn-
+                                                             run and may be revised only between runs. Fig-
+thesizes evaluators of final environment states from
+                                                             ure 2 shows a task example following all three
+a task instruction and its initial state, and revises
+                                                             stages.
+them using states that agents produce.
+
+3   Problem Setting                                          4.1    Evaluator Construction
+                                                             The Test-Suite Generator maps the task instruction
+A stateful tool-use task is a tuple τ = (x, s0 , O): a
+                                                             and observable initial state to declarative positive,
+natural-language instruction x, an initial environ-
+                                                             clean-negative, and adversarial challenge cases. A
+ment state s0 , and a read-only observation inter-
+                                                             category-specific deterministic adapter material-
+face O that exposes the state available for evalu-
+                                                             izes each specification in an isolated copy of the
+ation. Executing a workflow W with the task’s
+                                                             task environment, producing executable states with
+tools yields a final state sW . The correctness of
+                                                             instruction-derived labels.
+sW depends on constraints implied by the instruc-
+tion (existence, content, structure, consistency, and           The Verifier Evolver constructs a sandboxed ex-
+preservation of artifacts), which are not given as an        ecutable evaluator over the read-only observation
+executable specification. We consider only tasks             interface O. A deterministic harness runs each
+whose success is observable through O.                       evaluator candidate on the materialized challenge
+                                                             states and returns case-level failures as refinement
+Evaluator. An evaluator E is a deterministic pro-            feedback. Once the candidate satisfies the construc-
+gram that maps O(s) to a verdict ŷ(s) ∈ {0, 1},             tion gate, it is frozen as E (0) . The initial output of
+
+                                                         3
+      STAGE 1 — EVALUATOR AND CHALLENGE-STATE CONSTRUCTION                                                                             STAGE 2 — WORKFLOW EVOLUTION
+
+                                                       task requirements
+                                                                                                                                                                              Workflow                Workflow
+                                                                                                                                                                               Evolver               Candidate W
+                           Challenge-State Synthesis                                   Evaluator Synthesis and Refinement
+                                                                                       evaluator lineage: E(k) → E(k+1)
+
+                                                                                                                             freeze as E✸
+                                                                                                                                              Fitness /
+      Task Requirement
+        + Initial State         Test-Suite           Challenge States                        Verifier           Evaluator                    Feedback                   Workflow Execution
+         user intent and        Generator
+                                                         positive and             +          Evolver           Candidate E                  pass/fail, partial
+        observable state
+                                                       adversarial states   cases + labels                                                      checks,                      Final
+                                                                                                                                             repair signals                                                Workflow
+                                                                                                                                                                          Environment
+                                                                                                                                                                                                           Executor
+                                                                                                                                                                             State
+                                                                                                    test feedback
+
+
+
+
+                                                                                                                                                                                          expanded below
+
+      STAGE 3 — OUTER EVALUATOR REFINEMENT LOOP
+                                                                                                                                            Reference State F➕
+                                                                                                                                             high-quality final state
+                                          counterexample context                         State Diff +                                                                       strong condition          Workflow
+                                                                                    Counterexample Mining                                                                                             Executor
+                                                                                                                                                                            weak condition        strong / weak agents
+                                                                                                                                              Weak State F➖
+                                                                                                                                              imperfect final state
+
+
+
+
+Figure 1: Overview of VeriEvolve. Stage 1 constructs challenge states and an executable evaluator; Stage 2 freezes
+that evaluator while evolving workflows; and Stage 3 mines strong–weak execution-state differences to extend
+the challenge set and revise the evaluator. One Stage 3 update followed by a Stage 2 rerun is a refinement round.
+Purple nodes are model-backed roles, green nodes are persisted artifacts or states, and gray nodes are deterministic
+operations.
+
+
+Stage 1 is therefore the challenge set and evaluator                                                                4.3      Execution-State Refinement
+                                 
+                     C (0) , E (0) .                                                                                State-difference mining. At refinement round
+                                                                                                                    k, a deterministic adapter first removes known
+4.2       Workflow Evolution under Frozen                                                                           environment-specific artifacts symmetrically from
+          Evaluation                                                                                                F + and Fk− . The State-Diff module then organizes
+A workflow contains five functional nodes for task                                                                  the remaining observable differences into factual
+understanding, planning, ReAct execution, artifact                                                                  clusters, such as missing or extra artifacts, content
+inspection, and post-processing. Each node main-                                                                    mismatches, and structural deviations. Only clus-
+tains a pool of prompt or behavior alternatives, fol-                                                               ters that can be grounded in the task instruction are
+lowing the persistent multi-alternative representa-                                                                 eligible for refinement.
+tion of EvoLattice (Yuksel, 2025), and a candidate
+                                                                                                                    Counterfactual challenge states. For each se-
+path selects one alternative from every active node.
+                                                                                                                    lected cluster, the Test-Suite Generator constructs
+The Workflow Executor runs the selected path in
+                                                                                                                    paired counterfactual states using F + and the cur-
+an isolated task environment and returns the final
+                                                                                                                    rent Fk− as immutable anchors. The negative state
+state and execution trace.
+                                                                                                                    reproduces the selected difference, while the posi-
+   The frozen evaluator E (k) scores the observable
+                                                                                                                    tive control removes it and holds the unrelated state
+final state and provides partial fitness and check-
+                                                                                                                    fixed. A deterministic label-consistency gate ver-
+level evidence. Artifact inspection separately sum-
+                                                                                                                    ifies the expected verdicts, and a coverage gate
+marizes execution behavior that may explain the
+                                                                                                                    checks that the pair actually introduces and re-
+failed checks. The Workflow Evolver uses these
+                                                                                                                    moves the targeted difference. Cases that fail either
+signals to append new node alternatives for sub-
+                                                                                                                    gate are rejected before evaluator refinement.
+sequent rounds. Because earlier alternatives re-
+main available, promising partial behaviors can                                                                     Evaluator promotion and workflow rerun. The
+be retained and recombined rather than overwrit-                                                                    Verifier Evolver receives the current evaluator, the
+ten by each mutation. Throughout a Stage 2 run,                                                                     cumulative challenge set, and factual observation-
+however, E (k) is immutable; the search changes                                                                     level contrasts between the paired states. It pro-
+how the task is understood, planned, executed, in-                                                                  poses a localized revision targeted at the uncovered
+spected, or post-processed, but not the criterion                                                                   constraint. A candidate is promoted to E (k+1) only
+used to compare candidates. The multi-alternative                                                                   if cumulative regression verifies that it accepts F + ,
+workflow representation is shown in Appendix B.2                                                                    rejects all prior weak false-positive states, preserves
+(Figure 3).                                                                                                         all previous challenge-state verdicts, and correctly
+
+                                                                                                             4
+classifies the new cases. The promoted evaluator is         evaluator constraints not yet covered?
+then frozen, and weak-executor workflow evolution
+is rerun under the sharper criterion.                       5.2    Models and Experimental Budgets
+   A further refinement round is useful only when           All model-backed roles use Claude Sonnet, except
+the new weak state exposes a novel, instruction-            that initial Stage 1 construction ran in interactive
+grounded difference that the current evaluator does         Claude Code sessions and the weak Workflow Ex-
+not already cover. VeriEvolve terminates when               ecutor is GLM-5.2; Table 7 in Appendix B gives
+the weak state matches the reference or no action-          identifiers and invocation modes.
+able difference remains; when the evaluator stabi-             Stage 1 evaluator construction uses only inter-
+lizes on a repeated, already-covered difference; or         nal gates: positive acceptance of at least 0.90 and
+when workflow search, evaluator refinement, or the          adversarial rejection of at least 0.80. After an eval-
+refinement-round budget is exhausted. Repeated              uator is frozen, we measure its agreement with
+production of an error already detected by the eval-        the external MCPMark verifier. For the Stage 2
+uator is therefore attributed to workflow-search or         study, we include frozen evaluators with at least
+executor insufficiency rather than treated as another       0.85 post-hoc external agreement. This external
+evaluator gap.                                              measurement determines study inclusion and is
+   Each accepted refinement round appends paired            used for evaluation; Stage 3 is applied to the in-
+challenge states, a strong–weak state contrast, and         ternally accepted states that the external verifier
+a new evaluator version, yielding an ordered and            rejects. External labels, diagnostics, and verifier
+reusable evaluator lineage. The external bench-             logic are never routed back into test generation,
+mark verifier is not part of this loop: its source,         evaluator repair, workflow ranking, or workflow
+verdicts, and diagnostics are never provided to any         evolution.
+model-backed role or used for workflow ranking,                Unless otherwise noted, Stage 2 runs use five
+evaluator repair, or termination. In our experiments,       paths per round (three for the Filesystem Claude
+however, external verdicts decide which evaluators          campaign), at most 15 workflow rounds (three
+enter Stage 2 and which internally accepted states          paths and at most five rounds for the Playwright
+are false positives that trigger refinement, and the        and Notion pairs), up to three evaluator-repair at-
+reference state F + is one that the external verifier       tempts, and at most three refinement rounds. In
+also accepts. A deployment without an external              the Filesystem GLM-5.2 and the PostgreSQL cam-
+verifier would need another trigger and reference.          paigns, each Stage 2 round ran as a subprocess
+We evaluate one candidate trigger, executor dis-            with a one-hour timeout; a round that exceeded it
+agreement, only retrospectively (Appendix E.6); a           ended the run, which is counted as unsolved. Full
+verifier-free reference is not evaluated.                   per-category gates, budgets, and timeout settings
+                                                            are listed in Appendix B.
+5     Experimental Setup                                       We denote acceptance by the internal evaluator
+                                                            and external MCPMark verifier as Int✓ and Ext✓,
+5.1    Evaluation Questions and Scope
+                                                            respectively. Thus, Int✓/Ext× denotes an evalu-
+We evaluate on a subset of the MCPMark standard             ator false positive and Int × /Ext✓ an evaluator
+task suite spanning five task environments; the com-        false negative. External verdicts are never used
+plete task and exclusion breakdown is reported in           as optimization feedback. Formal exclusions and
+Appendix A. We treat Filesystem as our primary              infrastructure-invalid runs are reported separately
+controlled study and the remaining environments             and are not counted as semantic task failures.
+as cross-environment stress tests.
+   We ask three questions, one per stage. RQ1               6     Results
+(evaluator construction): can VeriEvolve synthe-
+size challenge states and executable evaluators that        6.1    RQ1: Constructing Evaluators
+distinguish correct task states from minimally in-          Table 1 shows that VeriEvolve constructs evaluators
+correct or adversarial ones? RQ2 (workflow evo-             across two different state interfaces. For the full
+lution): do the synthesized evaluators give feed-           Filesystem study, Stage 1 constructs 30/30 evalua-
+back informative enough to guide workflow search?           tors with 141 materialized challenge states, includ-
+RQ3 (execution-state refinement): can differences           ing 62 adversarial near-misses. After the evaluators
+between strong- and weak-executor states reveal             are frozen, post-hoc calibration finds agreement
+
+                                                        5
+ Environment Constructed Cases (P/N) Ext. agreement Stage-2 study                           Executor Workflow Int. pass Ext. pass FP FN
+ Filesystem         30/30        141 (34/107)     141/141          30/30                    Claude  Seed         24/30    27/30   0   3
+ PostgreSQL         18/21         120 (22/98)     115/120          15/21                    Claude  Evolved      30/30    30/30   0   0
+                                                                                            GLM-5.2 Seed          8/30     6/30   2   0
+                                                                                            GLM-5.2 Evolved      21/30    18/30   3   0
+Table 1: Primary RQ1 evidence. Cases are generated
+challenge states; P/N reports their post-hoc external-                             Table 3: Filesystem seed and evolved workflow per-
+verifier labels. External agreement compares the frozen                            formance. Seed denotes the internally selected best
+internal evaluator with those labels. The external verifier                        candidate at round 0, before workflow evolution, under
+is consulted only after evaluator construction and is not                          each campaign’s recorded path budget. FP and FN de-
+exposed to any model-backed role or used as evaluator-                             note Int✓/Ext× and Int × /Ext✓, respectively.
+repair feedback. For the Stage 2 study, we include tasks
+whose frozen evaluator reaches at least 0.85 post-hoc
+external agreement.                                                                states were produced after the evaluators were
+                                                                                   frozen, by other models working on the real task.
+                                   Int/Ext
+                                                                                   The campaigns retained the best state of each round,
+ Executor         States ✓/✓ ✓/× ×/✓ ×/× Agr. Prec. Rec. Spec.
+                                                                                   giving 258 states, 122 of them distinct (Table 2).
+ GLM-5.2            85      18      3        1   63 95.3 85.7 94.7 95.5
+ Claude             44      30      0        5    9 88.6 100.0 85.7 100.0
+                                                                                   The evaluators agree with the external verifier on
+ All (distinct)    122      41      3        6   72 92.6    93.2 87.2   96.0
+                                                                                   113/122 distinct states (92.6%; 95% CI 86.6–96.1).
+                                                                                   Errors occur in both directions: the three false pos-
+Table 2: Held-out evaluation on Filesystem: frozen                                 itives are the states that later trigger Stage 3, and
+Stage 1 evaluators versus the external verifier on distinct                        six valid states, on four tasks, are rejected inter-
+agent-produced states from both Stage 2 campaigns                                  nally. Restricted to the 60 final states, agreement
+(Int/Ext columns count states; Agr., Prec., Rec., and                              is 57/60, the outcomes in Table 3. Because each
+Spec. are agreement, precision, recall, and specificity
+                                                                                   retained state is the one the evaluator ranked high-
+in %, with “pass” as the positive class). Seven states
+produced by both executors are counted once in the last                            est in its round, this pool over-represents internally
+row. Details in Appendix D.3.                                                      high-scoring states and is not an independent sam-
+                                                                                   ple. The smaller live-state studies show the same
+                                                                                   scope boundary (Appendix D.5).
+with the external verifier on all 141 states.
+   For PostgreSQL, VeriEvolve successfully con-                                    Answer to RQ1. Where correctness is observ-
+structs evaluators for 18/21 standard tasks, cover-                                able, VeriEvolve built evaluators that agree with
+ing 120 calibration states (22 positive and 98 nega-                               the external verifier on their own suites (141/141
+tive). Post-hoc calibration of the frozen evaluators                               and 115/120) and on 113/122 held-out Filesystem
+yields 115/120 agreement with the external veri-                                   states. This is external calibration, not evidence of
+fier. Fifteen evaluators reach at least 0.85 per-task                              reliability on its own.
+agreement and are included in the Stage 2 study;                                   6.2   RQ2: Guiding Workflow Evolution
+three frozen evaluators remain below this study-
+inclusion threshold, while the remaining three tasks                               On Filesystem, workflow evolution triples the weak
+are blocked by the observation interface because                                   executor’s externally verified success from 6/30 to
+their success conditions are not adequately repre-                                 18/30 and raises internal convergence from 8/30 to
+sented by the available observation interface. Im-                                 21/30. Thus, 13 tasks reach internal convergence
+portantly, external verdicts are obtained only after                               only after workflow evolution. Of the 21 final in-
+evaluator construction: they determine the scope of                                ternally accepted states, 18 pass external verifica-
+the downstream study but are never routed back                                     tion, giving 85.7% internal precision. The three
+into test generation, evaluator repair, workflow                                   remaining false positives become the execution-
+ranking, or workflow evolution.                                                    state refinement tasks in RQ3; no GLM-5.2 state is
+                                                                                   externally accepted while internally rejected.
+Held-out agent-produced states. Agreement on                                          The strong Filesystem executor improves from
+a finite generated suite does not imply complete                                   27/30 to 30/30 external success, while internal
+coverage. To test the frozen evaluators beyond their                               convergence rises from 24/30 to 30/30. Its three
+own challenge suites, we re-execute each Stage 1                                   round-0 disagreements are evaluator false nega-
+evaluator on the final states that the two Stage 2                                 tives, and no strong-executor state is a false pos-
+executors produced on Filesystem and label every                                   itive. The strong condition also records approxi-
+state post hoc with the external verifier. These                                   mately 58× fewer executor tokens than GLM-5.2
+
+                                                                               6
+over the full campaign,1 highlighting the remaining                Run                Exec. tok. Evolver    Wall Normalized cost
+
+effect of executor capability under the same task-                 Filesystem
+                                                                   Stage 2, GLM-5.2     33.18M     $31.24 43.5 h 2.76M, $2.60 per gained
+specific evaluators. Because both comparisons are                                                                task (12)
+                                                                                               a
+                                                                   Stage 2, Claude     0.58M        $1.74 5.3 h 0.19M, $0.58 per gained
+paired over the same 30 tasks, we apply an ex-                                                                   task (3)
+act McNemar test (Table 14): GLM-5.2’s exter-                      Stage 3               8.10M      $3.49 4.6 hb 2.70M + 21.4K TSG/VE,
+                                                                                                                 $1.16 per repaired
+nal gain (12 tasks gained, none lost) is significant                                                             evaluator (3)
+                                                                   PostgreSQL (15 tasks)
+(p < 0.001), whereas Claude’s three gained tasks                   Stage 2, GLM-5.2     27.82M     $22.74 37.4 h 9.27M per solved task (3)
+are not (p = 0.25).                                                Stage 2, Claude      19.08M     $19.14 33.9 h 6.36M per solved task (3)
+
+   On the 15 admitted PostgreSQL tasks, both ex-
+                                                                  Table 4: Recorded cost of the main campaigns. Evolver
+ecutors solve the same three tasks, and every inter-
+                                                                  is the Workflow Evolver’s dollar cost; wall time is
+nally accepted final state is also externally accepted.           summed over tasks or runs. Normalized cost divides
+The strong executor solves them at round 0; the                   the whole campaign by the tasks that pass externally
+weak executor needs 11, 2, and 7 rounds of evolu-                 only after evolution (Filesystem), by repaired evalua-
+tion and 5–32× the strong executor’s tokens. Nei-                 tors (Stage 3), or by externally verified successes (Post-
+ther executor converges on the other 12 tasks within              greSQL). a Excludes prompt-cache reads. b 2.5 h elapsed
+the configured limits (Appendix D.5), which also                  with runs in parallel. Stage 1 cost was not recorded.
+reports the smaller Playwright and Notion studies.
+
+Answer to RQ2. The evaluators give usable                         three original evaluator gaps are repaired and no
+search feedback: evolution triples weak-executor                  Int✓/Ext× state survives the primary refinement
+success on Filesystem and closes three PostgreSQL                 runs. On uppercase and debugging, the trajectory
+gaps, but 12/15 PostgreSQL tasks stay unsolved,                   stops once the weak executor repeats an already-
+so a usable evaluator does not remove executor and                covered failure rather than exposing another evalu-
+search limits.                                                    ator constraint.
+                                                                     Figure 2 follows structure_mirror end to end.
+6.3    RQ3: Refining Evaluators from Execution                    E (0) lists only 5 of the 8 empty leaf directories that
+       States                                                     need a placeholder, so it accepts a weak state that
+                                                                  omits the other 3. The difference from F + forms
+The final weak-executor Filesystem campaign
+                                                                  three clusters (missing directories, missing place-
+produces exactly three Int✓/Ext× states:
+                                                                  holders, and directories left empty); the six paired
+uppercase, debugging, and structure_mirror.
+                                                                  cases lead to a three-line revision that adds the
+We apply one task-generic refinement strategy to
+                                                                  missing paths, and E (1) passes cumulative regres-
+all three, starting from their original evaluator,
+                                                                  sion. Rerunning weak-executor search under E (1) ,
+weak state, and workflow. These three cases are
+                                                                  GLM-5.2 converges at round 3 on a state that the
+selected by the external verifier, and each reference
+                                                                  external verifier also accepts. The run then entered
+state F + is a Claude state that it also accepts; the
+                                                                  a second refinement round, but its only observed
+refinement itself receives only the instruction, the
+                                                                  difference was a duplicate directory created by file
+two states, and the current evaluator and challenge
+                                                                  synchronization after the state had been archived;
+set. The repaired constraints are exact text and
+                                                                  we exclude that round (Appendix C).
+terminal-newline fidelity (uppercase), presence of
+the required fixed code pattern (debugging), and                  Answer to RQ3. Once the external verifier flags
+the missing nested directories and placeholders                   a false positive, strong–weak state differences re-
+(structure_mirror); Table 17 in Appendix D                        pair the missing constraint without further external
+lists the revisions.                                              feedback (3/3 on Filesystem). One revision let
+   Every strong–weak difference yields instruction-               the weak executor solve structure_mirror, but
+grounded paired challenge states and a regression-                not uppercase or debugging. Refinement needs
+free evaluator revision. The promoted evalua-                     an agent-produced false positive, which the Post-
+tors preserve the strong reference and all prior                  greSQL campaign never yields.
+challenge-state verdicts while rejecting every pre-
+viously accepted weak state. Consequently, all                    6.4     Cost and Repair Effort
+   1
+                                                                  Table 4 summarizes recorded cost (full accounting
+     Claude executor counts are input plus output tokens as
+reported by the Claude CLI and exclude prompt-cache reads;        in Appendix F). Executor tokens dominate. The
+the ratio is therefore indicative rather than exact.              weak executor needs 2.76M executor tokens and
+
+                                                              7
+    TASK: STRUCTURE_MIRROR                               STAGE 1: BUILD E(0)             STAGE 2: FALSE POSITIVE          STAGE 3: REFINE TO E(1)
+
+     Copy the entire directory structure of                 Test-Suite Generator           GLM-5.2           Claude         Test-Suite Generator
+     complex_structure/ to
+     complex_structure_mirror/, at any depth,
+     without file contents.                               5 challenge states              F0 −             F+              State difference paired
+                                                            complete mirror               round 3          Int   Ext       cases
+       Do not use python code.
+                                                            no mirror root                Int Ext                            negative case
+       Each empty directory gets a
+                                                            no _processed suffix                                             positive control
+       placeholder.txt with its absolute path.
+                                                            discarded dir kept
+       Rule 1: discard directories with more than                                         State difference
+                                                            placeholder missing
+       2 direct files.                                                                    Missing                              Verifier Evolver
+       Rule 2: append _processed to directory                                             src/main/resources, 3
+       names whose original contains numbers.                  Verifier Evolver           leaf placeholders
+                                                                                          missing, 3 directories left      E(1), 5 checks
+                                                                                          empty.                           Requires the 3 missing
+     Initial state (51 dirs, 6 levels deep)               Frozen E(0), 5 checks                                            placeholders – added 3
+     complex_structure/                                   Placeholders checked in        E(0) checks only 5 of the 8       paths to the placeholder
+     ├ empty_folder/                    +placeholder      5 listed directories.          leaf placeholders. The            check’s list.
+     ├ folder_QdTAj_0_2/         rename +placeholder                                     external verifier rejects F0−,
+     │ └ folder_eXccj_1_0/             3 files discard   External agreement: 5/5.        selecting it for Stage 3.
+     ├ mixed_content/                             keep
+                                                                                                                           Rerun: F1−, round 3
+                                                                                                                           Int Ext
+     │ └ images_and_text/          keep +placeholder
+     └ …
+
+
+
+
+Figure 2: Worked example on the MCPMark Filesystem task structure_mirror. Orange labels give what the
+mirror must do with each directory. Stage 1 builds E (0) from five challenge states; E (0) checks placeholders in only
+5 of the 8 empty leaf directories. In Stage 2, GLM-5.2 reaches a state F0− that E (0) accepts but the external verifier
+rejects, which selects the task for Stage 3. Stage 3 turns the difference from the Claude state F + into paired cases
+and a revised evaluator E (1) , under which the weak executor’s next state F1− passes both checks. Int and Ext denote
+the internal evaluator and the external verifier.
+
+
+$2.60 of evolver cost for each Filesystem task it                                  differs from the strong executor’s accepted state,
+gains through evolution, about 15 times the strong                                 would in retrospect have caught all three false posi-
+executor’s executor tokens and 4.5 times its evolver                               tives but also flagged 10 of 18 correct states (Ap-
+cost per gained task. The evaluator repair itself                                  pendix E.6); making such a trigger precise remains
+is cheap: across the three Stage 3 tasks, the Test-                                open. Because compute is dominated by candidate
+Suite Generator was called four times and passed                                   execution, future work should devote more capac-
+the label and coverage gates on the first attempt                                  ity to search and execution, while the accumulated
+each time, and the Verifier Evolver made six at-                                   challenge states and evaluator revisions may sup-
+tempts, of which two (both on debugging) were                                      port smaller models specialized for test generation
+rejected by cumulative regression. These calls use                                 and evaluator repair.
+64K tokens, under 1% of Stage 3 tokens; the rest
+re-runs weak-executor search under each revised
+evaluator (49 rounds in total, including 15 rounds                                  8   Conclusion
+and 3.36M executor tokens spent in the excluded
+structure_mirror round).
+                                                                                   We introduced V ERI E VOLVE, an evaluator-first
+7   Discussion                                                                     framework that constructs challenge states and exe-
+                                                                                   cutable evaluators before optimizing tool-use work-
+Once a calibrated task-specific evaluator is avail-                                flows. On MCPMark tasks whose success is ob-
+able, the bottleneck can shift from evaluation to                                  servable through the environment state, the synthe-
+search and execution: neither executor converges                                   sized evaluators agree with the external verifier on
+on 12 of the 15 admitted PostgreSQL tasks, and                                     their own challenge states and on most held-out
+on the three solved tasks only the weak executor                                   agent-produced states, guide externally measured
+needs evolution. A usable fitness signal is therefore                              workflow improvement, and can be repaired from
+necessary but not sufficient. Refinement is also                                   strong–weak state differences once a false posi-
+trajectory-dependent: it starts only when search                                   tive is identified. Throughout, the external verifier
+reaches an evaluator-accepted state that exposes a                                 remains the reference that admits evaluators and ex-
+gap, and in our experiments that trigger came from                                 poses their errors; removing that dependence is the
+the external verifier. A simple verifier-free alterna-                             main step toward agents that construct the fitness
+tive, flagging any accepted weak-executor state that                               signals they require.
+
+                                                                             8
+Limitations                                                   ance. A usable fitness signal does not guarantee
+                                                              task completion: on most PostgreSQL Stage 2
+Dependence on an external verifier. VeriEvolve                tasks neither executor converges, and several weak-
+never exposes the benchmark verifier to a model or            executor runs end at the one-hour round timeout
+uses it inside search, but our experiments are not            rather than after all 15 rounds. Successful evaluator
+verifier-free. External agreement decides which               repair likewise does not guarantee that a weaker
+evaluators enter Stage 2, external verdicts identify          executor can satisfy the refined criterion. Refine-
+the false positives that Stage 3 refines, and each ref-       ment requires a high-confidence positive state F +
+erence state F + is externally accepted. Our results          from a sufficiently capable executor, and F + is one
+therefore show feasibility under external calibra-            valid execution, not a complete characterization
+tion, not that synthesized evaluators are reliable, or        of all acceptable solutions. The strong executor
+that refinement can run autonomously, without an              provides such a state on 35 of 49 tasks across en-
+independent verifier.                                         vironments but on only 3 of 15 PostgreSQL tasks
+   Calibration on a finite challenge suite does not           (Appendix E.5); one of its internally accepted states
+guarantee complete evaluator coverage. Test-suite             is rejected externally, and the effect of an erroneous
+generation and evaluator construction both used               F + on the revised evaluator is untested. Repeated
+Claude, so the 141 Stage 1 challenge states share             workflow execution and refinement remain com-
+their author with the evaluators they test. The               putationally expensive, limiting both the present
+held-out agent-produced states come from other                experimental scale and the number of opportunities
+executors, but only the best state of each round              for execution-state refinement.
+was retained, so they are selected by the evalua-
+tor’s own ranking and are not independent samples.            References
+Initial interactive Stage 1 construction additionally
+relied on a procedural verifier-information bound-            Alcino Cunha and Nuno Macedo. 2026. Validating for-
+ary, whereas the stronger packet-level technical                mal specifications with LLM-generated test cases. In
+isolation applies to Stage 3.                                   Formal Methods: 27th International Symposium, FM
+                                                                2026, Proceedings, Part I, Lecture Notes in Com-
+                                                                puter Science, pages 279–297. Springer.
+   Our empirical coverage remains uneven across               Amine El Hattami, Megh Thakkar, Nicolas Chapados,
+environments. Filesystem is the only category with             and Christopher Pal. 2025. WebArena Verified: Re-
+complete Stage 1 and Stage 2 coverage together                 liable evaluation for web agents. In NeurIPS 2025
+with execution-state refinement. PostgreSQL pro-               Workshop on Scaling Environments for Agents.
+vides broader evidence: all 21 standard tasks re-             Alex Iacob, Andrej Jovanović, William F. Shen, Daniel
+ceive a Stage 1 disposition, 15 evaluators qualify              Burkhardt, Meghdad Kurmanji, Nurbek Tastan,
+for Stage 2, and all 15 matched strong/weak con-                Lorenzo Sani, Niccolò Alberto Elia Venanzi, Am-
+                                                                broise Odonnat, Zeyu Cao, Bill Marino, Xinchi Qiu,
+ditions are run to their configured limits. How-                and Nicholas D. Lane. 2026. The Red Queen Gödel
+ever, only three of these tasks are solved by either            Machine: Co-evolving agents and their evaluators.
+executor, and no PostgreSQL trajectory produces                 Preprint, arXiv:2606.26294.
+an Int✓/Ext× state that would trigger Stage 3.
+                                                              Carlos E. Jimenez, John Yang, Alexander Wettig,
+Playwright, Notion, and GitHub remain smaller                   Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R.
+or incomplete cross-environment studies. Ver-                   Narasimhan. 2024. SWE-bench: Can language mod-
+iEvolve can evaluate only properties represented                els resolve real-world GitHub issues? In The Twelfth
+through the observation interface, and several cross-           International Conference on Learning Representa-
+                                                                tions.
+environment tasks are excluded or caveated be-
+cause their success conditions are missing, weakly            Jens Kohl, Otto Kruse, Youssef Mostafa, Andre Luckow,
+specified, or distorted by the available state repre-            Karsten Schroer, Thomas Riedl, Ryan French, David
+                                                                 Katz, Manuel P. Luitz, Tanrajbir Takher, Ken E.
+sentation.                                                       Friedl, and Céline Laurent-Winter. 2026. Au-
+   Each Filesystem condition was run once, and                   tomated structural testing of LLM-based agents:
+we compare evolved workflows with their own                      Methods, framework, and case studies. Preprint,
+round-0 seed rather than with a budget-matched                   arXiv:2601.18827.
+search baseline, so part of the measured gain may             Yuqing Li, Zeguan Wu, Yu Gan, and Junyu Liu.
+reflect repeated sampling rather than evaluator guid-           2026. Self-modifying Lean proof agents with
+
+
+                                                          9
+  verifier-grounded benchmark coevolution. Preprint,               2026. MCPMark: A benchmark for stress-testing
+  arXiv:2607.17352.                                                realistic and comprehensive MCP use. In The Four-
+                                                                   teenth International Conference on Learning Repre-
+Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang,                     sentations.
+  Ruochen Xu, and Chenguang Zhu. 2023. G-Eval:
+  NLG evaluation using GPT-4 with better human                 Tianbao Xie, Danyang Zhang, Jixuan Chen, Xiaochuan
+  alignment. In Proceedings of the 2023 Conference                Li, Siheng Zhao, Ruisheng Cao, Toh Jing Hua, Zhou-
+  on Empirical Methods in Natural Language Process-               jun Cheng, Dongchan Shin, Fangyu Lei, Yitao Liu,
+  ing, pages 2511–2522, Singapore. Association for               Yiheng Xu, Shuyan Zhou, Silvio Savarese, Caiming
+  Computational Linguistics.                                     Xiong, Victor Zhong, and Tao Yu. 2024. OSWorld:
+                                                                  Benchmarking multimodal agents for open-ended
+Xuying Ning, Katherine Tieu, Dongqi Fu, Tianxin Wei,
+                                                                  tasks in real computer environments. In Advances in
+  Zihao Li, Yuanchen Bei, Jiaru Zou, Mengting Ai,
+                                                                 Neural Information Processing Systems 37 (Datasets
+  Zhining Liu, Ting-Wei Li, Lingjie Chen, Yanjun
+                                                                  and Benchmarks Track).
+  Zhao, Ke Yang, Bingxuan Li, Cheng Qian, Gaotang
+  Li, Xiao Lin, Zhichen Zeng, Ruizhong Qiu, and
+  23 others. 2026. Code as agent harness. Preprint,            Shunyu Yao, Noah Shinn, Pedram Razavi, and
+  arXiv:2605.18747.                                              Karthik R. Narasimhan. 2025. τ -bench: A bench-
+                                                                 mark for tool-agent-user interaction in real-world do-
+Alexander Novikov, Ngân Vũ, Marvin Eisenberger, Em-             mains. In The Thirteenth International Conference
+  ilien Dupont, Po-Sen Huang, Adam Zsolt Wagner,                 on Learning Representations.
+  Sergey Shirobokov, Borislav Kozlovskii, Francisco
+  J. R. Ruiz, Abbas Mehrabian, M. Pawan Kumar, Abi-            Kamer Ali Yuksel. 2025.          EvoLattice: Persis-
+  gail See, Swarat Chaudhuri, George Holland, Alex               tent internal-population evolution through multi-
+  Davies, Sebastian Nowozin, Pushmeet Kohli, and                 alternative quality-diversity graph representations
+  Matej Balog. 2025. AlphaEvolve: A coding agent                 for LLM-guided program discovery. Preprint,
+  for scientific and algorithmic discovery. Preprint,            arXiv:2512.13857.
+  arXiv:2506.13131.
+                                                               Jenny Zhang, Shengran Hu, Cong Lu, Robert Tjarko
+Bernardino    Romera-Paredes,      Mohammadamin
+                                                                 Lange, and Jeff Clune. 2026a. Darwin Gödel
+  Barekatain, Alexander Novikov, Matej Balog,
+                                                                 Machine: Open-ended evolution of self-improving
+  M. Pawan Kumar, Emilien Dupont, Francisco J. R.
+                                                                 agents. In The Fourteenth International Conference
+  Ruiz, Jordan S. Ellenberg, Pengming Wang, Omar
+                                                                 on Learning Representations.
+  Fawzi, Pushmeet Kohli, and Alhussein Fawzi. 2024.
+  Mathematical discoveries from program search with
+  large language models. Nature, 625:468–475.                  Jenny Zhang, Bingchen Zhao, Wannan Yang, Jakob
+                                                                 Foerster, Jeff Clune, Minqi Jiang, Sam Devlin, and
+Binghai Wang, Chenlong Zhang, Dayiheng Liu, Jiajun               Tatiana Shavrina. 2026b. Hyperagents. Preprint,
+  Zhang, Jiawei Chen, Mingze Li, Mouxiang Chen,                  arXiv:2603.19461.
+  Rongyao Fang, Siyuan Zhang, Xuwu Wang, Yuheng
+  Jing, Zeyao Ma, and Zeyu Cui. 2026a. The veri-               Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan
+  fication horizon: No silver bullet for coding agent            Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin,
+  rewards. Preprint, arXiv:2606.26300.                           Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang,
+                                                                 Joseph E. Gonzalez, and Ion Stoica. 2023. Judging
+Wenhan Wang, Chenyuan Yang, Zhijie Wang, Yuheng                  LLM-as-a-judge with MT-bench and Chatbot Arena.
+ Huang, Zhaoyang Chu, Da Song, Lingming Zhang,                   In Advances in Neural Information Processing Sys-
+ An Ran Chen, and Lei Ma. 2025. TestEval: Bench-                 tems 36 (Datasets and Benchmarks Track), pages
+ marking large language models for test case gener-              46595–46623.
+ ation. In Findings of the Association for Computa-
+ tional Linguistics: NAACL 2025, pages 3547–3562,
+ Albuquerque, New Mexico. Association for Compu-
+ tational Linguistics.
+                                                               A     Task Scope and Evaluation Regimes
+Wenyi Wang, Piotr Pi˛ekos, Nanbo Li, Firas Laakom, Yi-
+  meng Chen, Mateusz Ostaszewski, Mingchen Zhuge,
+  and Jürgen Schmidhuber. 2026b. Huxley-Gödel Ma-
+  chine: Human-level coding agent development by               A.1    Audited Experimental Scope
+  an approximation of the optimal self-improving ma-
+  chine. In The Fourteenth International Conference            Table 5 reports the complete experimental scope.
+  on Learning Representations.                                 Formal exclusions are not counted as task failures,
+                                                               infrastructure-invalid runs are excluded from se-
+Zijian Wu, Xiangyan Liu, Xinyuan Zhang, Lingjun                mantic results, and historical or pilot runs are not
+   Chen, Fanqing Meng, Lingxiao Du, Yiran Zhao, Fan-
+   shi Zhang, Yaoqi Ye, Jiawei Wang, Zirui Wang, Jinjie        pooled with standardized campaigns.
+   Ni, Yufan Yang, Arvin Xu, and Michael Qizhe Shieh.
+
+
+                                                          10
+ Environment   Universe   RQ1 attempted   S2 eligible          Valid pairs   RQ3 cases    Disposition
+ Filesystem         30              30            30    30-task campaigns           3     Primary standardized study; no exclusions.
+ PostgreSQL         21              21            15                   15           0     Full Stage 1 disposition and Stage 2 sweep over all eligible tasks;
+                                                                                          three additional evaluators fall below the admission threshold and
+                                                                                          three tasks are blocked by the observation interface.
+ Playwright          4               4             2                    2           0     Two formal exclusions: missing independent ground truth and
+                                                                                          unobservable success state.
+ Notion             28              23             2          1 historical          0     One historical matched pair; broader standardized execution re-
+                                                                                          mains limited by the live-state representation.
+ GitHub             23              23             1       0 standardized           0     Incomplete feasibility campaign; one externally calibrated eval-
+                                                                                          uator and one corrected strong-executor F + , with the corrected
+                                                                                          weak-executor pair incomplete.
+
+
+Table 5: Audited task scope. “S2 eligible” counts evaluators or tasks admitted to the corresponding Stage 2 study.
+Historical, diagnostic, and incomplete pilot results are reported separately from standardized matched pairs.
+
+
+A.2       Explicitly Checkable and Implicit                                   planning, ReAct execution, artifact inspection, and
+          Stateful Requirements                                               post-processing. A fresh workflow contains one
+VeriEvolve targets tasks in which correctness is                              seed alternative at each node except ReAct exe-
+determined by a structured environment state but a                            cution, which contains two. The alternative caps
+complete executable evaluation specification is not                           are 2, 3, 5, 2, 2, respectively. The baseline task-
+provided to the agent. The difficulty of constructing                         understanding alternative and the disabled post-
+that specification varies substantially across tasks,                         processing alternative are protected from eviction.
+as illustrated in Table 6.                                                       Alternatives are weighted by their historical
+                                                                              mean internal score, with an uninformed prior of
+                                                                              0.5. Each newly proposed alternative receives one
+B     Implementation and Experimental                                         forced exploration path in the next round; remain-
+      Configuration                                                           ing paths use weighted selection. When a node
+                                                                              reaches its cap, the lowest-scoring non-protected
+                                                                              alternative is evicted. The evaluator remains frozen
+B.1       Model Roles and Invocation Modes
+                                                                              throughout this process.
+Table 7 lists the model roles summarized in Sec-
+tion 5. Initial Stage 1 construction used one inter-
+active Claude Code session in which the Test-Suite                            B.3        Gates, Budgets, and Termination
+Generator and Verifier Evolver acted sequentially.                            Table 8 lists the gates and resource caps used in all
+Stage 3 instead used a retained, headless session                             standardized runs.
+per refinement round: the Verifier Evolver resumed                               The Stage 3 coordinator distinguishes seman-
+the accepted Test-Suite Generator session under a                             tic termination from infrastructure failure. Its
+packet-restricted interface. The Workflow Evolver                             terminal states include exact reference match,
+was stateless across rounds; the orchestration code                           semantic reference convergence, evaluator sta-
+explicitly supplied its alternative pool, score his-                          bilization on a repeated difference, refinement-
+tory, failed checks, and execution diagnosis on ev-                           round-cap exhaustion, evaluator-refinement fail-
+ery call.                                                                     ure, test-suite generation failure, case-budget ex-
+   All Claude roles except initial Stage 1 were in-                           haustion, unrecovered evaluator-environment fail-
+voked through the Claude CLI model alias sonnet;                              ure, Stage 2 infrastructure failure, and information-
+the recorded Stage 3 sessions resolve this alias to                           boundary violation. All three primary Filesystem
+claude-sonnet-5. The underlying model of the                                  refinement runs terminate through evaluator sta-
+interactive Stage 1 sessions was not logged, so we                            bilization on a repeated, already-covered differ-
+report it only as Claude. The weak executor is                                ence; for structure_mirror this happens after
+GLM-5.2 (glm-5.2) served through the Z.ai full-                               the excluded, artifact-triggered second round (Ap-
+precision API endpoint.                                                       pendix C).
+
+
+B.2       Persistent Multi-Alternative Workflow                               B.4 Environment Adapters and Observability
+Figure 3 shows the Stage 2 workflow representa-                               Table 9 summarizes how each environment materi-
+tion. The five active nodes are task understanding,                           alizes candidate states and what the evaluator can
+
+                                                                         11
+ Task                           Evaluation regime                Representative requirements
+ uppercase                      Nearly direct specification      Create explicitly named uppercase file copies and a fixed-format word-
+                                                                 count artifact. Major instruction clauses map nearly one-to-one to deter-
+                                                                 ministic evaluator checks.
+ structure_mirror               Implicit state specification     Reproduce a transformed hierarchy while satisfying interacting exis-
+                                                                 tence, naming, placeholder-content, discard, preservation, and absence
+                                                                 constraints. The prohibition on invalid extra structure is exposed only
+                                                                 through strong–weak execution-state comparison in the development and
+                                                                 controlled runs (Appendix C).
+
+Table 6: Examples of differing evaluation regimes within stateful tool-use tasks. Some instructions admit a nearly
+direct translation into executable checks, whereas others distribute correctness across interacting properties of the
+final environment state.
+
+Role                             Base model    Invocation                          Context and visible inputs            Output
+Test-Suite Generator, Stage 1    Claude        Interactive Claude Code CLI   Persistent task session; task instruc-      Declarative labeled challenge-state
+                                                                             tion, observable initial state, and self-   specification
+                                                                             generated artifacts
+Verifier Evolver, Stage 1     Claude        Same interactive session         Shares context with the Test-Suite          Sandboxed verify(context) eval-
+                                                                             Generator; receives challenge states        uator
+                                                                             and deterministic internal scoring
+                                                                             feedback
+Test-Suite Generator, Stage 3 Claude Sonnet Headless retained CLI session    Packet-restricted task instruction,         Anchor-based paired challenge cases
+                                                                             current evaluator, sanitized cases,
+                                                                             state-difference facts, and output
+                                                                             contract
+Verifier Evolver, Stage 3     Claude Sonnet Resumes Stage 3 TSG session      Current evaluator, cumulative cases,        Localized evaluator edits or replace-
+                                                                             factual paired contrasts, and deter-        ment code
+                                                                             ministic repair feedback
+Workflow Evolver              Claude Sonnet claude -p; one call per round    Fresh call with alternative statistics,     At most one new alternative per se-
+                                                                             score trajectory, failed checks, and        lected node
+                                                                             artifact-inspection diagnosis
+Strong Workflow Executor      Claude Sonnet Headless CLI subprocess per path Candidate workflow prompts and iso-         Final environment state and execu-
+                                                                             lated task environment                      tion trace
+Weak Workflow Executor        GLM-5.2       API call per workflow node       Same workflow prompts and                   Final environment state and execu-
+                                                                             category-specific MCP tool surface          tion trace
+
+
+Table 7: Model roles and invocation modes. Stage 1 TSG and VE share one interactive session; Stage 3 TSG and
+VE share one retained packet-restricted session per refinement round. The Workflow Evolver and both executors are
+invoked separately for each round or candidate.
+
+
+observe.                                                                          The initial evaluator E (0) contains five determinis-
+                                                                                  tic check families.
+                                                                                     The corresponding checks verify that the mirror
+C      End-to-End Case Study:                                                     root exists, required digit-bearing names are trans-
+       structure_mirror                                                           formed, discarded directories are absent, non-digit
+                                                                                  names are preserved, and placeholders exist. This
+                                                                                  evaluator achieves perfect agreement on the gener-
+C.1     Task and Initial Evaluator                                                ated Stage 1 suite, but it does not yet verify that the
+The task asks the agent to reproduce the di-                                      final mirror contains no invalid extra structure.
+rectory structure of complex_structure/ under
+complex_structure_mirror/ without copying
+file contents. Each mirrored empty directory must                                 C.2     False-Positive Exposure
+contain a placeholder.txt file storing its abso-                                  Under E (0) , the weak executor reaches internal
+lute path. Directories containing more than two di-                               convergence at round three. The retained state F0−
+rect files are discarded, directory names containing                              nevertheless fails external verification, producing
+digits receive a _processed suffix, and non-digit                                 one of the three Filesystem Int✓/Ext× states. The
+names are preserved.                                                              strong campaign provides an internally and exter-
+   Stage 1 synthesized five challenge states (Ta-                                 nally accepted reference state F + .
+ble 10): one complete positive case, one clean                                       E (0)    checks      placeholders     only     in
+negative, and three adversarial near-misses. All                                  five listed leaf directories.           F0− omits
+five expected labels agree with the external verifier.                            project/src/main/resources            and     leaves
+
+                                                                             12
+                                Task                            ReAct          Artifact
+                            Understanding     Planner         Execution       Inspection     Post-Processing
+
+                            Alternative A   Alternative A   Alternative A    Alternative A   Alternative A
+
+      Task Instance                                                                                            Candidate Artifact
+       + Initial Env        Alternative B   Alternative B   Alternative B    Alternative B   Alternative B     + Execution Trace
+
+
+                            Alternative C   Alternative C   Alternative C    Alternative C   Alternative C
+
+
+
+Figure 3: Persistent multi-alternative workflow used in Stage 2. A candidate path selects one prompt or behavior
+alternative from each active node, producing an artifact and execution trace. Alternatives persist across rounds,
+enabling non-destructive reuse and recombination.
+
+ Stage    Component               Gate or budget
+ 1        Internal construction   Positive acceptance ≥ 0.90; adversarial rejection ≥ 0.80.
+ 1        Post-hoc admission      External agreement ≥ 0.85 for admission to the standardized Stage 2 study.
+ 2        Workflow search         Five paths per round; candidate concurrency 1; at most 15 rounds.
+ 2        Candidate resources     Candidate wall-time limit 300 seconds; token budget 250K; ReAct limit at most 20 by default
+                                  and 24 at the framework cap.
+ 2        Strong executor         At most 40 turns and 600 seconds per candidate.
+ 2        Round timeout           One hour per round subprocess (Filesystem GLM-5.2 and PostgreSQL campaigns); a round
+                                  that exceeds it ends the run, which is counted as unsolved.
+ 3        Test-Suite Generator    Case budget 24; at most three label/coverage gate retries.
+ 3        Verifier Evolver        Initial proposal plus at most three repairs; at most two environment-repair restarts; 900-second
+                                  call timeout.
+ 3        Outer loop              At most three refinement rounds; Stage 2 subprocess timeout 21,600 seconds.
+
+                               Table 8: Standardized experimental gates and resource caps.
+
+
+three leaf directories without a placeholder,                       C.4     An Artifact-Triggered Second Round
+none of which E (0) checks. The five Stage 1
+                                                                    The run did not stop at F1− . Its second refinement
+challenge states do not expose this gap: their
+                                                                    round was triggered by a single extra root-level
+missing-placeholder case omits every placeholder
+                                                                    directory, complex_structure 2, in the working
+at once, which the five listed paths already detect.
+                                                                    copy of F1− . That directory is absent from the
+                                                                    archived F1− and from its canonicalization record:
+                                                                    it was created by file synchronization of the work-
+C.3      One Refinement Round                                       ing directory after the state was archived. Re-
+                                                                    verifying the archived F1− after the fact, the ex-
+Table 11 summarizes the primary refinement run.                     ternal verifier and E (0) , E (1) , and E (2) all accept
+In the first refinement round, the strong–weak dif-                 it. We therefore exclude the second round from
+ference is organized into empty-directory, missing-                 our results. The E (2) it produced adds an absence
+directory, and missing-file clusters. The Test-Suite                check learned from the artifact, and the weak state
+Generator converts these clusters into six paired                   reached under E (2) (score 0.8333, rejected inter-
+challenge states, and the Verifier Evolver repairs                  nally and externally) is reported only for complete-
+E (0) in one attempt, with a three-line patch that                  ness.
+adds the three missing placeholder paths to the
+placeholder check. Cumulative regression verifies
+that E (1) accepts F + , rejects F0− , and preserves all            C.5     Separate Controlled Run
+earlier case verdicts (11 cases in total).
+                                                                    A separate controlled run from the same source
+   Workflow evolution under E (1) converges at                      version also reaches an E (1) and then performs
+round three on a state F1− that the external verifier               a second round.      Its round-2 difference is
+also accepts. Its canonical tree hash, 80aeae4e...,                 mostly genuine: eleven extra placeholder.txt
+is the same as that of the externally accepted state                files, mostly in non-empty directories, and
+of the separate controlled run described below.                     one directory from the discarded subtree, to-
+                                                                    gether with a synchronization-artifact directory
+
+                                                               13
+ Environment   Materialized candidate                           Evaluator-visible state                          Principal limitation
+ Filesystem    Isolated directory tree                          Paths, file contents, directory structure, and  Volatile backup paths and duplicate artifacts
+                                                                supported metadata                              require conservative canonicalization.
+ PostgreSQL    Fresh isolated database clone                    Canonical schema, relation, and row snapshots   Some object classes and large relations are not
+                                                                                                                fully represented in the internal snapshot.
+ Playwright    Isolated browser execution                       Tool transcript and selected browser-state sig- Some tasks lack independent factual ground
+                                                                nals                                            truth or an observable post-condition.
+ Notion        Duplicated workspace                             Canonical page, block, database, and row snap- Linked views and serialization changes can ob-
+                                                                shots                                           scure or alter the graded state.
+ GitHub        Isolated repository                              Repository contents and supported issue, pull- Tool-surface and verifier-environment limita-
+                                                                request, and history state                      tions block broad standardized coverage.
+
+
+Table 9: Category-specific materialization and observation interfaces. Evaluator construction is meaningful only
+when task-relevant success conditions are represented in the permitted observation interface.
+
+
+Case                       Label Type                Targeted requirement           D.2    Filesystem Stage 2 Results
+correct_full_mirror          ✓       Positive       Complete transformed
+                                                    mirror.                         Table 13 reports seed and evolved verdicts
+mirror_dir_missing           ×       Clean negative Required mirror root is         for both executors, together with the final or
+                                                    absent.
+no_processed_suffix          ×       Adversarial    Digit-containing names          convergence round, best internal score, and
+                                                    are not transformed.
+discarded_dir_present        ×       Adversarial    A directory with more           executor tokens of the weak-executor loop.
+                                                    than two direct files is
+                                                    retained.
+                                                                                    Two weak-executor runs, file_splitting and
+missing_placeholder          ×       Adversarial    A mirrored empty di-            structure_analysis, ended after three and two
+                                                    rectory lacks its place-
+                                                    holder.                         rounds when a round subprocess exceeded a one-
+                                                                                    hour timeout; both are counted as unsolved. The
+Table 10: Initial structure_mirror challenge states.                                audited weak round-0 baseline is 8/30 internally
+                                                                                    and 6/30 externally, with two false positives and
+                                                                                    no false negatives. The evolved weak campaign
+complex_structure 3. Its E (2) adds checks
+                                                                                    reaches 21/30 internally and 18/30 externally. The
+against this extra structure, and the weak executor
+                                                                                    strong campaign improves from 24/30 internal and
+then produces an internally and externally accepted
+                                                                                    27/30 external seed successes to 30/30 on both
+state with tree hash 80aeae4e..., the state the pri-
+                                                                                    measures.
+mary run reached after one round. A development
+run that stopped after one round (Table 18) con-
+firms that extra structure is a real failure mode: its                              D.3    Held-Out Evaluation on Agent-Produced
+weak state, accepted by its E (1) , contains eleven                                        States
+extra placeholder files and fails external verifica-
+tion.                                                                               Protocol. For every best-of-round state retained
+                                                                                    by the two Filesystem Stage 2 campaigns, we
+                                                                                    copy the snapshot, remove copy-collision dupli-
+D      Complete Experimental Results                                                cates (files named <name> 2 that are byte-identical
+                                                                                    to <name>, created by file synchronization after the
+                                                                                    runs), re-execute the task’s Stage 1 frozen evaluator
+D.1       Filesystem Stage 1 Results                                                in the same sandbox used during the campaigns,
+                                                                                    and run the external verifier once on the same copy
+The primary Filesystem study constructs 30/30
+                                                                                    (verdict: exit code 0). No model is called, and
+evaluators with 141 total cases: 34 positive and
+                                                                                    nothing is fed back into any evaluator or workflow.
+107 negative states, including 62 adversarial near-
+                                                                                    Identical states (same task and content hash) are
+misses. All 141 generated labels agree with the
+                                                                                    counted once in the “distinct” rows.
+external verifier. Per-task Verifier-Evolver itera-
+tion counts were not recorded consistently and are                                  Data. Of 320 retained snapshots, 258 are valid
+therefore omitted.                                                                  campaign states. We exclude 60 Claude snapshots
+   Table 12 lists, for each task, the case counts,                                  that lie beyond their task’s final round and have
+external agreement, the hash prefix of the frozen                                   no round record (left over from an earlier run un-
+evaluator, and whether the evaluator was later re-                                  der the same campaign name) and two Claude
+fined in Stage 3.                                                                   file_arrangement states whose recorded inter-
+                                                                                    nal verdict does not reproduce, since they may not
+
+                                                                               14
+       Step          Evaluator   Newly exposed difference     New evaluation evidence       Promoted check                  Weak-state outcome
+
+       Initial       E (0)       –                            Five initial Stage 1 cases    Presence, renaming, discard, F0− : Int✓/Ext×
+                                                                                            and placeholder checks (5
+                                                                                            listed directories)
+      Round 1        E (1)       Empty-directory,      missing- Six paired counterfactual   Three placeholder paths F1− : Int✓/Ext✓
+                                 directory, and missing-file cases                          added; regression rejects F0−
+                                 clusters
+Round 2 (excluded)   E (2)       Duplicate directory created by Reproduce/remove pair       Extra-structure absence check   Int × /Ext× (not counted)
+                                 file synchronization
+
+
+Table 11: Primary structure_mirror evaluator lineage. One revision suffices: the weak state reached under E (1)
+passes the external verifier. The second round was triggered by a file-synchronization artifact and is excluded from
+our results.
+
+
+be the states that were scored. On the remaining                               below threshold, and three tasks are blocked by
+states, every re-executed internal verdict matches                             limitations of the observation interface. External
+the recorded one, and all 87 previously recorded ex-                           calibration is performed only after evaluator con-
+ternal verdicts reproduce. For 71 states the external                          struction and is not routed back into evaluator gen-
+verifier exits with code 1 after reporting missing                             eration or repair.
+output files; these are counted as failures, as in the                            All 15 eligible tasks receive matched strong- and
+round-0 baselines.                                                             weak-executor Stage 2 runs. Both conditions ulti-
+                                                                               mately solve employee_hierarchy_management,
+Results. Table 15 reports both pools; Table 16                                 customer_data_migration,                          and
+gives the per-task breakdown. The three false pos-                             sales_and_music_charts.            The strong ex-
+itives are the final GLM-5.2 states of uppercase,                              ecutor succeeds at round 0 on all three, whereas
+debugging, and structure_mirror. The six                                       the weak executor reaches externally verified
+distinct false negatives are Claude states of                                  success after 11, 2, and 7 workflow-evolution
+gradebased_score (three), file_arrangement,                                    rounds, respectively. The weak/strong executor
+and requirements_completion, and one GLM-                                      token ratios on these tasks are 32.2×, 5.2×, and
+5.2 state of requirements_writing. Scoring the                                 12.8×. On the remaining 12 eligible tasks, neither
+Stage 3 evaluators on the same pool is uninfor-                                condition reaches internal convergence. All 12
+mative: after removing the states used as Stage 3                              strong-executor runs use the full 15 rounds; of the
+anchors, only two states of the three refined tasks                            12 weak-executor runs, 4 use all 15 rounds and
+remain.                                                                        8 end earlier, after 4 to 12 rounds, when a round
+                                                                               exceeds the one-hour round timeout.
+D.4     Filesystem Stage 3 Lineage
+                                                                                  Across the resulting 30 Stage 2 conditions, ev-
+The complete Stage 3 ledger records 42 primary,                                ery internally accepted final state is also externally
+development, diagnostic, and case-study trajec-                                accepted: six conditions are Int✓/Ext✓, while
+tories. Primary claims use only the three pri-                                 the remaining 24 conditions do not reach internal
+mary refinement runs and the explicitly separated                              acceptance. No agent-produced Int✓/Ext× state
+structure_mirror exposure and controlled runs.                                 therefore occurs, so PostgreSQL does not trigger
+                                                                               execution-state refinement. This separates the ex-
+D.5     Cross-Environment Results
+                                                                               istence of evaluator imperfections from their expo-
+Table 19 summarizes the cross-environment evi-                                 sure by ordinary agent trajectories.
+dence by stage.
+                                                                               Playwright. The extraction_table pair
+PostgreSQL. Across all 21 standard PostgreSQL                                  reaches internal and benchmark-external accep-
+tasks, VeriEvolve successfully constructs evalu-                               tance under an oracle that primarily validates
+ators for 18 tasks. Their 120 post-hoc calibra-                                output format and row count; this should not be
+tion states contain 22 external-positive and 98                                interpreted as a complete semantic-correctness
+external-negative cases; the frozen internal eval-                             guarantee. The r1_arxiv pair remains at internal
+uators agree with the external verifier on 115/120                             and external failure under a correctness-calibrated
+states. Fifteen evaluators satisfy the per-task 0.85                           evaluator. The remaining two tasks are excluded
+external-agreement threshold and enter Stage 2,                                because either independent ground truth or an
+three successfully constructed evaluators remain                               observable success state is unavailable.
+
+                                                                          15
+                         Task                         Cases (P/N/A)       External agreement     Evaluator SHA         Refinement
+                         author_folders                 4 (1/3/3)                  4/4                 cadf0721              –
+                         budget_computation             6 (1/5/4)                  6/6                 3ffc73ef              –
+                         code_locating                  4 (2/2/2)                  4/4                 af458c70              –
+                         contact_information            6 (1/5/2)                  6/6                 31564641              –
+                         dataset_comparison             4 (1/3/3)                  4/4                 71bb6f84              –
+                         debugging                      4 (1/3/3)                  4/4                 06c927a2             E1
+                         dispute_review                 4 (1/3/3)                  4/4                 49314ccb              –
+                         duplicate_name                 4 (1/3/0)                  4/4                 4a81584a              –
+                         duplicates_searching           6 (1/5/4)                  6/6                 74fc6149              –
+                         english_talent                 4 (1/3/0)                  4/4                 0abee865              –
+                         file_arrangement               6 (1/5/4)                  6/6                 98a38fd4              –
+                         file_merging                   5 (1/4/0)                  5/5                 d269b616              –
+                         file_splitting                 5 (1/4/0)                  5/5                 d5127367              –
+                         find_math_paper                3 (1/2/2)                  3/3                 2c95cf0b              –
+                         gradebased_score               4 (1/3/0)                  4/4                 2c94bcfc              –
+                         individual_comments            4 (1/3/3)                  4/4                 73c2e2ce              –
+                         music_report                   6 (2/4/3)                  6/6                 8bedfe47              –
+                         organize_legacy_papers         4 (1/3/3)                  4/4                 205a13b0              –
+                         output_analysis                4 (2/2/2)                  4/4                 607113fc              –
+                         pattern_matching               5 (1/4/0)                  5/5                 3cf52711              –
+                         project_management             5 (1/4/3)                  5/5                 4d721109              –
+                         requirements_completion        4 (2/2/2)                  4/4                 a1d5746a              –
+                         requirements_writing           4 (1/3/3)                  4/4                 21c6fb05              –
+                         size_classification            5 (1/4/0)                  5/5                 693581a4              –
+                         solution_tracing               4 (1/3/3)                  4/4                 65a1e2b6              –
+                         structure_analysis             5 (1/4/0)                  5/5                 f374f700              –
+                         structure_mirror               5 (1/4/3)                  5/5                 1b24f899             E1
+                         time_classification            5 (1/4/3)                  5/5                 b8412da2              –
+                         timeline_extraction            6 (1/5/4)                  6/6                 7ed448b2              –
+                         uppercase                      6 (1/5/0)                  6/6                 5935a8c6             E1
+                         Total (30 evaluators)       141 (34/107/62)           141/141                    –             3 refined
+
+
+Table 12: Complete per-task Filesystem Stage 1 results. P, N, and A denote positive, negative, and adversarial
+challenge states. External agreement is measured only on the generated challenge suite.
+
+
+
+                                           GLM-5.2 (weak)                     Claude CLI (strong)                           GLM-5.2 loop
+      Task                      Seed (Int/Ext)   Evolved (Int/Ext)     Seed (Int/Ext)    Evolved (Int/Ext)    Final round        Best score   Tokens (M)
+      author_folders                ×/×               ×/×                  ✓/✓                 ✓/✓                14                0.00         2.70
+      budget_computation            ×/×               ×/×                  ×/×                 ✓/✓                14                0.40         2.80
+      code_locating                 ✓/✓               ✓/✓                  ✓/✓                 ✓/✓                 0                1.00         0.09
+      contact_information           ×/×               ×/×                  ✓/✓                 ✓/✓                14                0.40         2.47
+      dataset_comparison            ×/×               ✓/✓                  ✓/✓                 ✓/✓                12                1.00         2.61
+      debugging                     ✓/×               ✓/×                  ✓/✓                 ✓/✓                 0                1.00         0.13
+      dispute_review                ×/×               ✓/✓                  ×/×                 ✓/✓                 2                1.00         1.08
+      duplicate_name                ×/×               ✓/✓                  ✓/✓                 ✓/✓                 1                1.00         0.19
+      duplicates_searching          ×/×               ✓/✓                  ✓/✓                 ✓/✓                13                1.00         1.84
+      english_talent                ✓/✓               ✓/✓                  ✓/✓                 ✓/✓                 0                1.00         0.11
+      file_arrangement              ×/×               ✓/✓                  ×/✓                 ✓/✓                10                1.00         1.32
+      file_merging                  ×/×               ✓/✓                  ✓/✓                 ✓/✓                 9                1.00         1.36
+      file_splitting                ×/×               ×/×                  ✓/✓                 ✓/✓                1‡                0.09         0.13
+      find_math_paper               ✓/✓               ✓/✓                  ✓/✓                 ✓/✓                 0                1.00         0.08
+      gradebased_score              ×/×               ×/×                  ×/✓                 ✓/✓                14                0.00         2.91
+      individual_comments           ✓/✓               ✓/✓                  ✓/✓                 ✓/✓                 0                1.00         0.20
+      music_report                  ✓/✓               ✓/✓                  ✓/✓                 ✓/✓                 0                1.00         0.12
+      organize_legacy_papers        ×/×               ×/×                  ✓/✓                 ✓/✓                14                0.40         2.86
+      output_analysis               ×/×               ✓/✓                  ✓/✓                 ✓/✓                 4                1.00         0.78
+      pattern_matching              ×/×               ×/×                  ✓/✓                 ✓/✓                14                0.33         1.86
+      project_management            ×/×               ×/×                  ✓/✓                 ✓/✓                14                0.50         2.46
+      requirements_completion       ×/×               ✓/✓                  ×/✓                 ✓/✓                 2                1.00         0.21
+      requirements_writing          ×/×               ✓/✓                  ×/×                 ✓/✓                 8                1.00         1.69
+      size_classification           ×/×               ✓/✓                  ✓/✓                 ✓/✓                 3                1.00         0.30
+      solution_tracing              ×/×               ✓/✓                  ✓/✓                 ✓/✓                 1                1.00         1.00
+      structure_analysis            ×/×               ×/×                  ✓/✓                 ✓/✓                0‡                0.00         0.10
+      structure_mirror              ×/×               ✓/×                  ✓/✓                 ✓/✓                 3                1.00         0.63
+      time_classification           ×/×               ✓/✓                  ✓/✓                 ✓/✓                 6                1.00         0.98
+      timeline_extraction           ✓/✓               ✓/✓                  ✓/✓                 ✓/✓                 0                1.00         0.10
+      uppercase                     ✓/×               ✓/×                  ✓/✓                 ✓/✓                 0                1.00         0.06
+      Total (of 30)                  8/6              21/18                24/27               30/30              –                  –          33.18
+
+
+Table 13: Complete per-task Filesystem Stage 2 outcomes. Each cell under Seed and Evolved reports inter-
+nal/external acceptance. Seed is the internally selected best round-0 candidate before workflow evolution under
+the corresponding campaign’s recorded path budget (five paths for GLM-5.2, three for Claude). Int✓/Ext× and
+Int × /Ext✓ counts: GLM seed 2 and 0; GLM evolved 3 and 0; Claude seed 0 and 3; Claude evolved 0 and 0.
+Final round, best score, and tokens refer to the GLM-5.2 loop; best score is 1.00 for converged tasks and otherwise
+the maximum per-round internal score. ‡ Run ended early when a round subprocess exceeded a one-hour timeout;
+counted as unsolved.
+
+
+
+                                                                          16
+                     Executor     Verdict    Seed           95% CI      Evolved            95% CI      Gained    Lost           p
+                     GLM-5.2      external    6/30      [0.10, 0.37]       18/30       [0.42, 0.75]        12       0   <0.001
+                     GLM-5.2      internal    8/30      [0.14, 0.44]       21/30       [0.52, 0.83]        13       0   <0.001
+                     Claude       external   27/30      [0.74, 0.97]       30/30       [0.89, 1.00]         3       0     0.25
+                     Claude       internal   24/30      [0.63, 0.90]       30/30       [0.89, 1.00]         6       0    0.031
+
+
+Table 14: Paired uncertainty of the Filesystem seed-to-evolved gains on the same 30 tasks: Wilson 95% intervals
+and the exact two-sided McNemar test on tasks whose outcome changed.
+
+                                                                       Int/Ext
+                       Executor                States    ✓/✓      ✓/×       ×/✓        ×/×      Agr.    Prec.   Rec.    Spec.
+                       All retained round states
+                         GLM-5.2 (all)           203         18        3          1    181      98.0    85.7     94.7    98.4
+                         GLM-5.2 (distinct)       85         18        3          1     63      95.3    85.7     94.7    95.5
+                         Claude (all)             55         30        0         16      9      70.9   100.0     65.2   100.0
+                         Claude (distinct)        44         30        0          5      9      88.6   100.0     85.7   100.0
+                         Both (all)              258         48        3         17    190      92.2    94.1     73.8    98.4
+                         Both (distinct)         122         41        3          6     72      92.6    93.2     87.2    96.0
+                       Final states only
+                         GLM-5.2 (all)            30         18        3          0       9    90.0     85.7    100.0    75.0
+                         Claude (all)             30         30        0          0       0   100.0    100.0    100.0       –
+                         Both (all)               60         48        3          0       9    95.0     94.1    100.0    75.0
+                         Both (distinct)          53         41        3          0       9    94.3     93.2    100.0    75.0
+
+
+Table 15: Held-out evaluation of the Stage 1 frozen evaluators on agent-produced Filesystem states, by executor and
+pool. “All” counts every retained state; “distinct” counts identical states once. Metrics in %.
+
+
+Notion. The two calibrated Stage 1 evaluators                                    final five-node workflow begins much higher for
+use small suites and are therefore indicative rather                             Claude, at 27/30 external seed success, and evolu-
+than category-wide evidence. The remove_osaka                                    tion closes the final three tasks. For GLM-5.2, the
+historical matched pair exposes an evaluator diver-                              same final workflow improves from 6/30 to 18/30.
+gence, but its evaluator is below the 0.85 admission                                The comparison is consistent with complemen-
+threshold. Controlled serialization analysis mea-                                tary contributions from the workflow scaffold and
+sures agreement 0.75 under the historical schema                                 evaluator-guided evolution. A richer scaffold
+and 0.50 after a live-state serialization change. The                            places more strong-model capability in the seed,
+latter decrease is an engineering regression layered                             while evolution provides a larger marginal gain for
+on top of the underlying semantic divergence.                                    the weaker executor. Because several experimental
+                                                                                 components changed between the two Claude cam-
+GitHub. The GitHub study remains an incom-
+                                                                                 paigns, the 17/30 versus 27/30 difference should
+plete feasibility campaign. A subsequent au-
+                                                                                 not be attributed solely to the five-node representa-
+dit found that the historical Stage 2 zero scores
+                                                                                 tion.
+were produced by evaluating the live backend
+inside a short sandbox timeout; those runs are                                   E.2     Weak-Executor Context and Model Tier
+therefore not used as agent-performance evi-
+dence. After replacing live-backend evaluation                                   Removing context truncation substantially changes
+with canonical-snapshot scoring, a strong-executor                               the weak-executor result. The truncated GLM-5.2
+run on find_salient_file converges at round 0                                    campaign converges internally on 7/18 completed
+and passes post-hoc external verification. The                                   tasks, whereas the untruncated campaign converges
+corresponding corrected weak-executor matched                                    on 21/30. Twelve tasks previously classified as
+run was not completed, so we make no GitHub                                      stalled become internally converged under full his-
+matched-pair or Stage 3 claim.                                                   tory. The comparison is not denominator-matched,
+                                                                                 but the task-level audit supports context truncation
+E     Additional Analyses and Ablations                                          as a major source of the earlier failure mode.
+                                                                                    Under identical task-specific evaluators, GLM-
+E.1    Workflow Representation and Evolution                                     4.5 reaches 9/30 internal and 7/30 external suc-
+Table 20 compares the primary campaigns with an                                  cesses, compared with 21/30 and 18/30 for GLM-
+earlier React-only Claude campaign. The histori-                                 5.2. A separate history-accumulating replication
+cal run evolved only the execution prompt and im-                                reaches 14/30 internally and 12/30 externally, with
+proved external success from 17/30 to 30/30. The                                 the same 85.7% internal precision as the primary
+
+                                                                         17
+Task                   States   ✓/✓   ✓/×      ×/✓     ×/×                           Task                      States   ✓/✓   ✓/×   ×/✓   ×/×
+author_folders             2      1      0         0     1                           individual_comments           1      1     0     0     0
+budget_computation         4      1      0         0     3                           music_report                  1      1     0     0     0
+code_locating              2      2      0         0     0                           organize_legacy_papers        7      1     0     0     6
+contact_information        4      1      0         0     3                           output_analysis               4      2     0     0     2
+dataset_comparison        10      2      0         0     8                           pattern_matching              4      1     0     0     3
+debugging                  2      1      1         0     0                           project_management            3      1     0     0     2
+dispute_review             4      2      0         0     2                           requirements_completion       6      2     0     1     3
+duplicate_name             3      2      0         0     1                           requirements_writing         14      2     0     1    11
+duplicates_searching       6      1      0         0     5                           size_classification           4      1     0     0     3
+english_talent             1      1      0         0     0                           solution_tracing              3      2     0     0     1
+file_arrangement           8      2      0         1     5                           structure_analysis            2      1     0     0     1
+file_merging               7      2      0         0     5                           structure_mirror              4      1     1     0     2
+file_splitting             3      1      0         0     2                           time_classification           4      2     0     0     2
+find_math_paper            1      1      0         0     0                           timeline_extraction           1      1     0     0     0
+gradebased_score           5      1      0         3     1                           uppercase                     2      1     1     0     0
+
+
+ Table 16: Held-out evaluation per task: distinct retained states from both executors, by internal/external verdict.
+
+
+ Task           Diff-exposed constraint Revision       Outcome                ing redundant cases.
+                                         (0)
+ uppercase      Exact text and terminal- E         → FP removed; final
+                newline fidelity         E (1) (1)   Int × /Ext×
+                                           (0)
+                                                                              E.5   Strong-Executor Reliability
+ debugging      Presence of the required E         → FP removed; final
+                                           (1)
+                fixed code pattern       E     (3)   Int × /Ext×
+ structure_     Missing nested directo- E (0)      → FP     removed;
+                                                                              Stage 3 needs a reference state F + that the strong
+ mirror         ries and leaf placehold- E (1) (1)   next        state        executor reaches and that is accepted internally and
+                ers                                  Int✓/Ext✓
+                                                                              externally. Table 21 counts, for each environment,
+Table 17: Execution-state refinement on the three                             how often the strong executor (Claude) provides
+Filesystem false positives. Parentheses give Verifier-                        one in the paper’s runs. It does on all 30 Filesystem
+Evolver calls for each accepted revision. On uppercase                        tasks but on only 3 of the 15 admitted PostgreSQL
+and debugging, the final weak states are Int × /Ext×;                         tasks, so refinement could not run on the remain-
+on structure_mirror, the weak state reached under                             ing 12 even if a weak-executor false positive had
+E (1) passes both. A second structure_mirror round,
+                                                                              appeared there. Of the 36 strong-executor states
+triggered by a file-synchronization artifact, is excluded
+(Appendix C).                                                                 accepted by their internal evaluator, one (Notion
+                                                                              remove_osaka) is rejected externally: trusted with-
+                                                                              out the external check, it would have been a wrong
+weak campaign.                                                                reference. In our experiments every F + used for
+                                                                              refinement was externally accepted, so no such er-
+E.3 Paired Contrasts and Localized Evaluator                                  ror entered Stage 3; how a wrong reference would
+    Repair                                                                    affect the revised evaluator is untested.
+On debugging, unaided evaluator regeneration
+fails in four attempts. Providing an API-visible                              E.6   A Verifier-Free Refinement Trigger
+positive–negative contrast and constraining the Ver-                          In our experiments, Stage 3 is applied to the in-
+ifier Evolver to a localized patch yields the required                        ternally accepted states that the external verifier
+“fixed-code-present” check in two to three attempts.                          rejects. We test retrospectively whether executor
+The corrected evaluator then assigns full internal                            disagreement could replace that signal. For each of
+fitness to a valid executor state. This analysis sup-                         the 21 GLM-5.2 final states that its frozen evalua-
+ports the final Stage 3 design choice to expose                               tor accepts, we compare it with the strong execu-
+factual paired contrasts while requiring minimal,                             tor’s accepted final state on the same task, after the
+cumulative-regression-checked evaluator changes.                              same canonicalization as in Stage 3, and flag the
+                                                                              task under several rules on the resulting difference.
+E.4      Stagnation and Redundant Refinement                                  External verdicts are used only to score the rules
+A cap-three replay on uppercase produces identi-                              (Table 22).
+cal later weak states and content-identical evaluator                            Flagging any difference catches all three false
+revisions. Two of the three additional refinement                             positives: eight accepted weak states are identical
+rounds therefore add no new evaluator capability.                             to the strong state and are correctly left alone. How-
+The final stagnation gate detects that the remaining                          ever, ten of the 18 correct states also differ, mostly
+state difference is already covered and terminates                            in file content, so only 3 of the 13 flagged tasks are
+all three primary refinement runs without generat-                            real false positives. Narrower rules miss some false
+
+                                                                         18
+Task                 Provenance class                                Evaluators            Final Int./Ext.   Terminal                  Key result
+uppercase            Primary refinement run                           E0→E1                    ×/×           stabilized (r1)           Original false positive removed
+                                                                                                                                       (exact-match check replaces
+                                                                                                                                       .strip() tolerance).
+debugging            Primary refinement run                           E0→E1                    ×/×           stabilized (r1)           Original false positive removed
+                                                                                                                                       (require-fix-present check via
+                                                                                                                                       paired contrast).
+structure_mirror     Primary refinement run                    E0→E1 (E2 excluded)         ✓/✓ after r1      stabilized (r2)           Original false positive removed;
+                                                                                                                                       the weak state under E1 is ex-
+                                                                                                                                       ternally valid (hash 80aeae4e).
+                                                                                                                                       Round 2 was triggered by a file-
+                                                                                                                                       synchronization artifact and is ex-
+                                                                                                                                       cluded.
+structure_mirror     FP exposure (development case study)             E0→E1                    ✓/×           semantic convergence      Extra-structure blind spot: E1 ac-
+                                                                                                                                       cepts a state with eleven extra
+                                                                                                                                       placeholder files, which fails ex-
+                                                                                                                                       ternal verification.
+structure_mirror     Separate controlled run (external pass)        E0→E1→E2                   ✓/✓           stabilized (r2)           Round 2 targets genuine extra
+                                                                                                                                       structure (plus a synchroniza-
+                                                                                                                                       tion artifact); final state hash
+                                                                                                                                       80aeae4e, identical to the pri-
+                                                                                                                                       mary run’s round-1 state.
+
+
+Table 18: Primary and case-study Filesystem Stage 3 trajectories. Primary refinement runs, the false-positive-
+exposure run, and the separate controlled run are separated by provenance class. The final weak states of the
+uppercase and debugging primary runs are rejected internally and externally (calibrated true negatives); the
+structure_mirror primary run’s state after round 1 passes both. The controlled run is not pooled with the primary
+runs.
+
+ Environment       Stage 1 evidence                                 Stage 2 evidence                                    Stage 3 disposition
+ PostgreSQL        18/21 evaluators successfully constructed over  15 matched pairs run to the configured limits;       No agent-produced Int✓/Ext× state across
+                   120 calibration states (22 positive / 98 neg-   both executors solve three tasks. The strong         the 30 Stage 2 conditions; refinement not trig-
+                   ative), with 115/120 internal–external agree-   executor succeeds at round 0 on all three, while     gered
+                   ment; 15/21 meet the Stage 2 admission thresh-  the weak executor succeeds after rounds 11,
+                   old                                             2, and 7; neither converges on the remaining
+                                                                   12 tasks (8 weak-executor runs end at the one-
+                                                                   hour round timeout)
+ Playwright        Four evaluators over 88 generated cases; two Two valid pairs:           both executors pass          No eligible false positive; two tasks formally
+                   correctness evaluators and two format-contract- extraction_table; both fail r1_arxiv                 excluded
+                   only evaluators
+ Notion            Two loop-native evaluators calibrate at agree- One historical matched pair on remove_osaka:          No completed eligible refinement pair; outer
+                   ment 1.0; one additional evaluator is blocked strong condition Int✓/Ext×, weak condi-                refinement not run
+                   by the observation interface                    tion Int × /Ext×
+ GitHub            One full calibration at 0.857; additional Corrected canonical-snapshot scoring yields                No corrected Int✓/Ext× pair; refinement
+                   Stage 1 evaluators remain incomplete, diver- one provenance-valid strong-executor F +                not triggered
+                   gent, or blocked by the observation interface   on find_salient_file; a corrected weak-
+                                                                   executor matched run was not completed
+
+
+Table 19: Cross-environment evidence. PostgreSQL provides the broadest cross-environment Stage 1/Stage 2
+study; Playwright, Notion, and GitHub remain smaller or incomplete studies. These results are not pooled into the
+Filesystem task-level aggregate.
+
+
+positives, because the three differ in different ways:                                 should be read.
+uppercase only in trailing newlines, debugging
+in file content, and structure_mirror in missing                                       F      Compute, Cost, and Runtime
+structure. Such a trigger is therefore usable only
+if Stage 3 can dismiss harmless differences. Its                                       Table 24 reports primary experimental accounting.
+instruction-grounding filter and regression gate are                                   Stage 1 was performed through interactive sessions
+designed to do this, but they were not exercised on                                    across multiple context windows, so its task-level
+these false alarms, so whether they would decline                                      token and runtime costs were not recorded and
+them or over-tighten the evaluator is untested. The                                    are not estimated. Diagnostic and development
+analysis also requires a strong-executor state and                                     campaigns are excluded from the primary totals.
+uses only three positive cases.                                                          The weak Filesystem campaign records approxi-
+                                                                                       mately 58× the executor tokens of the strong cam-
+                                                                                       paign; Claude executor counts exclude prompt-
+E.7       Environment-Specific Diagnostics
+                                                                                       cache reads, so this ratio is indicative rather than
+Table 23 lists diagnostic findings from the cross-                                     exact. Stage 3 is also expensive because each
+environment studies that bear on how their results                                     accepted evaluator revision triggers another five-
+
+                                                                                  19
+  Campaign             Executor             Workflow and evolver                                                                            Seed Ext.   Final Ext.
+  Historical           Claude               Task understanding plus ReAct execution; only the ReAct prompt evolved                              17/30       30/30
+                                            by an interactive Claude Code outer loop
+  Primary              Claude               Five-node persistent multi-alternative workflow; headless Workflow                                  27/30       30/30
+                                            Evolver
+  Primary              GLM-5.2              Same five-node representation and task-specific evaluators                                           6/30       18/30
+
+Table 20: Workflow representation and evolution results. The historical and primary Claude campaigns differ in
+representation, seed, source version, and evolver invocation, so the comparison is supporting rather than a controlled
+single-variable ablation.
+
+
+             Environment Tasks Usable F + Int✓/Ext× Int ×                                                G     Oracle Isolation, Provenance, and
+             Filesystem            30                   30                 0       0                           Reproducibility
+             PostgreSQL            15                    3                 0      12
+             Playwright             2                    1                 0       1
+             Notion                 1                    0                 1       0                     G.1    External-Verifier Information Boundary
+             GitHub                 1                    1                 0       0
+                                                                                                         The external MCPMark verifier is invoked only
+             Total                 49                   35                 1      13
+                                                                                                         after an internal evaluator or workflow trajectory
+Table 21: Strong-executor (Claude) outcomes in the                                                       has been frozen. Its verdict is never used for work-
+paper’s runs, one final run per task. A usable reference                                                 flow ranking, alternative credit, evaluator repair,
+F + is a state accepted both internally and externally                                                   convergence, or termination. Outside the loop, its
+(Int✓/Ext✓); Int × counts states not accepted inter-                                                     verdicts are used for three decisions: admitting
+nally.                                                                                                   an evaluator to Stage 2 (agreement ≥ 0.85 on the
+                                                                                                         evaluator’s challenge suite), selecting the internally
+Trigger rule (weak vs. strong accepted state)           Flagged FPs caught Correct states flagged        accepted but externally rejected states that Stage 3
+Any difference
+Structural difference (missing/extra/empty)
+                                                             13/21
+                                                              4/21
+                                                                        3/3
+                                                                        1/3
+                                                                                           10/18
+                                                                                            3/18         refines, and confirming that each reference state F +
+Missing structure only (strong has it, weak lacks it)         2/21      1/3                 1/18
+Content difference (excluding newline-only)                  10/21      1/3                 9/18         passes. The strength of this guarantee differs across
+Any difference, newline-only differences ignored             12/21      2/3                10/18
+                                                                                                         experimental phases and is reported explicitly in
+Table 22: Retrospective verifier-free triggers on the                                                    Table 25.
+21 internally accepted GLM-5.2 final states (3 false                                                        The effective information flow is:
+positives, 18 correct), each compared with the strong
+executor’s accepted state on the same task.                                                                         x, O(s0 ) → TSG → C (0) → VE → E (0) ,
+                                                                                                                        E (k) → WorkflowSearch → Fk−
+
+path, up-to-15-round weak-executor search. The                                                                                     → ∆(k) → C (k+1) , E (k+1) ,
+expanded PostgreSQL campaign further illustrates                                                             Frozen trajectory → external verification.
+that evaluator availability does not make search                                                           There is no return edge from the final line to any
+inexpensive: running both conditions over the 15                                                         generation, scoring, repair, ranking, or stopping
+eligible tasks requires approximately 46.9M ex-                                                          component; the only uses of external verdicts are
+ecutor tokens, while most tasks still end without                                                        the three selection decisions above, which happen
+internal convergence. These costs motivate selec-                                                        between runs.
+tive execution-state refinement rather than universal
+Stage 3 sweeps over all benchmark tasks.                                                                 G.2    Stage 3 Packet Isolation
+   The PostgreSQL campaign was checkpointed                                                              Each Stage 3 model call receives a small al-
+across transient provider failures; completed                                                            lowlisted packet containing the task instruction,
+rounds were resumed without recomputation or                                                             current evaluator, sanitized challenge cases, fac-
+changes to scientific settings. Similarly, the three                                                     tual state-diff information, and an output contract.
+Filesystem Stage 3 runs were initially launched                                                          State paths, external verdict fields, and other non-
+in parallel, but concurrent Workflow-Evolver calls                                                       allowlisted values are removed before packet cre-
+caused correlated transient provider failures. They                                                      ation. Every packet is scanned for prohibited to-
+were resumed sequentially from completed check-                                                          kens, including references to the external verifier
+points without changing scientific settings. Par-                                                        and external verdict fields.
+allelism therefore reduced actual wall time while                                                           The model runs from a temporary directory
+introducing provider-contention overhead.                                                                outside the workbench. Most filesystem and
+
+                                                                                                    20
+ Analysis                             Finding                                                          Interpretation
+ PostgreSQL numeric type              An evaluator rejects valid Decimal values because it tests       Evaluator type mismatch rather than executor failure; cor-
+                                      only int and float; the external verifier accepts the state      rected by a type-equivalence update before the final cam-
+                                                                                                       paign.
+ PostgreSQL Stage 2 non-convergence   Neither executor converges on 12/15 Stage 2-eligible tasks       A usable fitness signal does not guarantee task completion;
+                                      despite evaluators that cleared the admission threshold          workflow search, executor capability, and interaction bud-
+                                                                                                       get remain limiting.
+ Playwright observability             Turnstile exposes no stable transcript-visible success signal;   Formal exclusions rather than task failures.
+                                      another task lacks independently grounded factual truth
+ Notion serialization                 Agreement falls from 0.75 to 0.50 when people and date           A real evaluator disagreement compounded by backward-
+                                      fields change serialization                                      incompatible state representation.
+ GitHub scoring interface             Historical in-loop evaluator calls queried the live backend      Historical non-convergence is excluded from performance
+                                      inside a short sandbox timeout, producing vacuous zero           claims; corrected strong-executor execution demonstrates
+                                      scores; canonical snapshot scoring restores valid internal       feasibility, while the standardized matched pair remains
+                                      evaluation                                                       incomplete.
+
+
+                                        Table 23: Environment-specific diagnostic findings.
+
+
+process tools are disabled; read operations are                                   The primary campaigns permit deterministic mate-
+logged. An attempt to access material out-                                        rialization and harness repair, checkpoint-resume
+side the approved packet is classified as an                                      after transient provider failures, and bounded
+information_boundary_violation and aborts                                         model repair within the predeclared budget. They
+the run. No such violation occurs in the primary                                  do not permit task-specific manual evaluator logic,
+Stage 3 campaign.                                                                 external-verifier feedback inside a loop, or unre-
+                                                                                  ported changes to scientific settings.
+G.3      Provenance and Immutable Artifacts                                          Development and diagnostic runs are retained
+Each reported run retains its source commit,                                      for mechanism analysis but are not pooled with
+strategy identifier, evaluator versions and hashes,                               primary outcomes. This distinction is especially
+workflow-state hashes, per-round telemetry, and                                   important for the Stage 3 development lineage,
+terminal classification. Stage 3 state archives pre-                              the pre-fix GitHub scoring runs, the Notion serial-
+serve canonical tree hashes and archive hashes for                                ization diagnostics, and the pre-provenance Play-
+all retained weak and reference states. Cumulative                                wright runs.
+regression records whether the candidate evaluator
+accepts F + , rejects all prior false-positive weak                               H       Prompts and Artifact Schemas
+states, preserves previous case verdicts, and han-
+dles newly added cases.                                                           H.1        Prompt Availability
+   Independent reproduction provides additional                                   Exact rendered prompts from the original inter-
+evidence:                                                                         active Stage 1 sessions were not recorded. We
+                                                                                  therefore report the role contract, visible inputs,
+    • The uppercase E (1) evaluator is byte-                                      tools, and output schema rather than reconstruct-
+      identical across three independent Verifier-                                ing those prompts after the fact. Stage 2 and
+      Evolver searches.                                                           Stage 3 prompt templates are retained in source, al-
+                                                                                  though campaign-era Stage 2 prompt hashes were
+    • Canonical weak-state tree hashes recur across
+                                                                                  not recorded on every early run. A prompt inven-
+      independent runs for uppercase, debugging,
+                                                                                  tory recording available paths, hashes, invocation
+      and structure_mirror.
+                                                                                  modes, and campaign associations will be released
+    • The externally accepted structure_mirror                                    with the code.
+      state hash 80aeae4e... is reached both by
+      the primary run after one refinement round                                  H.2        Role Contracts
+      and by the separate controlled run.                                         Initial Test-Suite Generator. Given the full task
+                                                                                  instruction and observable initial state, identify ex-
+G.4      Run Classification and Intervention                                      plicit and implicit requirements and generate at
+         Policy                                                                   least one complete positive state, one clean nega-
+Infrastructure failures are separated from seman-                                 tive, and adversarial near-misses. Labels must be
+tic task outcomes. Provisioning errors, provider                                  justified from the task instruction alone. The out-
+aborts, source mismatches, and unobservable suc-                                  put is a declarative mutation specification that a
+cess states are not assigned a semantic score of zero.                            deterministic category adapter materializes.
+
+                                                                             21
+Experiment                                 Tasks/runs Executor tokens Evolver cost      Recorded wall Qualification
+Filesystem Stage 1                                 30                 –           –                  – Interactive ac-
+                                                                                                       counting       not
+                                                                                                       recorded.
+Filesystem Stage 2, Claude                         30          575,739        $1.74     5.3 task-hours Primary strong
+                                                                                                       campaign; ex-
+                                                                                                       ecutor tokens
+                                                                                                       exclude prompt-
+                                                                                                       cache reads.
+Filesystem Stage 2, GLM-5.2                        30     33,176,550         $31.24    43.5 task-hours Primary weak
+                                                                                                       campaign; tasks
+                                                                                                       executed across
+                                                                                                       parallel lanes.
+Filesystem Stage 3                                  3      8,100,868          $3.49     ≈ 2.5 h actual Primary refine-
+                                                                                                       ment runs; TSG
+                                                                                                       and VE addition-
+                                                                                                       ally use 37,031
+                                                                                                       and 27,235 Son-
+                                                                                                       net tokens.
+PostgreSQL matched pairs                 30 conditions      ≈ 46.9M          $41.88   ≈ 71 h loop wall Full      15-pair
+                                                                                                       Stage 2 cam-
+                                                                                                       paign over all
+                                                                                                       eligible tasks.
+Playwright matched pairs                  4 conditions     1,062,274          $1.71            94 min Two           valid
+                                                                                                       matched pairs.
+Notion historical pair                    2 conditions         ≈ 110K         $0.50                  – Historical      di-
+                                                                                                       agnostic pair;
+                                                                                                       not pooled with
+                                                                                                       standardized
+                                                                                                       campaigns.
+GitHub corrected strong-executor pilot     1 condition         193,784            –                  – Provenance-
+                                                                                                       valid strong F + ;
+                                                                                                       corrected weak
+                                                                                                       matched       run
+                                                                                                       incomplete.
+
+Table 24: Primary and qualified experimental compute accounting. Executor tokens and evolver cost are reported
+separately. Missing measurements are left unestimated; historical or incomplete pilot rows are explicitly labeled.
+
+
+Initial Verifier Evolver. Given the materialized               Refinement Verifier Evolver. Given the current
+challenge states and their instruction-derived labels,         evaluator, cumulative cases, paired factual con-
+write a sandbox-compatible verify(context)                     trasts, and deterministic feedback, produce a lo-
+function. When the internal gate fails, revise the             calized patch targeting the uncovered constraint.
+evaluator from deterministic case-level feedback               A full rewrite is permitted only when the required
+while preserving already-correct checks.                       localized edit cannot be expressed safely.
+
+                                                               Workflow Executors. Given one selected work-
+Workflow Evolver. Given the current alternative                flow path and access to the category-specific tool in-
+pool, per-alternative score statistics, round history,         terface, execute the task in an isolated environment.
+failed checks, and artifact-inspection diagnosis,              The executor does not receive evaluator source,
+propose a small set of new node alternatives. The              external-verifier information, or outputs from other
+output is a JSON object containing a hypothesis                candidate paths.
+and at most one new alternative per selected node.
+                                                               H.3     Challenge-State Schema
+                                                               A challenge state contains:
+Refinement Test-Suite Generator. Given the
+                                                               {
+task instruction, current evaluator, strong–weak dif-              "case_id": "...",
+ference clusters, and immutable state anchors, gen-                "cluster": "...",
+erate paired cases that reproduce and remove one                   "expected_pass": true | false,
+                                                                   "adversarial_description": "...", // optional
+selected difference while holding unrelated state                  "anchor": "f_plus" | "weak", // refinement only
+fixed.                                                             "ops": [
+
+
+                                                          22
+Phase                  Technically enforced controls                  Procedural restrictions                         Audit evidence
+Interactive Stage 1   No hard filesystem-level isolation is proven Workspace policy prohibits reading verifier        External fields appear only in post-
+                      by retained artifacts                         source; external calibration occurs after eval-   construction calibration artifacts. Claims for
+                                                                    uator construction                                this phase are procedural, not technical.
+Automated Stage 2     Workflow-Evolver inputs are constructed Prompts prohibit reference to external veri-            Source/input hashes, routing policies, and
+                      only from internal scores, failed checks, fier logic                                            run manifests are retained.
+                      traces, and alternative statistics; executors
+                      are restricted to isolated task environments
+Stage 3 TSG and VE Packet-only temporary working directory Read access is additionally restricted by the              Per-round packet hashes and access-
+                      outside the repository; shell, search, write, packet contract                                   decision records; primary runs contain no
+                      web, and task tools disabled; packet al-                                                        information-boundary violation.
+                      lowlists and forbidden-token scans; tool-
+                      access logging and run-aborting outside-
+                      access checks
+Post-hoc verification Separate subprocess with provider creden- External result cannot be routed back into a          External records contain invocation status
+                      tials stripped; bounded output capture; in- model role                                          and return code and are stored outside model
+                      voked only after internal termination                                                           packets.
+
+
+Table 25: External-verifier isolation by phase. Initial interactive Stage 1 relies on a documented procedural boundary;
+Stage 2 and especially Stage 3 add technically enforced input and tool restrictions.
+
+
+        {                                                                              "system_prompt": "...",                               // optional
+            "type": "...",                                                             "max_react_iterations": 20                    // ReAct node only
+            "path": "...",                                                         }
+            "content": "...",                            // optional
+            "from": "..."                                // optional                 A workflow stores the ordered node list, alter-
+        }                                                                          natives, protected alternatives, caps, accumulated
+    ]
+}
+                                                                                   per-alternative statistics, and path history. A candi-
+                                                                                   date path selects one alternative from each active
+   Initial Stage 1 operations are applied to an iso-                               node.
+lated copy of the initial environment. Refinement
+cases may instead be anchored on F + or the current                                H.6          State-Difference and Counterfactual
+weak state.                                                                                     Schemas
+                                                                                   A canonical difference cluster records:
+H.4 Evaluator Schema
+                                                                                   {
+Evaluators expose one sandboxed function:                                              "kind": "content" | "missing_file" | "extra_file"
+verify(context) -> {                                                                         | "missing_dir" | "extra_dir" | "empty_dir"
+  "passed": bool,                                                                               | "symlink" | "mode",
+  "checks": [                                                                           "characteristic": "...",
+     {                                                                                  "paths": ["...", ...],
+       "check_id": str,                                                                 "signature": "..."
+       "description": str,                                                         }
+       "requirement_ids": [str, ...],
+       "passed": bool,                                                               A paired counterfactual uses the same cluster
+       "evidence": {...},                                                          identifier for:
+       "severity": "required" | "optional"
+     }
+  ],
+                                                                                        • a negative case that reproduces the selected
+  "summary": str                                                                          difference; and
+}
+                                                                                        • a positive control that removes only that dif-
+   The Filesystem evaluator context provides nine
+                                                                                          ference.
+read-only operations for file existence, directory ex-
+istence, globbing, directory listing, text, JSON, and                                The label-consistency gate validates their ex-
+CSV reading, text hashing, and file-size inspection.                               pected verdicts, while the coverage gate confirms
+Imports, direct file opening, code evaluation, sub-                                that the pair actually toggles the targeted cluster.
+processes, network access, and filesystem writes
+are prohibited.                                                                    H.7          Cumulative Regression and Loop State
+                                                                                   The cumulative regression artifact records:
+H.5 Workflow-Alternative Schema
+                                                                                   {
+Each active workflow node stores alternatives of                                       "cumulative_freeze_decision":
+the form:                                                                                  "FREEZE" | "REJECT",
+{                                                                                      "all_prior_weak_states_rejected": true | false,
+    "alt_id": "...",                                                                   "cumulative_weak_states": [...],
+    "prompt_template": "...",                                                          "added_check_ids": [...],
+
+
+                                                                              23
+    "removed_check_ids": [...],
+    "case_results": [...]
+}
+
+   The Stage 3 loop state stores evaluator hashes,
+weak-state tree hashes, per-round differences and
+telemetry, the set of seen and covered clusters, stag-
+nation decisions, and the final terminal reason. The
+run manifest binds this lineage to a run identifier,
+source commit, and frozen strategy.
+
+
+
+
+                                                         24
+

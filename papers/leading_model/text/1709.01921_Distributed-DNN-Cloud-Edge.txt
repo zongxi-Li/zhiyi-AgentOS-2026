@@ -1,0 +1,761 @@
+                                                                            Distributed Deep Neural Networks
+                                                                         over the Cloud, the Edge and End Devices
+
+
+                                                      Surat Teerapittayanon                         Bradley McDanel                               H.T. Kung
+                                                       Harvard University                          Harvard University                        Harvard University
+                                                     Cambridge, MA, USA                           Cambridge, MA, USA                        Cambridge, MA, USA
+                                                Email: steerapi@seas.harvard.edu             Email: mcdanel@fas.harvard.edu                Email: kung@harvard.edu
+arXiv:1709.01921v1 [cs.CV] 6 Sep 2017
+
+
+
+
+                                           Abstract—We propose distributed deep neural networks             issues and privacy concerns, or (2) perform classification
+                                        (DDNNs) over distributed computing hierarchies, consisting of       directly on the end device using simple Machine Learning
+                                        the cloud, the edge (fog) and end devices. While being able to      (ML) models e.g., linear Support Vector Machine (SVM),
+                                        accommodate inference of a deep neural network (DNN) in the
+                                        cloud, a DDNN also allows fast and localized inference using        leading to reduced system accuracy.
+                                        shallow portions of the neural network at the edge and end             To address these shortcomings, it is natural to consider
+                                        devices. When supported by a scalable distributed computing         the use of a distributed computing approach. Hierarchically
+                                        hierarchy, a DDNN can scale up in neural network size and           distributed computing structures consisting of the cloud,
+                                        scale out in geographical span. Due to its distributed nature,      the edge and devices (see, e.g., [1], [2]) have inherent
+                                        DDNNs enhance sensor fusion, system fault tolerance and data
+                                        privacy for DNN applications. In implementing a DDNN, we            advantages, such as supporting coordinated central and local
+                                        map sections of a DNN onto a distributed computing hierarchy.       decisions, and providing system scalability, for large-scale
+                                        By jointly training these sections, we minimize communication       intelligent tasks based on geographically distributed IoT
+                                        and resource usage for devices and maximize usefulness of           devices.
+                                        extracted features which are utilized in the cloud. The resulting      An example of one such distributed approach is to com-
+                                        system has built-in support for automatic sensor fusion and
+                                        fault tolerance. As a proof of concept, we show a DDNN              bine a small NN1 model (less number of parameters) on end
+                                        can exploit geographical diversity of sensors to improve object     devices and a larger NN model (more number of parameters)
+                                        recognition accuracy and reduce communication cost. In our          in the cloud. The small model at an end device can quickly
+                                        experiment, compared with the traditional method of offloading      perform initial feature extraction, and also classification if
+                                        raw sensor data to be processed in the cloud, DDNN locally          the model is confident. Otherwise, the end device can fall
+                                        processes most sensor data on end devices while achieving high
+                                        accuracy and is able to reduce the communication cost by a          back to the large NN model in the cloud, which performs
+                                        factor of over 20x.                                                 further processing and final classification. This approach
+                                                                                                            has the benefit of low communication costs compared to
+                                          Keywords-distributed deep neural networks; deep neural net-
+                                        works; dnn; ddnn; embedded dnn; sensor fusion; distributed          always offloading NN input to the cloud and can achieve
+                                        computing hierarchies; edge computing; cloud computing              higher accuracy compared to a simple model on device.
+                                                                                                            Additionally, since a summary based on extracted features
+                                                              I. I NTRODUCTION                              from the end device model are sent instead of raw sensor
+                                           Neural networks (NNs), and deep neural networks                  data, the system could provide better privacy protection.
+                                        (DNNs) in particular, have achieved great success in numer-            However, this kind of distributed approach over a com-
+                                        ous applications in recent years. For example, deep Con-            puting hierarchy is challenging for a number of reasons,
+                                        volutional Neural Networks (CNNs) continuously achieve              including:
+                                        state-of-the-art performances on various tasks in computer             • End devices such as embedded sensor nodes often have
+                                        vision as shown in Figure 1. At the same time, the number                 limited memory and battery budgets. This makes it an
+                                        of end devices, including Internet of Things (IoT) devices,               issue to fit models on the devices that meet the required
+                                        has increased dramatically. These devices are appealing                   accuracy and energy constraints.
+                                        targets for machine learning applications as they are often            • A straightforward partitioning of NN models over a
+                                        directly connected to sensors (e.g., cameras, microphones,                computing hierarchy may incur prohibitively large com-
+                                        gyroscopes) that capture a large quantity of input data in a              munication costs in transferring intermediate results
+                                        streaming fashion.                                                        between computation nodes.
+                                           However, the current state of machine learning systems
+                                                                                                              1 The term network layer may refer to either a layer in a NN or a layer
+                                        on end devices leaves an unsatisfactory choice: either (1)
+                                                                                                            in the distributed computing hierarchy (e.g., edge or cloud). In order to
+                                        offload input sensor data to large NN models (e.g., DNNs) in        remove ambiguity, when we refer to network layers for NN we explicitly
+                                        the cloud, with the associated communication costs, latency         use the term NN layers.
+                                                                            LeNet        AlexNet       VGGNet GoogLeNet               ResNet
+  • Incorporating geographically distributed end devices is
+                                                                            (1998)        (2012)        (2014)    (2014)               (2015)
+    generally beyond the scope of DNN literature. When
+                                                                           5 Layers      8 Layers      19 Layers 22 Layers           152 Layers
+    multiple sensor inputs on different end devices are
+    used, they need to be aggregated together for a single
+    classification objective. A trained NN will need to
+    support such sensor fusion.
+  • Multiple models at the cloud, the edge and the device
+    need to be learned jointly to allow coordinated decision
+    making. Computation already performed on end device
+    models should be useful for further processing on edge
+    or cloud models.
+  • Usual layer-by-layer processing of a DNN from the
+    NN’s input layer all the way to the NN’s output layer
+    does not directly provide a mechanism for local and
+    fast inference at earlier points in the neural networks
+    (e.g., end devices).
+  • A balance is needed between the accuracy of a model
+    (with the associated model size) at a given distributed
+                                                                                                                                   (34-layer version)
+    computing layer and the cost of communicating to the
+    layer above it. The solution must have reasonably good
+    lower NN layers on the end devices capable of accurate
+    local classification for some input while also providing               Figure 1. Progression towards deeper neural network structures in recent
+                                                                           years (see, e.g., [6], [7], [8], [9], [10]).
+    useful features for classification in the cloud for other
+    input.
+   To address these concerns under the same optimization                   greatly reduce the required memory cost of neural network
+framework, it is desirable that a system could train a single              layers and enables multi-layer NNs to run on end devices
+end-to-end model, such as a DNN, and partition it between                  with small memory footprints [5]. By training DDNN end-
+end devices and the cloud2 , in order to provide a simpler                 to-end, the network optimally configures lower NN layers to
+and more principled approach.                                              support local inference at end devices, and higher NN layers
+   To this end, we propose distributed deep neural networks                in the cloud to improve overall classification accuracy of the
+(DDNNs) over distributed computing hierarchies, consisting                 system. As a proof of concept, we show a DDNN can exploit
+of the cloud, the edge (fog) and geographically distributed                geographical diversity of sensors (on a multi-view multi-
+end devices. In implementing a DDNN, we map sections of                    camera dataset) in sensor fusion to improve recognition
+a single DNN onto a distributed computing hierarchy. By                    accuracy.
+jointly training these sections, we show that DDNNs can                       The contributions of this paper include
+effectively address the aforementioned challenges. Specifi-                   1) A novel DDNN framework and its implementation that
+cally, while being able to accommodate inference of a DNN                         maps sections of a DNN onto a distributed computing
+in the cloud, a DDNN allows fast and localized inference                          hierarchy.
+using some shallow portions of the DNN at the edge and                        2) A joint training method that minimizes communica-
+end devices. Moreover, via distributed computing, DDNNs                           tion and resource usage for devices and maximizes
+naturally enhance sensor fusion, data privacy and system                          usefulness of extracted features which are utilized in
+fault tolerance for DNN applications. When supported by a                         the cloud, while allowing low-latency classification via
+scalable distributed computing hierarchy, a DDNN can scale                        early exit for a high percentage of input samples.
+up in neural network size and scale out in geographical span.                 3) Aggregation schemes that allows automatic sensor
+   DDNN leverages our earlier work on BranchyNet [3]                              fusion of multiple sensor inputs to improve the overall
+which allows early exit points to be placed in a DNN.                             performance (accuracy and fault tolerance) of the
+Samples can be classified and exited locally when the system                      system.
+is confident and offloaded to the edge and the cloud when ad-
+                                                                              The DDNN codebase is open source and can be found
+ditional processing is required. In addition, DDNN leverages
+                                                                           here: https://github.com/kunglab/ddnn.
+the recent work of binary neural networks (BNNs) [4], which
+                                                                                                  II. R ELATED W ORK
+  2 For presentation simplicity, we often just consider the device-cloud
+scenario. Our methodology can similarly apply to general device-edge          In this section, we briefly review related work in dis-
+(fog)-cloud scenarios.                                                     tributed computing hierarchies and recent deep learning
+algorithms that enable our proposed method to run in a dis-     allocates computation on a per region basis in an image, and
+tributed fashion. We then discuss other approaches involving    exits each region independently when it is deemed to be of
+distributed deep networks.                                      sufficient quality.
+
+A. Distributed Computing Hierarchy                              C. Distributed Training of Deep Networks
+   The framework of a large-scale distributed computing            Current research on distributing deep networks is mainly
+hierarchy has assumed new significance in the emerging era      focused on improving the runtime of training the neural
+of IoT. It is widely expected that most of data generated       network. In 2012, Dean et al. proposed DistBelief, which
+by the massive number of IoT devices must be processed          maps large DNNs over thousands of CPU cores during
+locally at the devices or at the edge, for otherwise the        training [14]. More recently, several methods have been
+total amount of sensor data for a centralized cloud would       proposed to scale up DNN training across GPU clusters [15],
+overwhelm the communication network bandwidth. In addi-         [16], which further reduces the runtime of network training.
+tion, a distributed computing hierarchy offers opportunities    Note that this form of distributing DNNs (over homogeneous
+for system scalability, data security and privacy, as well as   computing units) is fundamentally different from the notion
+shorter response times (see, e.g., [2], [11]). For example,     presented in this paper. We proposes a way to train and
+in [11], a face recognition application shows a reduced         perform feedforward inference over deep networks that can
+response time is achieved when a smartphone’s photos are        be deployed over a distributed computing hierarchy, rather
+proceeded by the edge (fog) as opposed to the cloud. In this    than processed in parallel over bus- or switch-connected
+paper, we show that DDNN can systematically exploit the         CPUs or GPUs in the cloud.
+inherent advantages of a distributed computing hierarchy for
+DNN applications and achieve similar benefits.                  III. P ROPOSED D ISTRIBUTED D EEP N EURAL N ETWORKS
+B. Deep Neural Network Extensions                                  In this section we give an overview of the proposed
+   Binarized neural networks (BNNs) are a recent type of        distributed deep neural network (DDNN) architecture and
+neural networks, where the weights in linear and convolu-       describe how training and inference in DDNN is performed.
+tional layers are constrained to {−1, 1} (stored as 0 and 1
+                                                                A. DDNN Architecture
+respectively). This representation has been shown to achieve
+similar classification accuracy for some datasets such as          DDNN maps a trained DNN onto heterogeneous physical
+MNIST and CIFAR-10 [12] when compared to a standard             devices distributed locally, at the edge, and in the cloud.
+floating-point neural network while using less memory and       Since DDNN relies on a jointly trained DNN framework at
+reduced computation due to the binary format [4]. Embedded      all parts in the neural network, for both training and infer-
+binarized neural networks (eBNNs) extends BNNs to allow         ence, many of the difficult engineering decisions are greatly
+the network to fit on embedded devices by reducing floating-    simplified. Figure 2 provides an overview of the DDNN
+point temporaries through reordering the operations in in-      architecture. The configurations presented show how DDNN
+ference [5]. These compact models are especially attractive     can scale the inference computation across different physical
+in end device settings, where memory can be a limiting          devices. The cloud-based DDNN in (a) can be viewed as
+factor and low power consumption is required. In DDNN,          the standard DNN running in the cloud as described in
+we use BNNs, eBNNs and the alike to accommodate the             the introduction. In this case, sensor input captured on end
+end devices, so that they can be jointly trained with the NN    devices is sent to the cloud in original format (raw input
+layers in the edge and cloud.                                   format), where all layers of DNN inference is performed.
+   BranchyNet proposed a solution of classifying samples at        We can extend this model to include a single end device,
+earlier points in a neural network, called early exit points,   as shown in (b), by performing a portion of the DNN
+through the use of an entropy-based confidence criteria [3].    inference computation on the device rather than sending the
+If at an early exit point a sample is deemed confident based    raw input to the cloud. Using an exit point after device
+on the entropy of the computed probability vector for target    inference, we may classify those samples which the local
+classes, then it is classified and no further computation is    network is confident about, without sending any information
+performed by the higher NN layers. In DDNN, exit points         to the cloud. For more difficult cases, the intermediate DNN
+are placed at physical boundaries (e.g., between the last NN    output (up to the local exit) is sent to the cloud, where
+layer on an end device and the first NN layer in the next       further inference is performed using additional NN layers
+higher layer of the distributed computing hierarchy such        and a final classification decision is made. Note that the
+as the edge or the cloud). Input samples that can already       intermediate output can be designed to be much smaller than
+be classified early will exit locally, thereby achieving a      the sensor input (e.g., a raw image from a video camera),
+lowered response latency and saving communication to the        and therefore drastically reduce the network communication
+next physical boundary. With similar objectives, SACT [13]      required between the end device and the cloud. The details
+of how communication is considered in the network is                    written as
+                                                                                                    n
+discussed in section III-E.                                                                         X vij
+                                                                                            v̂j =             ,
+   DDNN can also be extended to multiple end devices                                                      n
+                                                                                                    i=1
+which may be geographically distributed, shown in (c),
+that work together to make a classification decision. Here,           where n is the number of inputs and vij is the j-
+each end device performs local computation as in (b), but             th component of the input vector and v̂j is the j-th
+their output is aggregated together before the local exit             component of the resulting output vector. Averaging
+point. Since the entire DDNN is jointly trained across                may reduce noisy input presented in some end devices.
+all end devices and exit points, the network automatically          • Concatenation (CC). CC simply concatenates the input
+
+aggregates the input with the objective of achieving max-             vectors together. CC retains all information which is
+imum classification accuracy. This automatic data fusion              useful for higher layers (e.g., the cloud) that can use
+(sensor fusion) simplifies runtime inference by avoiding the          the full information to extract higher level features.
+necessity of manually combining output from multiple end              Note that this expands the dimension of the resulting
+devices. We will discuss the design of feature aggregation            vector. To map this vector back to the same number
+in detail in section III-B. As before, if the local exit point        of dimensions as input vectors, we add an additional
+is not confident about the sample, each end devices sends             linear layer.
+intermediate output to the cloud, where another round of            We analyzes these aggregation methods in Section IV-C.
+feature aggregation is performed before making a final
+classification decision.                                          C. DDNN Training
+   DDNN scales vertically as well, by using an edge layer in         While DDNN inference is distributed over the distributed
+the distributed computing hierarchy between the end devices       computing hierarchy, the DDNN system can be trained on a
+and cloud, shown in (d) and (e). The edge acts similarly to       single powerful server or in the cloud. One aspect of DDNN
+the cloud, by taking output from the end devices, performing      that is different from most conventional DNN pipelines is the
+aggregation and classification if possible, and forwarding its    use of multiple exit points as shown in Figure 2. At training
+own intermediate output to the cloud if more processing is        time, the loss from each exit is combined during back-
+needed. In this way, DDNN naturally adjusts the network           propagation so that the entire network can be jointly trained,
+communication and response time of the system on a per            and each exit point achieves good accuracy relative to its
+sample basis. Samples that can be correctly classified locally    depth. For this work, we follow joint training as described
+are exiting without any communication to the edge or cloud.       in GoogleNet [9] and BranchyNet [3].
+Samples that require more feature extraction than can be pro-        For the system evaluation discussed in Section IV, we
+vided locally are sent to the edge, and eventually the cloud      apply DDNNs to a classification task. We use the softmax
+if necessary. Finally, DDNNs can also scale geographically        cross entropy loss function as the optimization objective.
+across the edge layer as well, which is shown in (f).             We now describe formally how we train DDNNs. Let y be
+                                                                  a one-hot ground-truth label vector, x be an input sample
+B. DDNN Aggregation Methods
+                                                                  and C be the set of all possible labels. For each exit, the
+   In DDNN configurations with multiple end devices               softmax cross entropy objective function can be written as
+(e.g., (c), (e), and (f) in Figure 2), the output from each end
+                                                                                                   1 X
+device must be aggregated in order to perform classification.                     L(ŷ, y; θ) = −       yc log yˆc ,
+We present several different schemes for aggregating the                                          |C|
+                                                                                                     c∈C
+output. Each aggregation method makes different assump-           where
+tions about how the device output should be combined and
+therefore can result in different system accuracy. We present                                      exp(z)
+                                                                                ŷ = softmax(z) = X          ,
+three approaches:                                                                                   exp(zc )
+   • Max pooling (MP). MP aggregates the input vectors                                                c∈C
+      by taking the max of each component. Mathematically,        and
+      max pooling can be written as
+                                                                                        z =fexitn (x; θ),
+                         v̂j = max vij ,
+                               1≤i≤n
+                                                                  where fexitn is a function representing the computation of
+    where n is the number of inputs and vij is the j-             the neural network layers from an entry point to the n-th
+    th component of the input vector and v̂j is the j-th          exit branch and θ represents the network parameters such as
+    component of the resulting output vector.                     weights and biases of those layers.
+  • Average pooling (AP). AP aggregates the input vectors            To train the DDNN we form a joint optimization problem
+    by taking the average of each component. This is              as minimizing a weighted sum of the loss functions of each
+(a)          Cloud Exit            (b)          Cloud Exit            (c)          Cloud Exit
+
+               Cloud                                Cloud                             Cloud
+                                                                                                           (a) Cloud-based DDN
+                                                                                                           (b) DDNN over cloud and device
+                                                                                                           (c) DDNN over cloud and geographically
+                                                                                                               distributed devices
+                                                Local Exit                         Local Exit
+
+                                                    Device                               Device
+
+
+
+(d)          Cloud Exit            (e)          Cloud Exit            (f)          Cloud Exit
+
+               Cloud                                Cloud                             Cloud
+                                                                                                           (d) DDDN over cloud, edge and device
+             Edge Exit                                                             Edge Exit               (e) DDNN over cloud, edge and
+                                                Edge Exit
+                                                                                                           geographically distributed devices
+               Edge                                 Edge                                      Edge         (f) DDDN over cloud and geographically
+                                                Local Exit                                 Local Exit      distributed edges and devices
+            Local Exit
+
+               Device                                    Device                                   Device
+
+
+Figure 2. Overview of the DDNN architecture. The vertical lines represent the DNN pipeline, which connects the horizontal bars (NN layers). (a) is the
+standard DNN (processed entirely in the cloud), (b) introduces end devices and a local exit point that may classify samples before the cloud, (c) extends
+(b) by adding multiple end devices which are aggregated together for classification, (d) and (e) extend (b) and (c) by adding edge layers between the cloud
+and end devices, and (f) shows how the edge can also be distributed like the end devices.
+
+
+
+exit:                                                                           its corresponding threshold T . For example, η close to 0
+                                N
+                                X                                               means that the DDNN is confident about the prediction of
+               L(ŷ, y; θ) =          wn L(ŷ exitn , y; θ),                    the sample; η close to 1 means it is not confident. At each
+                                n=1                                             exit point, η is computed and compared against T in order
+where N is the total number of exit points and wn is the                        to determine if the sample should exit at that point.
+associated weight of each exit. Equal weights are used for                         At a given exit point, if the predictor is not confident
+the experimental results of this paper.                                         in the result (i.e., η > T ), the system falls back to a higher
+                                                                                exit point in the hierarchy until the last exit is reached which
+D. DDNN Inference                                                               always performs classification.
+   Inference in DDNN is performed in several stages using                          We now provide an example of the inference procedure
+multiple preconfigured exit thresholds T (one element T at                      for a DDNN which has multiple end devices and three exit
+each exit point) as a measure of confidence in the prediction                   points (configuration (e) in Figure 2):
+of the sample. One way to define T is by searching over
+the ranges of T on a validation set and pick the one with                          1) Each end device first sends summary information to
+the best accuracy. We use a normalized entropy threshold                              local aggregator.
+as the confidence criteria (instead of unnormalized entropy                        2) The local aggregator determines if the combined sum-
+as used in [3]) that determines whether to classify (exit) a                          mary information is sufficient for accurate classifica-
+sample at a particular exit point. The normalized entropy is                          tion.
+defined as                                                                         3) If so, the sample is classified (exited).
+                                                                                   4) If not, each device sends more detailed information
+                                   |C|
+                                   X   xi log xi                                      to the edge in order to perform further processing for
+                        η(x) = −                     ,                                classification.
+                                   i=1
+                                          log |C|
+                                                                                   5) If the edge believes it can correctly classify the sample
+where C is the set of all possible labels and x is a probability                      it does so and no information is sent to the cloud.
+vector. This normalized entropy η has values between 0                             6) Otherwise, the edge forwards intermediate computa-
+and 1 which allows easier interpretation and searching of                             tion to the cloud which makes the final classification.
+E. Communication Cost of DDNN Inference                               • DDNNs seamlessly extend the capability of end devices
+   The total communication cost for an end device with the              by offloading difficult samples to the cloud.
+                                                                      • DDNNs have built-in fault tolerance. We illustrate that
+local and cloud aggregator is calculated as
+                                                                        missing any single end device does not dramatically
+                                         f ×o                           affect the accuracy of the system. Additionally, we
+                 c = 4 × |C| + (1 − l)                       (1)
+                                           8                            show how performance gradually degrades as more end
+where l is the percentage of samples exited locally, C is the           devices are lost.
+set of all possible labels (3 in our experiments), f is the           • DDNNs reduce communication costs for end devices
+
+number of filters, and o is the output size of a single filter          compared to traditional system that offloads all input
+for the final NN layer on the end-device. The constant 4                sensor data to the cloud.
+corresponds to 4 bytes which are used to represent a floating-         We first introduce the DDNN architecture and dataset used
+point number and the constant 8 corresponds to bits used            in our evaluation.
+to express a byte output. The first term assumes a single
+floating-point per class, which conveys the probability that
+the sample to be transmitted from the end device to the local       A. DDNN Evaluation Architecture
+aggregator belongs to this class. This step happens regardless
+of whether the sample is exited locally or at a later exit point.      To accommodate the small memory size of the end
+The second term is the communication between end device             devices, we use Binary Neural Network [4] blocks3 . We
+and cloud which happens (1 − l) fraction of the time, when          make use of two types of blocks in [5]: the fused binary
+the sample is exited in the cloud rather than locally.              fully connected (FC) block and fused binary convolution-
+                                                                    pool (ConvP) block as shown in Figure 3. FC blocks each
+F. Accuracy Measures                                                consist of a fully connected layer with m nodes for some
+                                                                    m, batch normalization and binary activation. ConvP blocks
+   Throughout the evaluation in Section IV, we use different
+                                                                    each consist of a convolutional layer with f filters for
+accuracy measures for the various exit points in a DDNN as
+                                                                    some f , a pooling layer and batch normalization and binary
+follows:
+                                                                    activation. A convolution layer has a kernel of size 3x3 with
+   • Local Accuracy is the accuracy when exiting 100% of
+                                                                    stride 1 and padding 1. A pooling layer has a kernel of size
+     samples at the local exit of a DDNN.                           3x3 with stride 2 and padding 1.
+   • Edge Accuracy is the accuracy when exiting 100% of
+                                                                       For our experiments, we use version (c) from Figure 2,
+     samples at the edge exit of a DDNN.
+                                                                    with six end devices. The system presented can be general-
+   • Cloud Accuracy is the accuracy when exiting 100% of
+                                                                    ized to a more elaborated structure which includes an edge
+     samples at the cloud exit of a DDNN.
+                                                                    layer, as shown in (d), (e) or (f) of Figure 2. Figure 4 depicts
+   • Overall Accuracy is the accuracy when exiting some
+                                                                    a detailed view of the DDNN system used in our experi-
+     percentage of samples at each exit point in the hier-
+                                                                    ments. In this system, we have six end devices shown in red,
+     archy. The samples classified at each exit point are
+                                                                    a local aggregator, and a cloud aggregator. During training,
+     determined by the entropy threshold T for that exit.
+                                                                    output from each device is aggregated together at each exit
+     The impact of T on classification accuracy and com-
+                                                                    point using one of the aggregation schemes described in
+     munication cost is discussed in Section IV-D.
+                                                                    Section III-B. We provide detailed analysis on the impact
+   • Individual Accuracy is the accuracy of an end device
+                                                                    of aggregation schemes at both the local and cloud exit
+     NN model trained separately from DDNN. The NN
+                                                                    points in Section IV-C. All DDNNs in our experiments are
+     model for each end device consists of a ConvP block
+                                                                    trained with Adam [17] using the following hyper-parameter
+     followed by a FC block (a single end device portion
+                                                                    settings: α of 0.001, β1 of 0.9, β2 of 0.999, and  of 1e-8. We
+     as shown in Figure 4). In the evaluation, individual
+                                                                    train each DDNN for 100 epochs. When training the DDNN,
+     accuracy for each device is computed by classifying all
+                                                                    we use equal weights for the local and cloud exit points. We
+     samples using the individual NN model and not relying
+                                                                    explored heavily weighting both the local exit and the cloud
+     on the local or cloud exit points of a DDNN.
+                                                                    exit, but neither weighting scheme significantly changed the
+             IV. DDNN S YSTEM E VALUATION                           accuracy of the system. This indicates that this solution to
+                                                                    the dataset and the problem we are exploring is not sensitive
+   In this section, we evaluate DDNN on a scenario with             to the weights, but this may not be true for other datasets
+multiple end devices and demonstrate the following charac-          and problems4 .
+teristics of the approach:
+   • DDNNs allow multiple end devices to work collabo-                3 A block consists of one or more conventional NN layers
+      ratively in order to improve accuracy at both the local         4 In GoogleNet [9], a less than 1% difference in accuracy was observed
+      and cloud exit points.                                        based on the values of the weight parameters
+                                                   Fused Binary                           Device 1   Device 2   Device 3    Device 4    Device 5    Device 6
+                                                   Convolution-Pool Block
+                                                   (ConvP)
+
+                       Fused Binary                                              Person
+                       Fully-Connected             f x 16 x 16 bits
+                       Block (FC)
+                                         Binary Activation
+                      n bits
+             Binary Activation           Batch Normalization                     Bus
+
+             Batch Normalization             3x3 pool, /2
+
+
+             fully-connected, n nodes     3x3 conv, f filters                    Car
+
+
+                   input                       input
+               (3 x 32 x 32)               (3 x 32 x 32)
+                                                                                 Figure 5. Example images of three objects (person, bus, car) from the
+Figure 3. Fused binary blocks consisting of one or more standard NN              multi-view multi-camera dataset. The six devices (each with their own
+layers. The fused binary fully connected (FC) block is a fully connected         camera) capture the same object from different orientations. An all grey
+layer with n nodes, batch normalization and binary activation. The fused         image denotes that the object is not present in the frame.
+binary convolution-pool (ConvP) block consists of a convolutional layer
+with f filters, a pooling layer, batch normalization and binary activation.
+The convolution layer has a kernel of size 3x3 with stride 1 and padding
+1. The pooling layer has a kernel of size 3x3 with stride 2 and padding 1.       preparing the dataset, for each bounding box, we extract an
+These blocks are used as they are presented in [5].                              image, and manually synchronize5 the same object across
+                                                                                 the multiple devices that the object appears in for the given
+                                                                                 frame. Examples of the extracted images are shown in
+                                                                                 Figure 5. Each row corresponds to a single sample used for
+                                                                                 classification. We resize each extracted sample to a 32x32
+                                                                                 RGB pixel image. For each device that a given object does
+                                                                                 not appear in, we use a blank image and assign a label of -1,
+                                                                                 meaning that the object is not present in the frame. Labels
+                                                                                 0, 1, and 2 correspond to car, bus and person, respectively.
+                                                                                 Objects that are not present in a frame (i.e., label of -
+                                                                                 1) are not used during training. We split the dataset into
+                                                                                 680 training samples and 171 testing samples. Figure 6
+                                                                                 shows the distribution of samples at each device. Due to
+                                                                                 the imbalanced number of class samples in the dataset,
+Figure 4. The DDNN architecture used in the system evaluation. The               the individual accuracy of each end device differs widely,
+FC and ConvP blocks in red and blue correspond to layers run on end
+devices and the cloud respectively. The dashed orange boxes represent the        as shown by the “Individual” curve of Figure 8. A full
+end devices and show which blocks of the DDNN are mapped onto each               description of the training process for the individual NN
+device. The local aggregator shown in red combines the exit output (a short      models is provided in Section IV-E. The processed dataset
+vector with length equal to the number of classes) from each end device in
+order to determine if local classification for the given input sample can be     used in this paper is available at [20].
+performed accurately. If the local exit is not confident (i.e. η(x) > T ), the
+activation output after the last convolutional layer from each end device is     C. Impact of Aggregation Schemes
+sent to the cloud aggregator (shown in blue), which aggregates the input
+from each device, performs further NN layer processing, and outputs a final         In order to perform classification on the input from mul-
+classification result. The aggregation of input for multiple end devices is      tiple end devices, we must aggregate the information from
+discussed in Section IV-C.
+                                                                                 each end device. We consider three aggregation methods
+                                                                                 (max pooling, average pooling, and concatenation) outlined
+B. Multi-view Multi-camera Dataset                                               in Section III-B, at both the local and cloud exit points.
+                                                                                 The accuracy of different aggregation schemes are shown in
+   We evaluate the proposed DDNN framework on a multi-
+                                                                                 Table I. The first two letters identify the local aggregation
+view multi-camera dataset [18]. This dataset consists of
+                                                                                 scheme and the last two letters identify the scheme used
+images acquired at the same time from six cameras placed
+                                                                                 by the cloud aggregator. For example, MP-CC means the
+at different locations facing the same general area. For the
+                                                                                 local aggregator uses max-pooling and the cloud uses con-
+purpose of our evaluation, we assume that each camera is
+                                                                                 catenation. Recall that each input to the local aggregator
+attached to an end device, which can transmit the captured
+                                                                                 is a floating-point vector of length equal to the number of
+images over a bandwidth-constraint wireless network to a
+                                                                                 classes (corresponding to the output from the final FC block
+physical endpoint connected to the cloud.
+                                                                                 for a single device as shown in Figure 4) and the device
+   The dataset provides object bounding box annotations.
+Multiple bounding boxes may exist in a single image, each                          5 In practical object tracking systems, this synchronization step is typi-
+of which corresponds to a different object in the frame. In                      cally automated [19].
+                    700                                                     racy of the local classifier. In the training phrase, during
+                                                                            backpropagation the MP-MP scheme only passes gradients
+                    600                                                     through a device that gives the highest response while MP-
+                                                                            CC scheme passes gradients through all devices. Therefore,
+                    500
+Number of samples
+
+
+
+                                                                            using CC aggregator in the cloud allows all devices to learn
+                                                                            better filters (filter weights) that give a stronger response for
+                    400                                                     the local MP aggregator, resulting in a better classification
+                                                                            accuracy.
+                    300                                                        The CC-CC scheme shows an opposite trend where the
+                                                                            local accuracy is poor while the cloud accuracy is high.
+                    200          Person                                     Concatenating the local information (instead of a pooling
+                                 Bus
+                    100          Car
+                                                                            scheme), does not enforce any relationship between out-
+                                                                            put for the same class on multiple devices and therefore
+                                 Not-present
+                     0       1         2        3      4       5        6
+                                                                            performs worse. Concatenating the output for the cloud
+                                                                            aggregator maintains the most information for NN layer
+                                               End Device                   processing in the cloud and therefore performs well.
+                                                                               Generally, for the local aggregator, average pooling per-
+Figure 6. The distribution of class samples for each end device in the      forms worse than max pooling. This is because some of
+multi-view multi-camera dataset.                                            the end devices do not have the object present in the given
+                                Table I                                     frame. Average pooling take average of all outputs from
+  ACCURACY OF AGGREGATION SCHEMES . T HE FIRST TWO LETTERS                  end devices; this compromises the strong outputs from end
+  IDENTIFY THE LOCAL AGGREGATION SCHEME , AND THE LAST TWO
+                                                                            devices in which the object is present. Based on these
+LETTERS IDENTIFY THE CLOUD AGGREGATION SCHEME . F OR EXAMPLE ,
+  MP-CC MEANS THE LOCAL AGGREGATOR USES MAX - POOLING AND                   results, we use the MP-CC aggregation scheme throughout
+ THE CLOUD AGGREGATOR USES CONCATENATION . T HE ACCURACY OF                 the paper.
+EACH EXIT POINT ( EITHER LOCAL OR CLOUD ) IS COMPUTED USING THE
+ENTIRE TEST SET. I N PRACTICE , WE WILL EXIT A PORTION OF SAMPLES           D. Entropy Threshold
+   LOCALLY BASED ON THE ENTROPY THRESHOLD T AND SEND THE
+REMAINING SAMPLES IN THE CLOUD . D UE TO ITS HIGH PERFORMANCE ,                The entropy threshold for an exit point, T , corresponds
+  MP-CC IS USED IN THE REMAINING EXPERIMENTS OF THIS PAPER .                to the level of confidence that is required in order to exit a
+                          Schemes     Local Acc. (%)   Cloud Acc. (%)       sample. A threshold value of 0 would mean that no samples
+                          MP-MP       95               91                   will exit and a value of 1 would mean that all samples exit at
+                          MP-CC       98               98                   that point. Figure 7 shows the relationship between T at the
+                          AP-AP       86               98
+                          AP-CC       75               96
+                                                                            local aggregator and the overall accuracy of the DDNN. We
+                          CC-CC       85               94                   observe that as more samples are exited at the local exit, the
+                          AP-MP       88               93                   overall accuracy decreases. This is expected, as the accuracy
+                          MP-AP       89               97
+                          CC-MP       77               87
+                                                                            of the local exit is typically lower than that of the cloud exit.
+                          CC-AP       80               94                      We need to set the threshold appropriately to achieve a
+                                                                            balance between the communication cost, as defined in Sec-
+                                                                            tion III-E, latency and accuracy of the system. In this case,
+output sent to the cloud aggregator is the output from the                  we see that setting the threshold to 0.8 results in the best
+final ConvP block.                                                          overall accuracy with significantly reduced communication,
+   The MP-MP scheme has good classification accuracy for                    i.e., 97% accuracy while exiting 60.82% of samples locally
+the local aggregator but poor performance in the cloud. The                 as shown in Table II where in addition to local exit (%) and
+elements in the vectors at the local aggregator correspond to               overall accuracy (%), communication cost in bytes is given.
+the same features (e.g., the first item is the likelihood that              We set T = 0.8 for the remaining experiments in the system
+the input corresponds to that class). Therefore, max pooling                evaluation, unless noted otherwise.
+corresponds to taking the max response for each class over                     The local classifier may do better than cloud for certain
+all end devices, and shows good performance. On the other                   samples where low-level features are more robust in classi-
+hand, since the information sent from the end devices to                    fication than higher-level features. By setting an appropriate
+the cloud is the activation output from the filters at each                 threshold T , we can improve overall accuracy. In this
+device, which corresponds to different visual features in the               experiment, T = 0.8 corresponds to that sweet spot where
+input from the viewpoint of each individual end device, max                 some samples which are incorrectly classified by the cloud
+pooling these features does not perform well.                               classifier can actually be correctly classified by the local
+   Comparing MP-MP and MP-CC schemes, though both                           classifier. Such a threshold indicates the optimal point where
+use MP for local aggregators, MP-CC increases the accu-                     both local and cloud classifier work best together.
+                                 Impact of Exit Threshold                                                                      100               Scaling End Devices
+                       100       Overall Acc. (%)                              100                                                       Overall
+                                 Local Exit (%)                                                                                          Cloud
+                                                                                                                               90        Local
+                       95                                                      80
+
+
+
+
+                                                                                                     Classification Accuracy
+                                                                                                                                         Individual
+Overall Accuracy (%)
+
+
+
+                                                                                                                               80
+
+
+
+
+                                                                                    Local Exit (%)
+                       90                                                      60                                              70
+                       85                                                      40                                              60
+                                                                                                                               50
+                       80                                                      20
+                                                                                                                               40
+                       75                                                      0                                               30
+                        0.0       0.2      0.4 0.6 0.8                   1.0                                                         1           2    3       4      5   6
+                                          Exit Threshold T                                                                                       Number of End Devices
+
+Figure 7. Overall accuracy of the system as the entropy threshold for the                            Figure 8. Accuracy of the DDNN system as additional end devices are
+local exit is varied from 0 to 1. For this experiment, 4 filters are used in                         added. The accuracy of “Overall” is obtained by exiting a percentage of
+the ConvP blocks on the end devices.                                                                 the samples locally and the rest in the cloud. The accuracy of “Cloud” and
+                                                                                                     “Local” are computed by exiting all samples at each point, respectively.
+                                                                                                     The end devices are ordered by their “Individual” classification accuracy,
+                                    Table II                                                         sorted from worst to best.
+          E FFECTS OF DIFFERENT EXIT THRESHOLD (T ) SETTINGS FOR THE
+          LOCAL EXIT. T = 0.8 IS USED IN THE REMAINING EXPERIMENTS .
+
+                       T      Local Exit (%)        Overall Acc. (%)   Comm. (B)                     the local exit point at all numbers of end devices. The gap
+                       0.1    0.00                  96                 140                           is widest when there are fewer devices. This suggests that
+                       0.3    0.58                  96                 139                           the additional NN layers in the cloud significantly improve
+                       0.5    1.75                  96                 138
+                       0.6    2.92                  96                 136                           the final classification result when the problem is more
+                       0.7    22.81                 96                 111                           difficult due to limited labeled training data for an end
+                       0.8    60.82                 97                 62                            device. Once all six end devices are added, both the local
+                       0.9    83.04                 96                 34
+                       1.0    100.00                92                 12                            and cloud aggregators have high accuracy. The “Overall”
+                                                                                                     curve represents the overall accuracy of the system when the
+                                                                                                     threshold for the local exit point is set to 0.8. We see that
+E. Impact of Scaling Across End Devices                                                              this curve is roughly equivalent to exiting all samples at the
+   In order to scale DDNNs across multiple end devices,                                              cloud (but at a much reduced communication cost as 60.82%
+we distribute the lower sections of Figure 4, shown in red,                                          of samples are exited locally). Generally, these results show
+over the corresponding devices, outlined in orange. Figure 8                                         that by combining multiple viewpoints we can increase the
+shows how the accuracy of the system improves as additional                                          classification accuracy at both the local and cloud level by a
+end devices (each with its attached input cameras) are added.                                        substantial margin when compared to the individual accuracy
+The devices are added in order sorted by their individual                                            of any device. The resulting accuracy of the DDNN system
+accuracy from worst to best (i.e., the device with the lowest                                        is superior to any individual device accuracy by over 20%.
+accuracy first and the device with the highest accuracy last).                                       Moreover, we note that the 60.82% of samples which exit
+   The first observation is the large variation in the individual                                    locally enjoy lowered latency in response time.
+accuracy of the end devices, as noted earlier. Due to the
+                                                                                                     F. Impact of Cloud Offloading on Accuracy Improvements
+nature of the dataset, some devices are naturally better posi-
+tioned and generally have clearer observations of the objects.                                          DDNNs improve the overall accuracy of the system by
+Looking at the viewpoints of each camera in Figure 5, we see                                         offloading difficult samples to the cloud, which perform
+that the selected examples for Device 6 have clear frontal                                           further NN layer processing and final classification. Figure 9
+views of each object. This viewpoint gives Device 6 the                                              shows the accuracy and communication costs of DDNN as
+highest individual accuracy at over 70%. By comparison,                                              the number of filters on the end devices increases. For all
+Device 2 has the lowest individual accuracy at under 40%.                                            settings, the NN layers stored on an end device require
+   The “Local” and “Cloud” curves show the accuracy of                                               under 2 KB of memory. In this experiment, we configure
+the system at each exit point when all samples are exited at                                         the local exit threshold T such that around 75% of samples
+that point. We observe that the cloud exit point outperforms                                         are exited locally and around 25% of samples are offloaded
+                          100
+                                Overall Acc.                                                       100           DDNN Fault Tolerance
+                           98   Cloud Acc.
+                                Local Acc.                                                         90
+                           96
+Classification Accuracy
+
+
+
+
+                                                                         Classification Accuracy
+                                                                                                   80
+                           94
+                                                                                                   70
+                           92
+                           90                                                                      60
+                           88                                                                      50
+                                                                                                                                           Overall
+                                                                                                   40                                      Cloud
+                           86                                                                                                              Local
+                                                                                                                                           Individual
+                           84   15                20        25     30                              30      1      2     3       4      5        6
+                                               Communication (B)                                                      Device Failure
+
+Figure 9. Accuracy and communication cost (in bytes) for increasingly    Figure 10. The impact on DDNN system accuracy when any single end
+larger end device memory sizes that accommodate additional filters. We   device has failed.
+notice that cloud offloading leads to improved accuracy.
+
+
+                                                                         per image sample. By comparison, as shown in Table II,
+to the cloud. We see that DDNNs achieve around a 5%                      the largest DDNN model used in our evaluation section
+improvement in accuracy compared to using just the local                 requires only 140 bytes of communication per sample on
+aggregator. This demonstrates the advantage for offloading               average (an over 20x reduction in communication costs).
+to the cloud even when larger models (more filters) with                 This communication reduction for an end device results from
+improved local accuracy are used on the end devices.                     transmitting class-label related intermediate results to the
+G. Fault Tolerance of DDNNs                                              local aggregator for all samples and binarized communica-
+                                                                         tion with the cloud when additional NN layer processing is
+   A key motivation for distributed systems is fault tolerance.          required for classification with improved accuracy.
+Fault tolerance implies that the system still works well
+even when some parts are broken. In order to test the fault                                                    V. DDNN P ROVISION FOR
+tolerance of DDNN, we simulate end device failures and                                                   H ORIZONTAL AND V ERTICAL S CALING
+look at the resulting accuracy of the system. Figure 10 shows
+the accuracy of the system under the presence of individual                 The evaluation in the previous section shows that DDNN
+device failures. Regardless of the device that is missing,               is able to achieve high overall accuracy through provisioning
+the system still achieves over a 95% overall classification              the network to scale both horizontally, across end devices,
+accuracy. Specifically, even when the device with the highest            and vertically, over the network hierarchy. Specifically, we
+individual accuracy has failed, which is Device 6, the overall           show that DDNN scales vertically, by exiting easier input
+accuracy is reduced by only 3%. This suggests that for this              samples locally for low-latency response and offloading
+dataset, the automatic fault tolerance provided by DDNN                  difficult samples to the cloud for high overall recognition
+makes the system reliable even in the presence of device                 accuracy, while maintaining a small memory footprint on the
+failure.                                                                 end devices and incurring a low communication cost. This
+   We can also view figure 8 from the perspective of pro-                result is not obvious, as we need sufficiently good feature
+viding fault tolerance for the system. As we decrease the                representations from the lower parts of the DNN (running on
+number of end devices from 6 to 4, we observe that the                   the end devices with limited resources) in order for the upper
+overall accuracy of the system drops only 4%. This suggests              parts of the neural network (running in the cloud) to achieve
+that the system can also be robust to mutliple failing end               high accuracy under the low communication cost constraint.
+devices.                                                                 Therefore, we show in a positive way that the proposed
+                                                                         method of jointly training a single DNN with multiple exit
+H. Reducing Communication Costs                                          points at each part of the distributed hierarchy allows us to
+   DDNNs significantly reduces the communication cost of                 meet this goal. That is, DDNN optimizes the lower parts of
+inference compared to the standard method of offloading raw              the DNN to create a sufficiently good feature representations
+sensor input to the cloud. Sending a 32x32 RGB pixel image               to support both samples exited locally and those processed
+(the input size of our dataset) to the cloud costs 3072 bytes            further in the cloud.
+   To meet the goal of horizontal scaling, we provide a                               ACKNOWLEDGMENT
+principled way of jointly training a DNN with inputs from          This work is supported in part by gifts from the Intel Cor-
+multiple devices through feature pooling via local and cloud     poration and in part by the Naval Supply Systems Command
+aggregators and demonstrate that by aggregating features         award under the Naval Postgraduate School Agreements No.
+from each device we can dramatically improve the accuracy        N00244-15-0050 and No. N00244-16-1-0018.
+of the system both at the local and cloud level. Filters
+on each device are automatically tuned to process the                                     R EFERENCES
+geographically unique inputs and work together toward to          [1] W. Shi, J. Cao, Q. Zhang, Y. Li, and L. Xu, “Edge computing:
+the same overall objective leading to high overall accuracy.          Vision and challenges,” IEEE Internet of Things Journal,
+Additionally, we show that DDNN provides built-in fault               vol. 3, no. 5, pp. 637–646, 2016.
+tolerance across the end devices and is still able to achieve     [2] K. Skala, D. Davidovic, E. Afgan, I. Sovic, and Z. Sojat,
+high accuracy in the presence of failed devices.                      “Scalable distributed computing hierarchy: Cloud, fog and
+                                                                      dew computing,” Open Journal of Cloud Computing (OJCC),
+                                                                      vol. 2, no. 1, pp. 16–24, 2015.
+                     VI. C ONCLUSION
+                                                                  [3] S. Teerapittayanon, B. McDanel, and H. Kung, “Branchynet:
+   In this paper, we propose a novel distributed deep neu-            Fast inference via early exiting from deep neural networks,”
+                                                                      in International Conference on Pattern Recognition, 2016.
+ral network architecture (DDNN) that is distributed across
+computing hierarchies, consisting of the cloud, the edge          [4] M. Courbariaux, Y. Bengio, and J.-P. David, “Binaryconnect:
+and end devices. We demonstrate for a multi-view, multi-              Training deep neural networks with binary weights during
+camera dataset that DDNN scales vertically from a few                 propagations,” in Advances in Neural Information Processing
+                                                                      Systems, 2015, pp. 3123–3131.
+NN layers on end devices or the edge to many NN layers
+in the cloud and scales horizontally across multiple end          [5] B. McDanel, S. Teerapittayanon, and H. Kung, “Embedded
+devices. The aggregation of information communicated from             binarized neural networks,” in International Conference on
+different devices is built into the joint training of DDNN and        Embedded Wireless Systems and Networks, 2017.
+is handled automatically at inference time. This approach
+                                                                  [6] Y. LeCun, L. Bottou, Y. Bengio, and P. Haffner, “Gradient-
+simplifies the implementation and deployment of distributed           based learning applied to document recognition,” Proceedings
+cloud offloading and automates sensor fusion and system               of the IEEE, vol. 86, no. 11, pp. 2278–2324, 1998.
+fault tolerance.
+                                                                  [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet
+   The experimental results suggest that with our DDNN
+                                                                      classification with deep convolutional neural networks,” in
+framework, a single DNN properly trained can be mapped                Advances in neural information processing systems, 2012, pp.
+onto a distributed computing hierarchy to meet the accu-              1097–1105.
+racy, communication and latency requirements of a target
+application while gaining inherent benefits associated with       [8] K. Simonyan and A. Zisserman, “Very deep convolutional
+                                                                      networks for large-scale image recognition,” arXiv preprint
+distributed computing such as fault tolerance and privacy.            arXiv:1409.1556, 2014.
+   DDNNs reduce the required communication compared
+to a standard cloud offloading approach by exiting many           [9] C. Szegedy, W. Liu, Y. Jia, P. Sermanet, S. Reed, D. Anguelov,
+samples at the local aggregator and sending a compact                 D. Erhan, V. Vanhoucke, and A. Rabinovich, “Going deeper
+                                                                      with convolutions,” in Proceedings of the IEEE Conference
+binary feature representation to the cloud when additional            on Computer Vision and Pattern Recognition, 2015, pp. 1–9.
+processing is required. For our evaluation dataset, the com-
+munication cost of DDNN is reduced by a factor of over           [10] K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning
+20x compared to offloading raw sensor input to a DNN in               for image recognition,” arXiv preprint arXiv:1512.03385,
+the cloud which performs all of the inference computation.            2015.
+   DDNN provides a framework for further research in             [11] S. Yi, Z. Hao, Z. Qin, and Q. Li, “Fog computing: Platform
+mapping DNN into a distributed computing hierarchy. For               and applications,” in Hot Topics in Web Systems and Tech-
+future work, we will investigate the performance of DDNNs             nologies (HotWeb), 2015 Third IEEE Workshop on. IEEE,
+                                                                      2015, pp. 73–78.
+on applications with a larger dataset with multiple types
+of input modalities [21] and more end devices. Currently,        [12] M. Rastegari, V. Ordonez, J. Redmon, and A. Farhadi, “Xnor-
+all layers in DDNN are binary. While binary layers are a              net: Imagenet classification using binary convolutional neural
+requirement for end devices due to the limited space on               networks,” arXiv preprint arXiv:1603.05279, 2016.
+devices, it is not necessary in the cloud. We will explore
+                                                                 [13] M. Figurnov, M. D. Collins, Y. Zhu, L. Zhang, J. Huang,
+other types of aggregation schemes and mixed precisions               D. Vetrov, and R. Salakhutdinov, “Spatially adaptive
+schemes where the end devices use binary NN layers and                computation time for residual networks,” arXiv preprint
+the cloud uses mixed-precision or floating-point NN layers.           arXiv:1612.02297, 2016.
+[14] J. Dean, G. Corrado, R. Monga, K. Chen, M. Devin, M. Mao,
+     A. Senior, P. Tucker, K. Yang, Q. V. Le et al., “Large scale
+     distributed deep networks,” in Advances in neural information
+     processing systems, 2012, pp. 1223–1231.
+
+[15] F. N. Iandola, K. Ashraf, M. W. Moskewicz, and
+     K. Keutzer, “Firecaffe: near-linear acceleration of deep neu-
+     ral network training on compute clusters,” arXiv preprint
+     arXiv:1511.00175, 2015.
+
+[16] J. Dean, “Large scale deep learning,” in Keynote GPU Tech-
+     nical Conference, vol. 3, 2015, p. 2015.
+
+[17] D. Kingma and J. Ba, “Adam: A method for stochastic
+     optimization,” arXiv preprint arXiv:1412.6980, 2014.
+
+[18] G. Roig, X. Boix, H. B. Shitrit, and P. Fua, “Conditional
+     random fields for multi-camera object detection,” in 2011
+     International Conference on Computer Vision. IEEE, 2011,
+     pp. 563–570.
+
+[19] X. Li, W. Hu, C. Shen, Z. Zhang, A. Dick, and A. V. D.
+     Hengel, “A survey of appearance models in visual object
+     tracking,” ACM transactions on Intelligent Systems and Tech-
+     nology (TIST), vol. 4, no. 4, p. 58, 2013.
+
+[20] B. McDanel, “Multiview multicamera dataset,” https:
+     //www.dropbox.com/s/uk8c6iymy8nprc0/MVMC.npz, 2016,
+     accessed: 2016-12-10.
+
+[21] M. Cha, Y. Gwon, and H. Kung, “Multimodal sparse
+     representation learning and applications,” arXiv preprint
+     arXiv:1511.06238, 2015.
+

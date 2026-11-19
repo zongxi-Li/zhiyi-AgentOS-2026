@@ -1,0 +1,1234 @@
+                                                                                       Preprint
+                                                                                   November 2, 2026
+
+
+
+
+                                         QueenBee: A Recursively Self-Improving Harness for
+                                           Communication Topology Design in LLM-Based
+                                                       Multi-Agent Systems
+                                                               Congjia Tian1        Yuhang Yao2         Jiaming Cui1
+                                                                         1
+                                                                           Virginia Tech, Blacksburg, VA
+                                                               2
+                                                                   Carnegie Mellon University, Pittsburgh, PA
+arXiv:2606.27492v2 [cs.MA] 30 Oct 2026
+
+
+
+
+                                                          {robintian777, jiamingcui}@vt.edu, yuhangyao8@gmail.com
+                                                              §     https://github.com/RobinTian-7/QueenBeePlanner
+
+
+
+                                             LLM-based multi-agent systems show great potential for complex tasks through role special-
+                                             ization and collaborative reasoning. However, existing automated workflow design methods
+                                             primarily focus on one-off search and candidate optimization, lacking sustained accumulation
+                                             and reuse of structural design experience to meet evolving coordination demands. We propose
+                                             QueenBee, an experience-guided framework for multi-agent workflow evolution. QueenBee
+                                             represents workflows as executable programs that generate temporal communication DAGs
+                                             and maintains Structural Feedback and Transition Bank (SFT-Bank), a persistent structural
+                                             memory of execution diagnoses, design hypotheses and validation outcomes, and historical
+                                             programs. This accumulated experience guides subsequent workflow generation, validation,
+                                             and optimization, enabling the co-evolution of collaboration programs and design experience.
+                                             Experiments on Silo-Bench show that QueenBee outperforms fixed communication base-
+                                             lines across team sizes and achieves the highest mean task score among recent automated
+                                             multi-agent workflow optimization methods. Ablation studies further show that SFT-Bank
+                                             components provide complementary performance gains, while evolution dynamics reveal a
+                                             consistently improving average trend in the quality of the best collaboration structures found
+                                             across independent runs as structural experience accumulates.
+
+
+
+                                         1    Introduction
+                                         LLM-based agents have shown strong abilities in reasoning, planning, and coding [6, 31, 30]. Yet
+                                         real-world tasks often involve interdependent subtasks, heterogeneous tools, feedback from dynamic
+                                         environments, and long-term information management [22, 7, 29]. Single agents still struggle with
+                                         reliable long-term coordination and systematic verification [17, 16]. Multi-agent systems (MAS) offer
+                                         an effective approach to complex tasks through role specialization, collaboration, and information
+                                         exchange [7, 29, 13, 4, 27].
+                                         Despite their success in collaborative reasoning and complex tasks, MAS performance depends heav-
+                                         ily on workflow design. Existing frameworks often require experts to specify roles, communication
+                                         topologies, execution order, and work instructions [7, 29, 13]. However, fixed structures adapt poorly
+                                         to different tasks and team sizes, while poor communication may cause information loss, redundant
+                                         computation, and inconsistent conclusions [41]. Manual design is therefore costly and poorly suited
+                                         to changing collaboration needs.
+                                         Automated MAS optimization methods mainly fall into three categories. Topology optimization
+                                         methods, including GPTSwarm, G-Designer, MaAS, and MASS, optimize communication links and
+                                         system architectures [45, 36, 34, 44] but lack direct program-level modeling of information transfer
+                                         and integration across stages. Code and workflow search methods, including ADAS, AFlow, and
+                                         A2Flow, expand the design space through program generation, execution feedback, and workflow
+                                         search [8, 39, 43] but do not specifically accumulate structural modification experience from MAS
+
+
+                                                                                           1
+                                                                                                                                                                                  ×K
+      a
+                       Inputs                             b
+                                                                                                     Generate & validate                                                               c
+                                                                                                                                                                                                        Update SFT-Bank
+                      bank state Bt
+                                                                                     02                                      03                             04
+                                                                                                                                                                                                 Diagnosis Cards             Summarize execution failures.
+            system prompt
+                                                               01                         legality screening                      stage-1 test               stage-2 test
+                                                                                          Check code, structure,                  Verify improvement        Check generalization
+                                                              planner LLM                    and constraints.                      over the parent.           and regressions.
+           parent workflow source                Ppar                                                                                                                                      failure        worker         answer       message   resource
+                                                                                                                                                                                            type        correctness   disagreement      loss      cost
+                                                                                                                                                            task A
+
+          SFT-Bank                                                                                                                        vs                task B
+
+                                                                                                                                                            task C
+                                                                                                                                                                                                 Ledger Record design changes and outcomes.
+            Diagnosis Cards                          Dt
+                                                                                          repair   reject   redesign       old (parent)   new (candidate)
+                                                                                                                                                             robust improvement                                                            Confirmed
+            Identify where and why workflows fail.
+                                                                                                                                                                                                                                           Refuted
+
+            Ledger                                   Lt                                                                                                                                    hypothesis        actual       Δ quality        Inconclusive
+                                                                          challenger.py                                                                                                                      edits
+            Track which design changes work or fail.                                                          what the planner outputs                                                                                                     Screened
+                                                              PHASES = [
+                                                                    {"kind": "gather"},
+                                                                                                                       design hypothesis ht,k
+            Program Archive                          At
+                                                                    {"kind": "broadcast_last"},                                                                                                  Program Archive               Archive evaluated workflows.
+            Store reusable workflow programs.
+                                                                    {"kind": "adaptive_peer"},
+                                                                                                                       source code
+                                                              ]
+                                                               def phase_adaptive_peer(...):
+
+            goal for this round                  gt,k
+                                                                    ...                                                phase functions / prompt                                                                        Bt → Bt+1
+                                                          example: workflow genome / phase function
+
+
+
+                                                                                                      updated bank is used in round t+1
+
+
+
+
+Figure 1. Overview of QueenBee’s experience-guided workflow evolution. The Planner receives the parent
+workflow, exploration goal, and experience retrieved from SFT-Bank. It generates a design hypothesis and
+workflow code, followed by legality screening, parent-comparison testing, and cross-task validation. Execution
+feedback updates Diagnosis Cards, the Ledger, and the Program Archive, guiding subsequent evolution.
+
+
+
+collaboration failures. Evolutionary search methods, such as EvoMAS, improve MAS configura-
+tions through mutation, crossover, and experience memory [9] but have yet to organize temporal
+collaboration outcomes into unified, traceable design knowledge.
+Prior work on experiential learning and agent self-evolution shows that systems can improve through
+external memory, reusable skills, and program modifications without updating model parameters
+[24, 42, 26, 28, 38, 12, 14]. However, MAS optimization requires not only better configurations but
+also learning to design better coordination programs. We argue that past execution results should
+become knowledge that directly guides future structural design, allowing coordination programs and
+design experience to co-evolve.
+We therefore represent MAS workflows as executable programs that generate temporal communication
+DAGs, enabling joint optimization and inheritance of communication structures and work instructions.
+Based on this representation, we propose QueenBee, an experience-guided workflow evolution
+framework that uses persistent structural memory, Structural Feedback and Transition Bank (SFT-
+Bank), to accumulate execution traces, design hypotheses and their validation results, and historical
+programs, enabling workflows to benefit continuously from past experience.
+We evaluate QueenBee on Silo-Bench and other problems across team sizes, model configurations,
+and automated optimization methods, and examine its experience components through ablation
+studies. Results show that QueenBee improves collaboration quality across team sizes and achieves
+the highest overall task performance among the compared automated workflow optimization methods.
+Our main contributions are: (1) Executable Workflow Evolution Paradigm. We represent MAS
+workflows as programs generating temporal communication DAGs, enabling joint optimization
+of communication structures and work instructions. (2) QueenBee and SFT-Bank. We propose
+an experience-guided workflow evolution framework that continuously improves workflows by
+accumulating and reusing design experience through structured memory. (3) Systematic Experimental
+Evaluation. We demonstrate QueenBee’s effectiveness across team sizes and model configurations on
+Silo-Bench and assess component contributions through ablation studies.
+
+
+2         Related Work
+
+2.1       Multi-Agent Communication Topology
+Early LLM-based MAS relied on handcrafted collaboration: CAMEL uses role-playing [13],
+MetaGPT assigns specialized development roles [7], AutoGen enables programmable agent conver-
+sations [29], Multi-Agent Debate uses multi-round discussion [4], and Mixture-of-Agents employs
+layered aggregation [27].
+
+
+                                                                                                                         2
+Later methods automate topology design. GPTSwarm jointly optimizes prompts and connections [45],
+DyLAN dynamically selects agents [18], AgentPrune removes redundant edges [35], G-Designer
+generates task-conditioned topologies [36], MaAS searches architectures [34], and MASS jointly
+optimizes prompts and topologies [44]. However, these methods primarily optimize agent selection,
+connections, or architectures, without explicitly modeling cross-round information propagation
+and integration as executable coordination programs. Unlike these methods, QueenBee encodes
+communication timing, information processing, and work instructions as executable coordination
+programs.
+
+2.2   Automated Workflow Optimization
+ADAS generates code-based agents and archives designs [8], AFlow combines Monte Carlo Tree
+Search with code modification and execution feedback [39], AgentSquare searches modular agent
+configurations [23], and A2Flow introduces reusable abstractions [43]. EvoMAS evolves declarative
+MAS configurations through trace-guided mutation, crossover, candidate pools, and experience
+memory [9]. MAS-Architect separates topology planning from node implementation [10], while
+DAAO adapts workflow depth, operators, and model routing [25]. However, these approaches lack a
+unified mechanism for organizing structural modifications and their validation outcomes into reusable
+experience and memory.
+Unlike these methods, QueenBee evolves inheritable temporal coordination programs, linking failure
+diagnoses, structural modifications, and experimental validation into reusable design knowledge.
+
+2.3   Experience-Based Self-Improvement and Harness Evolution
+External memory and skills enable improvement without parameter updates. Reflexion stores verbal
+feedback [24], ExpeL extracts execution experience [42], Voyager builds executable skill libraries
+[26], and Agent Workflow Memory retrieves historical workflows [28]. Promptbreeder evolves
+prompts [5], STOP modifies optimization scaffolds [33], GEPA uses trajectory reflection [1], Agentic
+Context Engineering evolves contextual experience [40], and Meta Context Engineering co-evolves
+context skills and artifacts [32].
+Program and harness evolution extend this approach. Darwin Gödel Machine evolves agent code [38],
+AlphaEvolve combines code generation and evolutionary selection [19], Meta-Harness optimizes
+execution frameworks [12], and Self-Harness validates modifications through failure diagnosis and
+regression testing [37]. Agentic Harness Engineering emphasizes observability and reversibility [14],
+Continual Harness adapts execution components online [11], and DemoEvolve uses demonstrations
+under sparse feedback [2]. Harness Updating Is Not Harness Benefit distinguishes updating capability
+from actual gains [15]. However, these approaches primarily improve agent capabilities or general
+execution frameworks and QueenBee applies experience-driven improvement to MAS coordination
+through execution diagnoses, validated design hypotheses, and inheritable programs.
+
+
+3     Method
+
+3.1   Problem Formulation
+Multi-Agent Workflow. Consider n LLM-based Workers W = {W1 , . . . , Wn } jointly solving tasks
+sampled from D. Each Worker Wi observes only oi , its private task information, and exchanges
+information over discrete communication rounds indexed by τ . With fixed Worker parameters, an
+executable Python workflow P determines (ai,τ , Ri,τ , ωi,τ ) = P (i, τ, si,τ ), where ai,τ specifies
+whether to send, Ri,τ ⊆ W \ {Wi } specifies recipients, ωi,τ gives optional semantic instructions, and
+si,τ is the observable state, including the round, known information sources, and pending messages.
+The program also determines the termination round Tcomm , after which every Worker submits its
+own final answer.
+Temporal Communication DAG. Executing P on task x produces a time-unrolled DAG:
+                           GP,x = Unroll(P, x) = (V, Ecomm ∪ Estate ),
+
+
+                                                  3
+where V = {(i, τ ) | i ∈ [n], 0 ≤ τ ≤ Tcomm }. Each node (i, τ ) represents Worker Wi at
+round τ . Communication edges link a sender (i, τ ) to next-round recipients (j, τ + 1); state edges
+connect consecutive states of the same Worker. All edges advance one round, ensuring acyclicity.
+Topology controls information flow and timing, while semantic instructions control its processing
+and expression.
+Executable Representation and Objective. The executable program has two policy functions:
+fcomm selects communication actions, recipients, and semantic instructions from the round, Worker
+identity, and observable state; fstop determines termination. Its editable Genome contains communica-
+tion phases, routing policies, and semantic work instructions. The executor unrolls these policies from
+task inputs and runtime states, while Worker parameters, the underlying communication protocol,
+and execution environment remain fixed. We optimize executable programs through inheritance,
+modification, and combination. QueenBee repeatedly generates, executes, and evaluates candidates
+to accumulate reusable experience that improves subsequent search. The design model remains fixed;
+only its external experience changes. The formal design-capability objective is given in Appendix E.
+
+3.2    SFT-Bank as Structural Memory
+We introduce the Structural Feedback and Transition Bank (SFT-Bank) to provide persistent structural
+memory for workflow design. SFT-Bank preserves execution diagnoses, design hypotheses and their
+validation outcomes, and historical executable programs. Formally, at iteration t, the bank consists of
+three components, denoted as Bt = (Dt , Lt , At ).
+Diagnosis Cards Dt . Diagnosis Cards record task performance, Worker correctness distributions,
+answer disagreements, information loss, and stage-level resource use, organized by propagation,
+aggregation, and final-output failures.
+Ledger Lt . The Ledger records each design hypothesis and validation outcome, linking parent
+and candidate workflows, target tasks, intended improvements, and observed performance changes.
+Attempts are labeled Confirmed, Refuted, or Inconclusive based on empirical comparisons; screened
+proposals are also retained.
+Program Archive At . The Program Archive stores executable source code and metadata for strong
+overall programs, task-specific specialists, and successful or failed implementations.
+
+3.3    Experience-Guided Workflow Evolution
+Each iteration uses SFT-Bank to schedule exploration and retrieve historical experience. The fixed-
+parameter Planner generates candidates, which the harness evaluates and uses to update SFT-Bank.
+                                                                                                 par
+Goal Scheduling. For each of K proposals, the harness selects a goal gt,k and parent workflow Pt,k
+from Bt . Most proposals address unresolved training-task failures grouped by output format and
+dominant failure type. An Upper Confidence Bound (UCB) strategy prioritizes groups by remaining
+improvement potential, historical quality changes, and attempt counts. Repeatedly refuted directions
+receive lower priority, and each iteration favors distinct groups. The harness selects strong task-
+specific parents from the Program Archive At so candidates inherit different local strengths. Other
+slots periodically explore Merge, combining complementary workflows across tasks; Economize,
+reducing model calls and tokens while preserving quality; and Explore, seeking alternative designs
+for unresolved, underexplored tasks.
+Experience-Guided Proposal. For candidate k, the harness constructs a design context from the
+three SFT-Bank components:
+                                                                par
+                                   Ct,k = Retrieve(Bt , gt,k , Pt,k )
+                                           D      L      A
+                                       = (Ct,k , Ct,k , Ct,k ).
+
+Diagnosis Cards Dt provide the parent’s task-specific failure patterns; the Ledger Lt supplies recently
+supported hypotheses, repeatedly ineffective modifications, and their measured effects; and the
+Program Archive At supplies successful and failed implementations addressing similar failures, plus
+complementary designs for workflow combinations. Retrieved programs are presented as editable
+code examples. The Planner also receives the parent’s editable Python Genome, its training-task
+
+
+                                                    4
+quality and cost records, the exploration goal, and fixed interface constraints I. It produces a design
+hypothesis ht,k specifying the target problem, modification mechanism, and expected improvement,
+together with a new Python Genome γt,k :
+                                                                par
+                             (ht,k , γt,k ) = Plannerθ (gt,k , γt,k , Ct,k , I).
+
+The harness embeds the Genome into the fixed framework to form candidate Pt,k , which generates
+a temporal communication DAG from task inputs and runtime states. Planner and Worker weights
+remain fixed; only workflow programs change. Retrieval and scheduling details appear in Appendix
+E.
+
+3.4    Empirical Evaluation and Experience Consolidation
+Staged Empirical Evaluation. The harness first screens code and structural validity, rejecting
+duplicates, constraint violations, and historically ineffective modifications. In Stage 1, it executes
+each screened candidate on target training tasks and reruns its parent under identical conditions; only
+candidates meeting predefined quality requirements without output-format errors advance. In Stage 2,
+additional training tasks spanning diverse templates and output formats test cross-task effectiveness,
+while regressions on previously strong tasks are checked. New task-specific specialists may receive
+independent confirmation tests to reduce chance effects. Evaluation records task quality, execution
+cost, parent-relative changes, and task-level gains and regressions.
+Experience Consolidation. Updates derive from execution evidence and source-code differences,
+not Planner self-assessment. Diagnosis Cards Dt receive execution statistics grouped by failure
+type, excluding specific answers and ground-truth labels for safe reuse. By comparing parent and
+candidate source code, the harness identifies added or removed communication stages, changes
+to round scheduling, and revised work instructions. The Ledger Lt associates these changes with
+task-level performance and regressions, labeling hypotheses Confirmed, Refuted, or Inconclusive;
+unexecuted proposals are Screened. Confirmation requires a predefined improvement margin without
+excessive regressions, while substantial target-task degradation yields refutation. The Ledger also
+tracks repeatedly refuted modification directions. The Program Archive retains programs, parent-
+version relationships, training evaluations, and metadata, preserving task-specific strengths for later
+reuse. With feedback et,k for each candidate, the update is:
+                               Bt+1 = U Bt , {(ht,k , Pt,k , et,k )}K
+                                                                       
+                                                                    k=1 .
+
+Screened and inconclusive attempts may still leave records; SFT-Bank updates do not require a
+candidate to outperform existing workflows. The resulting memory guides both the Planner’s design
+context and future goal and parent selection. Validation criteria and consolidation rules are detailed
+in Appendix E.
+
+
+4     Experiment
+4.1    Experimental Setup
+We primarily evaluate QueenBee on Silo-Bench and further assess the reliability of information
+propagation and aggregation using the Count-Frequency distributed statistics task (Appendix).
+Benchmarks and Tasks. Silo-Bench distributes task information across Workers, requiring them to
+integrate private information through communication to solve tasks beyond any individual Worker’s
+capability. It comprises 30 task types, three difficulty levels, and varying computational requirements.
+We use 18 development task types and 12 independent test task types.
+Baselines. Fixed communication baselines include Silo-Bench’s round-robin peer-to-peer commu-
+nication (P2P), Broadcast, and staged forwarding (SFS), alongside the unevolved initial workflow
+P0 . Automated optimization baselines include GPTSwarm [45], G-Designer [36], MaAS [34], and
+EvoMAS [9]. We also assess the role of historical experience through memory-free search and
+SFT-Bank component ablations.
+Model and Implementation Settings. We use GPT-5.1 and GPT-5 mini [20], DeepSeek-V4.1-Flash
+[3], and gpt-oss-120b [21] models as Planners or Workers across team sizes and model combinations.
+
+
+                                                     5
+                                         gpt-oss-120b               DeepSeek-V4.1-Flash
+           Method                n=2       n=5          n = 10   n=2       n=5       n = 10
+           Fixed Protocols
+             P2P                29.2       27.5          10.0     69.0      71.3      59.6
+             Broadcast          47.9       40.8          23.8     79.2      72.9      70.8
+             SFS                12.5        5.0           4.6     75.6      72.4      72.8
+             Initial Workflow   41.7       17.5           5.4     66.7      64.1      57.2
+           Automated Workflow Optimization
+             Random Search      58.3       25.0          20.6     70.8      78.3      71.7
+             GPTSwarm           52.8       28.3          28.1     71.8      75.6      60.8
+             G-Designer         40.3       21.7          16.9     57.6      78.3      75.8
+             EvoMAS             77.8       42.8          46.9     79.2      73.5      66.7
+             MaAS               13.9       13.3          23.9     68.1      61.1      82.5
+           QueenBee (Ours)      79.2       54.4          51.7     80.6      83.3      83.7
+
+Table 1. QueenBee versus fixed communication protocols and automated workflow optimization methods with
+2, 5 and 10 Workers. Entries report the GPT-OSS-120b configuration (as both Planner and Workers) and the
+DeepSeek configuration (as both Planner and Workers), respectively; fixed protocols use the same Workers.
+Results under the GPT configuration (GPT-5.1 Planner, GPT-5 mini Workers) are reported in Table H1.
+
+
+
+Controlled comparisons vary only the target variable, and Worker model parameters remain fixed
+throughout evolution. Model versions, inference settings, and search budgets are specified in the
+corresponding experiments.
+Experimental Protocol. Development data support candidate generation, execution evaluation, and
+SFT-Bank updates. Independent validation data, when used, serve only for post-evolution workflow
+selection. Test data are excluded from search, experience updates, and selection, and are used only
+for independent evaluation. All comparisons use identical test tasks, with budgets and repetition
+counts specified in the corresponding sections.
+Evaluation Metrics. We measure partial completion score (PCS). PCS is the benchmark’s partial-
+credit score: each Worker’s answer receives a task-specific quality score in [0, 1], averaged over
+Workers and test executions. Execution and search costs are measured by per-task and total search
+token consumption, respectively.
+
+
+4.2    Main Result
+
+We evaluate QueenBee against fixed communication protocols and automated workflow optimization
+methods on Silo-Bench with 2, 5, and 10 Workers, with results reported in Table 1.
+QueenBee outperforms fixed communication protocols. We compare QueenBee with P2P, Broad-
+cast, SFS, and the initial workflow under gpt-oss-120b and DeepSeek-V4.1-Flash Planner / Worker
+configurations. With 5 Workers, QueenBee achieves 54.4% SR under gpt-oss and 83.3% PCS un-
+der DeepSeek, surpassing the best fixed protocol, Broadcast, by 13.6 and 10.4 percentage points,
+respectively. QueenBee achieves the highest task quality in both configurations, showing that jointly
+optimizing communication structures and information processing improves collaboration within fixed
+teams.
+QueenBee outperforms existing automated workflow optimization methods. We further compare
+QueenBee with Random Search, GPTSwarm, G-Designer, EvoMAS, and MaAS using gpt-oss-120b
+and DeepSeek-V4.1-Flash, identical task splits, and a budget of 80 effective task executions. With
+5 Workers, QueenBee achieves the highest scores under both models (54.4% SR under gpt-oss and
+83.3% PCS under DeepSeek), exceeding the strongest baselines, EvoMAS (42.8%) and Random
+Search and G-Designer (both 78.3%), by 11.6 and 5.0 percentage points, respectively.
+Overall, QueenBee outperforms fixed protocols across model configurations and achieves the highest
+overall task performance among automated optimization methods, demonstrating the effectiveness of
+experience-guided executable workflow evolution.
+
+
+
+                                                   6
+4.3     Sensitivity Analysis
+4.3.1   Sensitivity to Team Size
+Having established QueenBee’s advantages over existing baselines with 5 Workers, we examine
+whether its improvements persist across team sizes and model configurations.
+QueenBee improves task quality across team sizes. As Table 2 shows, we evaluate teams of
+2, 5, and 10 Workers under GPT-5.1 / GPT-5 mini and gpt-oss-120b configurations. Under GPT,
+QueenBee improves PCS from 58.3%, 51.4%, and 8.6% to 70.8%, 58.5%, and 58.5%, respectively;
+under gpt-oss, from 50.0%, 40.0%, and 34.3% to 64.3%, 60.0%, and 60.0%. Consistent gains across
+all settings demonstrate stable optimization across team sizes and models.
+
+                         Team size          GPT-5.1 / GPT-5 mini    gpt-oss-120b
+                        N=2                     58.3 → 70.8             50.0 → 64.3
+                        N=5                     51.4 → 58.5             40.0 → 60.0
+                        N=10                      8.6 → 58.5            34.3 → 60.0
+   Table 2. Test PCS (%) of the initial and final workflows (initial → final) across team sizes and models.
+
+
+Larger teams benefit more from structural optimization. Initial PCS declines markedly with team
+size under both model configurations, whereas QueenBee mitigates this degradation. For 10-Worker
+teams, PCS increases by 49.9 and 25.7 percentage points under GPT and gpt-oss, respectively, the
+largest gains within each configuration. These results indicate that experience-guided structural
+optimization yields greater quality improvements as team size increases, consistently across both
+models.
+
+4.3.2   Sensitivity to Model Configurations
+We examine QueenBee’s sensitivity to model configurations by independently evolving workflows
+with DeepSeek-V4.1-Flash-thinking-max and gpt-oss-120b Planners, each paired with Workers of the
+same model family. Both use 5 Workers and a budget of 80 effective task executions. The resulting
+workflows are frozen and evaluated with both Worker models on 12 held-out task types.
+QueenBee achieves consistent gains across model configurations. As Table 3 shows, all four
+Planner–Worker combinations outperform their initial workflows. Notably, workflows evolved with
+the gpt-oss Planner achieve 75.0% PCS with DeepSeek Workers and 61.2% with gpt-oss Workers,
+compared with initial scores of 66.1% and 19.9%. These results demonstrate that QueenBee remains
+effective across model configurations and that evolved workflows can transfer to different Worker
+models.
+
+                                  Planner        Worker        PCS (%)
+                                   DeepSeek     DeepSeek       66.1 → 83.1
+                                   DeepSeek     gpt-oss        19.9 → 66.1
+                                   gpt-oss      DeepSeek       66.1 → 75.0
+                                   gpt-oss      gpt-oss        19.9 → 61.2
+Table 3. Test PCS (%) of initial and evolved workflows (initial → final) across Planner–Worker configurations.
+Workflows are evolved with matched Planner–Worker model families and evaluated using either Worker model.
+
+
+Performance is sensitive to model configurations. With the test Worker fixed, switching from
+DeepSeek-evolved to gpt-oss-evolved workflows reduces PCS by 8.1 and 4.9 percentage points for
+DeepSeek and gpt-oss Workers, respectively. Switching the test Worker while keeping the evolved
+workflow fixed produces larger differences of 17.0 and 13.8 points. Thus, execution-model choice
+has a greater observed impact than the evolution configuration in this experiment.
+Planner capability affects design precision. The DeepSeek Planner replaces the initial relay chain
+with centralized gathering and broadcasting, explicitly preserving data sources, order, and raw content
+so Workers independently compute from a consistent information snapshot. By contrast, the gpt-oss
+Planner retains the relay structure, adding a digest phase and generic forwarding instructions without
+explicit data-preservation constraints. In one III-29 test run, incomplete information propagation
+
+
+                                                      7
+                                          2 agents    5 agents       10 agents
+
+
+                            0.92
+
+                            0.90
+
+                            0.88
+
+                            0.86
+
+
+                            0.80
+
+
+                            0.70
+
+
+                            0.60
+
+
+                                   0      2      4        6      8      10       Final
+
+                                                     Round
+
+
+Figure 2. Evolution dynamics of QueenBee with DeepSeek-V4.1-Flash as Planner and Workers. Held-out test
+PCS of the best workflow at each evolution round and of the final selected workflow, for teams of 2, 5, and 10
+Workers.
+
+
+
+caused all five Workers to submit distinct incorrect answers. This case illustrates the importance of
+translating historical diagnoses into precise executable instructions, beyond modifying communication
+topology alone. Program details and execution traces are provided in the appendix.
+
+
+4.4    Performance over Evolution
+To assess QueenBee’s ability to continually improve collaboration structures, we examine workflow
+performance across evolution rounds for teams of 2, 5, and 10 Workers. As Figure 2 shows, historical
+workflows are evaluated retrospectively on held-out tasks after evolution, with test data excluded
+from candidate generation, validation, experience updates, and selection. The trajectories thus reflect
+how discovered workflows perform on unseen tasks.
+Structural evolution yields sustained performance gains. As Figure 2 shows, mean PCS rises
+stepwise across all three team sizes. Smaller teams saturate early, whereas larger teams continue
+to improve in later rounds. Some rounds yield no improvement, while effective structures raise
+performance to new plateaus. Through candidate generation, staged validation, and historical program
+retention, QueenBee converts continued exploration into cumulative workflow improvements.
+Larger teams gain more from evolution. With more Workers, each Worker handles a smaller
+shard of the task and completes it more reliably, but the initial propagation structure integrates these
+distributed results poorly, so initial PCS declines as team size increases. As evolution proceeds, this
+propagation disadvantage is gradually worn away: the Planner learns from accumulated experience
+how structural changes affect performance and combines effective structures, so that trial and error
+becomes directed. The advantage of better per-shard execution then emerges. The 10-Worker team,
+which starts from the lowest initial performance, achieves the largest gain and the highest final PCS,
+reversing the initial ordering across team sizes.
+Evolution gains stem from coordination optimization. Each evolution run fixes the Worker model
+and task configuration, optimizing only communication structures and work instructions. Thus,
+observed gains reflect improved workflow organization rather than changes in underlying model
+capabilities. The improving trajectories and the reversed ordering across team sizes indicate that
+QueenBee progressively discovers and retains higher-quality executable collaboration workflows
+through repeated exploration, empirical validation, and reuse of historical designs.
+
+
+
+                                                      8
+4.5    Ablation Study
+To assess SFT-Bank’s component contributions, we separately remove Diagnosis Cards Dt , the
+Ledger Lt , and the Program Archive At , alongside a memory-free variant (w/o SFT-Bank). The
+latter retains candidate generation, execution evaluation, and elite selection but excludes experience
+accumulated across iterations.
+All ablations use the setting of Section 4.2.
+SFT-Bank improves workflow optimization. As Table 4 shows, full QueenBee achieves the highest
+SR (80.6%) and PCS (83.1%). Removing SFT-Bank reduces these to 63.9% and 66.7%, drops of
+16.7 and 16.4 percentage points. Thus, structured experience accumulated across iterations improves
+final workflow quality beyond basic search and selection, providing reusable history for subsequent
+structural design.
+
+                          Method                SR (%) ↑   PCS (%) ↑   ∆PCS
+                          QueenBee (Full)           80.6        83.1       —
+                          w/o Diagnosis             77.8        77.8    − 5.3
+                          w/o Ledger                75.0        76.1    − 7.0
+                          w/o Archive               63.9        65.4 − 17.7
+                          w/o SFT-Bank              63.9        66.7 − 16.4
+                           Table 4. Ablation results for SFT-Bank components.
+
+
+All experience components contribute to performance. Removing Diagnosis Cards, the Ledger,
+and the Program Archive reduces PCS by 5.3, 7.0, and 17.7 percentage points, respectively. Without
+Diagnosis Cards Dt , the Planner cannot use historical failure types and diagnoses to guide structural
+improvements; without the Ledger Lt , it loses systematic records and use of past structural mod-
+ifications and validation results. Both reduce task quality, indicating the value of diagnosing and
+organizing execution history.
+Removing the Program Archive causes the largest drop. Among single-component ablations,
+w/o Archive performs worst (63.9% SR, 65.4% PCS). It removes both historical program examples
+and archive-based parent selection, concentrating search on the current incumbent. This suggests
+that retaining and reusing historical programs is important for experience-guided search: inheritance,
+combination, and modification let the Planner exploit past designs beyond a single incumbent. Its
+score slightly below w/o SFT-Bank reflects run-to-run LLM fluctuation, not a negative contribution.
+Overall, full SFT-Bank outperforms all ablations. The Program Archive At and associated structural
+inheritance have the greatest impact, while Diagnosis Cards and the Ledger provide additional
+gains. Representative workflow analysis also reveals distinct information-processing strategies across
+experience configurations.
+
+
+5     Conclusion
+We propose QueenBee, an experience-guided multi-agent workflow evolution framework that rep-
+resents workflows as executable programs generating temporal communication DAGs. Through
+persistent structural memory, SFT-Bank, QueenBee continuously accumulates execution traces,
+design hypotheses and their validation results, and historical programs, enabling workflow design
+to reuse past experience. This transforms execution results into knowledge guiding subsequent
+structural design, allowing coordination programs and design experience to co-evolve. Experiments
+on Silo-Bench show that QueenBee improves collaboration quality across team sizes and achieves the
+highest overall task performance among the compared automated workflow optimization methods.
+
+
+Limitations
+This study has several limitations. First, QueenBee is evaluated mainly on controlled tasks such as
+Silo-Bench and Count-Frequency; its generalization to open-ended real-world tasks and dynamic
+environments remains unverified. Second, workflow evolution requires repeated candidate genera-
+
+
+                                                     9
+tion and empirical evaluation, incurring additional search costs, while performance gains in some
+configurations entail higher execution costs. Furthermore, the experiments cover limited task scales,
+repetitions, and model combinations, providing insufficient evidence of experience transfer across
+tasks and models and no guarantee of sustained performance gains throughout evolution. Future work
+will explore broader applications, cross-task experience reuse, and more efficient evolution strategies
+.Finally, repeated LLM-based search may increase energy consumption, while deploying automati-
+cally evolved workflows in high-stakes applications risks propagating errors without adequate human
+oversight.
+
+
+
+
+                                                  10
+References
+ [1] Lakshya A Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista Opsahl-Ong, Arnav
+     Singhvi, Herumb Shandilya, Michael J Ryan, Meng Jiang, Christopher Potts, Koushik Sen, Alex Dimakis,
+     Ion Stoica, Dan Klein, Matei Zaharia, and Omar Khattab. GEPA: Reflective Prompt Evolution Can
+     Outperform Reinforcement Learning. In ICLR, 2026.
+ [2] Lirong Che, Yuzhe Yang, Peiwen Lin, Xu Cao, Chuang Wang, Xueqian Wang, and Jian Su. DemoEvolve:
+     Demonstration-Guided Harness Evolution under Sparse Feedback. arXiv preprint arXiv:2605.24539, 2026.
+ [3] DeepSeek-AI. DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence. arXiv preprint
+     arXiv:2606.19348, 2026.
+ [4] Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch. Improving Factuality
+     and Reasoning in Language Models through Multiagent Debate. In ICML, volume 235 of PMLR, pages
+     11733–11763, 2024.
+ [5] Chrisantha Fernando, Dylan Sunil Banarse, Henryk Michalewski, Simon Osindero, and Tim Rocktäschel.
+     Promptbreeder: Self-Referential Self-Improvement via Prompt Evolution. In ICML, volume 235 of PMLR,
+     pages 13481–13544, 2024.
+ [6] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang,
+     Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu
+     Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao Wu, Bei Feng, Chengda Lu, Chenggang
+     Zhao, Chengqi Deng, Chong Ruan, Damai Dai, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong
+     Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Honghui Ding, Huazuo
+     Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jingchang Chen, Jingyang Yuan, Jinhao Tu, Junjie Qiu,
+     Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaichao You, Kaige Gao, Kang
+     Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei
+     Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingxu Zhou, Meng Li, Miaojun Wang,
+     Mingming Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge,
+     Ruisong Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou,
+     Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, S. S. Li, Shuang
+     Zhou, Shaoqing Wu, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding Zeng, Wen Liu, Wenfeng Liang,
+     Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao, Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang
+     Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su,
+     Xuheng Lin, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan
+     Song, Xinyi Zhou, Xianzu Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu,
+     Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He,
+     Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan Wang,
+     Yue Gong, Yuheng Zou, Yujia He, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou,
+     Y. X. Zhu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying Tang, Yukun Zha, Yuting
+     Yan, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao,
+     Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun Liu, Zilin Li, Ziwei Xie, Ziyang Song,
+     Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, and Zhen Zhang. DeepSeek-R1 incentivizes
+     reasoning in LLMs through reinforcement learning. Nature, 645:633–638, 2025.
+ [7] Sirui Hong, Mingchen Zhuge, Jonathan Chen, Xiawu Zheng, Yuheng Cheng, Jinlin Wang, Ceyao Zhang,
+     Zili Wang, Steven Yau, Zijuan Lin, Liyang Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen
+     Schmidhuber. MetaGPT: Meta Programming for a Multi-Agent Collaborative Framework. In ICLR, 2024.
+ [8] Shengran Hu, Cong Lu, and Jeff Clune. Automated Design of Agentic Systems. In ICLR, 2025.
+ [9] Yuntong Hu, Yuting Zhang, Matthew Trager, Yi Zhang, Shuo Yang, Wei Xia, and Stefano Soatto. EvoMAS:
+     Evolutionary Generation of Multi-Agent Systems. In ICML, volume 306 of PMLR, pages 45989–46021,
+     2026.
+[10] Jing Huang, Lidong Zhang, Mutian Bao, Yadong Li, Xingzhong Xu, Jinjian Zhang, Jie Liu, Ming Kong,
+     and Qiang Zhu. MAS-Architect: Declarative Multi-Agent System Design via Separation of Concerns. In
+     ICML, 2026.
+[11] Seth Karten, Joel Zhang, Tersoo Upaa, Jr, Ruirong Feng, Wenzhe Li, Chengshuai Shi, Chi Jin, and Kiran
+     Vodrahalli. Continual Harness: Online Adaptation for Self-Improving Foundation Agents. arXiv preprint
+     arXiv:2605.09998, 2026.
+[12] Yoonho Lee, Roshen Nair, Qizheng Zhang, Kangwook Lee, Omar Khattab, and Chelsea Finn. Meta-
+     Harness: End-to-End Optimization of Model Harnesses. arXiv preprint arXiv:2603.28052, 2026.
+
+
+                                                   11
+[13] Guohao Li, Hasan Hammoud, Hani Itani, Dmitrii Khizbullin, and Bernard Ghanem. CAMEL: Commu-
+     nicative Agents for "Mind" Exploration of Large Language Model Society. In NeurIPS, volume 36, pages
+     51991–52008, 2023.
+
+[14] Jiahang Lin, Shichun Liu, Chengjun Pan, Lizhi Lin, Shihan Dou, Zhiheng Xi, Xuanjing Huang, Hang
+     Yan, Zhenhua Han, Tao Gui, and Yu-Gang Jiang. Agentic Harness Engineering: Observability-Driven
+     Automatic Evolution of Coding-Agent Harnesses. arXiv preprint arXiv:2604.25850, 2026.
+
+[15] Minhua Lin, Juncheng Wu, Zijun Wang, Zhan Shi, Yisi Sang, Bing He, Zewen Liu, Tianxin Wei, Zongyu
+     Wu, Zhiwei Zhang, Dakuo Wang, Xiang Zhang, Benoit Dumoulin, Cihang Xie, Yuyin Zhou, Suhang
+     Wang, and Hanqing Lu. Harness Updating Is Not Harness Benefit: Disentangling Evolution Capabilities in
+     Self-Evolving LLM Agents. arXiv preprint arXiv:2605.30621, 2026.
+
+[16] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy
+     Liang. Lost in the Middle: How Language Models Use Long Contexts. TACL, 12:157–173, 2024.
+
+[17] Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen
+     Men, Kejuan Yang, Shudan Zhang, Xiang Deng, Aohan Zeng, Zhengxiao Du, Chenhui Zhang, Sheng Shen,
+     Tianjun Zhang, Yu Su, Huan Sun, Minlie Huang, Yuxiao Dong, and Jie Tang. AgentBench: Evaluating
+     LLMs as Agents. In ICLR, 2024.
+
+[18] Zijun Liu, Yanzhe Zhang, Peng Li, Yang Liu, and Diyi Yang. A Dynamic LLM-Powered Agent Network
+     for Task-Oriented Agent Collaboration. In COLM, 2024.
+
+[19] Alexander Novikov, Ngân Vũ, Marvin Eisenberger, Emilien Dupont, Po-Sen Huang, Adam Zsolt Wagner,
+     Sergey Shirobokov, Borislav Kozlovskii, Francisco J. R. Ruiz, Abbas Mehrabian, M. Pawan Kumar,
+     Abigail See, Swarat Chaudhuri, George Holland, Alex Davies, Sebastian Nowozin, Pushmeet Kohli, and
+     Matej Balog. AlphaEvolve: A Coding Agent for Scientific and Algorithmic Discovery. arXiv preprint
+     arXiv:2506.13131, 2025.
+
+[20] OpenAI. GPT-5 System Card. OpenAI, 2025.
+
+[21] OpenAI. gpt-oss-120b & gpt-oss-20b Model Card. arXiv preprint arXiv:2508.10925, 2025.
+
+[22] Timo Schick, Jane Dwivedi-Yu, Roberto Dessi, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-
+     moyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language Models Can Teach Themselves to
+     Use Tools. In NeurIPS, 2023.
+
+[23] Yu Shang, Yu Li, Keyu Zhao, Likai Ma, Jiahe Liu, Fengli Xu, and Yong Li. AgentSquare: Automatic LLM
+     Agent Search in Modular Design Space. In ICLR, 2025.
+
+[24] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion:
+     Language Agents with Verbal Reinforcement Learning. In NeurIPS, volume 36, pages 8634–8652, 2023.
+
+[25] Jinwei Su, Qizhen Lan, Yinghui Xia, Lifan Sun, Weiyou Tian, Tianyu Shi, and Lewei He. Difficulty-Aware
+     Agentic Orchestration for Query-Specific Multi-Agent Workflows. In The ACM Web Conference (WWW),
+     2026.
+
+[26] Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima
+     Anandkumar. Voyager: An Open-Ended Embodied Agent with Large Language Models. TMLR, 2024.
+
+[27] Junlin Wang, Jue Wang, Ben Athiwaratkun, Ce Zhang, and James Y Zou. Mixture-of-Agents Enhances
+     Large Language Model Capabilities. In ICLR, 2025.
+
+[28] Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. Agent Workflow Memory. In ICML,
+     volume 267 of PMLR, pages 63897–63911, 2025.
+
+[29] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang,
+     Shaokun Zhang, Jiale Liu, Ahmed Hassan Awadallah, Ryen W White, Doug Burger, and Chi Wang.
+     AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversations. In COLM, 2024.
+
+[30] John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and
+     Ofir Press. SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering. In NeurIPS,
+     2024.
+
+[31] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. ReAct:
+     Synergizing Reasoning and Acting in Language Models. In ICLR, 2023.
+
+
+                                                    12
+[32] Haoran Ye, Xuning He, Vincent Arak, Haonan Dong, and Guojie Song. Meta Context Engineering via
+     Agentic Skill Evolution. In ICML, volume 306 of PMLR, pages 148325–148368, 2026.
+
+[33] Eric Zelikman, Eliana Lorch, Lester Mackey, and Adam Tauman Kalai. Self-Taught Optimizer (STOP):
+     Recursively Self-Improving Code Generation. In COLM, 2024.
+[34] Guibin Zhang, Luyang Niu, Junfeng Fang, Kun Wang, Lei Bai, and Xiang Wang. Multi-Agent Architecture
+     Search via Agentic Supernet. In ICML, volume 267 of PMLR, pages 75834–75852, 2025.
+
+[35] Guibin Zhang, Yanwei Yue, Zhixun Li, Sukwon Yun, Guancheng Wan, Kun Wang, Dawei Cheng, Jef-
+     frey Xu Yu, and Tianlong Chen. Cut the Crap: An Economical Communication Pipeline for LLM-Based
+     Multi-Agent Systems. In ICLR, 2025.
+
+[36] Guibin Zhang, Yanwei Yue, Xiangguo Sun, Guancheng Wan, Miao Yu, Junfeng Fang, Kun Wang, Tianlong
+     Chen, and Dawei Cheng. G-Designer: Architecting Multi-Agent Communication Topologies via Graph
+     Neural Networks. In ICML, volume 267 of PMLR, pages 76678–76692, 2025.
+
+[37] Hangfan Zhang, Shao Zhang, Kangcong Li, Chen Zhang, Yang Chen, Yiqun Zhang, Lei Bai, and Shuyue
+     Hu. Self-Harness: Harnesses That Improve Themselves. arXiv preprint arXiv:2606.09498, 2026.
+[38] Jenny Zhang, Shengran Hu, Cong Lu, Robert Lange, and Jeff Clune. Darwin Gödel Machine: Open-Ended
+     Evolution of Self-Improving Agents. In ICLR, 2026.
+
+[39] Jiayi Zhang, Jinyu Xiang, Zhaoyang Yu, Fengwei Teng, XiongHui Chen, Jiaqi Chen, Mingchen Zhuge,
+     Xin Cheng, Sirui Hong, Jinlin Wang, Bingnan Zheng, Bang Liu, Yuyu Luo, and Chenglin Wu. AFlow:
+     Automating Agentic Workflow Generation. In ICLR, 2025.
+
+[40] Qizheng Zhang, Changran Hu, Shubhangi Upasani, Boyuan Ma, Fenglu Hong, Vamsidhar Kamanuru,
+     Jay Rainton, Chen Wu, Mengmeng Ji, Hanchen Li, Urmish Thakker, James Y Zou, and Kunle Olukotun.
+     Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models. In ICLR, 2026.
+
+[41] Yuzhe Zhang, Feiran Liu, Yi Shan, Xinyi Huang, Xin Yang, Yueqi Zhu, Xuxin Cheng, Cao Liu, Ke Zeng,
+     Terry Jingchen Zhang, and Wenyuan Jiang. Silo-Bench: A Scalable Environment for Evaluating Distributed
+     Coordination in Multi-Agent LLM Systems. In ACL, pages 29379–29398, 2026.
+
+[42] Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. ExpeL: LLM
+     Agents Are Experiential Learners. In AAAI, volume 38, pages 19632–19642, 2024.
+
+[43] Mingming Zhao, Xiaokang Wei, Yuanqi Shao, Kaiwen Zhou, Lin Yang, Siwei Rao, Junhui Zhan, and Zhi-
+     tang Chen. A2Flow: Automating Agentic Workflow Generation via Self-Adaptive Abstraction Operators.
+     In AAAI, volume 40, pages 29930–29938, 2026.
+
+[44] Han Zhou, Xingchen Wan, Ruoxi Sun, Hamid Palangi, Shariq Iqbal, Ivan Vulić, Anna Korhonen, and
+     Sercan Ö. Arık. Multi-Agent Design: Optimizing Agents with Better Prompts and Topologies. In ICLR,
+     2026.
+
+[45] Mingchen Zhuge, Wenyi Wang, Louis Kirsch, Francesco Faccio, Dmitrii Khizbullin, and Jürgen Schmid-
+     huber. GPTSwarm: Language Agents as Optimizable Graphs. In ICML, volume 235 of PMLR, pages
+     62743–62767, 2024.
+
+
+
+
+                                                    13
+A       Count-Frequency Experiments
+A.1     Count-Frequency Experiments
+A.1.1    Experimental Setup
+Task Definition. Count-Frequency (CF) is a controlled distributed information aggregation task
+assessing information coverage and global integration in multi-agent workflows. Given an integer
+array A partitioned into N disjoint private shards A1 , . . . , AN , each Worker accesses only its own
+shard. Through inter-agent communication and collaboration, the system must recover the global
+frequency of each integer:
+                                             XN X
+                                     c(v) =           I[a = v],
+                                                  i=1 a∈Ai
+where v belongs to a finite value set U. A prediction is fully correct only if every count in the
+predicted frequency table is correct.
+Experimental Configuration. The original CF experiments use 8 Workers, primarily with array
+length |A| = 1024 and integer values 0–9. Core experiments use DeepSeek-V4-Flash for execution,
+planning, and analysis, with additional exploratory runs using DeepSeek-V3, Qwen3.5, GPT-4o, and
+MiMo-V2-Flash. The core evolution consists of 5 rounds, each generating 4 candidate structures and
+retaining 2 for further optimization.
+Baselines. We consider three fixed communication topologies: Tree progressively integrates local
+counts through hierarchical reduction; Mesh–Star exchanges information through dense commu-
+nication before central aggregation; and One-peer Exponential DAG–Star combines exponentially
+spaced single-neighbor communication with final star aggregation. Cold-start Free DAG denotes
+a freely generated communication structure without historical experience, while Self-evolved Free
+DAG denotes a structure obtained through repeated generation, execution evaluation, and historical
+candidate retention.
+Evaluation Metrics. CF measures the difference between predicted and true frequency tables using:
+                                          sX
+                              RMSE =            (ĉ(v) − c(v))2 ,
+                                                    v∈U
+
+where ĉ(v) and c(v) are the predicted and true counts. Following the original CF implementation,
+this metric takes the square root of summed squared errors without dividing by the number of distinct
+values. We also report Messages (inter-agent messages), Model Calls (execution-model calls), and
+Token Cost (total input and output tokens during execution). Lower values are better for all metrics.
+
+A.1.2    Main Results
+We compile the original CF results across model configurations to examine free-structure generation
+under different Worker and Planner settings. Table A2 preserves the originally reported fixed-topology
+results, selected generated structures, and relative error differences, while adding the actual sample
+counts for generated results.
+
+ Model / Configuration                      |A|   Best Fixed RMSE ↓   Selected Graph RMSE ↓   Reported Reduction
+ DeepSeek-V4-Flash                         1024               12.53                    7.87               37.2%
+ DeepSeek-V3                               1024               18.71                   15.97               14.7%
+ Qwen3.5-Flash + DeepSeek-V4-Pro Planner   2048               21.29                   14.46               32.1%
+ Qwen3.5-Flash                             1024               16.44                   11.53               29.9%
+ Qwen3.5-Plus                              1024               31.16                   25.94               16.7%
+ GPT-4o (Run 1)                             512               14.76                    6.48               56.1%
+ GPT-4o (Run 2)                             512               13.83                    7.87               43.0%
+ GPT-4o (Run 3)                             512               16.05                   11.10               30.8%
+ MiMo-V2-Flash                             1024               43.39                   37.26               14.1%
+
+                                  Table A1. Original cross-model CF results.
+
+Results Analysis. Across multiple model families, the original experiments generated candidate
+structures with lower errors than their corresponding fixed-topology references, with reported relative
+
+
+                                                       14
+ Method                          Mean RMSE ↓             Paired ∆RMSE [95% CI] ↓     Wins / Losses   p-value
+ QueenBee (Champion)               3.28 ± 0.84                                  —              —         —
+ Tree (Best Fixed)                 5.06 ± 2.45     − 1.78 [− 3.01, − 0.58] (− 35%)           8/2      0.020
+ One-peer Exponential DAG–Star     5.42 ± 1.59     − 2.14 [− 3.09, − 1.12] (− 39%)           8/2      0.008
+ Mesh–Star                       15.55 ± 17.24   − 12.27 [− 23.72, − 5.37] (− 79%)          10 / 0    0.002
+ Cold-start Graph                14.40 ± 16.53   − 11.12 [− 21.90, − 3.23] (− 77%)           9/1      0.006
+
+                      Table A3. Workflow optimization results on Count-Frequency.
+
+
+reductions of 14.1%–56.1%. These results show that free-structure search can explore diverse infor-
+mation aggregation strategies across model configurations. Overall, the CF experiments demonstrate
+the exploratory capability of automated communication structure generation and the potential of
+some candidates for efficient information aggregation.
+
+A.2    Case Study
+Experimental Setup. We use 8 Subagents to process an integer array of length 1024 with values
+0–255, each accessing only 128 integers. The Planner is DeepSeek-V4.1-Flash-thinking-max, and
+the Worker is gpt-oss-120b. Training, validation, and testing use disjoint random seeds, with final
+workflows evaluated on 10 independent test instances.
+We compare against three fixed topologies (Tree, One-peer Exponential DAG–Star, and Mesh–Star)
+and a Cold-start Graph without inherited experience. Performance is measured by RMSE between
+predicted and true frequency tables, with lower values indicating more accurate aggregation. We
+compare errors on paired test instances and report 95% bootstrap confidence intervals and two-sided
+sign-flip test results.
+Results Analysis. As Table A3 shows, QueenBee’s evolved champion achieves the lowest mean
+RMSE (3.28 ± 0.84) across 10 test instances and the smallest error variation, compared with standard
+deviations of 1.59–17.24 for other methods. Relative to the best fixed topology, Tree, mean RMSE
+decreases by 35%, with 8 wins and 2 losses across 10 instances (p = 0.020). Relative to other fixed
+topologies and Cold-start Graph, errors decrease by 39%–79%, with all corresponding p-values below
+0.01.
+The champion’s 95% bootstrap confidence interval for mean RMSE is [2.78, 3.77], below the mean
+errors of all baselines. Cold-start Graph has a mean RMSE of 14.40, substantially higher than
+QueenBee, indicating better aggregation by the experience-guided structure in these tests.
+These results demonstrate QueenBee’s potential to discover high-quality communication structures
+for precise distributed information aggregation, providing supplementary evidence of its applicability
+beyond Silo-Bench.
+
+
+B     Qualitative Case Study of Ablation
+
+B.1    Comparison of Evolved Workflows
+To further examine how SFT-Bank components affect workflow design, we compare the final exe-
+cutable programs selected by full QueenBee and four ablated variants. All five runs start from the
+same initial relay workflow but yield distinct communication structures and information-processing
+instructions.
+Full QueenBee adopts a Complete Snapshot strategy: Workers first send all private data to a central
+node, which organizes raw information by source ID and broadcasts it, explicitly forbidding omissions,
+modifications, reordering, or premature computation of the final answer. In contrast, w/o Diagnosis
+and w/o Ledger delegate global computation to the central node, w/o Archive retains the initial relay
+structure, and the memory-free variant lacks explicit constraints on final broadcast content. These
+differences show that automated workflow search changes not only communication topology but also
+information preservation and computational responsibilities.
+
+
+
+                                                    15
+ Method                Communication Structure       Information Processing Strategy
+ QueenBee (Full)       Gather → Broadcast            Centralized collection and broadcast of complete raw
+                                                     data; independent computation by each Worker
+ w/o Diagnosis         Gather → Broadcast            Centralized computation of the global result and broadcast
+ w/o Ledger            Gather → Broadcast            Centralized computation of the global result; raw data
+                                                     may be omitted
+ w/o Archive           Relay → Broadcast             Retains the relay chain; the final Worker merges
+                                                     information
+ w/o SFT-Bank          Gather → Broadcast            Centralized collection and broadcast without explicit
+                                                     broadcast instructions
+
+        Table B1. Communication structures and information-processing strategies across ablations.
+
+
+                                   Method                I-10    II-14    II-20
+                                 QueenBee (Full)       3/3     2/3       3/3
+                                 w/o Diagnosis         3/3     3/3       1/3
+                                 w/o Ledger            1/3     2/3       3/3
+                                 w/o Archive           1/3     0/3       2/3
+                                 w/o SFT-Bank          0/3     3/3       2/3
+                     Table B2. Strict success counts on representative tasks (three runs).
+
+
+
+B.2    Performance on Representative Tasks
+We select three test tasks with substantial performance differences across ablations: I-10 (Standard
+Deviation), II-14 (1D Life Game), and II-20 (Pipeline Hash). Each final workflow is independently
+tested three times per task using the original Silo-Bench scoring and unified stream-interruption
+handling rules.
+On I-10, full QueenBee and w/o Diagnosis achieve three fully correct runs, while w/o Ledger and w/o
+Archive succeed only once each. In one w/o Ledger failure, all Workers submit the same incorrect
+answer; its centralized computation strategy permits omitting raw data after producing the final result.
+On II-20, full QueenBee succeeds in all three runs, while w/o Diagnosis succeeds only once, with
+dispersed incorrect Worker answers in the other two. II-14 shows a different pattern: w/o Diagnosis
+and the memory-free variant succeed in all three runs, while full QueenBee has one partially incorrect
+run. Thus, the benefits of information-processing strategies are task-dependent, and no single task
+explains overall performance differences across ablations.
+
+B.3    Evolution of the Complete-Snapshot Strategy
+To trace how full QueenBee’s final design emerged during search, we examine its proposal Ledger. On
+training task II-16 (Trapping Rain), three related structural modifications appeared across successive
+generations:
+
+Generation Proposal Structural Modification                                                      Decision       ∆S
+0          g000_s2 Retain the original structure; add work instructions only                        Refuted    − 0.2
+1          g001_s3 Switch to centralized gathering and broadcasting without explicit instructions Inconclusive    —
+2          g002_s1 Centralized gathering and broadcasting with explicit preservation of a complete, Confirmed   +1.0
+                   ordered data snapshot
+
+The final champion, g002_s1, targets the historical scattered-wrong failure type by proposing a shared
+information snapshot to prevent Workers from answering based on inconsistent local information.
+The Planner predicts a 0.75 gain on the target task, while the actual head-to-head evaluation measures
+a gain of 1.0 (∆S denotes the change in the fraction of Workers answering correctly).
+These records illustrate distinct exploration directions: modifying work instructions alone, changing
+communication structure, and adding explicit data-integrity constraints. Importantly, the three
+proposals are not direct parent–child descendants. Thus, the records show that related designs were
+
+
+                                                        16
+ Dimension                    DeepSeek Planner                       gpt-oss Planner
+ Champion                     g002_s1                                g005_s2
+ Communication                Gather → Broadcast                     Relay → Digest → Broadcast
+ Information Preservation     Explicit source labels; complete       General instructions to include
+                              preservation of raw data and order     received information and private data
+ Computation                  Broadcast a complete snapshot; each    Relay information along the chain,
+                              Worker computes independently          then broadcast
+ III-29 (gpt-oss Worker)      5/5, 5/5, 4/5 Workers correct          0/5, 4/5, 5/5 Workers correct
+
+                            Table C1. Workflow designs generated by two Planners.
+
+
+proposed and evaluated across generations, but do not establish that the final proposal arose through
+successive modifications of the two earlier failed attempts.
+
+
+C     Case Study on Planner-Generated Workflows
+To examine differences in structural design and information-processing rules across Planners, we
+compare QueenBee champion programs evolved by DeepSeek-V4.1-Flash-thinking-max and gpt-oss-
+120b-thinking-high. Both runs start from the same relay workflow but use their respective Worker
+models during evolution. We fix the test Worker to gpt-oss-120b and analyze Silo-Bench task III-29
+(Load Balance).
+Workflow Design Differences. The DeepSeek Planner replaces the initial relay chain with centralized
+gathering and broadcasting, explicitly instructing Workers to label Agent IDs and preserve all data
+verbatim without omissions or reordering. The central node then broadcasts a shared, complete
+information snapshot. In contrast, the gpt-oss Planner retains the relay chain and adds a digest
+stage. All three communication stages use the same general instruction: "Include all facts you have
+received so far and your private data in your message." Explicit source labels and data-completeness
+constraints are absent.
+Execution Analysis. III-29 requires five Workers to aggregate 100 distributed tasks and compute
+load variance, maximum, and minimum values using a prescribed greedy algorithm. In one failed
+gpt-oss execution, Agent 1 omits all 10 tasks from Agent 0 when forwarding information to Agent 2.
+Agent 4 then omits 66 accumulated upstream tasks during the final broadcast, sending only its own
+24 tasks. Although the recorded message transmission loss is zero, none of the five Workers receives
+complete data. They access only 34, 56, 68, 90, and 90 tasks, respectively, and submit five distinct
+incorrect answers.
+By contrast, the DeepSeek workflow broadcasts an identical snapshot containing all 100 tasks to every
+Worker in all three runs. All Workers answer correctly in two runs; in the third, only one Worker
+fails due to its own computation error. This contrast suggests that explicit information-completeness
+constraints reduce the risk of content omission in multi-hop communication and help distinguish
+information propagation errors from final computation errors.
+
+
+D     Cost Analysis
+We analyze QueenBee’s offline search costs, deployment inference costs, and long-term amortization,
+and discuss suitable applications. QueenBee is a continuously evolving harness that maintains a
+deployable incumbent workflow and persistent SFT-Bank, enabling further search as new execution
+evidence arrives. Challengers must pass a promotion gate before replacing the incumbent. Freez-
+ing workflows in experiments ensures independent evaluation on unseen tasks without precluding
+subsequent evolution.
+
+D.1    Search and Inference Costs
+Table D1 compares token consumption under the same search-budget setting. Search cost measures
+tokens consumed by one optimization run, while inference cost measures average tokens per test task
+after deployment. All values are based on API-reported usage.
+
+
+                                                     17
+ Method                                  Search Tokens (M) ↓     Inference Tokens (k/task) ↓   PCS (%) ↑
+ QueenBee                                                5.477                         62.6         83.1
+ GPTSwarm                                               10.478                        113.2         75.6
+ G-Designer                                             13.513                        100.5         76.7
+ MaAS                                                   14.284                         60.2         61.1
+ EvoMAS                                                  5.030                         34.8         68.3
+ Fixed Protocols (P2P, SFS, Broadcast)                      —                     73.5–99.2           —
+
+                      Table D1. Search costs, inference costs, and test performance.
+
+
+
+QueenBee’s search cost is approximately 52%, 41%, and 38% of GPTSwarm, G-Designer, and
+MaAS, respectively. Its inference cost of 62.6k tokens per task is approximately 45% and 38%
+lower than GPTSwarm and G-Designer, respectively, and below all three fixed protocols. MaAS has
+comparable inference costs, while EvoMAS has lower search and inference costs; however, their PCS
+is lower by 22.0 and 14.8 percentage points, respectively. QueenBee achieves the highest PCS with
+relatively low search and inference costs.
+
+
+D.2    Cost Breakdown
+A single QueenBee evolution run consumes 5.477M tokens: approximately 4.863M for task execution
+and 0.613M for 16 successful Planner calls. Task execution comprises approximately 3.817M tokens
+for evolutionary evaluation and 1.048M for final validation and selection. Thus, approximately 89%
+of search costs arise from task execution, primarily paired challenger–parent comparisons and final
+validation, while Planner-generated structural modifications account for approximately 11%.
+SFT-Bank management is not a major token cost. For comparison, the memory-free variant con-
+sumes 5.550M tokens per search, while removing Diagnosis Cards or the Program Archive yields
+6.507M and 7.005M, respectively. Thus, structured experience does not increase total search token
+consumption in these experiments.
+
+
+D.3    Cost Amortization
+QueenBee’s main additional costs occur during offline evolution and do not increase per-task search
+overhead after deployment. Moreover, evaluations of different candidates and training tasks within
+an iteration are independent and can run in parallel to reduce wall-clock search time.
+For systems repeatedly processing similar tasks, offline search costs can be amortized over deployment.
+QueenBee has lower cumulative token consumption than GPTSwarm and G-Designer from the first
+deployed task, and amortizes its search cost relative to search-free fixed protocols after approximately
+150–505 tasks.
+One evolution run costs approximately as many tokens as 88 tasks executed by the final QueenBee
+workflow. Over 10,000 tasks, its amortized evolution cost is approximately 0.548k tokens per task, or
+0.87% of per-task inference cost.
+Thus, QueenBee’s cost advantage depends on optimization overhead, deployment efficiency, and task
+volume, rather than search or inference cost alone.
+
+
+D.4    Applicable Scenarios
+QueenBee is particularly suited to multi-agent systems that repeatedly process similar tasks. For
+example, analyses requiring periodic joint statistics, cross-checking, or auditing across departments
+or institutions with distributed data can reuse evolved workflows, reducing amortized search costs.
+Structural optimization is also valuable when coordination becomes a bottleneck as teams grow. In
+the 10-Worker Silo-Bench experiment, QueenBee improves PCS by 49.9 percentage points over the
+initial workflow, indicating its ability to mitigate information integration difficulties in larger teams.
+
+
+                                                   18
+For applications with high error costs or stringent quality requirements, QueenBee can trade additional
+offline validation for more reliable collaboration structures. Persistent SFT-Bank further enables
+deployed workflows to improve as new execution evidence accumulates.
+Overall, QueenBee trades reusable offline search costs for higher-quality collaborative workflows.
+Its evolution costs can be amortized through sustained deployment, particularly in applications with
+recurring tasks, complex coordination, or strict quality requirements.
+
+
+E     Additional Method Details
+E.1    Formal Design Objective
+Rather than directly searching for high-performing workflows, QueenBee accumulates reusable
+design experience through repeated candidate generation, execution, and evaluation. The design
+system and its update at iteration t are defined as:
+                        Mt = (Plannerθ , Bt ), Pt = Generate(Mt ; bt ),
+                                Bt+1 = U (Bt , Pt , Eval(Pt )) .
+
+Here, Plannerθ is a fixed-parameter design model, Bt is experience accumulated over t iterations, bt
+is the current design budget, Pt is the candidate set, Eval denotes execution evaluation, and U updates
+experience. Updating external experience rather than Planner parameters changes the information
+and search guidance available for subsequent design.
+We measure design capability by the quality of workflows generated under a fixed budget b:
+                                 J(Mt ; b) = Ex∼Deval [Q(Pt∗ , x)] ,
+where Pt∗ is generated within budget b and selected using development-stage evidence, while Q
+measures its execution quality on an independent evaluation task x. Thus, J measures workflow
+design capability under equal resource constraints, not the performance of an existing workflow. Our
+objective is:
+                                          max           J(MT ; b)
+                                    HT : Cexplore (HT )≤B
+where HT is a feasible exploration history comprising candidate generation, execution, and feedback;
+B is the total experience accumulation budget; and MT is the design system after T updates.
+Thus, we aim to improve workflow search and optimization efficiency under limited budgets through
+a fixed Planner and evolving external experience, ultimately yielding better workflows.
+
+E.2    Exploration Scheduling Details
+At iteration t, the harness schedules goals and parent workflows for K proposal slots:
+                                           par
+                                  (gt,k , Pt,k ) = Schedule(Bt , k).
+
+Here, k denotes the proposal slot. Most proposals target quality improvements, while the remainder
+rotate among structural merging, cost optimization, and open exploration.
+For targeted improvements, the harness groups unresolved training tasks by output format and
+dominant failure type. An Upper Confidence Bound (UCB) strategy prioritizes groups based on
+remaining improvement potential, historical quality changes, and exploration counts. Directions
+repeatedly refuted in the Ledger Lt receive lower priority, while each iteration favors coverage of
+distinct groups.
+For each selected goal, the harness chooses a strong task-specific program from the Program Archive
+At as the parent, allowing candidates to inherit different local strengths and explore multiple direc-
+tions.
+The harness also periodically schedules three exploration modes: Merge combines workflows
+with complementary strengths across training tasks; Economize reduces model calls and token
+consumption while preserving quality; and Explore targets unresolved, underexplored tasks to
+discover alternatives to existing successful designs.
+
+
+                                                   19
+E.3    Experience Retrieval Details
+The harness constructs each candidate’s design context using the three SFT-Bank components.
+From Diagnosis Cards Dt , it categorizes problematic training tasks by output format and observed
+failure cause, then retrieves the parent’s task-specific diagnoses.
+From the Ledger Lt , it aggregates validation outcomes and observed performance changes by failure
+type and modification mechanism, extracting recently supported hypotheses and repeatedly ineffective
+modifications.
+From the Program Archive At , it prioritizes successful programs that addressed similar failures
+and corresponding failure cases, providing complementary programs when combining workflows.
+Retrieved examples are presented as editable code snippets, allowing the Planner to reference concrete
+communication structures and execution strategies.
+The Planner also receives the parent’s editable Python code (Genome), its task-level quality and cost
+records, the current exploration goal, and fixed execution-interface constraints. The resulting design
+hypothesis specifies the target problem, modification mechanism, and predicted improvement, while
+the Genome provides its Python implementation.
+
+
+E.4    Validation and Experience Consolidation Details
+Candidates first undergo code and execution-structure validity checks. Duplicate programs, execution-
+constraint violations, and historically ineffective modifications are rejected before task testing.
+In Stage 1, the harness executes candidates on designated target training tasks and reruns their
+parent workflows under identical conditions. Only candidates satisfying predefined performance
+requirements without output-format errors advance.
+In Stage 2, promising candidates are evaluated on additional training tasks covering diverse templates
+and output formats. Regression tests check whether previously strong tasks deteriorate. Newly dis-
+covered task-specific specialists may undergo independent confirmation tests to reduce the influence
+of incidental execution outcomes.
+After evaluation, the harness derives experience from actual execution results and code changes rather
+than Planner self-assessment.
+Diagnosis Cards retain structured execution statistics by predefined failure type but exclude specific
+answers and ground-truth labels for safe reuse.
+The Ledger identifies added or removed communication stages, round-scheduling adjustments, and
+changes to work instructions through parent–candidate source comparisons. Based on target-task
+performance and regression tests, hypotheses are classified as Confirmed, Refuted, or Inconclusive;
+unexecuted proposals are marked Screened. Confirmation requires a predefined improvement margin
+without exceeding the allowed regression threshold, while substantial target-task degradation leads to
+refutation.
+The harness links modification mechanisms, validation outcomes, and observed performance changes,
+tracks historical performance across failure-type–modification combinations, and flags modifications
+repeatedly refuted in independent tests.
+The Program Archive retains new programs, parent-version relationships, training evaluations, and
+metadata, maintaining historical candidates according to task performance. Screened or insufficiently
+supported candidates may also leave records; experience updates do not require candidates to
+outperform existing workflows.
+
+
+F     Focused Validation and Final Selection
+When exploration ends and a final workflow is required, the harness stops generating candidates,
+selects historically strong programs from the Program Archive, and determines the final workflow
+through independent validation.
+
+
+                                                 20
+To prevent programs with chance high scores on a few tasks from dominating, candidate screening
+considers both task coverage and overall quality improvement. Specifically, the harness evaluates
+historical candidates using a shrunk training score relative to the initial workflow P0 :
+                                          1      X                         
+                           SeT (P ) =                  S P (u) − S P0 (u) ,
+                                      |UP | + 2
+                                                 u∈UP
+
+where UP is the set of tasks with training evaluations for both the candidate and initial workflows,
+and S P (u) is the mean execution quality of program P on task u. The denominator’s smoothing
+term penalizes candidates evaluated on too few tasks, preventing locally strong programs from being
+prematurely ranked as overall best. The harness further requires sufficient training-task coverage and
+excludes programs showing substantial regression on previously stable tasks, yielding a representative
+set of high-performing candidates.
+The harness then repeatedly evaluates selected programs on identical independent validation tasks,
+ranks them by mean quality across tasks, and favors lower execution cost when quality is comparable.
+Top-ranked candidates undergo further regression validation to detect substantial degradation on
+previously stable tasks. Independent validation results are used solely for final selection and are not
+fed back to the Planner for further structural modifications, preventing validation information from
+influencing earlier experience accumulation.
+Finally, the harness selects an independently validated executable workflow P ∗ . Thus, broad explo-
+ration discovers and accumulates diverse communication and collaboration strategies, while focused
+validation selects a strong overall workflow from historical candidates, completing the process from
+continual experience accumulation to final workflow selection.
+
+
+G     QueenBee Results by Difficulty Level
+Table G1 breaks down QueenBee’s results under the GPT configuration (Tables H1 and 2) by
+Silo-Bench difficulty level.
+
+                           Team size    Difficulty        SR↑   PCS↑    Tok.↓
+                           N=2          Level I       100.0     100.0    17.3
+                                        Level II       25.0      37.5    16.8
+                                        Level III      50.0      75.0    20.8
+                           N=5          Level I        75.0      80.0    97.9
+                                        Level II       25.0      45.5    99.5
+                                        Level III      50.0      50.0   140.4
+                           N=10         Level I        75.0      87.5    74.9
+                                        Level II        0.0      38.0    61.8
+                                        Level III      50.0      50.0   179.2
+
+                        Table G1. QueenBee by difficulty level across team sizes.
+
+
+
+
+                                                     21
+H     Results with GPT-5.1 and GPT-5 mini
+Table H1 reports the comparison of Table 1 under the GPT configuration (GPT-5.1 Planner, GPT-5
+mini Workers). Under GPT, QueenBee achieves 70.8%, 58.5%, and 58.5% PCS with 2, 5, and
+10 Workers, exceeding the best fixed protocol, Broadcast, by 1.2, 3.8, and 10.6 percentage points,
+respectively.
+
+                            Method               n=2       n=5      n = 10
+                            Fixed Protocols
+                              P2P                 37.5     37.4      22.3
+                              Broadcast           69.6     54.7      47.9
+                              SFS                 35.0     15.4      13.9
+                              Initial Workflow    58.3     51.4       8.6
+                            QueenBee (Ours)       70.8     58.5      58.5
+
+Table H1. QueenBee versus fixed communication protocols with 2, 5 and 10 Workers under the GPT configura-
+tion (GPT-5.1 Planner, GPT-5 mini Workers); fixed protocols use the same Workers.
+
+
+
+
+                                                   22
+

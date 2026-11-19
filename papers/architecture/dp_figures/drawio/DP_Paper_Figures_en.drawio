@@ -1,0 +1,597 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-11-19T00:00:00.000Z" agent="Kinlin research architecture authoring" version="29.0.0" type="device" compressed="false">
+  <diagram id="fig01-en" name="Local privacy release architecture">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig01_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig01_title" value="Local privacy release architecture" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig01_client" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="100" width="1060" height="610" />
+        </mxCell>
+        <mxCell id="fig01_client-heading" value="Trusted client" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#3D6F9C;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="58" y="112" width="1024" height="40" />
+        </mxCell>
+        <mxCell id="fig01_cloud" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1140" y="100" width="260" height="610" />
+        </mxCell>
+        <mxCell id="fig01_cloud-heading" value="Remote observer" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#78838D;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1158" y="112" width="224" height="40" />
+        </mxCell>
+        <mxCell id="fig01_input" value="Private input&#10;x" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="190" width="190" height="110" />
+        </mxCell>
+        <mxCell id="fig01_prefix" value="Local prefix&#10;+ private KV" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="310" y="190" width="220" height="110" />
+        </mxCell>
+        <mxCell id="fig01_gate" value="Privacy release gate&#10;clip, randomize, bind" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="590" y="190" width="270" height="110" />
+        </mxCell>
+        <mxCell id="fig01_egress" value="Approved&#10;payload" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="910" y="190" width="160" height="110" />
+        </mxCell>
+        <mxCell id="fig01_suffix" value="Suffix + KV&#10;and output head" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1165" y="190" width="210" height="110" />
+        </mxCell>
+        <mxCell id="fig01_e_0" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_input" target="fig01_prefix">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_e_1" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_prefix" target="fig01_gate">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_e_2" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_gate" target="fig01_egress">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_e_3" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_egress" target="fig01_suffix">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig01_profile" value="Approved profile&#10;neighbor / protocol / mechanism" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="420" width="280" height="125" />
+        </mxCell>
+        <mxCell id="fig01_ledger" value="Persistent ledger&#10;RDP + atomic reservation" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="400" y="420" width="290" height="125" />
+        </mxCell>
+        <mxCell id="fig01_outbox" value="Durable outbox&#10;releaseId ↔ exact bytes" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="740" y="420" width="330" height="125" />
+        </mxCell>
+        <mxCell id="fig01_e_profile" value="control" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_profile" target="fig01_gate">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-17" />
+            <Array as="points">
+              <mxPoint x="210" y="360" />
+              <mxPoint x="658" y="360" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_e_budget" value="reserve first" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#74658C;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_ledger" target="fig01_gate">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="18" />
+            <Array as="points">
+              <mxPoint x="545" y="380" />
+              <mxPoint x="725" y="380" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_e_durable" value="persist before send" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#74658C;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_gate" target="fig01_outbox">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="55" y="0" />
+            <Array as="points">
+              <mxPoint x="890" y="278" />
+              <mxPoint x="890" y="365" />
+              <mxPoint x="905" y="365" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_receipt" value="Step result&#10;+ commit receipt" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1165" y="420" width="210" height="125" />
+        </mxCell>
+        <mxCell id="fig01_e_reply" value="receipt" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_suffix" target="fig01_receipt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="52" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_e_feedback" value="verify locally; next step" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig01_receipt" target="fig01_prefix">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="250" y="20" />
+            <Array as="points">
+              <mxPoint x="1270" y="640" />
+              <mxPoint x="55" y="640" />
+              <mxPoint x="55" y="160" />
+              <mxPoint x="420" y="160" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig01_scope" value="Public-shape protocol; content protection within the declared input domain" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="735" width="1300" height="40" />
+        </mxCell>
+        <mxCell id="fig01_key" value="Solid: payload flow     Dashed: control / response     Purple: persistent state" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="790" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig02-en" name="Write-ahead release dataflow">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig02_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig02_title" value="Write-ahead release dataflow" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig02_validate" value="1  Validate profile&#10;identity + protocol" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_reserve" value="2  Reserve once&#10;atomic transaction" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="425" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_noise" value="3  Clip + randomize&#10;one noise draw" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="780" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_prepare" value="4  Persist bytes&#10;PREPARED" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1135" y="160" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_e_top0" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_validate" target="fig02_reserve">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_top1" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_reserve" target="fig02_noise">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_top2" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_noise" target="fig02_prepare">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_finish" value="8  Record ACKED&#10;no second charge" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_verify" value="7  Verify receipt&#10;step + digest" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="425" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_send" value="6  Send payload&#10;exact bytes + TLS" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="780" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_mark" value="5  Mark durable&#10;MAYBE_SENT" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1135" y="450" width="235" height="120" />
+        </mxCell>
+        <mxCell id="fig02_e_turn" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_prepare" target="fig02_mark">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_bottom3" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_mark" target="fig02_send">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_bottom2" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_send" target="fig02_verify">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_e_bottom1" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig02_verify" target="fig02_finish">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig02_gap" value="The only network send occurs after both durable budget and payload binding" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#267C78;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="85" y="335" width="1220" height="65" />
+        </mxCell>
+        <mxCell id="fig02_retry" value="Duplicate releaseId: verify binding and follow recovery; do not reserve or sample again" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="650" width="1300" height="75" />
+        </mxCell>
+        <mxCell id="fig02_failure" value="Any failure before step 6 blocks sending. Unknown egress retains its charge (Figures 3 and 5)." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="760" width="1300" height="55" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig03-en" name="Persistent release state machine">
+    <mxGraphModel dx="1440" dy="850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig03_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="850" />
+        </mxCell>
+        <mxCell id="fig03_title" value="Persistent release state machine" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig03_new" value="NEW&#10;uncharged" style="shape=ellipse;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="55" y="190" width="170" height="100" />
+        </mxCell>
+        <mxCell id="fig03_reserved" value="RESERVED&#10;charge reserved" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="290" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_prepared" value="PREPARED&#10;exact bytes durable" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="600" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_maybe" value="MAYBE_SENT&#10;egress permitted" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="910" y="190" width="240" height="100" />
+        </mxCell>
+        <mxCell id="fig03_acked" value="ACKED&#10;receipt verified" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1210" y="190" width="180" height="100" />
+        </mxCell>
+        <mxCell id="fig03_e_reserve" value="admit" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_new" target="fig03_reserved">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_prepare" value="bind" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_reserved" target="fig03_prepared">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_mark" value="log" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_prepared" target="fig03_maybe">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_ack" value="ACK" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_acked">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_sealed" value="SEALED_CHARGED&#10;no further send / no refund" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="505" y="540" width="430" height="105" />
+        </mxCell>
+        <mxCell id="fig03_e_orphan" value="unrecoverable crash" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_reserved" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="-25" y="5" />
+            <Array as="points">
+              <mxPoint x="410" y="592" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_badbytes" value="bytes lost / cancel" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_prepared" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="115" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_unknown" value="cannot recover safely" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_sealed">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="50" y="0" />
+            <Array as="points">
+              <mxPoint x="1030" y="592" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_e_retry" value="recover first; same bytes only" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig03_maybe" target="fig03_maybe">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-24" />
+            <Array as="points">
+              <mxPoint x="1090" y="110" />
+              <mxPoint x="970" y="110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig03_query" value="ACKED duplicates return the original receipt. Missing bytes never authorize resampling." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="677" width="1300" height="55" />
+        </mxCell>
+        <mxCell id="fig03_meaning" value="SEALED_CHARGED is an internal terminal marker; remote state may remain unknown." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="735" width="1300" height="55" />
+        </mxCell>
+        <mxCell id="fig03_budget" value="Conservative first version: all reservations remain charged; state transitions do not add the fee again." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="795" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig04-en" name="Gaussian release and prospective composition">
+    <mxGraphModel dx="1440" dy="940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="940" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig04_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="940" />
+        </mxCell>
+        <mxCell id="fig04_title" value="Gaussian release and prospective composition" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig04_a" value="(a) One complete publication vector" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=27;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="100" width="1320" height="40" />
+        </mxCell>
+        <mxCell id="fig04_h" value="Local activation&#10;h(x) ∈ Rᵈ" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="175" width="230" height="110" />
+        </mxCell>
+        <mxCell id="fig04_clip" value="Global L2 clipping&#10;‖h̄(x)‖₂ ≤ C" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="365" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_gaussian" value="Gaussian noise&#10;Z ∼ N(0, s²I)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="725" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_y" value="Release&#10;Y = h̄(x) + Z" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1085" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_e_hc" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_h" target="fig04_clip">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_e_cn" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_clip" target="fig04_gaussian">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_e_ny" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_gaussian" target="fig04_y">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_sensitivity" value="Prompt replacement: Δ₂ ≤ 2C. Noise calibration and finite-precision implementation require review." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="315" width="1300" height="65" />
+        </mxCell>
+        <mxCell id="fig04_b" value="(b) Prospective check before atomic reservation" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=27;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="425" width="1320" height="40" />
+        </mxCell>
+        <mxCell id="fig04_rho" value="Charged account R(α)&#10;includes reservations" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="490" width="500" height="100" />
+        </mxCell>
+        <mxCell id="fig04_cost" value="Public-schedule cost cₜ(α)&#10;= αΔₜ² / (2sₜ²)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="640" width="500" height="100" />
+        </mxCell>
+        <mxCell id="fig04_convert" value="Prospective ε at fixed δ*&#10;minα {R(α) + cₜ(α)&#10;+ ln(1/δ*) / (α − 1)}" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="700" y="530" width="675" height="150" />
+        </mxCell>
+        <mxCell id="fig04_e_account" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_rho" target="fig04_convert">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="635" y="540" />
+              <mxPoint x="635" y="575" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_e_cost" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_cost" target="fig04_convert">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="635" y="690" />
+              <mxPoint x="635" y="635" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_accept" value="Within ε limit: reserve atomically&#10;R(α) ← R(α) + cₜ(α)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="700" y="770" width="675" height="90" />
+        </mxCell>
+        <mxCell id="fig04_deny" value="Over limit / incompatible account&#10;reject without sending" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="790" width="500" height="70" />
+        </mxCell>
+        <mxCell id="fig04_e_accept" value="pass" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_convert" target="fig04_accept">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="45" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_e_deny" value="fail" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.15;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_convert" target="fig04_deny">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="2" />
+            <Array as="points">
+              <mxPoint x="801" y="760" />
+              <mxPoint x="315" y="760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_scope" value="Fixed public cost schedule; conditional bounds; no subsampling amplification." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="890" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig05-en" name="Lost-receipt recovery without resampling">
+    <mxGraphModel dx="1440" dy="1060" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="1060" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig05_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="1060" />
+        </mxCell>
+        <mxCell id="fig05_title" value="Lost-receipt recovery without resampling" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig05_actor0" value="Local runtime" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="25" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life0" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="170" y="180" />
+            <mxPoint as="targetPoint" x="170" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_actor1" value="Release gate / outbox" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="390" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life1" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="535" y="180" />
+            <mxPoint as="targetPoint" x="535" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_actor2" value="Privacy ledger" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="755" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life2" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="900" y="180" />
+            <mxPoint as="targetPoint" x="900" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_actor3" value="Cloud / suffix KV" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=1;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1120" y="105" width="290" height="65" />
+        </mxCell>
+        <mxCell id="fig05_line_life3" value="" edge="1" parent="1" style="edgeStyle=none;endArrow=none;endFill=1;strokeWidth=1.6;strokeColor=#78838D;dashed=1;dashPattern=6 4;">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="sourcePoint" x="1265" y="180" />
+            <mxPoint as="targetPoint" x="1265" y="825" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_requests" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="170" y="220" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_requestt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="220" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_request" value="activation reference" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_requests" target="fig05_requestt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_reserves" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="280" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_reservet" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="900" y="280" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_reserve" value="reserve once" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_reserves" target="fig05_reservet">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_reserveds" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="900" y="340" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_reservedt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="340" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_reserved" value="reservation receipt" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#74658C;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_reserveds" target="fig05_reservedt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_localwork" value="Sample once; persist bytes + MAYBE_SENT" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="380" y="380" width="310" height="85" />
+        </mxCell>
+        <mxCell id="fig05_payloads" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="505" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_payloadt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="505" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_payload" value="exact prepared payload" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_payloads" target="fig05_payloadt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_cloudwork" value="Serialized step commit&#10;KV + token + receipt" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1110" y="535" width="310" height="80" />
+        </mxCell>
+        <mxCell id="fig05_losts" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="650" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_lostt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="650" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_lost" value="reply lost / timeout" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_losts" target="fig05_lostt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_querys" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="720" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_queryt" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="720" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_query" value="query authoritative step state" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_querys" target="fig05_queryt">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_statuss" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1265" y="790" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_statust" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="790" width="0" height="0" />
+        </mxCell>
+        <mxCell id="fig05_e_status" value="COMMITTED / NOT_COMMITTED / UNKNOWN" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=1;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig05_statuss" target="fig05_statust">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="-21" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig05_committed" value="COMMITTED&#10;reuse receipt; advance once" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="45" y="880" width="420" height="110" />
+        </mxCell>
+        <mxCell id="fig05_notcommitted" value="NOT_COMMITTED&#10;retry identical bytes only" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="510" y="880" width="420" height="110" />
+        </mxCell>
+        <mxCell id="fig05_unknown" value="UNKNOWN / session invalid&#10;stop; retain charge" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="975" y="880" width="420" height="110" />
+        </mxCell>
+        <mxCell id="fig05_authority" value="NOT_COMMITTED must exclude in-flight work under the same session lock; an empty lookup is insufficient." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="45" y="1010" width="1350" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fig06-en" name="Protocol observability and enforcement">
+    <mxGraphModel dx="1440" dy="940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="940" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig06_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="940" />
+        </mxCell>
+        <mxCell id="fig06_title" value="Protocol observability and enforcement" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig06_private" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="110" width="400" height="590" />
+        </mxCell>
+        <mxCell id="fig06_private-heading" value="Private local state" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#3D6F9C;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="58" y="122" width="364" height="40" />
+        </mxCell>
+        <mxCell id="fig06_enforce" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="510" y="110" width="420" height="590" />
+        </mxCell>
+        <mxCell id="fig06_enforce-heading" value="Protocol enforcement" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#267C78;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="528" y="122" width="384" height="40" />
+        </mxCell>
+        <mxCell id="fig06_observed" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1000" y="110" width="400" height="590" />
+        </mxCell>
+        <mxCell id="fig06_observed-heading" value="Remote observation" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#78838D;fontSize=26;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1018" y="122" width="364" height="40" />
+        </mxCell>
+        <mxCell id="fig06_act" value="Activation values&#10;private-input dependent" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="205" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_random" value="Clip + randomize&#10;complete vector" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="205" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_tensor" value="Randomized tensor Y" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="205" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_length" value="True length / mask&#10;private position data" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="375" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_public" value="Public shape / padding&#10;allowlisted metadata" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="375" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_meta" value="Declared public metadata" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="375" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_behavior" value="Stop / error / timing&#10;private-state dependent" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="545" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_schedule" value="Approved schedule / rules&#10;otherwise revise scope" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="545" width="370" height="100" />
+        </mxCell>
+        <mxCell id="fig06_trace" value="Observable interaction trace" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1025" y="545" width="350" height="100" />
+        </mxCell>
+        <mxCell id="fig06_e_ab" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_act" target="fig06_random">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_bc" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_random" target="fig06_tensor">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_de" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_length" target="fig06_public">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_eg" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_public" target="fig06_meta">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_hj" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_behavior" target="fig06_schedule">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_e_jk" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig06_schedule" target="fig06_trace">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig06_reject" value="Unapproved raw fields or behavior: block remote release&#10;no raw-text fallback; no guarantee for an unanalyzed channel" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="125" y="755" width="1190" height="85" />
+        </mxCell>
+        <mxCell id="fig06_scope" value="Scope must state public identity / participation and any excluded timing or side channels explicitly." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="870" width="1310" height="45" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

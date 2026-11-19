@@ -1,0 +1,1542 @@
+                                                                     A Taxonomy of Attacks and Defenses in Split Learning
+
+                                                                        Aqsa Shabbira,1 , Halil İbrahim Kanpakb,1 , Alptekin Küpçüb,∗, Sinem Sava,∗
+                                                                                                   a Bilkent University, Ankara, Türkiye
+                                                                                                    b Koç University, İstanbul, Türkiye
+
+
+
+
+                                        Abstract
+                                        Split Learning (SL) has emerged as a promising paradigm for distributed deep learning, allowing resource-constrained clients to
+                                        offload portions of their model computation to servers while maintaining collaborative learning. However, recent research has
+arXiv:2505.05872v1 [cs.CR] 9 May 2025
+
+
+
+
+                                        demonstrated that SL remains vulnerable to a range of privacy and security threats, including information leakage, model inversion,
+                                        and adversarial attacks. While various defense mechanisms have been proposed, a systematic understanding of the attack landscape
+                                        and corresponding countermeasures is still lacking. In this study, we present a comprehensive taxonomy of attacks and defenses in
+                                        SL, categorizing them along three key dimensions: employed strategies, constraints, and effectiveness. Furthermore, we identify
+                                        key open challenges and research gaps in SL based on our systematization, highlighting potential future directions.
+                                        Keywords: split learning, collaborative learning, distributed machine learning, privacy-preserving computation, data privacy
+
+
+                                        1. Introduction                                                                 sion [10] aims to recover input samples from model activations.
+                                                                                                                        Additionally, backdoor and poisoning attacks [4, 90] manipu-
+                                           The increasing adoption of Machine Learning as a Service                     late the training pipeline to implant adversarial behavior. These
+                                        (MLaaS) has revolutionized AI-driven applications across do-                    vulnerabilities expose critical gaps in the privacy guarantees of
+                                        mains such as healthcare, finance, and IoT. However, ML out-                    SL, necessitating robust defense mechanisms to mitigate poten-
+                                        sourcing raises privacy concerns, as sensitive user data is often               tial threats. However, before effective defenses can be designed
+                                        processed on external or untrusted servers [72]. To address this                and evaluated, a systematic understanding of the attack land-
+                                        challenge, privacy-preserving machine learning (PPML) tech-                     scape itself is required. We build this foundation by addressing
+                                        niques have been developed, enabling collaborative learning                     these core research questions regarding attacks against SL:
+                                        while ensuring data confidentiality.
+                                                                                                                           RQ1: How can adversarial objectives targeting SL be sys-
+                                           Among various collaborative methods, Split Learning (SL)
+                                                                                                                        tematically taxonomized? Which architectural vulnerabilities
+                                        emerged as a promising framework that partitions deep learn-
+                                                                                                                        in SL implementations serve as primary attack vectors?
+                                        ing models between clients and servers [25]. SL enables clients
+                                        to process several layers of a neural network locally while dele-                  RQ2: What are the fundamental characteristics and underly-
+                                        gating the remaining layers to a server. This design reduces the                ing principles of different SL attack mechanisms (e.g., feature-
+                                        computational burden on resource-constrained client devices                     space hijacking, model inversion, gradient-based inference,
+                                        while keeping raw data in the local premises of the client [81].                embedding poisoning) that dictate their generalizability across
+                                        Over time, SL has evolved into different architectures, includ-                 SL variants and data domains, their potential for stealth, and
+                                        ing Vanilla Split Learning (VanSL) [25], U-shaped Split Learn-                  their ability to bypass defenses?
+                                        ing (USL) [25], No-Label Split Learning (NLSL) [45], Hybrid                        RQ3: Under what operational constraints and adversarial
+                                        Split Learning (Hybrid-SL) [21], and Multi-hop Split Learning                   assumptions (regarding knowledge, access, capabilities, and
+                                        (MHSL) [81], each optimizing trade-offs between performance,                    collusion scenarios) do attacks against SL demonstrate mea-
+                                        scalability, and privacy.                                                       surable effectiveness? How can their quantifiable impact on
+                                           Despite its architectural advantages for resource-constrained                privacy and model integrity be systematically evaluated?
+                                        clients and inherent data locality [25, 81], SL is vulnerable to                   To counter these threats, researchers have explored various
+                                        several security and privacy risks. Data reconstruction attacks                 privacy-preserving techniques as defense strategies, including
+                                        exploit smashed data and gradients to infer private inputs, while               DP to perturb gradients [88], homomorphic encryption (HE)
+                                        label inference attacks analyze gradient updates to recover class               for encrypted computation to prevent unauthorized data ac-
+                                        labels [59, 16]. Property inference attacks extract sensitive at-               cess [61], and communication compression to reduce informa-
+                                        tributes without full data reconstruction [52], and model inver-                tion leakage [62]. While each method strengthens SL security,
+                                                                                                                        it also introduces trade-offs in computational overhead, scala-
+                                            ∗ Corresponding author.
+                                                                                                                        bility, and model performance. Therefore, a clear understand-
+                                        E-mail addresses: akupcu@ku.edu.tr (A. Küpçü), sinem.sav@cs.bilkent.edu.tr
+                                                                                                                        ing of the defense landscape, its capabilities, limitations, and
+                                        (S. Sav).                                                                       evaluation is equally critical. Consequently, this paper also ad-
+                                            1 Equal contribution.                                                       dresses these research questions concerning defenses in SL:
+   RQ4: What is the taxonomy of defense techniques against                Papers that did not explicitly reference SL, such as those fo-
+predefined attack scenarios/ adversarial objectives tailored for          cused on general distributed machine learning, were excluded.
+SL? Wat are the common techniques and tools being employed?               We then classified each paper as comprehensively as possible,
+   RQ5: Which defenses are suitable for a specific task? What             considering multiple aspects such as the defense mechanisms it
+are the constraints and conditions implied by these defenses?             proposes in case of an attack paper and the attacks it addresses
+Can these techniques be optimized? Are these techniques suit-             in case of a defense paper, the assumed threat model, and the
+able for real-world applications?                                         server-client setup.
+   RQ6: How do defense techniques aim for success among dif-              Systematization Methodology. For our systematization, we
+ferent scenarios in terms of confidentiality or integrity of train-       begin by reviewing SL architectures to establish a foundational
+ing? What constitutes a successful defense mechanism?                     understanding of the landscape. We then categorized the col-
+   This paper provides a comprehensive SL analysis by system-             lected papers into two primary groups: attack papers and de-
+atically categorizing attack vectors and defense strategies based         fense papers. Within each group, we employ a structured clas-
+on these research questions. We propose taxonomies for attacks            sification approach based on three key dimensions:
+and defenses, evaluating their methodology, constraints, and ef-
+                                                                            1. Strategies: The method or strategies used to conduct at-
+fectiveness. We highlight key trade-offs, our observations, and
+                                                                               tacks or implement defenses.
+open challenges derived from this systematization, paving the
+way for future advancements in SL privacy and robustness.                   2. Constraints: The assumptions, limitations, and require-
+                                                                               ments under which the attacks or defenses operate.
+2. Review Scope and Methodology                                             3. Effectiveness: The impact and success rate of attacks, as
+                                                                               well as the robustness and trade-offs of defense mecha-
+    We systematically categorize SL architectures, identify key                nisms.
+attack surfaces —including data reconstruction, feature leak-
+age, and adversarial interference— and evaluate existing de-                Finally, we present a timeline in Figure 1 that compiles our
+fense mechanisms such as differential privacy, homomorphic                surveyed literature on both attacks and defenses. It illustrates
+encryption, and adversarial training. By consolidating insights           the chronological progression and dominant strategies.
+from prior research, we provide a structured framework for as-
+sessing privacy risks, defense effectiveness, and security trade-
+offs, laying the foundation for future advancements in PPML.
+Search Methodology. To ensure a comprehensive and rep-
+resentative collection of research on SL, we systematically
+gathered papers from major academic databases, including
+Google Scholar, IEEE Xplore, ACM Digital Library, arXiv,
+and SpringerLink. The search was conducted in two stages:
+an automated search using predefined keyword queries, fol-
+lowed by a snowballing approach to refine and expand the se-
+lection of relevant studies. We used keyword combinations to
+capture diverse SL research, including privacy, attack surfaces,
+and defenses. Example keywords included a combination of
+“split learning”, “privacy-preserving”, “split neural networks”,          Figure 1: SL attack and defense timeline (2021–2025), with attacks on the top
+“privacy attacks on split learning”, “homomorphic encryption              half and defenses on the bottom half. Attack and defense types are categorized
+based split Learning”, “differential privacy based split learn-           into four groups, as shown in the legend. Attacks are represented with a colored
+                                                                          background, while the corresponding defenses share the same color but are
+ing”, and “inference attacks in split learning”. These queries            displayed without a background.
+targeted research addressing both theoretical and practical as-
+pects of SL, ensuring coverage of multiple perspectives on its
+security vulnerabilities and mitigation strategies. Then, we em-          3. Split Learning (SL)
+ployed a snowballing approach, where we examined the ref-
+erences of key papers to identify prior work. Expanding this                We provide an overview of split learning (SL), its variants,
+approach in both directions, we also examined papers that have            and key concepts. We provide the frequently used notations
+cited the ones we identified, allowing us to trace the evolution          and abbreviations in Table 1.
+of knowledge in the field.
+    After identifying works across these different feature aspects,       3.1. Split Learning and Its Variants
+we aligned and classified them to develop our overall taxonomy              SL [25] is a distributed machine learning paradigm where the
+for SL systematization. During the filtering process, each iden-          computation of a deep learning model is split between clients
+tified paper was first assessed based on its abstract, followed by        and servers. It has evolved into various forms to address the di-
+a thorough review of its methodology and experimental evalu-              verse needs of collaborative machine learning. The key variants
+ation if the abstract indicated the use of a relevant technique.          include Vanilla SL [25], U-shaped SL [25], no-label SL [45],
+                                                                      2
+                                                                             ilar approach, in reverse. This way, USL ensures that x and ŷ
+                Table 1: Key Notations and Abbreviations
+                                                                             remain at the client while enabling end-to-end training.
+ Notation/Abbreviation          Description                                  Hybrid Split Learning: Hybrid SL integrates SL with other
+  fc                            Client-side network model part               collaborative learning paradigms, such as federated learning
+  fs                            Server-side network model part               (FL) to enhance privacy, scalability, and efficiency. For in-
+ x                              Raw input data (client-side)                 stance, combining SL with FL, Split Federated Learning (SFL)
+ y                              True label (often client-side)               allows clients to train parts of the model collaboratively while
+ zc                             Smashed data                                 leveraging federated learning aggregation techniques. Simi-
+ ∇zc                            Gradient sent from server to client          larly, incorporating HE ensures that smashed data exchanged
+ ŷ                             Model’s final output/prediction              between clients and servers remains encrypted, further strength-
+ x̃                             Reconstructed input data                     ening privacy. It enables solutions for scenarios involving het-
+ ỹ                             Inferred label                               erogeneous clients and large-scale data distributions. However,
+ VanSL                          Vanilla Split Learning                       integrating additional mechanisms often introduces computa-
+ USL                            U-Shaped Split Learning                      tional and communication overhead, making efficient design
+ SFL                            Split Federated Learning                     and implementation critical for practical use.
+ HSL                            Horizontal Split Learning                       We present less commonly adopted SL variants, i.e., multi-
+ VSL                            Vertical Split Learning                      hop and no-label SL, in Supplementary Material A. Finally,
+ SCSL                           Single-Client Split Learning                 unlike Federated Learning (FL) [94], where the entire model is
+ MCSL                           Multi-Client Split Learning                  trained locally on each client and the gradients are aggregated
+ SSSL                           Single-Server Split Learning                 by a server, SL partitions the model, delegating the more com-
+ MSSL                           Multi-Server Split Learning                  putationally intensive layers to the server. This makes SL [81]
+ SHS                            Semi-Honest Server                           ideal for resource-constrained clients, who wish to outsource
+ MS                             Malicious Server                             most of the computationally-intensive training procedure.
+ MC                             Malicious Client
+ SHC                            Semi-Honest Client                           3.2. Data Partitioning Schemes
+ FL                             Federated Learning                              Data partitioning in SL determines how data is distributed
+ HE                             Homomorphic Encryption                       among clients, impacting both the training process and privacy
+ DP                             Differential Privacy                         assurances. In Horizontal Split Learning (HSL) [47, 81],
+                                                                             clients handle data with identical feature spaces but different
+                                                                             samples; for instance, multiple hospitals with similar patient
+Hybrid SL [76], and Multi-hop SL [81]. Additionally, the ef-                 data but distinct patient groups can collaboratively train a model
+fectiveness of SL can be influenced by the choice of data par-               by sharing intermediate activations without exposing raw data.
+titioning schemes, namely horizontal partitioning and vertical               Conversely, Vertical Split Learning (VSL) [81, 34] is applica-
+partitioning, which dictate how data is distributed among par-               ble when clients possess complementary features for the sam-
+ticipants. We detail these variants below and illustrate the most            ples; each client processes its unique features, and a server
+commonly used ones in Figure 2.                                              combines these embeddings to facilitate joint learning, such as
+Vanilla Split Learning (VanSL): VanSL is the simplest form                   a bank and an e-commerce platform sharing distinct user at-
+of SL, where the client processes the initial layers ( fc ), and             tributes to jointly develop a credit scoring model.
+the server processes the remaining layers ( f s ). The client
+uses its private data x to compute the intermediate activations              3.3. Client-Server Participation Models
+zc = fc (x), which are transmitted to the server. The server com-            Single Client Split Learning (SCSL) In SCSL [80], training
+pletes the forward pass by calculating the output ŷ = f s (zc ).            involves one client and a server, making it ideal for a single or-
+During backpropagation ( f ′ ), the server computes the gradient             ganization, such as a hospital or research institute, that seeks
+                                                                  ∂L
+of the loss function L with respect to zc , denoted as ∇zc = ∂z    c
+                                                                     ,       to preserve privacy while offloading the heavy computation to
+and sends it back to the client. The client then updates the pa-             a server. Although it simplifies communication and coordina-
+rameters of fc using its local gradients. This collaborative pro-            tion, clients still need sufficient resources to process their local
+cess ensures the client retains x.                                           model portions.
+U-shaped Split Learning (USL): USL divides the model into                    Multi Client Split Learning (MCSL) MCSL [65] keeps
+three segments: (i) initial layers fc processed by the client, (ii)          the forward and backward propagation split between multiple
+middle layers f s handled by the server, and (iii) remaining lay-            clients and a server. Clients only send smashed data to the
+ers fc_r completed by the client. The client begins by processing            server, and the server processes the deeper layers of the model
+x through fc to compute zc and sends zc to the server for further            and updates all clients without requiring them to maintain a full
+computation. The server processes zc through f s to compute z s              model locally.
+and returns z s to the client. The client completes the forward              Single Server Split Learning (SSSL) In SSSL [81], all clients
+pass by applying fc_r to z s , resulting in the final output ŷ. The         interact with a single server. Clients send intermediate activa-
+backpropagation process follows the same sequence with a sim-                tions to the server, which processes the remaining model layers
+                                                                         3
+                                         Vanilla Split Learning         U-shaped Split Learning                      Split Federated Learning
+
+                                                  Forward Pass    Backward Pass            Client Side Local Model       Client Side Global Model
+
+
+
+
+Figure 2: Overview of three key SL variants: Vanilla Split Learning, U-shaped Split Learning, and Split Federated Learning. The figure highlights their architectural
+distinctions, client-server roles, and the flow of forward and backward passes in training.
+
+
+and computes gradients. The server then returns these gradients                            SL or U-shaped SL, the client only processes a few initial lay-
+to clients. Unlike MCSL, where multiple clients interact with                              ers of the model and never needs to store or train the full net-
+multiple servers, SSSL uses a single-server architecture with all                          work [25, 81]. This makes SL particularly suitable for resource-
+clients relying on one server for training. This setup is advanta-                         constrained devices such as smartphones, wearables, or embed-
+geous for organizations with centralized infrastructure capable                            ded IoT systems in domains like digital health, where data con-
+of handling high computational demands. It simplifies system                               fidentiality is crucial and local compute capacity is limited.
+architecture and reduces coordination overhead but may intro-                                 However, SL also has its limitations: It lacks robust mecha-
+duce scalability limitations as the number of clients increases.                           nisms for verifying the integrity of the training process, leaving
+Multi-Server Split Learning (MSSL) MSSL [65] divides the                                   it vulnerable to model manipulation, data poisoning, and back-
+model computation across multiple servers, allowing better                                 door attacks, especially in multi-client settings where collud-
+scalability and resource utilization. Each client processes the                            ing parties can exploit sequential training dynamics [4, 45, 69].
+initial model layers locally and sends the smashed data to                                 Moreover, SL’s training is often serialized, particularly in multi-
+one or more servers. The servers handle subsequent com-                                    client architectures, leading to communication bottlenecks and
+putations, often partitioning the model layers or tasks among                              slower convergence compared to methods that allow concurrent
+themselves, and collaboratively complete forward and back-                                 client updates [65].
+ward passes. MSSL is ideal for large-scale deployments where                                  Given these trade-offs, SL is most appropriate in scenarios
+a single server cannot handle the computation or communica-                                where deep models are essential, client computational power
+tion demands of multiple clients. It enhances system scalabil-                             is constrained, and data sensitivity is high. Examples in-
+ity and fault tolerance but requires efficient communication and                           clude natural language processing tasks involving transformer-
+synchronization between servers.                                                           based models or clinical settings with privacy-sensitive patient
+                                                                                           records [70]. Poirot et al. [68] demonstrated the effectiveness
+                                                                                           of SL in healthcare across disparate datasets while preserving
+3.4. Positioning SL within the PPML Landscape                                              privacy. Wang et al. [84] explored Stitch-able SL for multi-
+   While SL exposes intermediate representations to the server,                            UAV systems, showcasing its ability to handle device instabil-
+leading to attacks such as model inversion, label inference, and                           ity and model heterogeneity in complex tasks. Li et al. [46]
+feature space hijacking, other PPML methods, such as Feder-                                applied Split Learning to BERT-based models, achieving com-
+ated Learning (FL) and Secure Aggregation, are not immune to                               munication efficiency and privacy preservation in decentralized
+similar threats. For instance, in FL, gradients shared by clients                          text classification.
+can be exploited to reconstruct raw inputs, even without access
+to the model architecture or full training data [95]. Similarly,
+Secure Aggregation protocols may be circumvented when ad-                                  4. Attacks on Split Learning
+versaries collude or exploit partial gradient information to in-
+fer sensitive data [28, 54]. These observations suggest that the                              SL vulnerabilities arise from shared intermediate activations,
+underlying vulnerability (exposure of sensitive gradients or ac-                           gradients, and model states, exposing potential attack surfaces.
+tivations) is a broader issue in collaborative learning, not one                           This section categorizes these threats across three dimensions:
+unique to SL. Nonetheless, its advantages and disadvantages                                attack strategies (Section 4.1), operational constraints (Sec-
+must be weighed carefully.                                                                 tion 4.2), and attack effectiveness (Section 4.3). Finally, we
+   One of SL’s key strengths is offloading the client’s computa-                           provide a summary of the surveyed literature in Table 2, Sup-
+tional burden to the server. In standard setups such as Vanilla                            plementary Material E.
+                                                                                      4
+                              Feature Space           Manipulating features to infer             where x̃ is the reconstructed input, and x̃∗ is iteratively refined
+                                Hijacking                  sensitive inputs.
+                                                                                                 to align with x. The reconstruction loss Lrec minimizes the
+                                                       Reconstructing inputs from
+                             Model Inversion           model outputs or gradients.               difference between the reconstructed and original feature rep-
+                               Functionality         Extracting model behavior from              resentations. At the same time, regularization R( x̃∗ ) imposes
+       Data                      Stealing                activations or gradients.               constraints such as Total Variation (TV) loss [71] or adversarial
+   Reconstruction
+                                Generative            Generating synthetic data to               regularization [53]. The term λ controls the balance between
+                                Adversarial           approximate original inputs
+                                 Network
+                                                                                                 accuracy and constraint enforcement. The primary methodolo-
+                             Feature-Oriented       Reconstructing data from feature
+                                                                                                 gies are (i) Feature Space Hijacking Attack (FSHA), (ii) Model
+                              Reconstruction            activations or gradients                 Inversion Attack, (iii) Functionality Stealing, (iv) Generative
+                             Gradient Based
+                                                     Using gradients to deduce data              Adversarial Network (GAN), and (v) Feature Reconstruction.
+                                                                 labels.
+   Label Inference                                                                               We further provide detailed explanations of each subtype of
+                              Smashed Data           Using smashed data to deduce
+                                 Based                       data labels.
+                                                                                                 data reconstruction attack in Supplementary Material B.
+
+       Property                                      Inferring sensitive properties of           4.1.1.1 Feature Space Hijacking Attack (FSHA). FSHA [59,
+      Inference                                              the training data.
+                                                                                                 22] is a data reconstruction attack that exploits feature repre-
+                                Adversarial           Adding subtle perturbations to             sentations in SL settings. By leveraging adversarial learning,
+                                  Attack               mislead model predictions.                a technique where models are trained using adversarial exam-
+      Model
+    Manipulation             Backdoor Attack
+                                                      Embedding hidden triggers to               ples, intentionally crafted inputs designed to mislead the model,
+                                                       manipulate model behavior.
+                                                                                                 FSHA enables the adversary to approximate private client data
+                                                        Injecting malicious data to
+                             Poisoning Attack
+                                                              corrupt training.                  from the exchanged feature space. This attack employs a three-
+                                                                                                 component system: a pilot network ( f˜c ) that defines the target
+                                                                                                                                        −1
+Figure 3: A taxonomy of attacks in SL categorizing attack vectors into: (1)                      feature space, an inverse network ( f˜c ) that reconstructs inputs
+Data Reconstruction, (2) Label Inference, (3) Property Inference, and (4) Model                  from features, and a discriminator (D) that guides the mapping
+Manipulation Attacks.                                                                            learning through adversarial training.
+4.1. Attack Strategies                                                                           4.1.1.2 Model Inversion:. Model Inversion is an attack tech-
+   The attacks exploit specific ML principles and methodolo-                                     nique where an adversary attempts to reconstruct private train-
+gies. In this section, we categorize them into four main strate-                                 ing data by exploiting a model’s parameters, outputs, or gradi-
+gies: data reconstruction attacks (Section 4.1.1), label infer-                                  ents. As demonstrated by [27, 10], a malicious party can lever-
+ence attacks (Section 4.1.2), property inference attacks (Sec-                                   age the information received during the SL process to recover
+tion 4.1.3), and model manipulation attacks (Section 4.1.4). We                                  client data. This approach involves an optimization procedure
+further refine these categories into subcategories in Figure 3,                                  where the adversary generates synthetic inputs that produce ac-
+which presents a structured taxonomy of attacks, systematically                                  tivations or gradients matching those observed during training
+highlighting key attack vectors. Additionally, Figure 4 illus-                                   when fed through the model. By iteratively minimizing the dis-
+trates the distribution of adversarial attack models.                                            tance between these synthetic outputs and the observed ones,
+                                                                                                 often using mean squared error (MSE) as the objective func-
+                                                                                                 tion, the adversary can approximate the original private data.
+
+                                                                                                 4.1.1.3 Functionality Stealing:. Functionality stealing [92] is
+                                                                                                 an attack where an adversary replicates a model’s behavior. By
+                                                                                                 mimicking its functionality, the attacker approximates the orig-
+                                                                                                 inal model and extracts sensitive information. The adversary
+                                                                                                 can train a pseudo-client model ( f˜c ) that functionally mimics fc
+                                                                                                 without knowing its structure. Once the functionality is stolen,
+                                                                                                 the adversary can train a reverse mapping function to transform
+                                                                                                 features back into x, effectively compromising client privacy
+ Figure 4: The distribution of adversarial models of surveyed attacks in SL.
+                                                                                                 across multiple clients without modification.
+
+4.1.1. Data Reconstruction Attacks                                                               4.1.1.4 Generative Adversarial Network (GAN). GANs have
+   Data Reconstruction Attacks represent a significant privacy                                   emerged as powerful tools for data reconstruction attacks [91,
+vulnerability in SL systems, wherein the adversary attempts to                                   52] in SL environments. This approach involves training the
+recover sensitive training data. These attacks leverage model                                    generator G to produce synthetic inputs that yield feature rep-
+characteristics, including gradients, confidence scores, and in-                                 resentations or gradients matching those observed during train-
+ternal representations, to reconstruct private training inputs.                                  ing. The discriminator D helps refine these reconstructions by
+The adversary optimizes a reconstruction function to approx-                                     providing feedback on their realism. GAN-based attacks are
+imate the original input x, formulated as:                                                       concerning because they can operate effectively with limited in-
+                                                                                                 formation and can progressively improve reconstruction quality
+                    x̃ = arg min
+                              ∗
+                                 Lrec ( fc ( x̃∗ ), zc ) + λR( x̃∗ )                   (1)       through the adversarial training process.
+                               x̃
+
+                                                                                             5
+4.1.1.5 Feature Reconstruction. Feature reconstruction is an               updates but instead rely on the inherent information encoded in
+attack that aims to recover the original input data from inter-            z. The adversary infers labels by minimizing a predefined loss
+mediate feature representations exchanged during model train-              function (Ladv ), which measures the difference between the ob-
+ing. By leveraging statistical measures [24, 49] and adversarial           served z and reference embeddings (zexp ). This general process
+learning, attackers can approximate private data to exploit the            is formulated as:
+representation preferences encoded in zc [87, 96].
+                                                                                           ỹ = arg min Ladv (F (z), F (zexp ))          (5)
+                                                                                                     yexp
+4.1.2. Label Inference Attacks
+   Label inference attacks exploit the correlation between                 where, F represents the adversarial function. We detail the
+model updates and labels to infer client information. By an-               smash-based label inference attacks in Supplementary Mate-
+alyzing shared gradients or smashed data during training, these            rial C.2. Researchers have explored three primary approaches
+attacks leverage inherent patterns in the learning process to re-          for label inference leveraging smashed data in SL: (i) distance-
+construct labels. They are primarily categorized into gradient-            based matching [48], which measures the similarity between
+based and smashed data-based label inferences.                             observed and reference embeddings using metrics like Eu-
+                                                                           clidean distance; (ii) clustering-based inference [48, 96], which
+4.1.2.1 Gradient-Based Label Inference:. These attacks ex-
+                                                                           groups similar embeddings to identify patterns in labels; and
+ploit the correlation between gradient updates and label dis-
+                                                                           (iii) transfer learning-based inference [48, 30], which lever-
+tributions to infer client information. We provide a detailed
+                                                                           ages pre-trained models or generators to extract label informa-
+explanation of gradient-based label inference attacks in Sup-
+                                                                           tion from embeddings. These techniques demonstrate that even
+plementary Material C.1. Three methods dominate the litera-
+                                                                           without gradient information adversaries can successfully infer
+ture for performing gradient-based label inference attacks: (i)
+                                                                           private labels by exploiting the semantic properties preserved
+similarity-based techniques [48, 45] that compare gradients di-
+                                                                           in the shared intermediate representations.
+rectly by selecting the expected label (yexp ) and minimizing
+the difference between the observed gradient (∇c ) and expected
+gradient (∇exp ):                                                          4.1.3. Property Inference Attacks
+                                                                              Property inference attacks extract sensitive attributes or sta-
+                     ỹ = arg min ∥∇c − ∇exp ∥2                 (2)        tistical patterns from client data without requiring complete
+                               yexp
+                                                                           data reconstruction. Unlike reconstruction attacks, these ap-
+where ∥ · ∥ represents the similarity metric, such as Euclidean            proaches focus on inferring specific properties such as demo-
+norm (ℓ2 -norm) or cosine similarity. (ii) loss function-based in-         graphic information, class distributions, or other sensitive char-
+ference [10, 86] that iteratively refines predictions in searching         acteristics embedded within the private dataset. As demon-
+for the most expected label yexp by minimizing MSE or cross-               strated in [59, 52], property inference attacks in SL typically
+entropy loss:                                                              leverage the intermediate representations or model updates
+                                                                           shared during the collaborative training process. The approach
+                   ỹ = arg min Ladv (∇c − ∇exp )               (3)        involves an adversary creating a specialized classifier (C) that
+                             yexp
+                                                                           maps the observed smashed data or gradients to property labels.
+where (Ladv ) is the adversary loss function measuring the dif-            By analyzing patterns in the information, an adversary can infer
+ference between ∇c and ∇exp , and (iii) surrogate model op-                properties that were never intended to be shared. The attack can
+timization [37, 93, 4], where an adversary iteratively refines             be formulated as:
+the estimated label by minimizing the loss function using                                          X
+gradient-based optimization. Unlike direct gradient matching                        APIA = arg min     Ladv (F(T (xi )), li ), li ∈ 0, 1  (6)
+                                                                                                F
+or similarity-based inference, this method leverages a surrogate                                    xi ∈X
+model to approximate the relationship between x, ∇, and y, al-
+lowing for a structured reconstruction of private labels. At each          where (F) represents the adversarial inference model, (T ) is the
+iteration t, the adversary updates the estimated label ỹ(t) by per-       function that processes client data and produces the observable
+forming a gradient step that minimizes the loss function:                  artifacts, and (li ) indicates the property being inferred. These
+                                                                           attacks are particularly concerning because they can reveal sen-
+                                   ∂Ladv(∇c , ∇exp(ỹ(t) ))                sitive information while the participating entities believe they
+             ỹ(t+1) = ỹ(t) − η                                (4)
+                                           ∂ỹ                             are only sharing task-relevant features.
+
+where η is the learning rate that controls the step size for updat-
+ing the label estimate.                                                    4.1.4. Model Manipulation Attacks
+                                                                              This section explores attacks that compromise SL model in-
+4.1.2.2 Smashed Data-Based Label Inference:. In smashed                    tegrity, categorizing them into: (i) adversarial attacks that per-
+data-based label inference attacks, an adversary aims to recon-            turb inputs to cause misclassification, and (ii) backdoor and
+struct private labels by analyzing the structural and semantic             poisoning attacks that manipulate training data to induce ma-
+properties of z received by the adversary in an SL setup. Unlike           licious behavior or degrade performance (see Supplementary
+gradient-based attacks, these methods do not require gradient              Material D).
+                                                                       6
+4.1.4.1 Adversarial Attacks.. Adversarial attacks manipulate                        where Dclean represents the clean dataset used for normal train-
+intermediate feature representations by introducing perturba-                       ing, while Db contains samples modified with a trigger. The
+tions that induce misclassification. These attacks can be cat-                      adversary applies a backdoor function to x, producing xb that,
+egorized as non-targeted attacks [14] and targeted attacks [26].                    when processed by the model, leads to a specific misclassifica-
+We provide a summary of adversarial attacks and detail them in                      tion. The attacker assigns target labels yt to these backdoor-
+Supplementary Material D.1. The objective of a non-targeted                         embedded samples, ensuring that normal inputs retain their
+attack is to maximize the difference between the perturbed                          correct classification while triggered inputs are classified in-
+representation and the clean feature representation z. This is                      correctly. λ is a regularization parameter that balances the
+achieved by often using cosine similarity or Euclidean distance:                    model’s ability to maintain the accuracy on clean inputs while
+                                                                                    embedding the backdoor functionality (see Supplementary Ma-
+                      ξ∗ = arg max Lattack (z, ξ + z)                     (7)       terial D.2 for details of backdoor and poisoning attacks.)
+                                  ∥ξ∥∞ ≤ϵ
+                                                                                    a. Label Flipping Attacks: Label flipping attacks represent a
+where ξ∗ is the optimal adversarial perturbation, ξ is the adver-                   fundamental poisoning strategy in SL, where adversaries delib-
+sarial perturbation applied to z, and ∥ξ∥∞ ≤ ϵ ensures that the                     erately alter class labels within the training data [43, 19, 32].
+perturbation remains within the allowed bound. However, in a                        These attacks are executed by malicious clients who manipu-
+targeted attack, the adversary modifies z such that they move                       late their local datasets before participating in the collabora-
+toward a predefined target embedding zt , forcing the model to                      tive training process. The general approach involves systemati-
+produce a specific incorrect prediction. This is achieved by                        cally modifying the true labels of training samples to incorrect
+minimizing (rather than maximizing) the attack loss function                        ones, either through targeted flipping (changing specific source
+in Equation 7. The reason is that in a non-targeted attack, the                     classes to pre-selected target classes), untargeted flipping (ran-
+adversary aims to maximize the deviation of the perturbed rep-                      dom mislabeling across multiple classes), or distance-based op-
+resentation from the original feature representation, making the                    timization (selecting target classes that maximize classification
+output unpredictable and unreliable. In contrast, a targeted at-                    errors based on feature proximity). The effectiveness of label
+tack seeks to minimize the difference between the perturbed                         flipping attacks increases with the poisoning rate. For instance,
+representation and a specific target representation zt , effectively                even 10% malicious clients reduced class recall by 12.58% on
+steering the model toward a controlled misclassifications.                          CIFAR-10 and up to 47.31% with 50% malicious clients [19].
+                                                                                    Similar trends were observed by Ismail and Shukla [32], where
+4.1.4.2 Backdoor and Poisoning Attacks.. SL models are vul-
+                                                                                    untargeted and distance-based attacks caused greater accuracy
+nerable to adversarial manipulations that exploit weaknesses
+                                                                                    degradation than targeted attacks in both MNIST and ECG
+in the training process, particularly through poisoning attacks
+                                                                                    datasets, confirming their higher impact across domains.
+and backdoor attacks. Poisoning attacks manipulate the train-
+                                                                                    b. Embedding Poisoning Attacks: Embedding poisoning at-
+ing process by modifying the dataset to degrade model perfor-
+                                                                                    tacks target the smashed data, manipulating the embedding
+mance. Let x, y denote the original training data and labels,
+                                                                                    space rather than raw data or labels [4, 85]. The general ap-
+and A(x, y) be the adversarial poisoning function that generates
+                                                                                    proach involves introducing perturbations to the feature repre-
+a poisoned dataset x′ , y′ . The model, parameterized by θ, up-
+                                                                                    sentations (z˜i ) before they are transmitted to the server. These
+dates its parameters to θ∗ after training on poisoned data, lead-
+                                                                                    perturbations are designed to be subtle enough to avoid detec-
+ing to incorrect decision boundaries. The adversary’s objective
+                                                                                    tion while causing the model to learn unintended patterns or
+is to maximize classification errors, formulated as a minimiza-
+                                                                                    vulnerabilities. These attacks are effective because they directly
+tion problem where the model, trained on poisoned data, un-
+                                                                                    compromise the information exchange that is fundamental to
+knowingly optimizes its loss function in a way that degrades
+                                                                                    the collaborative learning process.
+generalization and increases misclassification:
+                                                                                    c. Client-Side Backdoor Attacks: Client-side backdoor at-
+                 θ∗ = arg min E(x′ ,y′ )∼A(x,y) L( fθ (x′ ), y′ )         (8)       tacks in SL involve malicious clients who inject hidden triggers
+                              θ
+                                                                                    into their local training data or model components. These at-
+where fθ (x′ ) is the model’s output, and L( fθ (X ′ ), Y ′ ) measures              tacks follow a pattern where the adversary modifies a subset
+the classification loss on the poisoned dataset. The expected                       of their training data to include specific trigger patterns asso-
+loss function E(x′ ,y′ )∼A(x,y) ensures the poisoning effect general-               ciated with targeted misclassifications [89, 69]. The approach
+izes across training samples. Backdoor attacks implant hidden                       involves training the local model component to respond to these
+triggers into the training process, enabling adversaries to ma-                     triggers while maintaining normal performance on clean data.
+nipulate model predictions when the trigger is present while                        This can be achieved through feature manipulation, label mod-
+maintaining normal behavior otherwise. Let x, y denote the                          ification, or the use of auxiliary models to distinguish between
+clean training data and labels, and let xb be the backdoor-                         clean and backdoored samples. The distributed nature of the
+inserted inputs with the attacker-defined target labels yt . The                    system makes it difficult to detect malicious behavior, allow-
+adversary optimizes a dual-objective function that ensures nor-                     ing backdoors to persist across multiple training rounds while
+mal classification on clean samples while inducing misclassifi-                     maintaining model utility for the primary task.
+cation on backdoor samples:                                                         d. Server-Side Backdoor Attacks: In server-side backdoor at-
+                                                                                    tacks, a malicious server compromises the integrity of the SL
+ θ∗ = arg min E(x,y)∼Dclean L( fθ (x), y) + λE(xb ,yt )∼Db L( fθ (xb ), yt )        model. As investigated in [74, 89, 90], these attacks lever-
+             θ
+
+                                                                                7
+age the server’s privileged position in the training process to            Label and Classification Constraints. Knowledge of the num-
+implant backdoor functionalities without direct access to client           ber of discrete labels in the dataset allows adversaries to re-
+data. The methodology involves manipulating the shared model               fine their predictions and narrow the search space for classifi-
+components or gradient updates to create hidden vulnerabilities            cation inference [10]. In some settings, adversaries are further
+that can be exploited later. This can be achieved through sur-             assumed to employ binary classifiers to predict labels from ob-
+rogate model training, feature space manipulation, or strategic            served model activations, a technique commonly leveraged in
+modification of model updates.                                             membership inference attacks to determine the presence of spe-
+                                                                           cific samples in the training set [45]. Additional assumptions,
+                                                                           such as requiring only a single labeled sample per class or hav-
+4.2. Attack Constraints                                                    ing access to all participant labels, further strengthen the adver-
+                                                                           sary’s capability to infer broader label information from model
+  Attack constraints define the technical and operational pre-
+                                                                           activations [48, 4].
+requisites for adversaries to execute attacks in SL successfully.
+
+                                                                           4.3. Attack Effectiveness
+Dataset Constraints. Dataset constraints influence the vulner-
+ability landscape of SL systems. One fundamental constraint                Domain-Independent Attacks. Such attacks do not rely on spe-
+is the adversary’s ability to access domain-similar datasets,              cific datasets, architectures, parameter distribution, or optimiza-
+which substantially enhances the feasibility of various attack             tion methods. Unlike traditional attacks that exploit domain-
+vectors [59]. Studies have shown that an exact match between               specific patterns, these attacks leverage fundamental weak-
+the adversary’s dataset and the target data is not necessary; it           nesses in the SL process, allowing them to generalize across
+is sufficient for the datasets to share similar distributional char-       multiple settings. For instance, [59, 92, 87, 48, 45, 37, 4, 10]
+acteristics to mount effective attacks [87, 26, 96, 30]. Further-          attacks have been shown to reconstruct input data and inference
+more, access to publicly available datasets enables the devel-             labels across diverse learning environments, demonstrating that
+opment of more sophisticated threats. For instance, adversaries            their effectiveness is not constrained to a particular application.
+can train surrogate models to reconstruct private data [92, 91]
+or employ shadow models to conduct backdoor insertion and                  Stealth. In traditional security frameworks, attacks are often
+poisoning attacks [90, 89, 32].                                            identified by monitoring anomalies in system behavior. How-
+                                                                           ever, many SL attacks [59, 92, 10, 87, 48, 90, 26, 96, 93, 69,
+                                                                           86, 19, 32] evade detection by ensuring that they do not intro-
+Knowledge-Based Constraints. The assumption that the server                duce observable deviations in gradient updates or model per-
+possesses complete knowledge of the learning task significantly            formance. For instance, distance correlation minimization is
+amplifies the effectiveness of adversarial strategies. Under this          leveraged in [59, 10, 87] to launch stealthy attacks, where gradi-
+constraint, adversaries are able to design task-specific queries           ent updates are subtly manipulated while preserving the overall
+that exploit the model’s learning objective, thereby increasing            model behavior.
+the risk of privacy breaches [59, 92]. For instance, in a set-
+ting where the learning task involves medical imaging, adver-
+                                                                           Defeating Differential Privacy. Differential Privacy (DP) [9]
+saries can synthesize patient-specific scans to infer sensitive at-
+                                                                           is recognized as one of the most effective privacy-preserving
+tributes. Additional assumptions, such as the server and client
+                                                                           methods in machine learning. It operates by introducing con-
+sharing the same optimizer, further facilitate attack success by
+                                                                           trolled random noise into training updates, thereby ensuring
+enabling more accurate reconstruction of training data or infer-
+                                                                           that the inclusion or exclusion of any individual data point
+ence of model parameters [92]. Some works explore scenar-
+                                                                           does not significantly alter the model’s output (detailed in Sec-
+ios where the adversary operates with only partial information
+                                                                           tion 5.1.1). This mechanism provides theoretical guarantees
+about the learning objective [14].
+                                                                           that adversaries cannot precisely infer the presence of a specific
+                                                                           data sample. However, recent studies [22, 92, 45, 48, 4, 93, 30]
+Architecture Exposure Constraints. Architecture exposure                   have demonstrated that DP alone is insufficient in defending
+constraints play a crucial role in determining the vulnerabil-             against advanced SL attacks. The primary limitation of DP in
+ity of SL systems to various attacks. The exposure to client-              the SL setting is that it focuses on protecting individual data
+side architecture significantly enhances the efficacy of model             contributions rather than preventing full-scale data reconstruc-
+manipulation [26, 30], inversion [10], and feature reconstruc-             tion. While DP effectively limits the sensitivity of activations
+tion attacks [96]. Further expanding on this constraint, more              and gradient updates, adversaries can still exploit structural and
+comprehensive threat models have been proposed, where adver-               statistical properties of gradients to recover private information
+saries are assumed to have full knowledge of both the client’s             at a more aggregated level. Moreover, adversaries employing
+subnetwork architecture and the dataset distribution [74]. This            distance correlation minimization techniques [59, 10, 87] have
+enhanced architectural exposure notably strengthens the poten-             been shown to circumvent DP protections. By iteratively op-
+tial for backdoor attacks, enabling adversaries to manipulate the          timizing gradient representations, adversaries can reconstruct
+model’s internal structure and implement covert functionalities            highly accurate approximations of the original input data, re-
+while evading detection.                                                   ducing the effectiveness of DP.
+                                                                       8
+SL Variants. The effectiveness of attacks in SL is not confined                                        5.1.1. Protection Mechanisms
+to a single variant but extends across all architectures [92, 14,                                         Protection mechanisms aim to secure parties preemptively
+96, 93], demonstrating a fundamental vulnerability. Since all                                          before attacks occur. These approaches generally conceal or
+SL variants inherently rely on exchanging intermediate activa-                                         limit the information an adversary can extract, often assuming
+tions or gradients between the clients and the servers, adver-                                         a semi-honest threat model.
+saries can exploit this communication to infer sensitive infor-
+mation, manipulate learning dynamics, or introduce adversar-                                           5.1.1.1 Data Perturbation:. In this approach, clients intention-
+ial perturbations. The structural modifications between VanSL,                                         ally modify (e.g., add noise to) data or intermediate representa-
+USL, and Hybrid SL do not provide sufficient protection, as                                            tions, aiming to obscure sensitive information while preserving
+the core vulnerability (gradient leakage and model influence)                                          sufficient utility for training. Differential privacy (DP) gained
+remains consistent across variants.                                                                    prominence due to its well-defined mathematical framework
+                                                                                                       that achieves provable formal privacy guarantees. By calibrat-
+                                                                                                       ing noise according to (ε, δ)-DP, data contributors can formally
+5. Defense For Split Learning                                                                          bound the risk. The privacy guarantee is established through
+                                                                                                       the definition in Equation (9), ensuring that even if an adver-
+   In Section 4, we explored how adversaries exploit SL vulner-                                        sary observes these shared activations, they cannot confidently
+abilities. In response, various defense strategies have emerged.                                       distinguish whether a specific data point was included in the
+This section systematically analyzes defense mechanisms based                                          dataset X.
+on defense strategies (Section 5.1), operational constraints
+(Section 5.2), and effectiveness (Section 5.3), with a summary                                                     Pr[M(X) ∈ S ] ≤ eε Pr[M(X′ ) ∈ S ] + δ.            (9)
+in Table 2, Supplementary Material E.                                                                  where M is a randomized mechanism that takes a dataset X as
+                                                                                                       input and M satisfies (ε, δ)-differential privacy for all neighbor-
+   Secure Computation - Homomorphic Encryption                                                         ing datasets X and X′ differing in at most one entry. Here, ε de-
+   Secure Computation - Function Secret Sharing                                                        fines the privacy budget and δ is a small probability of violating
+   Data Perturbation - Differential Privacy                                                            strict ε-DP. To achieve differential privacy, noise from distribu-
+   Architecture Modification - Protocol Modification                                                   tions such as Laplace, Gaussian, or uniform is often added to
+   Architecture Modification - Data Decorrelation                                                      the data or query results to obscure the influence of any single
+   Monitoring - Weight/anomaly detection                                                               individual. In the context of SL, DP is often applied to per-
+   Monitoring - Gradient Detection                                                                     turb the activations exchanged between the client and server,
+                                                                                                       preventing sensitive information leakage through intermediate
+Figure 5: The distribution of defense mechanisms classified in the surveyed                            representations. Nonetheless, DP methods often entail a trade-
+literature.                                                                                            off between privacy and model accuracy. Key challenges in
+                                                                                                       these schemes include:
+5.1. Defense Strategies                                                                                • Accuracy vs. Noise: Elevated noise degrades model perfor-
+                                                                                                          mance.
+   In this section, we present defense strategies, first categoriz-                                    • Scalability: Tuning DP parameters for high-dimensional data
+ing them into protection and detection mechanisms, followed                                               or large-scale models is non-trivial.
+by their subcategories. The distribution and taxonomy of these                                         Several papers [79, 56, 22] investigate how DP needs to be ap-
+strategies in the surveyed literature is illustrated in Figures 5,                                     plied in terms of both achieving privacy and accuracy in various
+and 6, respectively.                                                                                   SL setups.
+
+                             Data                                      Adds noise to protect
+                                                                                                       5.1.1.2 Secure Computation:. Cryptographic methods offer
+                                            Differential Privacy
+                         Perturbation                                    individual data.              formal security guarantees by preventing adversaries from ac-
+                                                                                                       cessing raw data, with each cryptographic scheme preserving
+                                              Homomorphic             Enables encrypted data
+
+                          Secure
+                                               Encryption                 computation.                 different properties. Homomorphic encryption (HE) enables
+     Protection                                                                                        computations on encrypted data. Formally, if E represents the
+                        Computation
+                                              Function Secret        Splits functions to prevent
+                                                 Sharing                   reconstruction.             encryption function, D the decryption function, and ◦ a sup-
+                                              Architectural          Alters model structure for        ported operation (such as addition or multiplication) under HE,
+                                              Modifications                  privacy.
+                                                                                                       then an HE scheme satisfies the property:
+                        Modification
+                                               Protocol              Adjusts training to reduce
+                                              Modifications                   leakage.                                      D(E(x) ◦ E(y)) = x ◦ y
+                                Gradient                   Detects manipulations in
+                                Detection                     gradient updates.                        where x and y are plaintext values, and E(x) and E(y) are their
+      Detection                                                                                        corresponding ciphertexts. Each encryption scheme provides
+                             Weight/Anomaly                  Flags unusual model
+                                Detection                         behaviour.                           different functionalities, and in the context of SL, fully homo-
+                                                                                                       morphic encryption is widely preferred due to its ability to sup-
+                                                                                                       port arbitrary polynomial-time computations on encrypted data
+                   Figure 6: Taxonomy of Defense Strategies
+                                                                                                       without requiring decryption.
+                                                                                                   9
+   On the other hand, function secret sharing (FSS) is a crypto-               formation leakage to potential adversaries.
+graphic technique that allows a function to be split into n shares                           
+distributed among parties, such that the original function can be                            max(0, v + z), with probability p,
+                                                                                             
+                                                                                 R eLU(v) = 
+                                                                                  3
+                                                                                             
+                                                                                                                                         (10)
+reconstructed by combining the shares. Below, we present the                                 0,
+                                                                                                              with probability (1 − p).
+formal definition of FSS as references in [5].
+   For n ∈ N, an n-party FSS scheme with respect to a share                    Additionally, mechanisms designed to de-correlate transmitted
+output decoder DEC = (S 1 , . . . , S n , R, Dec) and a function               data have been proposed in [52, 73, 83, 78, 42], demonstrating
+class F is a pair of probabilistic polynomial-time algorithms                  various techniques to mitigate information leakage while pre-
+(Gen, Eval) defined as:                                                        serving utility.
+                                                                               b. Protocol Modifications: Beyond structural adjustments, re-
+  • Key Generation: The algorithm Gen(1λ , f ) with a secu-                    fining the protocol that governs data exchange in SL can sub-
+    rity parameter λ and a function description f ∈ F , outputs                stantially strengthen privacy. A notable example is SL without
+    n secret keys (k1 , . . . , kn ).                                          local weight sharing (P-SL) [66], which prevents adversaries
+                                                                               from leveraging model inversion to reconstruct client data. In-
+  • Evaluation: Each party i runs Eval(i, ki , x), with a party                stead of sharing model parameters, this approach enables col-
+    index i, the corresponding key ki , and an input x. It outputs             laborative training without exposing private data. The gradient
+    a value yi ∈ S i , representing the party’s share of f (x).                computation in this modified setting is given by:
+                                                                                                                                                        
+   For example, in a setting with two semi-honest servers that                    ∇L(outputs, labels) = ∇ui ,w L gw ([zi , zcache ]), [ytrain
+                                                                                                                                        i     , ycache ]
+assumed to not collude, neither server can reconstruct the train-
+                                                                               where zi = fu (xi ) represents the smashed data from the current
+ing function independently, even though together they can com-
+                                                                               client, and zcache consists of previously cached smashed data,
+pute the intended final result, as f (x) = f1 (x)⊕ f2 (x) where f1 , f2
+                                                                               effectively mitigating privacy leakage from individual updates.
+are computationally indistinguishable.
+                                                                                  An alternative strategy is to invert the SL setup, wherein
+   The primary objective here is not merely to ensure data
+                                                                               clients hold the labels while the server processes encrypted fea-
+privacy, since encryption with well-established cryptographic
+                                                                               tures, as proposed in [35]. This approach reduces the computa-
+schemes already provides a rigorous security foundation, but to
+                                                                               tional burden on resource-constrained clients while preserving
+optimize the application of these strategies for efficiency and
+                                                                               model utility.
+practicality, particularly in resource-constrained environments.
+                                                                                  Other examples include [66, 44], which explore communica-
+Khann et al. [38] explore a two-server FSS approach, examin-
+                                                                               tion and data-sharing regulations. Such protocol modifications
+ing how different secure computation techniques can be adapted
+                                                                               ensure that client-side computations remain efficient while re-
+for SL.
+                                                                               ducing the effectiveness of feature-space hijacking and recon-
+   Other works [35, 61, 57, 41] integrate HE into SL leveraging                struction attacks [78, 44]. However, both architecture and pro-
+both cryptographic techniques and adversarial training method-                 tocol level modifications introduce a computational burden on
+ologies to enhance security while maintaining computational                    the server, which must be managed to maintain scalability.
+feasibility. While these methods maintain model accuracy and                      While these methods can be empirically effective, they may
+provide robust security, their computational overhead can be                   incur a reduction in model accuracy and often lack formal secu-
+impractical for resource-constrained environments as discussed                 rity proofs, leaving them potentially vulnerable to minor adap-
+in [35], for computational resource-restricted environments ad-                tations in attack strategies. Key considerations include:
+ditional considerations need to be done to manage the training                 • Model Accuracy vs. Privacy: Structural modifications may
+in a feasible way.                                                                compromise performance.
+                                                                               • Robustness Under Diverse Attacks: Without formal guaran-
+5.1.1.3 Structural and Procedural Modifications:. Defense                         tees, even minor changes in attack tactics might bypass these
+strategies in this section modify the model architecture or the                   defenses.
+protocol to limit information leakage and maintain privacy. We
+provide the details of two subcategories (architectural modifi-                5.1.2. Detection Mechanisms
+cations and protocol modifications) below:                                       Detection mechanisms focus on monitoring the training pro-
+a. Architectural Modifications: Architectural modifications                    cess to identify malicious activity during or after its occurrence,
+introduce structural changes to SL to prevent reconstruction at-               thereby enabling timely responses such as halting or rolling
+tacks. Abuadbba et al. [1] investigate the effects of shrinking                back updates. These methods are particularly relevant for sce-
+the cut layer on the effectiveness of FSHA. Building on this,                  narios involving overtly malicious adversaries who might en-
+Pham et al. [62] introduce a binarized neural network approach                 gage in label-flipping, backdoor insertion, or model hijacking.
+combined with DP to analyze its impact on both security and                    Two primary detection approaches are employed:
+efficiency. Another important approach leverages specialized
+activation functions, such as the one presented in Equation (10)               5.1.2.1 Gradient/Update Monitoring:. This method involves
+by Mao et al. [52], which strategically introduce randomness                   analyzing the gradients or updates exchanged between clients
+into activation outputs to obscure patterns and minimize the in-               and servers to detect abnormal variations. Outlier detection
+                                                                          10
+techniques can highlight significant deviations that may sig-            61], data perturbation [79, 64, 77], and architecture-based ap-
+nal an ongoing attack. Several studies have explored gradi-              proaches [62, 1, 52, 73, 44] generally suffice, as they aim to mit-
+ent anomaly detection to identify adversarial activity in SL             igate reconstruction attacks. In malicious settings, verification-
+[18, 12, 11]. Considering the approach in [18], the detection            based detection strategies [18, 13, 11, 69] are often necessary
+score DS n is computed as follows:                                       to detect and prevent adversarial behaviors such as poisoning or
+                                                                         backdoor attacks. Balancing these approaches depends on the
+               DS n = S ig(λds (Ĝn · Ên · V̂n − α))       (11)         degree of trust among participants and the trade-off between
+                                                                         privacy and performance overhead.
+where Ĝn represents the adjusted gradient similarity gap, Ên
+is the logarithmic transformation of the polynomial approxima-           Multi-Party Verification Constraints. When multiple clients or
+tion error, and V̂n quantifies the overlap between same-class and        servers are involved, defenses may need enhanced validation
+different-class gradients. S ig is a sigmoid activation that nor-        mechanisms to differentiate between benign and malicious up-
+malizes the detection score to the range [0, 1]. This approach           dates, as demonstrated in [13, 11, 18]. Some methods [69, 42]
+enables the identification of adversarial gradient manipulations         rely on cross-comparisons among clients, a trusted third party,
+by analyzing deviations in expected gradient behavior.                   or a server, which increases communication rounds and latency.
+                                                                         In large-scale or bandwidth-limited environments, frequent ver-
+5.1.2.2 Weight Anomaly Detection:. Some frameworks track                 ification may be impractical. Leveraging powerful nodes or
+model weight evolution, comparing it to normal behavior to               third parties can mitigate some of these issues but introduces
+detect anomalies and prevent adversarial tampering. Studies              additional trust assumptions.
+such as [69] analyze changes in weight distributions to detect
+anomalies, particularly those introduced by backdoor attacks,            Architectural Constraints. Certain defenses [62, 1] depend on
+making them effective in identifying malicious training behav-           the model’s partitioning and the number of layers retained on
+iors. One such metric for anomaly detection is the Rotational            the client side [62] or specialized activation functions [52], can
+Distance metric introduced in [69], which quantifies the direc-          limit information leakage but may also reduce flexibility or per-
+tional change in parameter space between consecutive training            formance on complex tasks. Architectural considerations be-
+iterations:                                   !                          come increasingly crucial when striving for a generalized ap-
+                                  Bt · Bt−1
+                  θ(t) = arccos                            (12)          proach that minimizes reliance on specific empirical setups.
+                                 ∥Bt ∥∥Bt−1 ∥
+where Bt and Bt−1 are the backbone parameters at consecutive             Computational and Operational Constraints. Practical deploy-
+training steps, and ∥ · ∥ denotes the Euclidean norm. The an-            ments of SL, especially on edge or mobile devices, limit how
+gular displacement θ(t) measures the directional shift in model          often encryption, extra communication rounds, or gradient
+updates. However, backdoor attacks introduce abnormal direc-             checks can be performed. Heavy cryptographic schemes may
+tional changes in weight updates, causing θ(t) to deviate from           be infeasible, and much of the work in this domain focuses on
+normal training patterns. By averaging pairwise differences in           improving computational efficiency [35, 57, 40]. Additionally,
+θ(t) across clients, anomalies can be detected and flagged as            defenses that assume continuous client availability are prone to
+potential threats.                                                       disruption if participants drop out or arrive late, as considered
+   Monitoring techniques have been refined to strengthen secu-           in [69]. Some training modifications also limit the flow of in-
+rity while maintaining training integrity and robustness. Rieger         formation during learning [66]. These operational constraints
+et al. [69] propose periodically auditing trained models to val-         highlight the need for strategies that remain robust under un-
+idate participant honesty. They highlight the risk of falsely la-        predictable network conditions and resource limitations.
+beling honest participants as malicious, which could disrupt the
+training process. Their approach ensures that training remains           5.3. Defense Effectiveness
+robust while minimizing false positives in adversary detection.             Defense effectiveness in SL is evaluated based on several
+                                                                         key factors, including applicability to different attack types,
+5.2. Defense Constraints                                                 assumed client-server setups, computational constraints, and
+   Defense strategies in SL operate under constraints that affect        tested model architectures. The alignment between defense
+how, and to what degree, they can be deployed: (i) assump-               strategies and attack vectors is crucial, as protection-based ap-
+tions about adversaries, (ii) requirements for verifying correct-        proaches such as cryptographic techniques, DP, and architec-
+ness when multiple parties are involved, (iii) the architectural         tural modifications focus on preventing information leakage,
+details and training protocol configurations, and (iv) practical         while detection-based methods such as gradient monitoring and
+limitations in computational power or system availability.               anomaly detection aim to identify and halt adversarial behavior.
+
+Threat Model Constraints. Alongside the attacks discussed in             5.3.1. Attack Coverage and Defense Alignment
+Section 5.3.1, defense strategies differ in how they address ad-            Each defense mechanism addresses specific adversarial
+versaries that may only observe and infer (semi-honest) ver-             threats in SL. Data perturbation defenses [1, 79, 64, 77], in-
+sus those that actively alter the environment (malicious). For           cluding DP and feature decorrelation, are effective against label
+semi-honest scenarios, cryptographic methods [35, 38, 57, 40,            inference and reconstruction attacks, making it more difficult
+                                                                    11
+for adversaries to extract information from gradients or inter-           analysis, are highly dependent on the model architecture and
+mediate representations. However, these approaches often in-              training setup, as the information carried in gradients is signif-
+troduce a trade-off in accuracy. Secure computation techniques            icantly influenced by these factors. For instance, as discussed
+[35, 57, 41, 61, 38], such as HE and FSS, offer robust privacy            in [11], larger gradients may suffer from the curse of dimen-
+guarantees by allowing encrypted computations.                            sionality, since these methods rely on distance and correlation
+   Architectural modifications[62, 1, 66, 44, 83, 52, 82, 73, 78,         analysis among data.
+42], including cut-layer adjustments and novel activation func-
+tions, significantly mitigate feature-space hijacking and recon-          6. Key Observations and Takeaways
+struction attacks, but their effectiveness depends on the model’s
+depth and complexity.                                                        We outline key observations derived from our analysis on SL
+   Detection mechanisms are crucial for identifying adversarial           attack and defenses below:
+actions during training. Gradient anomaly detection [11, 13,              • Architecture: The feasibility of attacks and defenses is
+18] is effective against poisoning and hijacking attacks by ana-             heavily influenced by the architectural design (e.g., VanSL,
+lyzing inconsistencies in the updates exchanged between clients              USL) and data partitioning strategies (horizontal vs. verti-
+and servers. Model weight anomaly detection [69] is particu-                 cal). We observe that most attack research focuses on VanSL,
+larly useful against backdoor attacks, as it can identify hidden             which is highly vulnerable to feature-space hijacking and
+manipulations within the model weights by monitoring devi-                   model inversion due to the exposure of smashed data at a
+ations from expected parameters. The effectiveness of these                  single cut layer. In contrast, USL and SFL face increased
+mechanisms relies on accurately profiling normal training be-                label exposure risks due to multi-hop data transmissions.
+havior, and they may be vulnerable to adversaries who subtly                 Similarly, the majority of defenses focus on the VanSL set-
+manipulate updates to evade detection.                                       ting (Figure 7). Furthermore, we observe that No-Label SL
+                                                                             (NLSL) and Multi-hop SL (MHSL) are the least explored
+5.3.2. Client-Server Setup and Deployment Scenarios                          variants in the literature despite their distinct privacy and
+   The client-server setup influences the feasibility and effec-             trust characteristics. NLSL enhances label privacy by keep-
+tiveness of defenses. In single-client SL (SCSL), cryptographic              ing labels on the client, requiring thorough analysis to assess
+defenses such as HE and FSS are more feasible, as encryption                 its resistance to inference attacks targeting label information
+and decryption overhead is limited to a single participant. Ar-              via gradients or activations. MHSL, with its chained compu-
+chitectural modifications are also easier to apply, as there is no           tation across multiple entities, has received minimal attention
+need for cross-client consistency.                                           in the literature, and its unique multi-party computation and
+   In multi-client SL (MCSL), on the other hand, client-side                 trust assumptions remain inadequately characterized. These
+gradient monitoring and anomaly detection become more rele-                  observations directly address RQ1, which seeks to under-
+vant, as adversarial participants may be disguised among hon-                stand how adversarial objectives can be systematically tax-
+est clients. Data perturbation techniques, including DP, require             onomized in relation to architectural vulnerabilities in SL.
+careful tuning in MCSL, as variations in data distributions may              Our findings underscore the need to extend taxonomies be-
+affect privacy-utility trade-offs. In addition, DP alone are in-             yond VanSL to capture under-explored variants with distinct
+sufficient in terms of defense as discussed earlier (Section 4.3).           structural vulnerabilities.
+Secure computation methods face scalability challenges, as the            • Semi-Honest Adversaries: Our taxonomy reveals a criti-
+overhead increases with an increasing number of clients. In                  cal reliance on the semi-honest adversarial model, where ad-
+MCSL, architectural modifications such as split-layer depth op-              versaries passively follow the protocol. While this simpli-
+timization and secure aggregation become more practical, as                  fies threat modeling, it underestimates real-world risks, as
+computational burdens are distributed across multiple parties.               attacks like label flipping, gradient manipulation, or collu-
+Lastly, communication latency and encryption overhead remain                 sion exceed the assumptions of this model, rendering many
+key concerns for cryptographic techniques.                                   defenses ineffective against stronger adversaries per RQ3.
+                                                                          • Generalization of Attack Mechanisms: Several core at-
+5.3.3. Model and Dataset Considerations                                      tack strategies, especially those that exploit the cut layer
+   Defense effectiveness also depends on the complexity of the               bottleneck, such as latent representation reconstruction [59,
+model architecture and the dataset’s properties. In lightweight              52] and property inference based on intermediate activa-
+models such as convolutional neural networks for image clas-                 tions [59], demonstrated effectiveness across a variety of SL
+sification, DP and gradient perturbation are effective [64, 77],             models and datasets. This suggests that the act of split-
+as small distortions in features do not drastically impact per-              ting and transmitting intermediate representations introduces
+formance. Cryptographic methods such as HE remain fea-                       consistent privacy vulnerabilities that are not easily mitigated
+sible in small-scale models but introduce significant latency                by simply changing model architecture or task. These find-
+[35, 39]. In deep architectures such as ResNet and trans-                    ings respond to RQ2, which seeks to understand the gener-
+formers, secure computation techniques struggle due to their                 alizability and stealth of SL attack mechanisms. The per-
+high computational complexity, while architectural modifica-                 sistence of these attacks across different conditions suggests
+tions [1, 62, 52] become more critical to mitigate feature-space             an architectural invariance in SL’s threat surface. This high-
+hijacking. Detection-based methods, such as gradient anomaly                 lights both a concern and an opportunity: to develop model-
+                                                                     12
+  agnostic defenses that reduce information leakage in repre-               The three-way trade-off is addressing RQ5, which discusses
+  sentations z and gradients ∇ as discussed in Section 4.1.2,               the suitability, constraints, and potential optimization of de-
+  for example, via dimensionality reduction.                                fenses for specific tasks, and also connects to RQ6 regarding
+• Inherent Risk of the Cut Layer: The interface between                     what constitutes a successful defense in practice, often in-
+  the client-side and server-side models, where z or ∇ are ex-              volving a balance of these factors.
+  changed, consistently emerges as a critical attack surface in           • Architectural Changes: Modifying SL —by shifting the cut
+  SL. Multiple attacks, including FSHA [59], model inversion                layer or shrinking the shared ’smashed data’— can reduce
+  via gradients [10], GAN-based input reconstruction [91], and              exposure and increase attack difficulty, but studies agree that
+  various label or property inference strategies [37, 59, 10], ex-          these changes alone rarely ensure full or provable privacy,
+  ploit this specific interface to extract sensitive information.           serving best as complements to stronger defenses. This ob-
+  This highlights the need to prioritize specifically the security          servation aligns with RQ4’s investigation into the strengths
+  of the cut layer. Moreover, it underscores that defenses fo-              and limitations of current defense strategies in mitigating in-
+  cused solely on obfuscating raw inputs, such as local DP (see             formation leakage. Architectural changes are a good fit for
+  Section 4.3), are insufficient, as critical information is often          situations where one does not have much computing power or
+  preserved and leaked through z and ∇. Effective SL defenses               when one wants to add a basic, extra layer of security along-
+  must directly mitigate the information content traversing this            side stronger methods.
+  unavoidable interface between model partitions, which di-               • Confidentiality & Integrity: Most SL defenses target two
+  rectly relates to RQ2’s examination of attack vectors and vul-            goals: confidentiality (protecting data, labels, or attributes)
+  nerable interfaces.                                                       and integrity (preventing model manipulation with moni-
+• Reliance on Strong Adversarial Capabilities: Many                         toring or robust aggregation). Availability remains under-
+  prominent SL attack studies assume strong adversarial ca-                 explored in the reviewed literature. This distinction between
+  pabilities, such as full or partial model access [59, 91] or              defense goals directly informs RQ6 —how techniques pri-
+  access to auxiliary datasets aligned with the training dis-               oritize confidentiality vs. integrity— and supports the tax-
+  tribution [92, 32, 89]. While useful for exposing theoret-                onomy outlined in RQ4; notably, detection strategies, cru-
+  ical vulnerabilities, these assumptions often diverge from                cial for identifying active threats like poisoning or backdoors
+  practical deployment scenarios, where adversaries may have                (though reliant on robust baselines and unable to address pas-
+  limited knowledge, access, or resources. In addressing                    sive leakage), fall under this discussed class and thus also
+  RQ3, we systematically differentiate between strong and con-              address aspects of RQ4.
+  strained adversarial assumptions across attack studies, en-             • Hybrid Defenses: While layering defense techniques may
+  abling more accurate threat modeling and highlighting the                 seem promising, the literature highlights complex interac-
+  need for context-aware, practically-deployable defenses.                  tions—such as applying DP to encrypted data or combining
+• Leakage Persistence Beyond Gradients: Studies have                        noise with architectural constraints, which can increase over-
+  demonstrated that intermediate activations exchanged during               head, obscure true privacy guarantees, or introduce new vul-
+  the forward pass can leak sensitive information, enabling la-             nerabilities. These findings, central to RQ5, emphasize that
+  bel inference [48, 96] and data reconstruction [52, 59] even              effective composition requires careful joint analysis, as naive
+  in the absence of gradient information. This critical finding             stacking is often inadequate.
+  shows that SL remains vulnerable even during inference-only             • Prominence of Studied Defenses: The literature shows DP
+  deployments or when gradient leakage is mitigated through                 as the most extensively studied approach for enhancing con-
+  secure aggregation or other protective mechanisms. This em-               fidentiality in SL, followed by HE. In contrast, detection re-
+  phasizes the need for defenses targeting information leakage              search focuses primarily on gradient analysis. Highlight-
+  in z —such as its semantic consistency or correlation with                ing these commonly used techniques —DP, HE, and gradi-
+  inputs— beyond just the backward pass, addressing RQ1 on                  ent analysis— directly informs RQ4 on prevalent SL defense
+  the nature and sources of information leakage in SL.                      strategies.
+• Privacy–Utility–Overhead Trade-off: SL defenses show a
+  clear three-way trade-off between privacy, model utility (e.g.          7. Open Research Directions
+  accuracy), and computational or communication overhead.
+  Methods range from lightweight approaches with weaker                      Building on our key observations, we outline the key open
+  guarantees to heavy cryptographic schemes with high costs;              research directions below:
+  while DP offers a tunable middle ground whose optimal bal-              • Advanced Attack and Defense Strategies: A key research
+  ance is still application-specific and challenging to achieve.             direction emerging in response to RQ1 involves extending
+  Homomorphic Encryption (HE) and Function Secret Shar-                      adversarial taxonomies and corresponding defense mecha-
+  ing (FSS) offer strong theoretical privacy by enabling com-                nisms to SL variants beyond the conventional VanSL setting.
+  putation on encrypted data. However, their high computa-                   Alternative SL variants such as USL, Hybrid-SL, NLSL, and
+  tional and bandwidth overheads restrict practical use to sim-              MHSL exhibit distinct architectural patterns (e.g., multi-hop
+  ple models or scenarios, where privacy outweighs perfor-                   communication, hybrid cut points) and data handling proce-
+  mance. This addresses RQ4 by discussing the place of cryp-                 dures, which introduce previously unaddressed attack sur-
+  tographic techniques in the landscape of defense techniques.               faces. As outlined in Section 4 and Section 5, these non-
+                                                                     13
+  standard configurations may necessitate variant-specific de-           • Advancing Holistic Monitoring Strategies: Future re-
+  fense strategies that are not adequately covered by existing             search should prioritize proactive, multi-layered defenses to
+  VanSL-centric approaches. Alongside exploring novel ap-                  address SL’s broad attack surface: a direction already emerg-
+  proaches, techniques from the broader PPML literature could              ing in recent work, as noted in Section 5.1. Integrating
+  be adapted to SL when there are matching problem struc-                  anomaly detection (e.g., gradient or behavior-based) [11]
+  tures. For instance, adaptive differential privacy used in fed-          with insights from federated learning —such as techniques
+  erated learning [17, 75, 7] could be incorporated to dynam-              developed to achieve secure aggregation for verifying client
+  ically adjust noise levels based on model updates. This ad-              updates [36]— can enhance detection capabilities without
+  justment could help balance the trade-off between model ac-              significant overhead. Additionally, defenses against side-
+  curacy and privacy by reducing noise in scenarios where up-              channel threats (e.g., [8]) and secure inference techniques
+  dates pose a lower privacy risk.                                         can strengthen robustness against covert attacks. Hybrid ap-
+• Broadening Threat Models Beyond Semi-Honest Ad-                          proaches may be necessary —combining secure computa-
+  versaries: Future research should focus on developing a                  tion methods (for confidentiality of client data) with moni-
+  progressive adversarial framework that evaluates defenses                toring (for learning integrity)— to realize a truly holistic de-
+  across a spectrum of adversarial strengths, from semi-honest             fense strategy in SL. This means that monitoring mechanisms
+  actors to fully malicious colluding parties. SL systems are es-          should be integrable with other defense techniques.
+  pecially vulnerable to adversaries capable of poisoning gra-           • Instance Encoding and Potential Threats: Intermediate
+  dients, manipulating activations, or tampering with training             representations in SL —often referred to as smashed data—
+  states. We advocate for hybrid evaluation protocols that inte-           can be viewed as encodings that have the potential to leak
+  grate empirical testing with theoretical analysis to assess ro-          sensitive information, even without full input reconstruction.
+  bustness. Furthermore, adopting formal models from crypto-               This issue is known as the instance encoding problem [6, 50].
+  graphic literature (e.g., Byzantine threat models [15], covert           Carlini et al.[6] reframed the PPML problem as instance en-
+  adversaries [3], or adaptive adversaries [2]) can help bridge            coding, analyzing the statistical underpinnings of privacy in
+  the current gap between theoretical security guarantees and              ML, comparing techniques, and offering bounds and empiri-
+  practical adversarial capabilities, thus advancing the scope             cal results under specific attacks. Maeng et al.[50] introduced
+  of RQ3 on evaluating the realism and comprehensiveness of                a Fisher information based framework to quantify and bound
+  adversarial assumptions.                                                 leakage in PPML, also leveraging the instance encoding per-
+• Toward Uncertainty-Aware Defense Design: A promising                     spective. Given the alignment in goals and definitions, this
+  research direction is the development of uncertainty-aware               concept provides valuable insights for improving the secu-
+  defenses via entropy analysis of intermediate representations            rity of SL systems.
+  in SL systems. Low entropy in smashed data —often caused               • Verifiable Training and Inference: Ensuring the verifiabil-
+  by deterministic or sparse activations— correlates with in-              ity of training and inference in SL, alongside privacy, is an-
+  creased vulnerability to inference attacks, as it signals re-            other crucial objective. Zero knowledge (ZK)-proofs enable
+  duced uncertainty exploitable by adversaries. Operations                 parties to prove correct computation without leaking unau-
+  like ReLU and max-pooling compress representational diver-               thorized information, offering a promising means to verify
+  sity, aligning features closely with input semantics and ele-            the correctness of training in PPML. This capability is vi-
+  vating privacy risk. In contrast, randomized activations and             tal where malicious participants alter training data, introduce
+  dropouts introduce beneficial uncertainty that hinders infer-            backdoors, or poison the training process. Peng et al. [60]
+  ence. Formalizing these effects using information-theoretic              survey the use of ZK-proofs in machine learning, categoriz-
+  tools like mutual information and representation entropy                 ing approaches into verifiable training, testing, and inference,
+  could quantify the trade-off between expressivity and leak-              and proposing an abstract framework for their application in
+  age. Additionally, comparing differential entropy before and             ML contexts, which can be beneficial for SL settings. Ef-
+  after the cut layer may help identify optimal cut points that            ficiency would constitute a crucial concern when ZK-proofs
+  balance utility and privacy. Entropy-based metrics thus offer            are employed.
+  a principled foundation for designing more privacy-resilient           • Exploring       Hardware-Based         Security      Solutions:
+  SL architectures, contributing to RQ2 on structural factors              Hardware-based solutions, such as trusted execution
+  that shape the effectiveness of inference attacks in SL.                 environments (e.g., [31]), are under-explored and show
+• Evaluating Practical Threats Under Realistic Conditions:                 promise for enhancing security and privacy in SL.
+  In response to RQ3, future research should prioritize the de-          • Resilience to Distributed System Faults Ensuring the train-
+  velopment and evaluation of attacks under more constrained               ing process remains robust and continues effectively despite
+  and realistic conditions. This includes black-box settings,              common distributed system faults, such as client dropouts,
+  limited or mismatched auxiliary data, bounded query or com-              late-arrivals, and potential communication errors. Strategies
+  pute budgets, and scenarios involving partial or probabilistic           focus on maintaining training integrity and progress even
+  knowledge of the target model. Crucially, quantifying how                when parts of the system fail.
+  attack effectiveness degrades under practical constraints is
+  vital to building accurate and actionable threat models for
+  real-world SL deployments.
+                                                                    14
+8. Related Work                                                           5 for improving text, shortening sentences, correcting typos and
+                                                                          grammatical errors to enhance readability and clarity.
+   Several Systematization of Knowledge (SoK) papers have
+examined privacy-preserving methodologies across collabora-
+tive learning paradigms. Podschwadt et al. [67] presented a sys-          References
+tematization of deep learning to preserve privacy utilizing HE,
+focusing on the computational complexities and practical lim-              [1] S. Abuadbba, K. Kim, M. Kim, C. Thapa, S. A. Camtepe,
+itations of HE-based solutions. Ng and Chow [55] conducted                     Y. Gao, H. Kim, and S. Nepal. Can we use split learning
+an extensive SoK examining cryptographic approaches to pri-                    on 1d cnn models for privacy preserving training? In
+vacy preservation in deep learning. Mansouri et al. [51] sys-                  ASIACCS, 2020.
+tematically analyzed secure aggregation techniques for FL, cat-
+                                                                           [2] R. Arora, O. Dekel, and A. Tewari. Online bandit learning
+egorizing encryption-based and MPC-based approaches while
+                                                                               against an adaptive adversary: from regret to policy regret.
+evaluating their performance, scalability, and resilience against
+                                                                               arXiv:1206.6400, 2012.
+adversarial attacks.
+   While FL and SL share distributed learning characteristics,             [3] Y. Aumann and Y. Lindell. Security against covert adver-
+SL presents distinct challenges arising from its architectural de-             saries: Efficient protocols for realistic adversaries. Jour-
+sign, particularly in the transmission of intermediate activations             nal of Cryptology, 2010.
+between participants. Conventional secure aggregation meth-
+ods developed for FL cannot be directly applied to SL without              [4] Y. Bai, Y. Chen, H. Zhang, W. Xu, H. Weng, and D. Good-
+substantial modifications, as SL’s vulnerabilities emerge from                 man. {VILLAIN}: Backdoor attacks against vertical split
+unique adversarial capabilities, including feature-space leak-                 learning. In USENIX Security, 2023.
+age and inference attacks. In examining SL-specific security
+concerns, Pham and Chilamkurti [63] surveyed data leakage                  [5] E. Boyle, N. Gilboa, and Y. Ishai. Function secret sharing.
+threats, identifying gradient leakage, label inference, and fea-               In EUROCRYPT. Springer, 2015.
+ture reconstruction attacks. Hu et al. [29] conducted a review
+                                                                           [6] N. Carlini, S. Deng, S. Garg, S. Jha, S. Mahloujifar,
+and experimental evaluation of SL, highlighting the variability
+                                                                               M. Mahmoody, S. Song, A. Thakurta, and F. Tramèr. Is
+in SL paradigms concerning cut-layer selection, model aggre-
+                                                                               private learning possible with instance encoding? 2021.
+gation, and label sharing. While these works provide highly
+valuable empirical insights, we uniquely and systematically cat-           [7] Z. Chen, H. Zheng, and G. Liu. Awdp-fl: An adaptive
+egorize security and privacy challenges in SL, establishing a                  differential privacy federated learning framework. Elec-
+novel formal taxonomy of attack vectors and mitigation tech-                   tronics, 2024.
+niques, analyzing their effectiveness and limitations.
+                                                                           [8] E. Debenedetti, G. Severi, N. Carlini, C. A. Choquette-
+                                                                               Choo, M. Jagielski, M. Nasr, E. Wallace, and F. Tramèr.
+9. Conclusion
+                                                                               Privacy side channels in machine learning systems. In
+   We systematically explored the security and privacy land-                   USENIX Security, 2024.
+scape of Split Learning (SL) by categorizing various at-
+                                                                           [9] C. Dwork. Differential privacy. In ICALP, 2006.
+tack strategies and defense mechanisms. We presented a
+novel taxonomy of attacks and defenses in SL, categoriz-                  [10] E. Erdoğan, A. Küpçü, and A. E. Çiçek. Unsplit: Data-
+ing them along: (i) strategies, (ii) constraints, and (iii) ef-                oblivious model inversion, model stealing, and label infer-
+fectiveness. While SL presents a promising framework for                       ence attacks against split learning. In ACM WPES, 2022.
+distributed/outsourced machine learning, its inherent vulner-
+abilities -—ranging from data reconstruction and label infer-             [11] E. Erdogan, U. Teksen, M. S. Celiktenyildiz, A. Kupcu,
+ence to adversarial manipulation—- underscore the need for                     and A. E. Cicek. Splitout: Out-of-the-box training-
+robust countermeasures. Existing defenses –including cryp-                     hijacking detection in split learning via outlier detection.
+tographic techniques, differential privacy, and architectural                  In CANS, 2024.
+modifications– often introduce trade-offs in computational ef-
+ficiency and scalability. Employing the key observations and              [12] E. Erdoğan, A. Küpçü, and A. E. Çiçek. Splitguard: De-
+takeaways presented in this paper, future research can enhance                 tecting and mitigating training-hijacking attacks in split
+the resilience of SL, making it a viable solution for secure col-              learning. In WPES, 2022.
+laborative learning.
+                                                                          [13] E. Erdoğan, U. Tekşen, M. S. Çeliktenyıldız, A. Küpçü,
+                                                                               and A. E. Çiçek. Defense mechanisms against training-
+Acknowledgements                                                               hijacking attacks in split learning. IEEE TKDE, 2023.
+
+   We acknowledge TÜBİTAK (the Scientific and Technologi-                [14] M. Fan, C. Chen, C. Wang, W. Zhou, and J. Huang. On
+cal Research Council of Türkiye) project 124N941. The authors                  the robustness of split learning against adversarial attacks.
+utilized ChatGPT-4o [58] to refine the text in Sections 1, 4, and              In ECAI. 2023.
+                                                                     15
+[15] M. Fang, X. Cao, J. Jia, and N. Gong. Local model poi-              [32] A. T. Z. Ismail and R. M. Shukla. Analyzing the vul-
+     soning attacks to {Byzantine-Robust} federated learning.                 nerabilities in splitfed learning: Assessing the robustness
+     In USENIX Security, 2020.                                                against data poisoning attacks. arXiv:2307.03197, 2023.
+[16] C. Fu, J. Zhang, T. Zhu, W. Zhou, and P. S. Yu. Label               [33] A. T. Z. Ismail and R. M. Shukla. Analyzing the vul-
+     inference attacks against vertical federated learning. In                nerabilities in splitfed learning: Assessing the robustness
+     USENIX Security, 2022.                                                   against data poisoning attacks, 2023.
+[17] J. Fu, Z. Chen, and X. Han. Adap dp-fl: Differentially
+                                                                         [34] P. Joshi, C. Thapa, S. Camtepe, M. Hasanuzzaman,
+     private federated learning with adaptive noise, 2022.
+                                                                              T. Scully, and H. Afli. Performance and information
+[18] J. Fu, X. Ma, B. B. Zhu, P. Hu, R. Zhao, Y. Jia, P. Xu,                  leakage in splitfed learning and multi-head split learning
+     H. Jin, and D. Zhang. Focusing on pinocchio’s nose: A                    in healthcare data and beyond. Methods and Protocols,
+     gradients scrutinizer to thwart split-learning hijacking at-             2022.
+     tacks using intrinsic attributes. In NDSS, 2023.
+                                                                         [35] H. I. Kanpak, A. Shabbir, E. Genç, A. Küpçü, and S. Sav.
+[19] S. Gajbhiye, P. Singh, and S. Gupta. Data poisoning attack               Cure: Privacy-preserving split learning done right, 2024.
+     by label flipping on splitfed learning. In RTIP2R, 2022.
+                                                                         [36] F. Karakoç, A. Küpçü, and M. Önen. Fault tolerant and
+[20] Y. Ganin and V. Lempitsky. Unsupervised domain adap-                     malicious secure federated learning. In CANS, 2024.
+     tation by backpropagation. In ICML, 2015.
+                                                                         [37] S. Kariyappa and M. K. Qureshi. Exploit: Extracting pri-
+[21] Y. Gao, M. Du, X. Zhang, and Y. Xiang. Combined feder-
+                                                                              vate labels in split learning. In SaTML. IEEE, 2023.
+     ated and split learning in edge computing: Taxonomy and
+     open issues. Sensors, 2022.                                         [38] T. Khan, M. Budzys, and A. Michalas. Make split, not
+[22] G. Gawron and P. Stubbings. Feature space hijack-                        hijack: Preventing feature-space hijacking attacks in split
+     ing attacks against differentially private split learning.               learning. In SACMAT, 2024.
+     arXiv:2201.04018, 2022.
+                                                                         [39] T. Khan, K. Nguyen, and A. Michalas. A more secure
+[23] I. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu,                        split: Enhancing the security of privacy-preserving split
+     D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio.                  learning. In AsiaCCS. Tampere University, 2023.
+     Generative adversarial nets. NIPS, 2014.
+                                                                         [40] T. Khan, K. Nguyen, and A. Michalas. Split ways:
+[24] A. Gretton, D. Sejdinovic, H. Strathmann, S. Balakrish-                  Privacy-preserving training of encrypted data using split
+     nan, M. Pontil, K. Fukumizu, and B. K. Sriperumbudur.                    learning. In arXiv:2301.08778, 2023, 2023.
+     Optimal kernel choice for large-scale two-sample tests.
+     NIPS, 2012.                                                         [41] T. Khan, K. Nguyen, A. Michalas, and A. Bakas. Love
+                                                                              or hate? share or split? privacy-preserving training using
+[25] O. Gupta and R. Raskar. Distributed learning of deep neu-
+                                                                              split learning and homomorphic encryption, 2023.
+     ral network over multiple agents, 2018.
+[26] Y. He, C. Hu, Y. Pu, J. Chen, and X. Li. Advusl: Targeted           [42] S. A. Khowaja, I. H. Lee, K. Dev, M. A. Jarwar, and
+     adversarial attack against u-shaped split learning. In IEEE              N. M. F. Qureshi. Get your foes fooled: Proximal gradient
+     MASS, 2024.                                                              split learning for defense against model inversion attacks
+                                                                              on iomt data. IEEE TNSE, 2024.
+[27] Z. He, T. Zhang, and R. B. Lee. Model inversion attacks
+     against collaborative inference. In ACSAC, 2019.                    [43] M. Kohankhaki, A. Ayad, M. Barhoush, and A. Schmeink.
+                                                                              Detecting data poisoning in split learning using intraclass-
+[28] B. Hitaj, G. Ateniese, and F. Perez-Cruz. Deep models un-                distance inflated loss. In IEEE GC Wkshps, 2023.
+     der the gan: Information leakage from collaborative deep
+     learning. In ACM SIGSAC, 2017.                                      [44] J. Li, A. S. Rakin, X. Chen, Z. He, D. Fan, and
+                                                                              C. Chakrabarti. Ressfl: A resistance transfer framework
+[29] Z. Hu, T. Zhou, B. Wu, C. Chen, and Y. Wang. A review
+                                                                              for defending model inversion attack in split federated
+     and experimental evaluation on split learning. Future In-
+                                                                              learning. In CVPR, 2022.
+     ternet, 2025.
+[30] H. Huang, X. Li, and W. He. Pixel-wise reconstruction of            [45] O. Li, J. Sun, X. Yang, W. Gao, H. Zhang, J. Xie, V. Smith,
+     private data in split federated learning. In ICICS, 2023.                and C. Wang. Label leakage and protection in two-party
+                                                                              split learning. arXiv:2102.08504, 2018.
+[31] W. Huang, Y. Wang, A. Cheng, A. Zhou, C. Yu, and
+     L. Wang. A fast, performant, secure distributed training            [46] Z. Li, S. Si, J. Wang, and J. Xiao. Federated split bert for
+     framework for llm. In ICASSP, 2024.                                      heterogeneous text classification, 2022.
+                                                                    16
+[47] Z. Li, C. Yan, X. Zhang, G. Gharibi, Z. Yin, X. Jiang, and          [63] N. D. Pham and N. Chilamkurti. Data leakage threats and
+     B. A. Malin. Split learning for distributed collaborative                protection in split learning: A survey. In ICEA, 2023.
+     training of deep learning models in health informatics. In
+                                                                         [64] N. D. Pham, K. T. Phan, and N. Chilamkurti. Enhancing
+     AMIA Annu. Symp. Proc, 2024.
+                                                                              accuracy-privacy trade-off in differentially private split
+[48] J. Liu, X. Lyu, Q. Cui, and X. Tao. Similarity-based la-                 learning. IEEE TIFS, 2024.
+     bel inference attack against training and inference of split
+                                                                         [65] N. D. Pham, T. K. Phan, A. Abuadbba, Y. Gao,
+     learning. IEEE TIFS, 2024.
+                                                                              D. Nguyen, and N. Chilamkurti. Split learning without
+[49] M. Long, Y. Cao, J. Wang, and M. Jordan. Learning trans-                 local weight sharing to enhance client-side data privacy.
+     ferable features with deep adaptation networks. In PMLR,                 arXiv:2212.00250, 2022.
+     2015.
+                                                                         [66] N. D. Pham, T. K. Phan, A. Abuadbba, Y. Gao, V.-D.
+[50] K. Maeng, C. Guo, S. Kariyappa, and G. E. Suh. Bound-                    Nguyen, and N. Chilamkurti. Split Learning without Lo-
+     ing the invertibility of privacy-preserving instance encod-              cal Weight Sharing To Enhance Client-side Data Privacy .
+     ing using fisher information. NeurIPS, 2023.                             IEEE TDSC, (01):1–13, Apr. 5555.
+
+[51] M. Mansouri, M. Önen, W. B. Jaballah, and M. Conti.                 [67] R. Podschwadt, D. Takabi, and P. Hu. Sok: Privacy-
+     Sok: Secure aggregation based on cryptographic schemes                   preserving deep learning with homomorphic encryption.
+     for federated learning. PoPETs, 2023.                                    arXiv:2112.12855, 2021.
+
+[52] Y. Mao, Z. Xin, Z. Li, J. Hong, Q. Yang, and S. Zhong.              [68] M. G. Poirot, P. Vepakomma, K. Chang, J. Kalpathy-
+     Secure split learning against property inference, data re-               Cramer, R. Gupta, and R. Raskar. Split learning for col-
+     construction, and feature space hijacking attacks. In ES-                laborative deep learning in healthcare. arXiv:1912.04966,
+     ORICS, 2023.                                                             2019.
+
+[53] M. Nasr, R. Shokri, and A. Houmansadr. Machine learn-               [69] P. Rieger, A. Pegoraro, K. Kumari, T. Abera, J. Knauer,
+     ing with membership privacy using adversarial regulariza-                and A.-R. Sadeghi. Safesplit: A novel defense against
+     tion. In ACM SIGSAC, 2018.                                               client-side backdoor attacks in split learning. In NDSS,
+                                                                              2025.
+[54] M. Nasr, R. Shokri, and A. Houmansadr. Comprehen-
+     sive privacy analysis of deep learning: Passive and active          [70] H. R. Roth, A. Hatamizadeh, Z. Xu, C. Zhao, W. Li,
+     white-box inference attacks against centralized and feder-               A. Myronenko, and D. Xu. Split-u-net: Preventing data
+     ated learning. In IEEE S&P, 2019.                                        leakage in split learning for collaborative multi-modal
+                                                                              brain tumor segmentation, 2022.
+[55] L. K. Ng and S. S. Chow. Sok: cryptographic neural-
+     network computation. In IEEE S&P, 2023.                             [71] L. I. Rudin, S. Osher, and E. Fatemi. Nonlinear total vari-
+                                                                              ation based noise removal algorithms. Physica D, 1992.
+[56] K. T. P. Ngoc Duy Pham and N. Chilamkurti. Enhancing
+     accuracy-privacy trade-off in differentially private split          [72] M. D. Ryan. Cloud computing privacy concerns on our
+     learning, 2024.                                                          doorstep. Communications of the ACM, 2011.
+
+[57] K. Nguyen, T. Khan, and A. Michalas. Split without a                [73] A. Singh, A. Chopra, V. Sharma, E. Garza, E. Zhang,
+     leak: Reducing privacy leakage in split learning. In Se-                 P. Vepakomma, and R. Raskar. Disco: Dynamic and in-
+     cureComm, 2025.                                                          variant sensitive channel obfuscation for deep neural net-
+                                                                              works, 2021.
+[58] OpenAI. Gpt-4o: Multimodal ai model.
+                                                                         [74] B. Tajalli, O. Ersoy, and S. Picek. On feasibility of server-
+[59] D. Pasquini, G. Ateniese, and M. Bernaschi. Unleashing                   side backdoor attacks on split learning. In IEEE SPW,
+     the tiger: Inference attacks on split learning. In ACM CCS,              2023.
+     2021.
+                                                                         [75] M. Talaei and I. Izadi.     Adaptive differential pri-
+[60] Z. Peng, T. Wang, C. Zhao, G. Liao, Z. Lin, Y. Liu,                      vacy in federated learning: A priority-based approach.
+     B. Cao, L. Shi, Q. Yang, and S. Zhang. A survey of zero-                 arXiv:2401.02453, 2024.
+     knowledge proof based verifiable machine learning, 2025.
+                                                                         [76] C. Thapa, M. A. P. Chamikara, S. Camtepe, and L. Sun.
+[61] G.-L. Pereteanu, A. Alansary, and J. Passerat-Palmbach.                  Splitfed: When federated learning meets split learning. In
+     Split he: Fast secure inference combining split learning                 AAAI, 2022.
+     and homomorphic encryption, 2022.
+                                                                         [77] T. Titcombe, A. J. Hall, P. Papadopoulos, and D. Ro-
+[62] N. D. Pham, A. Abuadbba, Y. Gao, T. K. Phan, and                         manini. Practical defences against model inversion attacks
+     N. Chilamkurti. Binarizing split learning for data privacy               for split neural networks. In ICLR Workshop on DPML,
+     enhancement and computation reduction, 2022.                             2021.
+                                                                    17
+[78] V. Turina, Z. Zhang, F. Esposito, and I. Matta. Feder-              [94] Y. Zhao, M. Li, L. Lai, N. Suda, D. Civin, and V. Chandra.
+     ated or split? a performance and privacy analysis of hy-                 Federated learning with non-iid data. arXiv:1806.00582,
+     brid split and federated learning architectures. In CLOUD,               2018.
+     2021.
+                                                                         [95] L. Zhu, Z. Liu, and S. Han. Deep leakage from gradients.
+[79] P. Vepakomma, J. Balla, and R. Raskar. Privatemail: Su-                  In NeurIPS, 2019.
+     pervised manifold learning of deep features with differen-
+     tial privacy for image retrieval, 2021.                             [96] X. Zhu, X. Luo, Y. Wu, Y. Jiang, X. Xiao, and B. C. Ooi.
+                                                                              Passive inference attacks on split learning via adversarial
+[80] P. Vepakomma, O. Gupta, A. Dubey, and R. Raskar. Re-                     regularization. arXiv:2310.10483, 2023.
+     ducing leakage in distributed deep learning for sensitive
+     health data. arXiv:1812.00564, 2019.
+[81] P. Vepakomma, O. Gupta, T. Swedish, and R. Raskar.
+     Split learning for health: Distributed deep learning with-
+     out sharing raw patient data, 2018.
+[82] P. Vepakomma, A. Singh, O. Gupta, and R. Raskar.
+     Nopeek: Information leakage reduction to share activa-
+     tions in distributed deep learning, 2020.
+[83] X. Wan, J. Sun, S. Wang, L. Chen, Z. Zheng, F. Wu, and
+     G. Chen. Pslf: Defending against label leakage in split
+     learning. In ACM CIKM, 2023.
+[84] Y. Wang, C. Zhang, Z. Zheng, J. Wang, and X. Li. Stitch-
+     able split learning assisted multi-uav systems. IEEE Open
+     J. Comput. Soc, 2024.
+[85] X. Wu, H. Yuan, X. Li, J. Ni, and R. Lu. Evaluating se-
+     curity and robustness for split federated learning against
+     poisoning attacks. IEEE TIFS, 2024.
+[86] S. Xie, X. Yang, Y. Yao, T. Liu, T. Wang, and J. Sun. La-
+     bel inference attack against split learning under regression
+     setting. arXiv:2301.07284, 2023.
+[87] X. Xu, M. Yang, W. Yi, Z. Li, J. Wang, H. Hu, Y. Zhuang,
+     and Y. Liu. A stealthy wrongdoer: Feature-oriented re-
+     construction attack against split learning. In CVPR, 2024.
+[88] X. Yang, J. Sun, Y. Yao, J. Xie, and C. Wang. Dif-
+     ferentially private label protection in split learning.
+     arXiv:2203.02073, 2022.
+[89] F. Yu, L. Wang, B. Zeng, K. Zhao, Z. Pang, and T. Wu.
+     How to backdoor split learning. Neural Networks, 2023.
+[90] F. Yu, B. Zeng, K. Zhao, Z. Pang, and L. Wang. Chronic
+     poisoning: Backdoor attack against split learning. In
+     AAAI, 2024.
+[91] B. Zeng, S. Luo, F. Yu, G. Yang, K. Zhao, and L. Wang.
+     Gan-based data reconstruction attacks in split learning.
+     Neural Networks, 2025.
+[92] L. Zhang, X. Gao, Y. Li, and Y. Liu. Functionality and
+     data stealing by pseudo-client attack and target defenses
+     in split learning. IEEE TDSC, 2024.
+[93] K. Zhao, X. Chuo, F. Yu, B. Zeng, Z. Pang, and L. Wang.
+     Splitaum: Auxiliary model-based label inference attack
+     against split learning. IEEE TNSM, 2024.
+                                                                    18
+Supplementary Material                                                               i. Feature Space Hijacking Attack (FSHA):. A prominent data
+                                                                                     reconstruction attack is FSHA [59, 22], which allows a mali-
+A. Additional Split Learning Variants                                                cious server to reconstruct the private data in a VanSL setup.
+                                                                                     FSHA consists of three key components: (i) Pilot network ( f˜c ):
+    Here, we explain the remaining SL variants, namely multi-
+                                                                                     dynamically defines the target feature space z˜c and is respon-
+hop and no-label split learning.
+                                                                                     sible for mapping between raw input x and z˜c = f˜c (x) for
+Multi-hop Split Learning (MHSL): MHSL extends the SL                                                                                        −1
+concept to multiple parties, creating a chain of computation                         the client network. (ii) Inverse network ( f˜c ): trained to ap-
+across multiple entities. The model is divided into several seg-                     proximate the inverse function of f˜c , allowing the malicious
+ments ( fc1 , f s1 , f s2 , ..., fcn ) where the subscript denotes the entity        server to reconstruct x from z˜c , and (iii) Discriminator (D): an
+processing that segment. The client with input x begins by com-                      adversarially-trained network that indirectly guides to learn the
+puting (zc1 = fc1 (x)) and sends zc1 to the first server. Each sub-                  mapping between x and z˜c . FSHA follows a two-step adver-
+sequent server i computes z si = f si (z si−1 ) and forwards it to the               sarial training process. In the first step, the server begins by
+                                                                                                                                                     −1
+next entity. The final client computes the output ŷ = fcn (z sn−1 )                 sampling a batch from public dataset x pub to train f˜c and f˜c ,
+and calculates the loss. During backpropagation gradients flow                       ensuring the networks converge by minimizing the reconstruc-
+in the reverse direction through the chain. While the ordering                       tion loss:
+                                                                                                                       −1
+of clients and servers in MHSL is flexible, there are practical                                       L ˜ ˜ −1 = d( f˜c ( f˜c (x pub ), x pub )
+                                                                                                             fc , fc
+                                                                                                                                                   (13)
+constraints. A client must process the first model segment to
+handle the x, and the last entity whether a client or a server must                  where d is a suitable distance function, such as Mean Squared
+compute the loss. Intermediate entities can be either servers or                     Error (MSE). In the second step, the server adversarially trains
+clients, depending on computational needs. For example, in a                         the D loss to distinguish between z˜c from the one induced from
+medical collaboration setting, hospitals can process the initial                     the zc :
+and final model segments while cloud servers handle interme-                                              LD = log(1 − D(z˜c )) + log(D(zc ))               (14)
+diate computations. In contrast, in a business forecasting sce-
+nario, multiple companies may preprocess data before sending                         After each local training step for D, the malicious server can
+it to a server for final inference. This flexibility allows MHSL                     then train the network by forging the gradient using D to recon-
+to adapt to various distributed learning scenarios while ensuring                    struct an adversarial loss function for fc : L fc = log(1 − D(zc )).
+privacy and scalability.                                                             After adversarial training, the server can reconstruct the client’s
+                                                                                                                  −1
+No-Label Split Learning (NLSL): NLSL is designed to keep                             private input using: x̃ = f˜c ( fc (x)) where x̃ is the reconstructed
+both x and y private to the client. In NLSL, the client processes                    approximation of the client’s original data.
+ fc to compute zc and sends it to the server. The server computes
+the forward pass through the remaining layers f s to generate
+                                                                                     ii. Model Inversion:. Another key attack technique in data re-
+ŷ. However, rather than calculating the loss on the server, the
+                                                                                     construction is Model Inversion [27], applied in [10], which
+server sends ŷ back to the client. The client then computes the
+                                                                                     exploits the relationship between the gradients and the origi-
+loss L(y, ŷ) using the true labels y and calculates the gradient
+                                                                                     nal input in a VanSL setting. In this approach, the honest-but-
+(∇ŷ = ∂L∂ŷ ). The client sends ∇ŷ back to the server, which be-
+                                                                     ∂L
+                                                                                     curious server iteratively optimizes both the original input x and
+gins the backpropagation process by computing (∇zc = ∂z               c
+                                                                        ) and        the client model parameters θ to reconstruct the data. Instead of
+sending it to the client. Finally, the client updates the parame-                    explicitly matching the gradients, the attacker performs coor-
+ters of fc using the received gradients. Similar to USL, NLSL                        dinate gradient descent, where the optimization alternates be-
+ensures that the client is responsible for computing the loss,                       tween updating x and θ to minimize the mean squared error
+preventing the server from having direct access to y. However,                       (MSE) for both input and parameter updates. The attack mini-
+unlike USL, where the client also processes the final layers af-                     mizes the following objective:
+ter receiving intermediate representations from the server, in
+NLSL, the server completes the entire forward pass, ensuring                              x̃ = arg min MS E( f˜c∗ ( x̃∗ , θ̃∗ ), fc (x, θ)) + λ TV( x̃∗ )   (15)
+                                                                                                    ∗x̃
+that only the client handles label-related computations, offering
+stronger privacy guarantees.
+                                                                                                    θ̃ = arg min MS E( f˜c∗ ( x̃∗ , θ̃∗ ), fc (x, θ))       (16)
+                                                                                                                       θ̃∗
+B. Details of Data Reconstruction Attacks
+                                                                                     Here, f˜c∗ represents the random initialization of the client net-
+   Data reconstruction attacks in split learning exploit smashed                     work, TV( x̃∗ ) is the Total Variation [71] to enforce smoothness,
+data zc to infer private client inputs. They are primarily cat-                      and λ is a regularization parameter. The attack is demonstrated
+egorized into (i) Feature Space Hijacking Attack (FSHA), (ii)                        in a single client single server (SCSL) setup and it can extend
+Model Inversion Attack, (iii) Functionality Stealing, (iv) Gener-                    to multi-client configurations through two key properties: se-
+ative Adversarial Network (GAN), and (v) Feature Reconstruc-                         quential client training and shared parameter updates. Since the
+tion techniques. Each technique exploits distinct aspects of the                     server interacts with only one client at a time and all clients up-
+model behavior to compromise training and data privacy as ex-                        date the same parameter set, a multi-client setup functionally
+plained below:                                                                       mirrors a single-client configuration with aggregated data.
+                                                                                19
+iii. Functionality Stealing:. The functionality stealing attack             criminator (DISC) network [20, 23], which distinguishes be-
+in [92] allows a semi-honest server to train a pseudo-client                tween features from different domains, and Multi-Kernel Max-
+model ( f˜c ) that closely mimics fc without knowing its struc-             imum Mean Discrepancy (MK-MMD) [24, 49], a statistical
+ture in VanSL and USL setups. The server achieves this by                   measure to align distributions, to align feature spaces formu-
+using intermediate server models and a small set x pub of size              lated as: min f˜c LDIS C + L MK−MMD Second, an inverse mapping
+N. The goal is to make f˜c learn the mapping, making it func-               network, fc˜−1 , is trained on public auxiliary data to reconstruct
+tionally identical to fc , while training the server model sepa-            inputs from smashed data. Finally, during the attack phase, the
+rately. Mathematically, the training objective for the pseudo-              trained inverse network is applied to the victim’s smashed data
+client model is to minimize the KL-Div (Kullback-Leibler Di-                snapshot zc to reconstruct the private training data, given by:
+vergence), which measures the difference between the soft la-               x̃ = fc−1 (zc ).
+bels of z˜c and zc rather than the hard labels. Once the func-                 Zhu et. al [96] achieve feature reconstruction by employ-
+tionality is stolen, the server trains a reverse mapping function           ing a simulator model trained on an auxiliary dataset that fol-
+ f s−1 to transform the feature space of smashed data back into             lows a similar distribution as the client’s private data in a VanSL
+the original input space. Since the pseudo-client model has al-             setup. This simulator aims to approximate the behavior of the
+ready learned to produce feature representations similar to fc ,            client’s private model, enabling the semi-honest server to infer
+the server can fine-tune f s−1 to improve reconstruction accuracy.          private data without direct access. To enhance its effectiveness,
+The server can apply this attack to multi-client SL directly with-          adversarial regularization is introduced through a discriminator
+out any modification.                                                       network D1 that distinguishes real intermediate representations
+                                                                            from synthetic ones, ensuring that the simulator learns indis-
+iv. Generative Adversarial Network (GAN):. A data recon-                    tinguishable representations. Once trained, a decoder model
+struction attack using GAN [52] is performed in a VanSL setup,              is used to reconstruct the original input features from the in-
+where a semi-honest server trains a generator G to synthesize               termediate representations, with an additional discriminator D2
+fake samples (x′ ) and injects them into the learning process. By           guiding it to produce reconstructions that closely resemble real
+observing the responses of the honest participant, the adversary            data.
+adjusts G to produce reconstructions that resemble the original
+training data. The adversarial objective is formulated as:
+                                                                            C. Details of Label Inference Attacks
+                      1 X               1 X
+ ADRA = min max             log D(x) +            log(1 − D(G(x′ )))
+           G     D |X|                 |X|  ′   ′                              This section provides an in-depth examination of the label in-
+                        x∈X                x ∈X
+                                                               (17)         ference attacks discussed in Section 4.1.2, elaborating on their
+where D is the discriminator. Through an iterative adversar-                mathematical foundations and implementation details.
+ial process, the adversary refines G to generate highly accurate
+reconstructions. Similarly, Zeng et al. [91] demonstrate how a              C.1. Details of Gradient-Based Label Inference:
+semi-honest server in a USL setup can reconstruct private client
+data using GANs. The attack begins with a shadow model,                        The ExPLoit framework [37] formulates label inference as
+where the server approximates the client’s model via an aux-                an optimization problem where the surrogate labels ŷ˜ are iter-
+iliary dataset xaux . A GAN discriminator, combined with cross-             atively refined. The server initializes random surrogate labels
+entropy loss, ensures the shadow model’s output aligns with zc .            and computes L′ = H(ŷ,˜ p̂˜y) where ( p̂)  ˜ are predictions from
+Once trained, an inverse model maps features back to the input              the surrogate model. Through backpropagation f ˜c∗ , the attack
+space, optimizing data reconstruction with MSE loss. While                  computes ∇z s L′ to minimize the ExPLoit loss function which
+this exploits server-side vulnerabilities, SL also faces threats            consists of (1) gradient matching by minimizing E[∥∇zs L′ −
+from malicious clients in multi-client setups [91]. An honest               ∇z˜s L∥2 ], (2) label prior regularization via KL-Div DKL (Py ∥Pŷ ),
+but curious client can extract the server model via knowledge               and (3) cross-entropy regularization E[H(ŷ,      ˜
+                                                                                                                            ˜ p̂)/H(Py )], ensur-
+distillation, aligning an alternative model with the global server          ing label alignment. The final loss function is:
+model by minimizing KL-Div loss. The client then performs
+                                                                                                                           ˜
+                                                                                                                       ˜ p̂)
+                                                                                                                   "         #
+feature space inversion, using GAN-based optimization to infer                          h                 i          H(ŷ,
+                                                                            LExPL = E ∥∇zs L − ∇z˜s L′ ∥2 +λce ·E              +λ p ·DKL (Py ∥Pŷ˜ )
+missing class samples. Instead of reconstructing data in pixel                                                       H(Py )
+space, the attack operates in a low-dimensional noise space, im-                                                                             (18)
+proving efficiency and inference accuracy.                                  where λce and λ p are hyperparameters controlling the trade-off
+                                                                            between objectives. By iteratively optimizing f˜c∗ and the in-
+v. Feature Reconstruction. Feature-oriented reconstruction at-              ferred labels, the attack successfully recovers private labels.
+tack [87] exploits the representation preference encoded in the                 Erdogan et al. [10] attack methodology leverages gradient
+zc that the client transmits to the server during training by a             updates ∇zc L to achieve perfect label recovery accuracy by a
+semi-honest server in the VansL setup. The attack follows a                 semi-honest server. In their VanSL setup, the server receives
+three-phase pipeline: First, the adversary constructs a substi-             zc and ∇zc L from the client. The attack randomly initializes
+tute client f˜c by minimizing the distance between the client’s             f˜c∗ matching the client model’s architecture and iteratively tests
+smashed data and the generated features using a domain dis-                 all possible labels ỹ, selecting the one that minimizes gradient
+                                                                       20
+differences:                                                                             the client to infer private labels by forwarding inputs through
+                                                                                         both models:
+                        ∂L( fc ( f s (x)), y) ∂L( f˜c∗ ( f s (x)), ỹ)
+                                                                         !
+   ỹ∗ = arg min MSE                         ,                               (19)                                    ỹ ← f˜(zc )                    (22)
+               ỹ               ∂θ                      ∂θ̃
+                                                                                         where ỹ represents the inferred labels, f˜ is the trained auxiliary
+This optimization approach computes the Mean Squared Error                               model, and f (X) is the client model’s intermediate representa-
+between the gradients of the original model parameters (θ) and                           tion.
+those of the surrogate model parameters (θ̃). The attack suc-                               Xie et. al [86] propose a label inference attack against VanSL
+ceeds due to the deterministic relationship between labels and                           under a regression setting, addressing a gap in prior research fo-
+gradient patterns.                                                                       cused on classification tasks against a semi-honest server. Their
+   The embedding swapping attack [4] operates through a struc-                           methodology consists of multiple stages. First, the attacker ini-
+tured process of gradient comparison. For implementation, the                            tializes dummy labels and a surrogate model that attempts to
+attacker first computes embeddings zt and zi for target and un-                          approximate the label model’s behavior. The attack then em-
+known samples respectively. During training, when xi is used                             ploys a gradient matching strategy, where the attacker itera-
+in a batch, the attacker first uploads zi and records the corre-                         tively updates the dummy labels to minimize the distance be-
+sponding back-propagated gradient ∇zi from the server. In a                              tween the gradients of the surrogate model and the gradients
+later batch, the attacker swaps the embedding by sending zt in-                          received from the label party. To enhance attack effectiveness,
+stead and observes the new gradient update ∇z   ˜ i . The attacker                       the authors introduce learning regularization: (1) Gradient Dis-
+determines whether xi belongs to the target label based on the                           tance Loss, which minimizes the discrepancy between the gra-
+gradient norm ratio:                                                                     dients of the surrogate and the original model, (2) Training Ac-
+                              ˜ i ∥2
+                            ∥∇z                                                          curacy Loss, which ensures that the surrogate model’s predic-
+                                     ≤α                       (20)
+                            ∥∇zi ∥2                                                      tions align with the dummy labels, and (3) Knowledge Learning
+and ensures that the gradient norm satisfies:                                            Loss, which utilizes a small auxiliary dataset with known labels
+                                                                                         to guide the optimization process.
+                             ∥∇zi ∥2 ≤ µ                                     (21)
+                                                                                         C.2. Details of Smashed-Based Label Inference:
+where ∥ · ∥2 represents the L2 norm, and α, µ are predefined                                After the completion of training, the server no longer receives
+threshold parameters. If both conditions hold, it suggests that                          gradients, making gradient-based attacks ineffective. However,
+swapping the embedding does not significantly impact the train-                          during the inference phase, the adversary still receives zc , which
+ing loss, indicating that xi likely belongs to the target label. This                    retains semantic similarities to x, thereby encoding label in-
+attack can be extended to multi-attacker cases.                                          formation and enabling label inference. Liu et al. [48] intro-
+   Another attack proposed by Zhao et al. [93] enables a ma-                             duced three primary approaches for smashed data inference:
+licious client to infer private labels in VanSL through a struc-                         Euclidean Distance-Based Matching, Clustering-Based Infer-
+tured three-step approach: dummy label initialization, auxiliary                         ence, and Transfer Learning-Based Inference. The Euclidean
+model training, and private label inference. The client first ini-                       distance approach assigns zc to the nearest stored reference
+tializes an auxiliary model using semi-supervised clustering (K-                         sample zre f , assuming they share the same label:
+Means) to generate structured dummy labels approximating the
+server’s label distribution. A small set of labeled auxiliary sam-                                             j = arg min ∥zc − zre f ∥2               (23)
+                                                                                                                             re f
+ples serves as cluster centroids, improving training efficiency.
+The auxiliary model is then trained with a composite loss func-                          The clustering-based method further groups similar smashed
+tion, aligning its predictions with the server’s outputs. Once                           data into clusters using K-Means clustering. Additionally,
+trained, the model captures the server’s decision boundaries, al-                        the Transfer Learning-Based Inference approach leverages pre-
+lowing the client to infer private labels by forwarding inputs                           trained models to extract feature representations from the
+through both models. The auxiliary model training process in-                            smashed data, improving label inference accuracy even when
+volves optimizing a composite loss function comprising three                             the cut layer is far from the output. Specifically, the adversary
+components:                                                                              applies a pre-trained model fpretrained to transform zc into a fea-
+                                                                                         ture space where class separability is enhanced:
+  • Distance-based loss (ℓd ): Aligns gradients between the
+    server and auxiliary model.                                                                                  ztrans = fpretrained (zc )             (24)
+  • Performance-based loss (ℓ p ): Ensures predictions match                             Then, label inference is performed by matching ztrans to the clos-
+    dummy labels.                                                                        est reference embedding zref,trans in the feature space:
+  • Knowledge-based loss (ℓk ): Refines predictions using a
+                                                                                                            j = arg min |ztrans − zref, trans |2        (25)
+    small set of labeled auxiliary samples.                                                                           re f
+
+The iterative optimization process enables the auxiliary model                           By leveraging knowledge from pre-trained models, the adver-
+to approximate the server’s classification behavior without di-                          sary can generalize across datasets and improve inference ro-
+rect access to labels. Once trained, the auxiliary model allows                          bustness.
+                                                                                    21
+   Extending beyond feature reconstruction, [96] also performs            where δ is the adversarial perturbation applied to the input x,
+label inference in USL, where the client retains both the first           and ϵ defines the perturbation constraint.
+and last layers of the model, keeping labels private. In this
+scenario, the server additionally trains a label simulator h̃ to          D.2. Details of Backdoor and Poisoning Attack
+approximate the client’s final model layers. Instead of directly             i. Label Flipping Attacks: Kohankhaki et al. [43] inves-
+learning label mappings, h̃ processes the received zcr and out-           tigated static label flipping attacks, where malicious clients
+puts ŷ. A key challenge in this setting is overfitting, if h̃ is         systematically modify class labels within their local training
+trained solely on an auxiliary data xaux , it may struggle to gen-        data before transmission to the server. These modifications
+eralize to x. To address this, a random label-flipping mechanism          remain constant throughout the training process, causing the
+is introduced, where a fraction of training labels are intention-         VanSL model to develop incorrect associations that degrade
+ally perturbed. This forces h̃ to learn generalized representa-           its performance through increased misclassification rates and
+tions rather than memorizing specific label distributions from            reduced generalization capability. Their study examined poi-
+xaux .                                                                    soning scenarios by varying the number of malicious clients
+   Huang et al. [30] proposed an attack on SFL that reconstructs          (M ∈ {0, 2, 4, 6, 8, 10}) and poisoning rate per client (p ∈
+pixel-wise accurate private training data from shared smashed             {0.25, 0.5, 0.75}). The attacks specifically targeted ECG read-
+data under a semi-honest server threat model. The attack com-             ings, flipping labels between normal and abnormal classes,
+prises two phases: training and inference. During training, the           thereby introducing systematic errors in the model’s ability to
+server collects zc from honest clients and generates pseudo-              distinguish between normal and abnormal readings.
+samples x′ using a pseudo-sample generator trained with one-                 ii. Client-Side Backdoor Attacks: Yu et. al [89] introduce
+hot and entropy losses to ensure class-balanced generation.               client-side backdoor attacks where a malicious client in the
+The model is then trained to learn the inverse mapping from               VanSL setup leverages its control over local training data to in-
+smashed data to private images. In the inference phase, the               ject backdoor samples by modifying features or labels. If the
+model reconstructs private images from new smashed data. To               client holds both the features and the labels, it directly back-
+enhance the effectiveness of the reconstruction, the model is             doors the data by adding a trigger pattern and associating it
+optimized using cycle-consistency losses. The forward cycle               with an incorrect label. If the server holds the labels, the at-
+consistency loss ensures that the reconstructed images, when              tacker may use label inference techniques to identify and ma-
+processed again through the client-side model, produce outputs            nipulate specific training samples. To enhance attack persis-
+similar to the original smashed data. The backward cycle con-             tence, an auxiliary model is introduced to distinguish between
+sistency loss ensures that processed smashed data can regener-            the clean and backdoor samples in the feature space, improving
+ate original-like images when passed through the model. The               the sensitivity of the model to backdoor patterns. This ensures
+forward cycle-consistency loss is formally defined as:                    that the attack remains effective without degrading the model’s
+                      L f = ∥ f˜−1 (zc ) − x′ ∥2             (26)         performance on the primary task, making detection challeng-
+                                                                          ing.
+These loss functions refine the inversion process, enabling more
+precise reconstructions of private data.
+
+D. Details of Model Manipulation Attacks
+                                                                                                                            VanSL
+  This section provides an in-depth examination of the model
+                                                                                                                            U shaped
+manipulation attacks discussed in Section 4.1.4, elaborating on
+their mathematical foundations and implementation details.                                                                  SFL
+
+D.1. Details of Adversarial Attacks:
+   The adversary in [14] perturbs feature representations by
+minimizing their cosine similarity. The perturbation is itera-            Figure 7: The distribution of split learning types in the surveyed literature on
+tively updated as:                                                        defense techniques.
+
+                                ∂Lattack (z s , z∗s )
+                         (                            )
+                δ = Clipϵ δ − ζ                           (27)                Rieger et. al [69] also examine client-side backdoor attacks
+                                      ∂δ                                  in the USL setup. The attack process begins with trigger inser-
+where ζ is the update step size, ϵ is the perturbation budget, and        tion into a subset of its training data. The malicious client then
+Clipϵ {·} ensures the perturbation remains within the allowed ϵ-          trains its local model on both clean and poisoned data, ensuring
+ball.                                                                     that the backdoor is embedded while maintaining high overall
+   The adversarial example in [26] x̃ is iteratively updated using        model accuracy. Once the adversarial client completes training,
+a gradient-based method while ensuring that the perturbation δ            it transmits the model update to the server, which forwards it to
+remains within the predefined budget:                                     the next client. This gradual backdoor propagation allows the
+                                                                          backdoor to persist through multiple training rounds, as subse-
+                             ∥δ∥∞ ≤ ϵ                        (28)         quent benign clients unknowingly build upon the manipulated
+                                                                     22
+                                                                                         the client model to adapt feature encoding to match the shadow
+                                                                                         model while maintaining original training protocol integrity.
+
+                                                  SS-SC
+                                                                                         E. Supplementary Tables and Figures
+                                                  SS-MC
+                                                  MS-MC                                     We provide the general overview of attack and defense strate-
+                                                                                         gies and their features, such as implementation availability and
+                                                                                         SL style in Table 2. We also present the distribution of defense
+                                                                                         techniques across multi-client and multi-server settings in Fig-
+Figure 8: The distribution of client-server architectures in the surveyed litera-        ure 8 and the distribution of these SL types across the reviewed
+ture on defense mechanisms.                                                              literature in Figure 7.
+
+
+model. Since SL does not reset model updates, the backdoor
+remains embedded even after multiple training rounds.
+     iii. Server-Side Backdoor Attacks: Further advancing the
+field of backdoor attacks, Tajalli et al. [74] investigated server-
+side backdoor attacks in VanSL, where an adversarial server in-
+jects backdoors without direct access to the client data. They
+proposed two strategies: Surrogate Client Attack and Injec-
+tor Autoencoder Attack. In the Surrogate Client Attack, the
+server introduces a surrogate client fˆc∗ mimicking fc and trains
+it on a poisoned dataset using a weighted loss function:Lcomb =
+αLc + (1 − α)L̃c∗ where α controls client influence in backprop-
+agation. The Injector Autoencoder Attack trains an autoen-
+coder on paired (clean, poisoned) smashed data and places it
+between the client’s cut layer and the server’s input pipeline
+to modify incoming activations in real-time. Their results sug-
+gest VanSL is resilient to backdoor attacks. Contrarily, Yu et
+al. [89] demonstrated that a malicious server can implant back-
+doors via feature space hijacking, aligning the client model’s
+optimization process with a shadow model trained on a sepa-
+rate dataset. A discriminator network transfers the backdoor’s
+effect to the client, while an auxiliary model maintains feature
+separability, ensuring stealth and preserving task accuracy. A
+discriminator network aids in transferring the backdoor’s ef-
+fect to the client model, ensuring it learns to associate trigger
+patterns with attacker-specified outputs. An auxiliary model
+further reinforces backdoor persistence by maintaining feature
+separability. Since this method does not alter raw client data, it
+remains stealthy while ensuring the primary task’s accuracy is
+unaffected.
+     Recently, Yu et al. [90] introduced the SFI (Steal, Fine-
+tune, and Implant) attack framework, a sophisticated server-
+side backdoor attack in a VanSL framework, manipulating gra-
+dient updates without requiring access to raw client data. The
+framework operates in three distinct stages. In the Steal Stage,
+it constructs a shadow model f˜s using a limited shadow dataset
+x s , labeling samples as either backdoor (x sb = 1) or clean
+(x sb = 0), while the shadow model learns from the server’s
+main task model f s . During the Finetune Stage, the framework
+optimizes the server model f s , shadow model f˜s , and auxiliary
+model fa , where the auxiliary model assists in backdoor sample
+differentiation, ensuring stable backdoor encoding while main-
+taining main task accuracy. Finally, in the Implant Stage, the
+framework transfers backdoor capability to the client model by
+implementing a discriminator for adversarial training, forcing
+                                                                                    23
+            Paper            Split Learning Style Implementation Training Setup Model Architecture                  Attack Strategy                                    Defense Strategy
+         Fu et al.[18]              SFL             Available       SS-SC             DNN                                  NA                                   Monitoring - Gradient Detection
+      Erdogan et al.[13]           VanSL            Available       SS-SC         DNN (ResNet)                             NA                                   Monitoring - Gradient Detection
+         SplitOut[11]              VanSL            Available       SS-SC         DNN (ResNet)                             NA                                   Monitoring - Gradient Detection
+      Titcombe et al.[77]          VanSL            Available       SS-MC             DNN                                  NA                                           Data Perturbation
+        Mao et al. [52]            VanSL        No Open Source      SS-SC             DNN                                  NA                            Architecture Modification - Data Decorrelation
+       Khan et al. [38]            VanSL            Available       MS-SC             DNN                                  NA                            Secure Computation - Function Secret Sharing
+      Khowaja et al. [42]          VanSL        No Open Source      SS-SC             DNN                                  NA                             Architecture Modification - Data Perturbation
+         ResSFL [44]                SFL             Available       SS-MC         DNN (VGG-11)                             NA                           Architecture Modification - Protocol Modification
+       Pham et al. [66]            VanSL        No Open Source      MS-MC             DNN                                  NA                           Architecture Modification - Protocol Modification
+       PrivateMail [79]            VanSL        No Open Source      SS-SC             DNN                                  NA                                Data Perturbation - Differential Privacy
+       Pham et al. [62]            VanSL            Available       SS-MC             DNN                                  NA                           Architecture Modification & Differential Privacy
+         DISCO[73]                 VanSL            Available       SS-SC             DNN                                  NA                            Architecture Modification - Data Decorrelation
+       Turina et al. [78]           SFL         No Open Source      SS-MC             DNN                                  NA                            Architecture Modification - Data Decorrelation
+      Gawron et al. [22]           VanSL            Available       SS-SC             DNN                                  NA                                          Differential Privacy
+       Khan et al. [41]             USL             Available       SS-SC         DNN (1D CNN)                             NA                           Secure Computation - Homomorphic Encryption
+       Khan et al. [39]             USL             Available       SS-SC            1D CNN                                NA                           Secure Computation - Homomorphic Encryption
+         Split HE[61]              VanSL        No Open Source      SS-SC             DNN                                  NA                           Secure Computation - Homomorphic Encryption
+        Split Ways[40]              USL         No Open Source      SS-SC            1D CNN                                NA                           Secure Computation - Homomorphic Encryption
+      Nguyen et al. [57]            USL             Available       SS-SC            1D CNN                                NA                           Secure Computation - Homomorphic Encryption
+      Abuadbba et al.[1]           VanSL            Available       SS-MC            1D CNN                                NA                           Architecture Modification & Differential Privacy
+         SafeSplit[69]              USL         No Open Source      SS-MC             DNN                                  NA                                Monitoring - Weight/anomaly detection
+          PSLF[83]                 VanSL        No Open Source      SS-SC             DNN                                  NA                            Architecture Modification - Data Decorrelation
+          CURE[35]                 VanSL            Available       SS-SC             DNN                                  NA                           Secure Computation - Homomorphic Encryption
+
+
+      Pasquini et al. [59]          VSL             Available       SS-MC             DNN                      Data reconstruction - FSHA                                      NA
+          PCAT [92]                VanSL        No Open Source      SS-SC             CNN              Data reconstruction - Functionality Stealing                            NA
+          Unsplit[10]              VanSL            Available       SS-SC             DNN                 Data Reconstruction - Model Inversion                                NA
+         Xu et al. [87]            VanSL        No Open Source      SS-SC             DNN             Data Reconstruction - Feature Reconstruction                             NA
+         Li et al.[45]             VanSL        No Open Source      SS-SC             DNN            Label Inference - Gradient-Based Label Inference                          NA
+         Liu et al.[48]            VanSL            Available       SS-SC             DNN            Label Inference - Gradient-Based Label Inference                          NA
+         ExPLoit[37]               VanSL        No Open Source      SS-SC             DNN            Label Inference - Gradient-Based Label Inference                          NA
+         VILLIAN[4]                 VSL         No Open Source      SS-SC             DNN                Model Manipulation - Backdoor Attacks                                 NA
+         Yu et al. [90]            VanSL        No Open Source      SS-SC             DNN                Model Manipulation - Backdoor Attacks                                 NA
+       Tajalli et al.[74]          VanSL        No Open Source      SS-SC             DNN                Model Manipulation - Backdoor Attacks                                 NA
+         Fan et al.[14]             USL         No Open Source      SS-SC             DNN               Model Manipulation - Adversarial Attacks                               NA
+         AdvUSL[26]                 USL         No Open Source      SS-MC             DNN               Model Manipulation - Adversarial Attacks                               NA
+     Kohankhaki et al.[43]         VanSL            Available       SS-MC             DNN                Model Manipulation - Poisoning Attacks                                NA
+        Zhu et al.[96]              USL         No Open Source      SS-MC             DNN              Data Reconstruction- Feature Reconstruction                             NA
+         Yu et al.[89]             VanSL        No Open Source      SS-MC             DNN                Model Manipulation - Backdoor Attacks                                 NA
+        SplitAum[93]               VanSL        No Open Source      SS-SC             DNN            Label Inference - Gradient Based Label Inference                          NA
+        Zeng et al.[91]             USL         No Open Source      SS-SC             DNN                      Data reconstruction - GAN                                       NA
+       Huang et al.[30]             SFL         No Open Source      MS-MC             DNN            Label Inference - Smashed Based Label Inference                           NA
+      Gajbhiye et al.[19]           SFL         No Open Source      MS-MC             DNN                Model Manipulation - Poisoning Attack                                 NA
+         Xie et al.[86]            VanSL            Available       SS-SC             DNN            Label Inference - Gradient Based Label Inference                          NA
+         Wu et al.[85]              SFL             Available       MS-MC             DNN                Model Manipulation - Poisoning Attack                                 NA
+       Ismail et al.[33]            SFL         No Open Source      MS-MC             DNN                Model Manipulation - Poisoning Attack                                 NA
+
+
+
+Table 2: Comparison of prior Split Learning approaches, showing key attributes such as VanSL (Vanilla SL), SFL (Split Federated Learning), USL (U-Shaped
+SL), VSL (Vertical SL), SS-SC (Single-Server Single-Client), SS-MC (Single-Server Multi-Client), MS-SC (Multi-Server Single-Client), and MS-MC (Multi-Server
+Multi-Client). Model abbreviations include DNN (Dense Neural Network), CNN (Convolutional Neural Network) and 1D CNN (1 Dimensional Convolutional
+Neural Network). The thick gray line separates defense papers (top) from attack papers (bottom) and NA stands for ’not applicable’.
+
+
+
+
+                                                                                               24
+

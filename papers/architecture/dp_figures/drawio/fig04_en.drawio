@@ -1,0 +1,95 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-11-19T00:00:00.000Z" agent="Kinlin research architecture authoring" version="29.0.0" type="device" compressed="false">
+  <diagram id="fig04-en" name="Gaussian release and prospective composition">
+    <mxGraphModel dx="1440" dy="940" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="940" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fig04_canvas" value="" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFFFFF;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="0" y="0" width="1440" height="940" />
+        </mxCell>
+        <mxCell id="fig04_title" value="Gaussian release and prospective composition" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=32;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="40" y="24" width="1360" height="44" />
+        </mxCell>
+        <mxCell id="fig04_a" value="(a) One complete publication vector" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=27;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="100" width="1320" height="40" />
+        </mxCell>
+        <mxCell id="fig04_h" value="Local activation&#10;h(x) ∈ Rᵈ" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#ECF2F8;strokeColor=#3D6F9C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="175" width="230" height="110" />
+        </mxCell>
+        <mxCell id="fig04_clip" value="Global L2 clipping&#10;‖h̄(x)‖₂ ≤ C" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="365" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_gaussian" value="Gaussian noise&#10;Z ∼ N(0, s²I)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="725" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_y" value="Release&#10;Y = h̄(x) + Z" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F4F5F6;strokeColor=#78838D;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1085" y="175" width="290" height="110" />
+        </mxCell>
+        <mxCell id="fig04_e_hc" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_h" target="fig04_clip">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_e_cn" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_clip" target="fig04_gaussian">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_e_ny" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_gaussian" target="fig04_y">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="fig04_sensitivity" value="Prompt replacement: Δ₂ ≤ 2C. Noise calibration and finite-precision implementation require review." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="315" width="1300" height="65" />
+        </mxCell>
+        <mxCell id="fig04_b" value="(b) Prospective check before atomic reservation" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=27;fontFamily=Arial;fontStyle=1;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="50" y="425" width="1320" height="40" />
+        </mxCell>
+        <mxCell id="fig04_rho" value="Charged account R(α)&#10;includes reservations" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="490" width="500" height="100" />
+        </mxCell>
+        <mxCell id="fig04_cost" value="Public-schedule cost cₜ(α)&#10;= αΔₜ² / (2sₜ²)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="640" width="500" height="100" />
+        </mxCell>
+        <mxCell id="fig04_convert" value="Prospective ε at fixed δ*&#10;minα {R(α) + cₜ(α)&#10;+ ln(1/δ*) / (α − 1)}" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#F1EEF6;strokeColor=#74658C;strokeWidth=1.5;fontColor=#243746;fontSize=25;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="700" y="530" width="675" height="150" />
+        </mxCell>
+        <mxCell id="fig04_e_account" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_rho" target="fig04_convert">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="635" y="540" />
+              <mxPoint x="635" y="575" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_e_cost" value="" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_cost" target="fig04_convert">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="635" y="690" />
+              <mxPoint x="635" y="635" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_accept" value="Within ε limit: reserve atomically&#10;R(α) ← R(α) + cₜ(α)" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#EAF4F1;strokeColor=#267C78;strokeWidth=1.5;fontColor=#243746;fontSize=26;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="700" y="770" width="675" height="90" />
+        </mxCell>
+        <mxCell id="fig04_deny" value="Over limit / incompatible account&#10;reject without sending" style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=#FFF1E8;strokeColor=#A85A32;strokeWidth=1.5;fontColor=#243746;fontSize=24;fontFamily=Arial;fontStyle=0;align=center;verticalAlign=middle;spacing=12;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="790" width="500" height="70" />
+        </mxCell>
+        <mxCell id="fig04_e_accept" value="pass" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#617482;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_convert" target="fig04_accept">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="45" y="0" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_e_deny" value="fail" style="edgeStyle=none;rounded=0;html=0;convertToSvg=1;endArrow=block;endFill=1;endSize=9;strokeWidth=1.8;strokeColor=#A85A32;dashed=0;dashPattern=6 4;fontSize=23;fontFamily=Arial;fontColor=#243746;labelBackgroundColor=#FFFFFF;exitX=0.15;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fig04_convert" target="fig04_deny">
+          <mxGeometry as="geometry" relative="1">
+            <mxPoint as="offset" x="0" y="2" />
+            <Array as="points">
+              <mxPoint x="801" y="760" />
+              <mxPoint x="315" y="760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fig04_scope" value="Fixed public cost schedule; conditional bounds; no subsampling amplification." style="shape=rect;rounded=1;arcSize=8;whiteSpace=wrap;html=0;convertToSvg=1;svgWhiteSpace=wrap;fillColor=none;strokeColor=none;strokeWidth=1.5;fontColor=#243746;fontSize=23;fontFamily=Arial;fontStyle=0;align=left;verticalAlign=middle;spacing=0;shadow=0;glass=0;dashed=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="65" y="890" width="1300" height="35" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,1664 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<!-- new favicon config and versions by realfavicongenerator.net -->
+<link rel="apple-touch-icon" sizes="180x180" href="https://static.arxiv.org/static/base/1.0.0a5/images/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="https://static.arxiv.org/static/base/1.0.0a5/images/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="https://static.arxiv.org/static/base/1.0.0a5/images/icons/favicon-16x16.png">
+<link rel="manifest" href="https://static.arxiv.org/static/base/1.0.0a5/images/icons/site.webmanifest">
+<link rel="mask-icon" href="https://static.arxiv.org/static/base/1.0.0a5/images/icons/safari-pinned-tab.svg" color="#b31b1b">
+<link rel="shortcut icon" href="https://static.arxiv.org/static/base/1.0.0a5/images/icons/favicon.ico">
+<meta name="msapplication-TileColor" content="#b31b1b">
+<meta name="msapplication-config" content="images/icons/browserconfig.xml">
+<meta name="theme-color" content="#b31b1b">
+<!-- end favicon config -->
+<title>Search | arXiv e-print repository</title>
+<script defer src="https://static.arxiv.org/static/base/1.0.0a5/fontawesome-free-5.11.2-web/js/all.js"></script>
+<link rel="stylesheet" href="https://static.arxiv.org/static/base/1.0.0a5/css/arxivstyle.css" />
+<script type="text/x-mathjax-config">
+  MathJax.Hub.Config({
+    messageStyle: "none",
+    extensions: ["tex2jax.js"],
+    jax: ["input/TeX", "output/HTML-CSS"],
+    tex2jax: {
+      inlineMath: [ ['$','$'], ["\\(","\\)"] ],
+      displayMath: [ ['$$','$$'], ["\\[","\\]"] ],
+      processEscapes: true,
+      ignoreClass: '.*',
+      processClass: 'mathjax.*'
+    },
+    TeX: {
+        extensions: ["AMSmath.js", "AMSsymbols.js", "noErrors.js"],
+        noErrors: {
+          inlineDelimiters: ["$","$"],
+          multiLine: false,
+          style: {
+            "font-size": "normal",
+            "border": ""
+          }
+        }
+    },
+    "HTML-CSS": { availableFonts: ["TeX"] }
+  });
+</script>
+<script src='//static.arxiv.org/MathJax-2.7.3/MathJax.js'></script>
+<script src="https://static.arxiv.org/static/base/1.0.0a5/js/notification.js"></script>
+
+    
+  <script>document.documentElement.classList.add('js');</script>
+  <link rel="stylesheet" href="https://static.arxiv.org/static/design-system/latest/design-system-components.css">
+<link rel="stylesheet" href="https://static.arxiv.org/static/design-system/latest/fonts.css">
+  <link rel="stylesheet" href="https://static.arxiv.org/static/search/0.5.6/css/bulma-tooltip.min.css" />
+  <link rel="stylesheet" href="https://static.arxiv.org/static/search/0.5.6/css/search.css" />
+  <script
+    src="https://code.jquery.com/jquery-3.2.1.slim.min.js"
+    integrity="sha256-k2WSCIexGzOj3Euiig+TlR8gA0EmPjuc79OEeY5L45g="
+    crossorigin="anonymous"></script>
+
+  <script src="https://static.arxiv.org/static/search/0.5.6/js/fieldset.js"></script>
+  <style>
+  radio#cf-customfield_11400 {
+    display: none;
+  }
+  /* Render the spinout .ds-site-footer standalone / full-bleed. search extends the
+     legacy base, whose bare wrapping <footer> (in base/base.html, outside any
+     overridable block — so it can't be removed from here) is styled by
+     arxivstyle.css with a grey background (hsl(0,0%,95%)) + 1em 2em padding,
+     boxing our warm-wash footer inside a second grey band. display:contents drops
+     the wrapper's box entirely (cleaner than zeroing individual properties) so
+     .ds-site-footer renders in its place; it inherits flex-shrink:0 from the same
+     legacy `footer` rule, so the sticky footer still works. Search-specific
+     legacy-base integration; the shared chrome CSS stays byte-identical to the SSOT. */
+  body > footer {
+    display: contents;
+  }
+  </style>
+
+  </head>
+  <body>
+  
+  
+  <header><a href="#main-container" class="is-sr-only">Skip to main content</a>
+    
+
+<div id="ds-announcement"></div>
+
+<script src="https://static.arxiv.org/static/design-system/latest/chrome/banner.js" defer></script>
+<script src="https://static.arxiv.org/static/design-system/latest/chrome/header.js" defer></script>
+<header class="ds-site-header ">
+  <a aria-hidden="true" tabindex="-1" href="https://arxiv.org/IgnoreMe" class="is-sr-only"></a>
+  <a href="https://arxiv.org/" class="ds-site-header-logo" aria-label="archive home">
+    <img src="https://static.arxiv.org/static/design-system/latest/logos/arxiv-logo.svg" alt="archive">
+  </a>
+  
+  <a id="ds-search-toggle" class="ds-site-header-search-link" href="https://arxiv.org/search" aria-controls="ds-search-overlay" aria-expanded="false">
+    <svg class="ds-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <span>Search</span>
+  </a>
+  
+  <button type="button" id="ds-nav-toggle" class="ds-site-header-nav-toggle"
+    aria-label="Open menu" aria-controls="ds-site-header-nav" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+  
+  <nav class="ds-site-header-nav" id="ds-site-header-nav" aria-label="Main navigation">
+    <a href="https://arxiv.org/submit">Submit</a>
+    <a href="https://info.arxiv.org/about/donate.html">Donate</a>
+    <span class="ds-site-header-divider" aria-hidden="true"></span>
+    
+    <a href="https://arxiv.org/login" class="ds-site-header-login">Log in</a>
+  </nav>
+  
+  
+</header>
+
+<div class="ds-search-overlay" id="ds-search-overlay" hidden>
+  <div class="ds-search-overlay-panel" role="search">
+    <form method="GET" action="https://arxiv.org/search">
+      <label for="ds-search-input" class="is-sr-only">Search arXiv</label>
+      <input type="text" name="query" id="ds-search-input" class="ds-input" autocomplete="off"
+        placeholder="Search papers by title, author, abstract, or ID...">
+      <input type="hidden" name="searchtype" value="all">
+      <input type="hidden" name="source" value="header">
+    </form>
+    <p class="ds-hint">
+      Press Enter to search &middot; <a href="https://arxiv.org/search/advanced">Advanced search</a>
+    </p>
+  </div>
+</div>
+
+
+  </header>
+  <main class="container" id="main-container">
+    
+
+
+    
+  <div class="level is-marginless">
+    <div class="level-left">
+      <h1 class="title is-clearfix">
+    
+        Showing 1&ndash;22 of 22 results for all: <span class="mathjax">SkillRL OR SkillBank OR AgentEvolver OR ToolMaker</span>
+    
+</h1>
+    </div>
+    <div class="level-right is-hidden-mobile">
+      <!-- feedback for mobile is moved to footer -->
+      <span class="help" style="display: inline-block;"><a href="https://github.com/arXiv/arxiv-search/releases">Search v0.5.6 released 2020-02-24</a>&nbsp;&nbsp;</span>
+    </div>
+  </div>
+    <div class="content">
+      
+  <form method="GET" action="/search/"  aria-role="search">
+    
+
+    
+    <div class="field has-addons-tablet">
+      <div class="control is-expanded">
+        <label for="query" class="hidden-label">Search term or terms</label>
+        
+          <input class="input is-medium" id="query" name="query" placeholder="Search term..." type="text" value="SkillRL OR SkillBank OR AgentEvolver OR ToolMaker">
+        
+        
+      </div>
+      <div class="select control is-medium">
+        <label class="is-hidden" for="searchtype">Field</label>
+        <select class="is-medium" id="searchtype" name="searchtype"><option selected value="all">All fields</option><option value="title">Title</option><option value="author">Author(s)</option><option value="abstract">Abstract</option><option value="comments">Comments</option><option value="journal_ref">Journal reference</option><option value="acm_class">ACM classification</option><option value="msc_class">MSC classification</option><option value="report_num">Report number</option><option value="paper_id">arXiv identifier</option><option value="doi">DOI</option><option value="orcid">ORCID</option><option value="license">License (URI)</option><option value="author_id">arXiv author ID</option><option value="help">Help pages</option><option value="full_text">Full text</option></select>
+      </div>
+      <div class="control">
+          <button class="button is-link is-medium">Search</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="control is-size-7">
+        
+        <label class="radio">
+          <input checked id="abstracts-0" name="abstracts" type="radio" value="show"> Show abstracts
+        </label>
+        
+        <label class="radio">
+          <input id="abstracts-1" name="abstracts" type="radio" value="hide"> Hide abstracts
+        </label>
+        
+      </div>
+    </div>
+    <div class="is-clearfix" style="height: 2.5em"> 
+      <div class="is-pulled-right">
+        
+        <a href="/search/advanced?terms-0-term=SkillRL+OR+SkillBank+OR+AgentEvolver+OR+ToolMaker&amp;terms-0-field=all&amp;size=50&amp;order=-announced_date_first">Advanced Search</a>
+        
+      </div>
+    </div>
+    <input type="hidden" name="order" value="-announced_date_first">
+    <input type="hidden" name="size" value="50">
+  </form>
+
+  
+
+  
+      
+<div class="level breathe-horizontal">
+  <div class="level-left">
+    <form method="GET" action="/search/">
+      <div style="display: none;">
+        
+          
+            <select id="searchtype" name="searchtype"><option selected value="all">All fields</option><option value="title">Title</option><option value="author">Author(s)</option><option value="abstract">Abstract</option><option value="comments">Comments</option><option value="journal_ref">Journal reference</option><option value="acm_class">ACM classification</option><option value="msc_class">MSC classification</option><option value="report_num">Report number</option><option value="paper_id">arXiv identifier</option><option value="doi">DOI</option><option value="orcid">ORCID</option><option value="license">License (URI)</option><option value="author_id">arXiv author ID</option><option value="help">Help pages</option><option value="full_text">Full text</option></select>
+          
+        
+          
+            <input id="query" name="query" type="text" value="SkillRL OR SkillBank OR AgentEvolver OR ToolMaker">
+          
+        
+          
+        
+          
+        
+          
+            <ul id="abstracts"><li><input checked id="abstracts-0" name="abstracts" type="radio" value="show"> <label for="abstracts-0">Show abstracts</label></li><li><input id="abstracts-1" name="abstracts" type="radio" value="hide"> <label for="abstracts-1">Hide abstracts</label></li></ul>
+          
+        
+      </div>
+      <div class="box field is-grouped is-grouped-multiline level-item">
+        <div class="control">
+          <span class="select is-small">
+            <select id="size" name="size"><option value="25">25</option><option selected value="50">50</option><option value="100">100</option><option value="200">200</option></select>
+          </span>
+          <label for="size">results per page</label>.
+        </div>
+        <div class="control">
+          <label for="order">Sort results by</label>
+          <span class="select is-small">
+            <select id="order" name="order"><option selected value="-announced_date_first">Announcement date (newest first)</option><option value="announced_date_first">Announcement date (oldest first)</option><option value="-submitted_date">Submission date (newest first)</option><option value="submitted_date">Submission date (oldest first)</option><option value="">Relevance</option></select>
+          </span>
+        </div>
+        <div class="control">
+          <button class="button is-small is-link">Go</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+      
+
+
+
+
+<ol class="breathe-horizontal" start="1"> 
+
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2611.17007">arXiv:2611.17007</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2611.17007">pdf</a>, <a href="https://arxiv.org/ps/2611.17007">ps</a>, <a href="https://arxiv.org/format/2611.17007">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Skill Adapter: Personalized Modification and Online Routing of General-Purpose Skills
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Zhuang%2C+Q">Qijia Zhuang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Gou%2C+Y">Yanyin Gou</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ma%2C+W">Wenbin Ma</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ren%2C+Y">Yuxiang Ren</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2611.17007v2-abstract-short" style="display: inline;">
+        &hellip;the two types of decisions using modification gains and routing outcomes, respectively.
+  We evaluate Skill Adapter on ALFWorld, WebShop, and SkillsBench. Compared with <span class="search-hit mathjax">SkillRL</span>, it improves task success rates by an average of 11.43 percentage points and reduces mean execution time on all three benchmarks. Skill Adapter retains its performance advantage when&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2611.17007v2-abstract-full').style.display = 'inline'; document.getElementById('2611.17007v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2611.17007v2-abstract-full" style="display: none;">
+        Large language model (LLM) agents use external skills to reuse task procedures and experience with tools. General-purpose skills describe shared execution procedures, while specific tool choices, operating practices, and output requirements vary across users. In long-horizon tasks, subgoals, available inputs, and environmental states change as execution progresses. Agents must select currently applicable skills from an expanding skill pool and prepare candidates for subsequent steps.
+  We propose Skill Adapter, which enables personalized modification and online routing of general-purpose skills. The system distills local adjustments from user requirements and execution feedback and stores them as Adapters linked to general-purpose skills. The routing agent selects general-purpose skills and applicable Adapters based on the current subtask, execution progress, and environmental feedback, incrementally maintaining a task-level online skill library that the main LLM reads on demand. The system preloads candidates for subsequent nodes and rechecks their applicability once actual inputs are determined. Reinforcement learning optimizes the two types of decisions using modification gains and routing outcomes, respectively.
+  We evaluate Skill Adapter on ALFWorld, WebShop, and SkillsBench. Compared with <span class="search-hit mathjax">SkillRL</span>, it improves task success rates by an average of 11.43 percentage points and reduces mean execution time on all three benchmarks. Skill Adapter retains its performance advantage when the skill pool grows to 1,000 skills.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2611.17007v2-abstract-full').style.display = 'none'; document.getElementById('2611.17007v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 16 November, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 12 November, 2026;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> November 2026.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">9 pages, 3 figures, 3 tables</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2610.41143">arXiv:2610.41143</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2610.41143">pdf</a>, <a href="https://arxiv.org/ps/2610.41143">ps</a>, <a href="https://arxiv.org/format/2610.41143">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Machine Learning">cs.LG</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        TalentRL: Strategy-Guided Reinforcement Learning for Hierarchical Skill Routing
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+H">Huancheng Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Sun%2C+X">Xiaodi Sun</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Huang%2C+Z">Zhaoqiong Huang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chang%2C+M">Michelle Chang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Lu%2C+J">Jingwen Lu</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2610.41143v1-abstract-short" style="display: inline;">
+        Natural-language skills enable large language model (LLM) agents to reuse procedures across tasks, yet most systems retrieve individual skills from a flat <span class="search-hit mathjax">SkillBank</span> without explicitly modeling the high-level strategy that governs their selection and use. We introduce TalentRL, a strategy-guided reinforcement learning framework for hierarchical routing over p&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.41143v1-abstract-full').style.display = 'inline'; document.getElementById('2610.41143v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2610.41143v1-abstract-full" style="display: none;">
+        Natural-language skills enable large language model (LLM) agents to reuse procedures across tasks, yet most systems retrieve individual skills from a flat <span class="search-hit mathjax">SkillBank</span> without explicitly modeling the high-level strategy that governs their selection and use. We introduce TalentRL, a strategy-guided reinforcement learning framework for hierarchical routing over procedural memory. Coarse-grained talents represent recurring strategies for skill use, while fine-grained skills provide executable procedures. For each task, the policy model selects a talent that guides execution and softly prioritizes its associated skills during similarity-based retrieval. However, since task outcomes depend jointly on talent selection, retrieved skill context, and downstream execution, terminal rewards alone cannot isolate the contribution of the routing decision. TalentRL therefore trains talent routing with reward contrasts between rollouts of the same task under matched interventions on the talent-conditioned context, and optimizes downstream execution with group-relative advantages. Across seven open-domain and multi-hop question-answering benchmarks, talent-aware supervised fine-tuning improves average success rate by 7.53%, 6.71%, and 9.21% over the corresponding zero-shot baselines for Qwen2.5-7B, Qwen3-8B, and Llama-3.1-8B, respectively. Reinforcement learning further improves these SFT checkpoints by 7.58% to 9.32%, and TalentRL achieves the highest average success rate among all compared methods on all three backbones. On the agentic benchmarks ALFWorld and WebShop, TalentRL achieves the highest ALFWorld success rate (99.3%) and the highest WebShop score (90.7) among all compared methods.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.41143v1-abstract-full').style.display = 'none'; document.getElementById('2610.41143v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 29 October, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2610.21597">arXiv:2610.21597</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2610.21597">pdf</a>, <a href="https://arxiv.org/ps/2610.21597">ps</a>, <a href="https://arxiv.org/format/2610.21597">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Networking and Internet Architecture">cs.NI</span>
+        
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+          
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Decoding What iOS Location Services Send to Apple: An LLM Is an Unreliable Analyst but a Useful <span class="search-hit mathjax">Toolmaker</span>
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Leith%2C+D">Douglas Leith</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="has-text-black-bis has-text-weight-semibold">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2610.21597v1-abstract-short" style="display: inline;">
+        Reverse engineering the data formats used by mobile software is skilled and slow, and using AI to assist with it is attractive. We evaluate this for the protobuf messages that an iPhone sends to Apple&#39;s location services. Working from Apple&#39;s binaries, we use two frontier models (Claude Opus 4.8, Codex GPT Sol 5.6) to reconstruct the schemas of protobufs observed in network traffic. The great majo&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.21597v1-abstract-full').style.display = 'inline'; document.getElementById('2610.21597v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2610.21597v1-abstract-full" style="display: none;">
+        Reverse engineering the data formats used by mobile software is skilled and slow, and using AI to assist with it is attractive. We evaluate this for the protobuf messages that an iPhone sends to Apple&#39;s location services. Working from Apple&#39;s binaries, we use two frontier models (Claude Opus 4.8, Codex GPT Sol 5.6) to reconstruct the schemas of protobufs observed in network traffic. The great majority of the schemas contain substantial errors, and these are hard to detect because the schemas are internally consistent. Direct AI use is therefore unsuitable for forensic and privacy analysis. AI can, however, write reliable analysis tools when their output can be validated. We use Claude to write a Python tool, Extractor, that reliably recovers protobuf schemas from Apple binaries. We validate it against binaries compiled from schemas with known answers, previously published schemas, and network measurements. We demonstrate the use of Extractor to decode and analyse the location services network traffic of a jailbroken iPhone 8 (iOS 16.7.11).
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.21597v1-abstract-full').style.display = 'none'; document.getElementById('2610.21597v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 15 October, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2610.11613">arXiv:2610.11613</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2610.11613">pdf</a>, <a href="https://arxiv.org/ps/2610.11613">ps</a>, <a href="https://arxiv.org/format/2610.11613">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        <span class="search-hit mathjax">AgentEvolver</span>: System-Wide Self-Evolution Through Task Execution
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Zhang%2C+W">Wentao Zhang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yang%2C+F">Fuchao Yang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhao%2C+Y">Yilei Zhao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+X">Xinrun Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=An%2C+B">Bo An</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2610.11613v1-abstract-short" style="display: inline;">
+        &hellip;without improving how it works. Turning task experience into reusable capability requires connecting the changed component to its evaluation and subsequent use. We present <span class="search-hit mathjax">AgentEvolver</span>, a system for developing capabilities during task execution while keeping the foundation model fixed. Eight entity families expose reusable operations, methods, agents, contro&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.11613v1-abstract-full').style.display = 'inline'; document.getElementById('2610.11613v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2610.11613v1-abstract-full" style="display: none;">
+        An agent can complete a task without improving how it works. Turning task experience into reusable capability requires connecting the changed component to its evaluation and subsequent use. We present <span class="search-hit mathjax">AgentEvolver</span>, a system for developing capabilities during task execution while keeping the foundation model fixed. Eight entity families expose reusable operations, methods, agents, control flow, interfaces, and supporting state to revision through a common versioned lifecycle. A shared Runtime coordinates ongoing work, while persistent planning and recoverable context preserve task direction and supporting evidence. We evaluate task outcomes on SWE-bench Pro Public and examine capability changes in six application cases. The team reports an 82.08\% resolution rate with evolution, exceeding its reported baseline without evolution. The cases show retained capabilities entering later website, game, and research work, while also documenting incomplete objectives and an unsuccessful strategy. These findings distinguish improvement in a reusable component from success on the final task. <span class="search-hit mathjax">AgentEvolver</span> provides a concrete basis for studying capability accumulation through execution; independent-task transfer and total development cost remain open questions.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.11613v1-abstract-full').style.display = 'none'; document.getElementById('2610.11613v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 8 October, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2610.10164">arXiv:2610.10164</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2610.10164">pdf</a>, <a href="https://arxiv.org/ps/2610.10164">ps</a>, <a href="https://arxiv.org/format/2610.10164">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        UniSkill: Learning Actor-Aligned Skill Proposals for an Evolving Policy
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Lu%2C+Y">Yifei Lu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Liu%2C+C">Cheng Liu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yu%2C+D">Dianzhi Yu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Xiang%2C+H">Hui Xiang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhang%2C+J">Ji Zhang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Xiao%2C+Y">Yuanchu Xiao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Liang%2C+R">Rong Liang</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2610.10164v1-abstract-short" style="display: inline;">
+        &hellip;improve across tasks by retaining reusable skills distilled from prior interactions. Recent work jointly optimizes task execution and skill extraction, enabling the policy and <span class="search-hit mathjax">skillbank</span> to co-evolve. However, as the actor continues learning, rewarding skill proposals through their reuse in subsequent training steps may conflate skill benefits with actor impr&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.10164v1-abstract-full').style.display = 'inline'; document.getElementById('2610.10164v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2610.10164v1-abstract-full" style="display: none;">
+        Large language model agents can improve across tasks by retaining reusable skills distilled from prior interactions. Recent work jointly optimizes task execution and skill extraction, enabling the policy and <span class="search-hit mathjax">skillbank</span> to co-evolve. However, as the actor continues learning, rewarding skill proposals through their reuse in subsequent training steps may conflate skill benefits with actor improvement, while directly testing each proposed skill requires costly additional actor rollouts. In this paper, we introduce UniSkill, which uses a shared policy to interact with the environment and propose <span class="search-hit mathjax">skillbank</span> edits (Add, Update, or No Edit) from the resulting trajectories. Specifically, the actor learns from environment rewards, while contrastive action feedback guides skill proposal learning. This feedback provides an actor-alignment signal by measuring how replacing the retrieved skill with a proposed skill changes the current actor&#39;s action log-likelihood gap between previously collected successful and failed trajectories from the same task, thereby avoiding new rollouts for each proposal. Since proposal-level feedback may suppress an otherwise appropriate edit operation when the proposed skill content scores poorly, we further apply skill-edit support regularization to preserve exploration. Empirically, UniSkill achieves strong performance, reaching 98.4% success on ALFWorld and 84.7% on WebShop while maintaining stable joint training. Further ALFWorld experiments show that UniSkill remains effective when the shared policy uses a smaller backbone. Our implementation is available at https://github.com/LimOkii/UniSKill.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2610.10164v1-abstract-full').style.display = 'none'; document.getElementById('2610.10164v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 7 October, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2609.22987">arXiv:2609.22987</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2609.22987">pdf</a>, <a href="https://arxiv.org/ps/2609.22987">ps</a>, <a href="https://arxiv.org/format/2609.22987">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        OptiSkill: A Hierarchical and Evolving <span class="search-hit mathjax">SkillBank</span> for LLM-Based Optimization Modeling
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Zhao%2C+R">Ruiqing Zhao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Liu%2C+R">Rui Liu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zuo%2C+Y">Yuan Zuo</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhang%2C+H">Huarong Zhang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Han%2C+X">Xiao Han</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wu%2C+J">Junjie Wu</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2609.22987v1-abstract-short" style="display: inline;">
+        &hellip;skills that transfer across problem narratives and guide concrete modeling decisions. We propose OptiSkill, a skill-augmented framework that builds a hierarchical and evolving <span class="search-hit mathjax">SkillBank</span> for LLM-based OR modeling.&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2609.22987v1-abstract-full').style.display = 'inline'; document.getElementById('2609.22987v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2609.22987v1-abstract-full" style="display: none;">
+        Automated operations research (OR) modeling requires LLMs to translate natural-language decision problems into correct mathematical programs. Existing methods can improve individual formulations, but they often solve problems in isolation, retaining little reusable experience and repeating similar formulation errors. Prior memory-based approaches store examples, thoughts, or insights as references, while OR modeling requires reusable formulation skills that transfer across problem narratives and guide concrete modeling decisions. We propose OptiSkill, a skill-augmented framework that builds a hierarchical and evolving <span class="search-hit mathjax">SkillBank</span> for LLM-based OR modeling. <span class="search-hit mathjax">SkillBank</span> stores solver-verified experience as reusable skills, with Global Strategies for problem-level formulation skeletons and Step Experiences for local error-prevention rules. It is further refined through stable batch-level test-time evolution, where candidate skills are incorporated only after validation. Experiments on eight OR modeling benchmarks show that OptiSkill improves formulation accuracy across LLM backbones, outperforms strong agentic baselines, and gains further by expanding <span class="search-hit mathjax">SkillBank</span> coverage and reliability. Code and data are available at https://github.com/rachhhhing/OptiSkill
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2609.22987v1-abstract-full').style.display = 'none'; document.getElementById('2609.22987v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 19 September, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> September 2026.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">Accepted by EMNLP 2026 Main Conference</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2609.16008">arXiv:2609.16008</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2609.16008">pdf</a>, <a href="https://arxiv.org/ps/2609.16008">ps</a>, <a href="https://arxiv.org/format/2609.16008">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Distributed, Parallel, and Cluster Computing">cs.DC</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Co-Skill: A Collaborative Communication Framework for Skill Evolution
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Ma%2C+Y">Yilin Ma</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Pan%2C+Y">Yanqi Pan</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yang%2C+W">Weihao Yang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zeng%2C+P">Peixin Zeng</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Xu%2C+J">Jiannan Xu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Huang%2C+H">Hao Huang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Xia%2C+W">Wen Xia</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2609.16008v2-abstract-short" style="display: inline;">
+        &hellip;is a cost-efficient paradigm where a cloud LLM analyzes and generates skills while an edge SLM executes and internalizes them. However, existing hybrid methods, such as <span class="search-hit mathjax">SkillRL</span>, still suffer from low success rate and high token usage. We find this stems from blind communication: the cloud cannot perceive the edge&#39;s execution capability, while the edge do&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2609.16008v2-abstract-full').style.display = 'inline'; document.getElementById('2609.16008v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2609.16008v2-abstract-full" style="display: none;">
+        Agent evolution through skills becomes critical for LLM-based agents to iteratively improve task success rate. Hybrid evolution is a cost-efficient paradigm where a cloud LLM analyzes and generates skills while an edge SLM executes and internalizes them. However, existing hybrid methods, such as <span class="search-hit mathjax">SkillRL</span>, still suffer from low success rate and high token usage. We find this stems from blind communication: the cloud cannot perceive the edge&#39;s execution capability, while the edge does not understand the cloud&#39;s analysis needs.
+  We thus propose the Collaborative Communication Framework (CCF) to achieve effective edge-cloud evolution. CCF is realized via three techniques: (1) a cloud-aware prefix-merged trajectory trie where the edge compresses trajectories by merging shared prefixes and pinpointing divergence points for efficient cloud analysis, (2) an edge-aware progressive skill tree where the cloud progressively builds a hierarchical skill tree to match edge SLM execution capability, and (3) a collaborative skill evolution scheme upon these two trees that evolves cloud LLM and edge SLM in a separated way to jointly improve task success rate. Experiments across ALFWorld and WebShop show that CCF reduces LLM+SLM tokens by 15.6%--41.9% over state-of-the-art hybrid methods while consistently improving 25.8%--76.4% task success rate.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2609.16008v2-abstract-full').style.display = 'none'; document.getElementById('2609.16008v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 16 September, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 1 August, 2026;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> September 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2608.24747">arXiv:2608.24747</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2608.24747">pdf</a>, <a href="https://arxiv.org/ps/2608.24747">ps</a>, <a href="https://arxiv.org/format/2608.24747">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Computation and Language">cs.CL</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        SkillForge: Evolving Verifiable Skills for Reinforcement Learning Agents
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Yang%2C+S">Shidong Yang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ma%2C+Z">Ziyu Ma</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Huang%2C+T">Tongwen Huang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+X">Xucong Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Li%2C+R">Renda Li</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Hu%2C+Y">Yiming Hu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+Y">Yong Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chu%2C+X">Xiangxiang Chu</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2608.24747v1-abstract-short" style="display: inline;">
+        &hellip;complex decision-making tasks. However, most RL-trained agents remain episodic and cannot accumulate reusable knowledge across episodes. Recent skill-based approaches, such as <span class="search-hit mathjax">SkillRL</span>, attempt to address this issue by extracting skills from raw trajectories, but treat the skill bank as an append-only repository without verifying whether stored skills remain&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2608.24747v1-abstract-full').style.display = 'inline'; document.getElementById('2608.24747v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2608.24747v1-abstract-full" style="display: none;">
+        Large language model (LLM) agents are trained with reinforcement learning (RL) for complex decision-making tasks. However, most RL-trained agents remain episodic and cannot accumulate reusable knowledge across episodes. Recent skill-based approaches, such as <span class="search-hit mathjax">SkillRL</span>, attempt to address this issue by extracting skills from raw trajectories, but treat the skill bank as an append-only repository without verifying whether stored skills remain effective. In this paper, we propose SkillForge, a framework for continuous skill evolution that enables skills to be verified and refined through environment interaction. By making skill usage explicit during agent interaction, RL can directly optimize both environment actions and skill invocation decisions. SkillForge further introduces evidence-based skill verification and multi-pathway skill induction, allowing the skill bank to continuously grow while maintaining its quality. Extensive experiments on ALFWorld, WebShop, and AppWorld show that SkillForge consistently outperforms <span class="search-hit mathjax">SkillRL</span>, demonstrating the effectiveness of continuously verified skills in training stronger LLM agents.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2608.24747v1-abstract-full').style.display = 'none'; document.getElementById('2608.24747v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 25 August, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> August 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2607.29468">arXiv:2607.29468</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2607.29468">pdf</a>, <a href="https://arxiv.org/ps/2607.29468">ps</a>, <a href="https://arxiv.org/format/2607.29468">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Self-Play Meets Skill Evolution: Self-Evolving Search Agents that Pose, Solve, and Remember
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Fu%2C+Z">Zenghuang Fu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Li%2C+Z">Zhaoyang Li</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ai%2C+Q">Qiuyuan Ai</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wu%2C+H">Haoyu Wu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wu%2C+M">Minghui Wu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhao%2C+C">Chenxu Zhao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+A">Ante Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=He%2C+G">Guannan He</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+C">Changwei Wang</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2607.29468v1-abstract-short" style="display: inline;">
+        &hellip;open-domain and multi-hop question-answering benchmarks, SESA improves average accuracy over SSP by 1.2--3.2 points across multiple backbones and surpasses the skill-augmented <span class="search-hit mathjax">SkillRL</span> baseline by 0.9 points under a unified evaluation protocol. On Qwen3 models, SESA-Off retains 1.8--2.2 points of improvement over SSP, while the final skill bank adds a further&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2607.29468v1-abstract-full').style.display = 'inline'; document.getElementById('2607.29468v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2607.29468v1-abstract-full" style="display: none;">
+        Self-play agents can generate training problems without questions from target benchmarks, but their curricula lack persistent state: failures affect gradients yet do not explicitly shape future practice. External skill memories preserve procedural experience but are typically learned from fixed task distributions. We introduce \textbf{SESA} (Self-Evolving Skill-Augmented Agent), which makes procedural memory an evolving state of tool-augmented search self-play. A challenger poses problems, while a separately parameterized solver alone retrieves skills. Informative failures are distilled into reusable skills and written back to memory. The updated memory changes solver behavior and success, which changes the challenger&#39;s reward and the distribution of future problems; the resulting frontier produces new failures that rewrite memory. This bidirectional loop makes task generation and skill memory co-evolve. Because retrieved skills shape on-policy training trajectories, their benefits can enter the model parameters as well as remain in the external bank, enabling memory-free deployment and optional inference-time retrieval. Across seven open-domain and multi-hop question-answering benchmarks, SESA improves average accuracy over SSP by 1.2--3.2 points across multiple backbones and surpasses the skill-augmented <span class="search-hit mathjax">SkillRL</span> baseline by 0.9 points under a unified evaluation protocol. On Qwen3 models, SESA-Off retains 1.8--2.2 points of improvement over SSP, while the final skill bank adds a further 0.5--1.0 points. These results show that evolving skill memory is not merely an inference-time plug-in: it changes policy learning and the future training distribution while retaining value as optional external memory. Our code is available at https://github.com/Zenghuang-Fu/SESA-Self-Evolving-Search-Agents.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2607.29468v1-abstract-full').style.display = 'none'; document.getElementById('2607.29468v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 31 July, 2026; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> July 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2607.22633">arXiv:2607.22633</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2607.22633">pdf</a>, <a href="https://arxiv.org/ps/2607.22633">ps</a>, <a href="https://arxiv.org/format/2607.22633">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Evolving from Lessons: Skill-Augmented Table Graph Reasoning for Operation-wise Table Question Answering
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Su%2C+G">Guixin Su</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Pi%2C+Q">Qiankun Pi</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Xu%2C+M">Mayi Xu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Li%2C+W">Wenli Li</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhong%2C+M">Ming Zhong</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhu%2C+Y">Yuanyuan Zhu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Jiang%2C+J">Jiawei Jiang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Qian%2C+T">Tieyun Qian</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2607.22633v2-abstract-short" style="display: inline;">
+        &hellip;structures, where LLMs plan and execute dynamic chains to retrieve evidence subgraphs for graph traversal reasoning. Based on this, SkillTGR builds a hierarchical <span class="search-hit mathjax">SkillBank</span> to distill reason trajectories into abstract skills under cognitive heuristics, then hybrid retrieves both successful and failed skills for contrastive augmented table graph reasoning, th&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2607.22633v2-abstract-full').style.display = 'inline'; document.getElementById('2607.22633v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2607.22633v2-abstract-full" style="display: none;">
+        Table Question Answering (TableQA) aims to reason over tables to answer user queries. Existing research treats all questions uniformly and evaluates solely through overall accuracy, obscuring a critical reality that LLMs excel at simple lookups yet struggle with complex operations like aggregation and arithmetic. To reveal this disparity, we introduce a novel \emph{Operation-wise TableQA} task with a fine-grained question taxonomy and release two datasets named WikiTQ-ow and TabFact-ow for evaluation. As for modeling bottlenecks, existing methods flatten tables into linearized texts, disrupting inherent structures and inducing the ``lost-in-the-middle&#39;&#39; issue, which poses a primary barrier to complex cross-row reasoning. Moreover, they typically reason from scratch, neglecting reusable patterns shared across similar operations. To address these limitations, we propose a Skill-augmented Table Graph Reasoning (SkillTGR) framework for self-evolving structured reasoning. Specifically, SkillTGR represents tables as attributed graphs with explicit row-column-cell structures, where LLMs plan and execute dynamic chains to retrieve evidence subgraphs for graph traversal reasoning. Based on this, SkillTGR builds a hierarchical <span class="search-hit mathjax">SkillBank</span> to distill reason trajectories into abstract skills under cognitive heuristics, then hybrid retrieves both successful and failed skills for contrastive augmented table graph reasoning, thereby enabling the continual self-evolution. Extensive experiments demonstrate that SkillTGR achieves superior performance with an average of 5.91\% overall and 5.06\% operation-wise improvement, also reducing 19.76\% token consumption and 27.64\% inference latency. Our codes and data will be released upon publication.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2607.22633v2-abstract-full').style.display = 'none'; document.getElementById('2607.22633v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 14 September, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 20 June, 2026;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> July 2026.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">14 pages, 7 figures, Accepted by ICDE 2027</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2606.09316">arXiv:2606.09316</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2606.09316">pdf</a>, <a href="https://arxiv.org/ps/2606.09316">ps</a>, <a href="https://arxiv.org/format/2606.09316">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Anything2Skill: Compiling External Knowledge into Reusable Skills for Agents
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Pan%2C+Q">Qianjun Pan</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yang%2C+Y">Yutao Yang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Li%2C+J">Junsong Li</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhou%2C+J">Jie Zhou</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+K">Kai Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Li%2C+X">Xin Li</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+Q">Qin Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=He%2C+L">Liang He</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2606.09316v3-abstract-short" style="display: inline;">
+        &hellip;output specifications, supporting evidence, and confidence scores. To construct a deployable procedural memory, Anything2Skill manages the extracted skills in a persistent <span class="search-hit mathjax">SkillBank</span> through taxonomy-aware compilation, registry-level reconciliation, lifecycle tracking, versioned updates, and visible skill-tree projection. At inference time, agents retrieve b&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2606.09316v3-abstract-full').style.display = 'inline'; document.getElementById('2606.09316v3-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2606.09316v3-abstract-full" style="display: none;">
+        Retrieval-augmented generation (RAG) enables agents to access external knowledge at inference time, but it primarily retrieves fragmented declarative evidence, leaving agents to repeatedly infer task procedures from passages, manuals, examples, logs, or trajectories. This raises a fundamental question: can skills extracted from external knowledge bases be installed into an agent, enabling it to rapidly approximate domain expertise? In this paper, we propose Anything2Skill, a taxonomy-guided framework that compiles heterogeneous external knowledge into reusable, retrievable, and executable skills for agents. Given a corpus of knowledge records, \textsc{Anything2Skill} first decomposes each record into evidence windows and performs plan-and-expand skill extraction under a skill-tree prior. The extracted candidates are then converted into structured skill contracts that specify invocation conditions, contraindications, action moves, workflow steps, constraints, output specifications, supporting evidence, and confidence scores. To construct a deployable procedural memory, Anything2Skill manages the extracted skills in a persistent <span class="search-hit mathjax">SkillBank</span> through taxonomy-aware compilation, registry-level reconciliation, lifecycle tracking, versioned updates, and visible skill-tree projection. At inference time, agents retrieve both task-specific passages from the original knowledge base and relevant procedural skills from the <span class="search-hit mathjax">SkillBank</span>, allowing RAG to provide declarative evidence while compiled skills provide reusable procedural guidance. Experiments on qsv and GitHub-CLI show that Anything2Skill combined with RAG achieves 98.85\% and 94.10\% success rates, respectively, substantially outperforming RAG-only agents. These results suggest that compiling latent procedural knowledge into explicit skills is an effective way to extend retrieval-augmented agents from knowledge access toward capability reuse.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2606.09316v3-abstract-full').style.display = 'none'; document.getElementById('2606.09316v3-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 19 June, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 8 June, 2026;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> June 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2605.09038">arXiv:2605.09038</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2605.09038">pdf</a>, <a href="https://arxiv.org/ps/2605.09038">ps</a>, <a href="https://arxiv.org/format/2605.09038">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        SearchSkill: Teaching LLMs to Use Search Tools with Evolving Skill Banks
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Hu%2C+J">Jinchao Hu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhong%2C+M">Meizhi Zhong</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+K">Kehai Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhang%2C+M">Min Zhang</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2605.09038v4-abstract-short" style="display: inline;">
+        &hellip;selects a skill, then generates a search or answer action conditioned on the selected skill card. The skill inventory itself is not fixed: SearchSkill maintains an evolving <span class="search-hit mathjax">SkillBank</span>, expands or refines it from recurrent failure patterns, and reconstructs affected trajectories before supervised training. The resulting two-stage SFT recipe aligns training wit&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2605.09038v4-abstract-full').style.display = 'inline'; document.getElementById('2605.09038v4-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2605.09038v4-abstract-full" style="display: none;">
+        Teaching language models to use search tools is not only a question of whether they search, but also of whether they issue good queries. This is especially important in open-domain question answering, where broad or copied queries often waste retrieval budget and derail later reasoning. We propose \Ours, a framework that makes query planning explicit through reusable search skills. At each step, the model first selects a skill, then generates a search or answer action conditioned on the selected skill card. The skill inventory itself is not fixed: SearchSkill maintains an evolving <span class="search-hit mathjax">SkillBank</span>, expands or refines it from recurrent failure patterns, and reconstructs affected trajectories before supervised training. The resulting two-stage SFT recipe aligns training with the inference-time protocol of skill selection followed by skill-grounded execution. Across open-source and closed-source models, SearchSkill improves exact match on knowledge-intensive QA benchmarks and yields better retrieval behavior, including fewer copied first queries, more atomic hop-focused queries, and more correct answers within a small search budget. These results suggest that explicit skill-conditioned query planning is a lightweight alternative to treating search as an undifferentiated action.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2605.09038v4-abstract-full').style.display = 'none'; document.getElementById('2605.09038v4-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 28 September, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 9 May, 2026;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> May 2026.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2602.08234">arXiv:2602.08234</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2602.08234">pdf</a>, <a href="https://arxiv.org/ps/2602.08234">ps</a>, <a href="https://arxiv.org/format/2602.08234">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Machine Learning">cs.LG</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        <span class="search-hit mathjax">SkillRL</span>: Evolving Agents via Recursive Skill-Augmented Reinforcement Learning
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Xia%2C+P">Peng Xia</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+J">Jianwen Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+H">Hanyang Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Liu%2C+J">Jiaqi Liu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zeng%2C+K">Kaide Zeng</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+Y">Yu Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Han%2C+S">Siwei Han</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhou%2C+Y">Yiyang Zhou</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhao%2C+X">Xujiang Zhao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+H">Haifeng Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zheng%2C+Z">Zeyu Zheng</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Xie%2C+C">Cihang Xie</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yao%2C+H">Huaxiu Yao</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2602.08234v2-abstract-short" style="display: inline;">
+        &hellip;often redundant and noise-heavy. This prevents agents from extracting high-level, reusable behavioral patterns that are essential for generalization. In this paper, we propose <span class="search-hit mathjax">SkillRL</span>, a framework that bridges the gap between raw experience and policy improvement through automatic skill discovery and recursive evolution. Our approach introduces an experience&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2602.08234v2-abstract-full').style.display = 'inline'; document.getElementById('2602.08234v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2602.08234v2-abstract-full" style="display: none;">
+        Large Language Model (LLM) agents have shown stunning results in complex tasks, yet they often operate in isolation, failing to learn from past experiences. Existing memory-based methods primarily store raw trajectories, which are often redundant and noise-heavy. This prevents agents from extracting high-level, reusable behavioral patterns that are essential for generalization. In this paper, we propose <span class="search-hit mathjax">SkillRL</span>, a framework that bridges the gap between raw experience and policy improvement through automatic skill discovery and recursive evolution. Our approach introduces an experience-based distillation mechanism to build a hierarchical skill library <span class="search-hit mathjax">SkillBank</span>, an adaptive retrieval strategy for general and task-specific heuristics, and a recursive evolution mechanism that allows the skill library to co-evolve with the agent&#39;s policy during reinforcement learning. These innovations significantly reduce the token footprint while enhancing reasoning utility. Experimental results on ALFWorld, WebShop and seven search-augmented tasks demonstrate that <span class="search-hit mathjax">SkillRL</span> achieves state-of-the-art performance, outperforming strong baselines over 15.3% and maintaining robustness as task complexity increases. Code is available at this https://github.com/aiming-lab/<span class="search-hit mathjax">SkillRL</span>.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2602.08234v2-abstract-full').style.display = 'none'; document.getElementById('2602.08234v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 7 October, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 8 February, 2026;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> February 2026.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">NeurIPS 2026</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2512.01311">arXiv:2512.01311</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2512.01311">pdf</a>, <a href="https://arxiv.org/ps/2512.01311">ps</a>, <a href="https://arxiv.org/format/2512.01311">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+        
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Machine Learning">cs.LG</span>
+          
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        CuES: A Curiosity-driven and Environment-grounded Synthesis Framework for Agentic RL
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Mai%2C+S">Shinji Mai</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhai%2C+Y">Yunpeng Zhai</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+Z">Ziqian Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+C">Cheng Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zou%2C+A">Anni Zou</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Tao%2C+S">Shuchang Tao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Liu%2C+Z">Zhaoyang Liu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ding%2C+B">Bolin Ding</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2512.01311v2-abstract-short" style="display: inline;">
+        &hellip;generation provides a scalable foundation for agents that not only learn how to act, but also learn what to learn. The code is available at https://github.com/modelscope/<span class="search-hit mathjax">AgentEvolver</span>/tree/main/research/CuES.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2512.01311v2-abstract-full').style.display = 'inline'; document.getElementById('2512.01311v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2512.01311v2-abstract-full" style="display: none;">
+        Large language model based agents are increasingly deployed in complex, tool augmented environments. While reinforcement learning provides a principled mechanism for such agents to improve through interaction, its effectiveness critically depends on the availability of structured training tasks. In many realistic settings, however, no such tasks exist a challenge we term task scarcity, which has become a key bottleneck for scaling agentic RL. Existing approaches typically assume predefined task collections, an assumption that fails in novel environments where tool semantics and affordances are initially unknown. To address this limitation, we formalize the problem of Task Generation for Agentic RL, where an agent must learn within a given environment that lacks predefined tasks. We propose CuES, a Curiosity driven and Environment grounded Synthesis framework that autonomously generates diverse, executable, and meaningful tasks directly from the environment structure and affordances, without relying on handcrafted seeds or external corpora. CuES drives exploration through intrinsic curiosity, abstracts interaction patterns into reusable task schemas, and refines them through lightweight top down guidance and memory based quality control. Across three representative environments, AppWorld, BFCL, and WebShop, CuES produces task distributions that match or surpass manually curated datasets in both diversity and executability, yielding substantial downstream policy improvements. These results demonstrate that curiosity driven, environment grounded task generation provides a scalable foundation for agents that not only learn how to act, but also learn what to learn. The code is available at https://github.com/modelscope/<span class="search-hit mathjax">AgentEvolver</span>/tree/main/research/CuES.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2512.01311v2-abstract-full').style.display = 'none'; document.getElementById('2512.01311v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 3 December, 2025; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 1 December, 2025;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> December 2025.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2511.10395">arXiv:2511.10395</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2511.10395">pdf</a>, <a href="https://arxiv.org/ps/2511.10395">ps</a>, <a href="https://arxiv.org/format/2511.10395">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Machine Learning">cs.LG</span>
+        
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Computation and Language">cs.CL</span>
+          
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        <span class="search-hit mathjax">AgentEvolver</span>: Towards Efficient Self-Evolving Agent System
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Zhai%2C+Y">Yunpeng Zhai</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Tao%2C+S">Shuchang Tao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+C">Cheng Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zou%2C+A">Anni Zou</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+Z">Ziqian Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Fu%2C+Q">Qingxu Fu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Mai%2C+S">Shinji Mai</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yu%2C+L">Li Yu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Deng%2C+J">Jiaji Deng</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Cao%2C+Z">Zouying Cao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Liu%2C+Z">Zhaoyang Liu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ding%2C+B">Bolin Ding</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhou%2C+J">Jingren Zhou</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2511.10395v1-abstract-short" style="display: inline;">
+        &hellip;These limitations lead to prohibitively high data-construction costs, low exploration efficiency, and poor sample utilization. To address these challenges, we present <span class="search-hit mathjax">AgentEvolver</span>, a self-evolving agent system that leverages the semantic understanding and reasoning capabilities of LLMs to drive autonomous agent learning.&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2511.10395v1-abstract-full').style.display = 'inline'; document.getElementById('2511.10395v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2511.10395v1-abstract-full" style="display: none;">
+        Autonomous agents powered by large language models (LLMs) have the potential to significantly enhance human productivity by reasoning, using tools, and executing complex tasks in diverse environments. However, current approaches to developing such agents remain costly and inefficient, as they typically require manually constructed task datasets and reinforcement learning (RL) pipelines with extensive random exploration. These limitations lead to prohibitively high data-construction costs, low exploration efficiency, and poor sample utilization. To address these challenges, we present <span class="search-hit mathjax">AgentEvolver</span>, a self-evolving agent system that leverages the semantic understanding and reasoning capabilities of LLMs to drive autonomous agent learning. <span class="search-hit mathjax">AgentEvolver</span> introduces three synergistic mechanisms: (i) self-questioning, which enables curiosity-driven task generation in novel environments, reducing dependence on handcrafted datasets; (ii) self-navigating, which improves exploration efficiency through experience reuse and hybrid policy guidance; and (iii) self-attributing, which enhances sample efficiency by assigning differentiated rewards to trajectory states and actions based on their contribution. By integrating these mechanisms into a unified framework, <span class="search-hit mathjax">AgentEvolver</span> enables scalable, cost-effective, and continual improvement of agent capabilities. Preliminary experiments indicate that <span class="search-hit mathjax">AgentEvolver</span> achieves more efficient exploration, better sample utilization, and faster adaptation compared to traditional RL-based baselines.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2511.10395v1-abstract-full').style.display = 'none'; document.getElementById('2511.10395v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 13 November, 2025; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> November 2025.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2510.06872">arXiv:2510.06872</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2510.06872">pdf</a>, <a href="https://arxiv.org/ps/2510.06872">ps</a>, <a href="https://arxiv.org/format/2510.06872">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Human-Computer Interaction">cs.HC</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Prototyping Multimodal GenAI Real-Time Agents with Counterfactual Replays and Hybrid Wizard-of-Oz
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Gmeiner%2C+F">Frederic Gmeiner</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Holstein%2C+K">Kenneth Holstein</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Martelaro%2C+N">Nikolas Martelaro</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2510.06872v1-abstract-short" style="display: inline;">
+        &hellip;our prototyping experiences, highlighting successes and limitations, and offers a practical guide and an open-source toolkit for UX designers, HCI researchers, and AI <span class="search-hit mathjax">toolmakers</span> to build more user-centered and context-aware multimodal agents.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2510.06872v1-abstract-full').style.display = 'inline'; document.getElementById('2510.06872v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2510.06872v1-abstract-full" style="display: none;">
+        Recent advancements in multimodal generative AI (GenAI) enable the creation of personal context-aware real-time agents that, for example, can augment user workflows by following their on-screen activities and providing contextual assistance. However, prototyping such experiences is challenging, especially when supporting people with domain-specific tasks using real-time inputs such as speech and screen recordings. While prototyping an LLM-based proactive support agent system, we found that existing prototyping and evaluation methods were insufficient to anticipate the nuanced situational complexity and contextual immediacy required. To overcome these challenges, we explored a novel user-centered prototyping approach that combines counterfactual video replay prompting and hybrid Wizard-of-Oz methods to iteratively design and refine agent behaviors. This paper discusses our prototyping experiences, highlighting successes and limitations, and offers a practical guide and an open-source toolkit for UX designers, HCI researchers, and AI <span class="search-hit mathjax">toolmakers</span> to build more user-centered and context-aware multimodal agents.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2510.06872v1-abstract-full').style.display = 'none'; document.getElementById('2510.06872v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 8 October, 2025; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2025.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">18 pages, 5 figures, 4 tables</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2510.06825">arXiv:2510.06825</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2510.06825">pdf</a>, <a href="https://arxiv.org/ps/2510.06825">ps</a>, <a href="https://arxiv.org/format/2510.06825">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Computation and Language">cs.CL</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Adaptive Tool Generation with Models as Tools and Reinforcement Learning
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+C">Chenpeng Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Cheng%2C+X">Xiaojie Cheng</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+C">Chunye Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yang%2C+L">Linfeng Yang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhang%2C+L">Lei Zhang</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2510.06825v2-abstract-short" style="display: inline;">
+        &hellip;of relying on live APIs, MTR learns from complete ReAct traces with schema-validated, simulated observations. Our approach operates through a multi-agent architecture where a <span class="search-hit mathjax">ToolMaker</span> generates task-specific, OpenAI-compatible tool interfaces, an AutoAgent produces structured think-act-observe sequences, and a ToolActor simulates realistic responses. Traini&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2510.06825v2-abstract-full').style.display = 'inline'; document.getElementById('2510.06825v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2510.06825v2-abstract-full" style="display: none;">
+        Tool-augmented language models have demonstrated strong capabilities, but their reliance on live API access creates scalability and reliability challenges during training and deployment. We propose MTR, a simulation-first training framework for tool-augmented reasoning. Instead of relying on live APIs, MTR learns from complete ReAct traces with schema-validated, simulated observations. Our approach operates through a multi-agent architecture where a <span class="search-hit mathjax">ToolMaker</span> generates task-specific, OpenAI-compatible tool interfaces, an AutoAgent produces structured think-act-observe sequences, and a ToolActor simulates realistic responses. Training proceeds in two stages: Stage-1 Supervised Fine-Tuning (SFT) teaches &#39;trace grammar&#39; from complete reasoning sequences; Stage-2 Group Relative Policy Optimization (GRPO) optimizes strategy with a composite trace reward that balances answer correctness and internal consistency. Across four multi-hop QA benchmarks (HotpotQA, MuSiQue, 2WikiMultiHopQA, Bamboogle), MTR attains competitive Exact Match (EM) scores to live-API systems and excels on reasoning-intensive tasks, suggesting that effective tool reasoning can be learned from structured traces without live interactions.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2510.06825v2-abstract-full').style.display = 'none'; document.getElementById('2510.06825v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 9 October, 2025; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 8 October, 2025;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2025.
+      
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2503.00271">arXiv:2503.00271</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2503.00271">pdf</a>, <a href="https://arxiv.org/ps/2503.00271">ps</a>, <a href="https://arxiv.org/format/2503.00271">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Software Engineering">cs.SE</span>
+        
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Cryptography and Security">cs.CR</span>
+          
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Why Johnny Adopts Identity-Based Software Signing: A Usability Case Study of Sigstore
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Kalu%2C+K+G">Kelechi G. Kalu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Okorafor%2C+S">Sofia Okorafor</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Singla%2C+T">Tanmay Singla</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+S">Sophie Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Torres-Arias%2C+S">Santiago Torres-Arias</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Davis%2C+J+C">James C. Davis</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2503.00271v6-abstract-short" style="display: inline;">
+        &hellip;over time, and (3) the contexts that cause usability concerns. Our findings illuminate the usability factors of identity-based signing tools and yield recommendations for <span class="search-hit mathjax">toolmakers</span>, adopting organizations, and the research community. Notably, components of identity-based tooling exhibit different levels of maturity and readiness for adoption, and integratio&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2503.00271v6-abstract-full').style.display = 'inline'; document.getElementById('2503.00271v6-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2503.00271v6-abstract-full" style="display: none;">
+        Software signing is the most robust method for ensuring the integrity and authenticity of components in a software supply chain. Legacy key-managed signing tools (e.g., OpenPGP) burdened practitioners with key management and signer identification, creating both usability challenges and security risks. A new class of identity-based signing tools automate many of these concerns, but little is known about their usability and its effect on their adoption and effectiveness in practice. A usability evaluation can clarify the extent to which identity-based designs succeed and highlight priorities for improvement.
+  To fill this gap, we conducted the first usability study of Sigstore, a pioneering and widely adopted exemplar of identity-based signing. Through interviews with 17 industry experts, we examined (1) the problems and advantages associated with practitioners&#39; tooling choices, (2) how and why their signing-tool usage has evolved over time, and (3) the contexts that cause usability concerns. Our findings illuminate the usability factors of identity-based signing tools and yield recommendations for <span class="search-hit mathjax">toolmakers</span>, adopting organizations, and the research community. Notably, components of identity-based tooling exhibit different levels of maturity and readiness for adoption, and integration flexibility is a common pain point but potentially mitigable through plugins and APIs. Our results will help identity-based signing <span class="search-hit mathjax">toolmakers</span> further strengthen software supply chain security.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2503.00271v6-abstract-full').style.display = 'none'; document.getElementById('2503.00271v6-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 14 April, 2026; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 28 February, 2025;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> March 2025.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">Accepted for publication at USENIX Security &#39;26. 25 Pages</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2502.11705">arXiv:2502.11705</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2502.11705">pdf</a>, <a href="https://arxiv.org/ps/2502.11705">ps</a>, <a href="https://arxiv.org/format/2502.11705">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Computation and Language">cs.CL</span>
+        
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Machine Learning">cs.LG</span>
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Multiagent Systems">cs.MA</span>
+          
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        LLM Agents Making Agent Tools
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=W%C3%B6lflein%2C+G">Georg Wölflein</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ferber%2C+D">Dyke Ferber</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Truhn%2C+D">Daniel Truhn</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Arandjelovi%C4%87%2C+O">Ognjen Arandjelović</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Kather%2C+J+N">Jakob Nikolas Kather</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2502.11705v2-abstract-short" style="display: inline;">
+        &hellip;of highly specialised tools, like in life sciences and medicine. Motivated by the growing trend of scientific studies accompanied by public code repositories, we propose <span class="search-hit mathjax">ToolMaker</span>, an agentic framework that autonomously transforms papers with code into LLM-compatible tools. Given a GitHub URL and short task description,&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2502.11705v2-abstract-full').style.display = 'inline'; document.getElementById('2502.11705v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2502.11705v2-abstract-full" style="display: none;">
+        Tool use has turned large language models (LLMs) into powerful agents that can perform complex multi-step tasks by dynamically utilising external software components. However, these tools must be implemented in advance by human developers, hindering the applicability of LLM agents in domains demanding large numbers of highly specialised tools, like in life sciences and medicine. Motivated by the growing trend of scientific studies accompanied by public code repositories, we propose <span class="search-hit mathjax">ToolMaker</span>, an agentic framework that autonomously transforms papers with code into LLM-compatible tools. Given a GitHub URL and short task description, <span class="search-hit mathjax">ToolMaker</span> autonomously installs dependencies and generates code to perform the task, using a closed-loop self-correction mechanism for debugging. To evaluate our approach, we introduce a benchmark comprising 15 complex computational tasks spanning various domains with over 100 unit tests to assess correctness and robustness. Our method correctly implements 80% of the tasks, substantially outperforming current state-of-the-art software engineering agents. <span class="search-hit mathjax">ToolMaker</span> therefore is a step towards fully autonomous agent-based scientific workflows. Our code and benchmark are publicly available at https://github.com/KatherLab/<span class="search-hit mathjax">ToolMaker</span>.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2502.11705v2-abstract-full').style.display = 'none'; document.getElementById('2502.11705v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 29 May, 2025; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 17 February, 2025;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> February 2025.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">Accepted at ACL 2025</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2410.08410">arXiv:2410.08410</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2410.08410">pdf</a>, <a href="https://arxiv.org/format/2410.08410">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Computer Vision and Pattern Recognition">cs.CV</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Human Stone <span class="search-hit mathjax">Toolmaking</span> Action Grammar (HSTAG): A Challenging Benchmark for Fine-grained Motor Behavior Recognition
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Liu%2C+C">Cheng Liu</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Yan%2C+X">Xuyang Yan</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhang%2C+Z">Zekun Zhang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ding%2C+C">Cheng Ding</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhao%2C+T">Tianhao Zhao</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Jannati%2C+S">Shaya Jannati</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Martinez%2C+C">Cynthia Martinez</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Stout%2C+D">Dietrich Stout</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2410.08410v1-abstract-short" style="display: inline;">
+        &hellip;annotated at a rather coarse-grained level, which lacks diversity in domain-specific datasets, especially for rarely seen domains. In this paper, we introduced Human Stone <span class="search-hit mathjax">Toolmaking</span> Action Grammar (HSTAG), a meticulously annotated video dataset showcasing previously undocumented stone&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2410.08410v1-abstract-full').style.display = 'inline'; document.getElementById('2410.08410v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2410.08410v1-abstract-full" style="display: none;">
+        Action recognition has witnessed the development of a growing number of novel algorithms and datasets in the past decade. However, the majority of public benchmarks were constructed around activities of daily living and annotated at a rather coarse-grained level, which lacks diversity in domain-specific datasets, especially for rarely seen domains. In this paper, we introduced Human Stone <span class="search-hit mathjax">Toolmaking</span> Action Grammar (HSTAG), a meticulously annotated video dataset showcasing previously undocumented stone <span class="search-hit mathjax">toolmaking</span> behaviors, which can be used for investigating the applications of advanced artificial intelligence techniques in understanding a rapid succession of complex interactions between two hand-held objects. HSTAG consists of 18,739 video clips that record 4.5 hours of experts&#39; activities in stone <span class="search-hit mathjax">toolmaking</span>. Its unique features include (i) brief action durations and frequent transitions, mirroring the rapid changes inherent in many motor behaviors; (ii) multiple angles of view and switches among multiple tools, increasing intra-class variability; (iii) unbalanced class distributions and high similarity among different action sequences, adding difficulty in capturing distinct patterns for each action. Several mainstream action recognition models are used to conduct experimental analysis, which showcases the challenges and uniqueness of HSTAG https://nyu.databrary.org/volume/1697.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2410.08410v1-abstract-full').style.display = 'none'; document.getElementById('2410.08410v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 10 October, 2024; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> October 2024.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">8 pages, 4 figures, accepted by the 11th IEEE International Conference on Data Science and Advanced Analytics (DSAA)</span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/2305.17126">arXiv:2305.17126</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/2305.17126">pdf</a>, <a href="https://arxiv.org/format/2305.17126">other</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Machine Learning">cs.LG</span>
+        
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Artificial Intelligence">cs.AI</span>
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Computation and Language">cs.CL</span>
+          
+            <span class="tag is-small is-grey tooltip is-tooltip-top" data-tooltip="Machine Learning">stat.ML</span>
+          
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Large Language Models as Tool Makers
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Cai%2C+T">Tianle Cai</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Wang%2C+X">Xuezhi Wang</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Ma%2C+T">Tengyu Ma</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Chen%2C+X">Xinyun Chen</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Zhou%2C+D">Denny Zhou</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="has-text-black-bis has-text-weight-semibold">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="2305.17126v2-abstract-short" style="display: inline;">
+        Recent research has highlighted the potential of large language models (LLMs) to improve their problem-solving capabilities with the aid of suitable external tools. In our work, we further advance this concept by introducing a closed-loop framework, referred to as LLMs A s Tool Makers (LATM), where LLMs create their own reusable tools for problem-solving. Our approach consists of two phases: 1) to&hellip;
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2305.17126v2-abstract-full').style.display = 'inline'; document.getElementById('2305.17126v2-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="2305.17126v2-abstract-full" style="display: none;">
+        Recent research has highlighted the potential of large language models (LLMs) to improve their problem-solving capabilities with the aid of suitable external tools. In our work, we further advance this concept by introducing a closed-loop framework, referred to as LLMs A s Tool Makers (LATM), where LLMs create their own reusable tools for problem-solving. Our approach consists of two phases: 1) tool making: an LLM acts as the tool maker that crafts tools for a set of tasks. 2) tool using: another LLM acts as the tool user, which applies the tool built by the tool maker for problem-solving. On the problem-solving server side, tool-making enables continual tool generation and caching as new requests emerge. This framework enables subsequent requests to access cached tools via their corresponding APIs, enhancing the efficiency of task resolution. Recognizing that tool-making requires more sophisticated capabilities, we assign this task to a powerful, albeit resource-intensive, model. Conversely, the simpler tool-using phase is delegated to a lightweight model. This strategic division of labor allows the once-off cost of tool-making to be spread over multiple instances of tool-using, significantly reducing average costs while maintaining strong performance. Furthermore, our method offers a functional cache through the caching and reuse of tools, which stores the functionality of a class of requests instead of the natural language responses from LLMs, thus extending the applicability of the conventional cache mechanism. We evaluate our approach across various complex reasoning tasks, including Big-Bench tasks. With GPT-4 as the tool maker and GPT-3.5 as the tool user, LATM demonstrates performance equivalent to using GPT-4 for both roles, but with a significantly reduced inference cost.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('2305.17126v2-abstract-full').style.display = 'none'; document.getElementById('2305.17126v2-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 10 March, 2024; <span class="has-text-black-bis has-text-weight-semibold">v1</span> submitted 26 May, 2023;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> May 2023.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">Code available at https://github.com/ctlllll/LLM-<span class="search-hit mathjax">ToolMaker</span></span>
+    </p>
+    
+
+    
+
+    
+  </li>
+
+  <li class="arxiv-result">
+    <div class="is-marginless">
+      <p class="list-title is-inline-block"><a href="https://arxiv.org/abs/1404.5062">arXiv:1404.5062</a>
+        <span>&nbsp;[<a href="https://arxiv.org/pdf/1404.5062">pdf</a>]&nbsp;</span>
+      </p>
+      <div class="tags is-inline-block">
+        <span class="tag is-small is-link tooltip is-tooltip-top" data-tooltip="Computational Engineering, Finance, and Science">cs.CE</span>
+        </div>
+      
+    </div>
+    
+    <p class="title is-5 mathjax">
+      
+        Rapid prototyping for sling design optimization
+      
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      
+      <a href="/search/?searchtype=author&amp;query=Zaimovic-Uzunovic%2C+N">Nermina Zaimovic-Uzunovic</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Lemes%2C+S">Samir Lemes</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Curic%2C+D">Damir Curic</a>, 
+      
+      <a href="/search/?searchtype=author&amp;query=Topcic%2C+A">Alan Topcic</a>
+      
+    </p>
+    
+    <p class="abstract mathjax">
+      <span class="search-hit">Abstract</span>:
+      <span class="abstract-short has-text-grey-dark mathjax" id="1404.5062v1-abstract-short" style="display: inline;">
+        &hellip;initial value. The future researches should use 3D scanning technology in order to provide more accurate 3D model of initial part. Results of this research can be used by <span class="search-hit mathjax">toolmakers</span> in order to engage FEA/RP technology to design and manufacture lighter products with acceptable stress distribution.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('1404.5062v1-abstract-full').style.display = 'inline'; document.getElementById('1404.5062v1-abstract-short').style.display = 'none';">&#9661; More</a>
+      </span>
+      <span class="abstract-full has-text-grey-dark mathjax" id="1404.5062v1-abstract-full" style="display: none;">
+        This paper deals with combination of two modern engineering methods in order to optimise the shape of a representative casting product. The product being analysed is a sling, which is used to attach pulling rope in timber transportation. The first step was 3D modelling and static stress/strain analysis using CAD/CAE software NX4. The slinger shape optimization was performed using Traction method, by means of software Optishape-TS. To define constraints for shape optimization, FEA software FEMAP was used. The mould pattern with optimized 3D shape was then prepared using Fused Deposition Modelling (FDM) Rapid prototyping method. The sling mass decreased by 20%, while signifficantly better stress distribution was achieved, with maximum stress 3.5 times less than initial value. The future researches should use 3D scanning technology in order to provide more accurate 3D model of initial part. Results of this research can be used by <span class="search-hit mathjax">toolmakers</span> in order to engage FEA/RP technology to design and manufacture lighter products with acceptable stress distribution.
+        <a class="is-size-7" style="white-space: nowrap;" onclick="document.getElementById('1404.5062v1-abstract-full').style.display = 'none'; document.getElementById('1404.5062v1-abstract-short').style.display = 'inline';">&#9651; Less</a>
+      </span>
+    </p>
+    
+
+    <p class="is-size-7"><span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 20 April, 2014; 
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> April 2014.
+      
+    </p>
+    
+    <p class="comments is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Comments:</span>
+      <span class="has-text-grey-dark mathjax">ISSN 1854-6250</span>
+    </p>
+    
+
+    
+
+    
+      <p class="comments is-size-7">
+        <span class="has-text-black-bis has-text-weight-semibold">Journal ref:</span>
+        Advances in Production, Engineering &amp; Management 6(2011)4, 271-280
+      </p>
+    
+  </li>
+
+</ol>
+
+
+  
+
+
+      <div class="is-hidden-tablet">
+        <!-- feedback for mobile only -->
+        <span class="help" style="display: inline-block;"><a href="https://github.com/arXiv/arxiv-search/releases">Search v0.5.6 released 2020-02-24</a>&nbsp;&nbsp;</span>
+      </div>
+    </div>
+
+  </main>
+  <footer>
+    <footer class="ds-site-footer">
+  <div class="ds-site-footer-grid">
+    <div class="ds-site-footer-main">
+      <div class="ds-site-footer-ack">
+        We gratefully acknowledge support from our <a href="https://info.arxiv.org/about/major_funders.html"><strong>major funders</strong></a>,
+        <a href="https://info.arxiv.org/about/ourmembers.html"><strong>member institutions</strong></a><span class="ack-member-inline" hidden>, <strong></strong></span>,
+        and all contributors.
+      </div>
+      <nav class="ds-site-footer-links" aria-label="Site navigation">
+        <a href="https://info.arxiv.org/about">About</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://info.arxiv.org/help">Help</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://info.arxiv.org/help/contact.html">Contact</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://info.arxiv.org/help/subscribe.html">Subscribe</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://info.arxiv.org/help/license/index.html">Copyright</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://info.arxiv.org/help/policies/privacy_policy.html">Privacy</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://info.arxiv.org/help/web_accessibility.html">Accessibility</a> <span class="ds-site-footer-sep" aria-hidden="true">&middot;</span>
+        <a href="https://status.arxiv.org/" target="_blank" rel="noopener noreferrer">Operational Status<span class="is-sr-only"> (opens in new tab)</span></a>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+  </footer>
+  <script src="https://static.arxiv.org/static/base/1.0.0a5/js/member_acknowledgement.js"></script>
+  </body>
+</html>

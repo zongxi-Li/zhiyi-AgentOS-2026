@@ -1,0 +1,1513 @@
+                                         E VO S KILL -S1: Evolving Reusable Skills with Genetic-Inspired Operators
+
+
+                                                          Yujun Wang1,2,3,* , Jiqiang Li4,* , Yinuo Lu5 , Jinhe Bi1,2 , Aniri1
+                                                          Wenxuan Ye3,6 , Boliang Liu3,7 , Sikuan Yan1,2,3 , Shuning Wang4
+                                                          Xuebing Zhou3 , Sören Pirk8 , Hinrich Schütze1,2 , Yunpu Ma1,2
+                                                           1
+                                                           LMU Munich; 2 Munich Center for Machine Learning (MCML);
+                                                             3
+                                                               Huawei Heisenberg Research Center; 4 Zhejiang University;
+                                                                              5
+                                                                                University of Hong Kong;
+                                                       6
+                                                         Technical University of Munich (TUM); 7 TU Berlin; 8 Kiel University.
+                                                                                  *
+                                                                                    Equal contribution.
+arXiv:2611.22610v1 [cs.AI] 17 Nov 2026
+
+
+
+
+                                                               Abstract
+                                             Reusable skills allow language-model agents to
+                                             accumulate and reuse problem-solving experi-
+                                             ence. However, most existing methods improve
+                                             a skill bank only indirectly through rollout-
+                                             driven accumulation and heuristic reflection, of-                 4                           1
+                                             ten resulting in shallow and weakly controlled                     Skill Bank                 Skill Bank
+                                             updates. We present E VO S KILL -S1, an RL-             3          Vanilla      1
+                                             driven framework that instead treats reusable            Reflection Skill           Problem       EvoSkill-S1
+                                                                                                                Update
+                                             skills themselves as the direct objects of evolu-                 2                                        2
+                                                                                                                   Solver                                    Skill
+                                                                                                                                                            Evolver
+                                             tion. Given hard-negative failures, E VO S KILL -
+                                             S1 selects parent skills and transforms them            Figure 1: Heuristic skill-bank updates versus direct skill-
+                                             into candidate child skills through five genetic-       level evolution in E VO S KILL -S1, where an RL-trained
+                                             inspired operators: revision, cross-revision, mu-       evolver transforms existing skills through genetic-
+                                             tation, dual-reflection, and crossover. Down-           inspired operators.
+                                             stream task rewards train the skill evolver
+                                             to generate more effective child skills, while
+                                             evaluator-guided write-back selectively retains         tion. Nevertheless, many challenging problems still
+                                             beneficial updates. Complementary Skill Bank
+                                                                                                     benefit from reusable problem-solving experience
+                                             Fusion consolidates operator-specific banks to
+                                             exploit their distinct recovery patterns, while a       rather than isolated one-shot generation (Brown
+                                             Procedural Skill Interface supports transfer to         et al., 2020; Wei et al., 2022; Kojima et al., 2022;
+                                             unseen problems. Across all reported math and           Wang et al., 2023; Cobbe et al., 2021; Hendrycks
+                                             code benchmarks, E VO S KILL -S1 improves               et al., 2021b; Chen et al., 2021; Li et al., 2022). A
+                                             the corresponding initialized skill banks under         natural way to provide such experience is through
+                                             both Qwen and GPT-family solvers, with rel-             a skill bank: a collection of compact abstractions,
+                                             ative gains of up to 12.39%. Compared with
+                                                                                                     strategies, and cautions that can be retrieved for re-
+                                             the strongest external baseline without direct
+                                             skill evolution, the largest relative improvement
+                                                                                                     lated problems, echoing broader work on language-
+                                             reaches 20.39%.                                         agent memory, tool use, and experience reuse (Yao
+                                                                                                     et al., 2023; Schick et al., 2023; Park et al., 2023;
+                                                                                                     Wang et al., 2024; Packer et al., 2023; Shinn et al.,
+                                         1   Introduction                                            2023; Zhao et al., 2024).
+                                         Large language models (LLMs) have become in-                   Many existing approaches improve such banks
+                                         creasingly capable of complex reasoning, includ-            only indirectly. As new rollouts arrive, they append
+                                         ing mathematical problem solving and code genera-           new skills or summarize and reflect on additional
+                                             Correspondence: yujun_wang_cn@hotmail.com,              experience (Wang et al., 2024; Shinn et al., 2023;
+                                         cognitive.yunpu@gmail.com.                                  Zhao et al., 2024). This rollout-driven maintenance
+
+                                                                                                 1
+supports continual accumulation, but often leaves             evaluator-guided write-back retains beneficial up-
+existing skills largely unchanged or only shallowly           dates and discards ineffective or redundant can-
+edited through weakly controlled heuristics. Conse-           didates. Because different operators exhibit com-
+quently, a skill bank may continue to grow without            plementary repair patterns, Complementary Skill
+systematically repairing brittle strategies, exploring        Bank Fusion consolidates their operator-specific
+alternative solution routes, or combining comple-             banks under the same overall skill-bank budget. A
+mentary partial skills.                                       Procedural Skill Interface further supports transfer
+   We instead ask whether reusable skills them-               of evolved skills to unseen problems.
+selves can become the direct objects of evolu-                   Experiments across math and code benchmarks
+tion. In math and code, unresolved rollout failures           show that E VO S KILL -S1 consistently improves
+provide concrete diagnostic signals: they expose              the corresponding initialized skill banks under
+where retrieved skills remain incomplete, brittle, or         both Qwen and GPT-family solvers, achieving rel-
+poorly matched to the target problem (Cobbe et al.,           ative gains of up to 12.39%. Compared with the
+2021; Lightman et al., 2024; Chen et al., 2021;               strongest external baseline without direct skill evo-
+Austin et al., 2021; Hendrycks et al., 2021a; Jain            lution, the largest relative improvement reaches
+et al., 2025). Rather than merely collecting more             20.39%.
+experience from these failures, they can be used                 This paper makes three main contributions:
+to directly transform existing skills into stronger
+descendants.                                                      • RL-guided direct skill evolution. We formu-
+   Direct skill-level evolution, however, is non-                   late skill-bank improvement as an explicit op-
+trivial. First, different failure modes require differ-             timization problem over reusable skills them-
+ent transformations: some skills need conservative                  selves and train a dedicated skill evolver with
+repair, while others require cross-problem transfer,                downstream task rewards to transform exist-
+an alternative solution route, stronger guardrails,                 ing parent skills into stronger child skills,
+or composition with another skill. Second, a sin-                   while keeping the base solver fixed.
+gle hard negative can yield multiple plausible child              • Complementary genetic-inspired operators.
+skills, requiring a principled mechanism for com-                   We introduce five genetic-inspired operators
+paring candidates and assigning credit to useful                    that apply distinct transformations to reusable
+transformations. Third, evolved skills may retain                   skills. Their complementary recovery pat-
+artifacts specific to their source problems, limit-                 terns address heterogeneous failure modes and
+ing transfer to unseen problems. Finally, different                 motivate the fusion of operator-specific skill
+operators may recover complementary subsets of                      banks.
+failures, requiring a mechanism to consolidate their
+distinct strengths.                                               • Complementary Skill Bank Fusion and em-
+   These challenges lead to the following question:                 pirical validation. We consolidate operator-
+                                                                    specific banks under a fixed overall budget,
+     Can reusable skills themselves be di-
+                                                                    support the use of evolved skills on unseen
+     rectly and iteratively evolved into
+                                                                    problems through a Procedural Skill Inter-
+     stronger descendants while remaining
+                                                                    face, and demonstrate consistent improve-
+     efficient enough for skill-bank improve-
+                                                                    ments across math and code benchmarks.
+     ment?
+   In response, we propose E VO S KILL -S1, an RL-
+                                                              2    Related Work
+driven framework for direct skill-level evolution.
+Without updating the base solver, E VO S KILL -S1             LLM agents, memory, and retrieval. LLM
+uses hard negatives as evolution targets, selects par-        agents often combine reasoning with actions, tools,
+ent and support skills from the current bank, and             environment feedback, and persistent memory. Re-
+transforms them into candidate child skills through           Act interleaves reasoning and acting (Yao et al.,
+five genetic-inspired operators: revision, cross-             2023), Toolformer learns to invoke external tools
+revision, mutation, dual-reflection, and crossover.           (Schick et al., 2023), and Generative Agents main-
+Using GRPO-style group-relative feedback, the                 tain memory streams for interactive simulation
+trainable skill evolver learns to favor child skills          (Park et al., 2023). Voyager further stores exe-
+that improve downstream task performance, while               cutable skills in an expanding library (Wang et al.,
+
+                                                          2
+                                                          Iterative Skill Evolution
+ 1 Initialization                                                 1               2                  3
+
+   Train                                                   Retrieve         Evolution             LLM-
+    Set                                                     Parent          Operators             based
+                Rollout Trajectories Initial Skill Bank
+                                                            Skills                               Evolver
+ 2 Skill Evolution
+        Hard
+      Negatives
+                            Skill Evolver                                                                  4
+   Initial Skill Bank                                             6                   5            Candidate
+ 3 Skill Bank Fusion                                       Evolved           Evaluator-              Child
+    Bank      Bank      Bank                              Skill Bank          guided                 Skills
+    Revision Mutation Crossover ...
+                                                                             Write-back
+           Compose Strengths        Deduplication
+
+ 4 Inference
+    Test                Procedural Skill
+    Set                    Interface                          : RL-trained module                : Frozen module
+           Evolved Skills                      Solver
+
+Figure 2: Overview of the E VO S KILL -S1 pipeline. An initial skill bank is evolved through fixed-operator runs,
+where an RL-trained evolver generates candidate child skills and evaluator-guided write-back updates the bank.
+Operator-specific banks are then fused, and the resulting evolved skills are accessed through the Procedural Skill
+Interface at inference time.
+
+
+2024), while MemGPT manages context outside                   solving policy through reinforcement learning (Xia
+model parameters for later reuse (Packer et al.,              et al., 2026). Skill-R1 trains a lightweight skill gen-
+2023). Retrieval-augmented methods ground gen-                erator for recurrent instance-level skill optimization
+eration in external evidence (Lewis et al., 2020;             using group-relative feedback across rollouts and
+Karpukhin et al., 2020; Guu et al., 2020; Borgeaud            successive revisions (Vishe et al., 2026). MetaSkill-
+et al., 2022; Gao et al., 2023), and Self-RAG                 Evolve operates at two timescales, improving both
+jointly controls retrieval and self-critique (Asai            task skills and the meta-skill that controls the im-
+et al., 2024). Together, these works establish exter-         provement pipeline (Wang et al., 2026). In con-
+nal memory and retrieval as effective mechanisms              trast, E VO S KILL -S1 keeps the base solver fixed
+for accumulating reusable knowledge.                          and trains a dedicated evolver whose optimization
+                                                              targets are the reusable skills in a persistent bank,
+Experience learning and procedural skills. Re-                rather than the solving policy or the trajectories
+flexion stores verbal feedback from prior failures            from which skills are derived.
+(Shinn et al., 2023), while ExpeL extracts reusable
+insights from training experience (Zhao et al.,               3       Problem Setup and Motivation
+2024). ReasoningBank distills generalizable rea-              3.1      Problem Setup
+soning strategies from successful and failed trajec-
+tories and combines memory retrieval with test-               Task setting. Let D = {(xi , yi )}N     i=1 denote a
+time scaling (Ouyang et al., 2026). Skill-Pro rep-            collection of tasks, where xi is the problem input
+resents procedural skills through activation, execu-          and yi is the reference answer or executable specifi-
+tion, and termination conditions, and uses semantic-          cation. At evolution step t, a retriever scores skills
+gradient proposals with a PPO-style gate to main-             with σ(x, s) and selects the top-k retrieved skill set
+tain the skill memory (Mi et al., 2026). These                             Rt (x) = arg topk σ(x, s).            (1)
+approaches primarily derive, retrieve, or refine                                          s∈St
+
+reusable knowledge from episodic experience.                  The solver then samples an answer conditioned on
+                                                              these retrieved skills, and the evaluator maps the
+Skill and trajectory evolution. Recent work in-               answer to a task reward:
+creasingly treats trajectories or skills as explicit                        at (x) ∼ πθ (· | x, Rt (x)),
+optimization objects. SE-Agent evolves interaction                                                               (2)
+trajectories through revision, recombination, and                           rt (x) = E(x, y, at (x)).
+refinement (Guo et al., 2025). SkillRL constructs a           Here E denotes exact match, unit-test pass rate, or
+hierarchical skill library and co-evolves it with the         another benchmark-specific evaluator.
+
+                                                          3
+                   Also recovered by other operator
+                   Unique recovery                    Revision
+                                                                             write-back. Separate operator-specific runs pro-
+                          23
+                                                                             duce banks that are fused for inference.
+Correct problems
+
+
+                                35     32               Cross-
+                                              27       revision
+                   27                                                        4.1   Hard Negative Mining
+                                                      Mutation
+
+
+                   115 160 147 149 147 Crossover                             We construct the hard-negative pool once from
+                                                           Dual-
+                                                                             the initialization rollouts described in the Problem
+                                                      reflection
+                                                                             Setup subsection. A hard negative is a problem
+                                                                             whose initial base-solver rollout receives an evalua-
+                                                                             tor reward below a task-specific success threshold.
+Figure 3: Diagnostics motivating multi-operator skill
+                                                                             Formally, we define
+evolution. The left panel separates shared and operator-
+unique recoveries among failures of the initialized bank.                                 
+                                                                                    H = xi : (xi , a0 (xi ), r0 (xi )) ∈ T0 ,
+The right panel reports judge-scored changes in re-                                                                            (4)
+trieved skill guidance after evolution.                                                          r0 (xi ) < τ ,
+
+                                                                             where τ denotes the success threshold. For math,
+Skill bank initialization. The initial skill bank                            r0 (xi ) is determined by the benchmark answer
+is constructed from rollout data. We collect base-                           checker; for code, it is derived from executable
+solver rollouts                                                              tests.
+                           T0 = {(xi , a0 (xi ), r0 (xi ))}M                    The hard-negative pools are fixed before skill
+                                                           i=1 ,
+                                                                  (3)       evolution begins. At evolution step t, each operator-
+                           S0 = Curateϕ0 T0 ,
+                                                                             specific run samples a target batch Bt ⊆ H and
+where Curateϕ0 denotes an LLM-based skill ex-                                retrieves parent and support skills from its current
+traction procedure performed by the initial skill                            skill bank. These sampled hard negatives serve as
+evolver qϕ0 before reinforcement-learning-based                              evolution targets for the framework.
+evolution. The evolver summarizes reusable
+                                                                             4.2   Skill Evolution Framework
+problem-solving guidance from the rollout trajec-
+tories to form the initial skill bank. For math, we                          The core of E VO S KILL -S1 is a coupled process
+run the base solver on roughly 17k DAPO prob-                                that evolves the skill bank while simultaneously
+lems (Yu et al., 2025) and extract the initial math                          training a dedicated skill evolver through reinforce-
+skills from the resulting trajectories. For code, we                         ment learning. Evolution is conducted through five
+apply the same pipeline to the APPS training set                             separate operator-specific runs. The formulation
+(Hendrycks et al., 2021a). The resulting banks                               below describes one such run; because the operator
+serve as the starting points for subsequent skill evo-                       is fixed throughout the run, we suppress operator
+lution.                                                                      and domain indices. Each run maintains an evolv-
+                                                                             ing skill bank St and a trainable skill evolver qϕt .
+3.2                  Why Directly Evolve Initialized Skills?                 The evolver parameters ϕt are updated through-
+The initialized bank leaves hard problems un-                                out training. The base solver parameters θ remain
+solved even when the solver retrieves relevant skills.                       fixed.
+E VO S KILL -S1 uses these failures to evolve ex-                               For each target problem x ∈ Bt ⊆ H, the run
+isting skills through distinct genetic-inspired re-                          retrieves parent and support skills Rt (x) from its
+pair operators. Figure 3 shows that the operators                            current bank. The evolver then applies the run’s
+uniquely recover different failures and that evo-                            operator to generate K candidate child skills:
+lution changes the quality of retrieved guidance.
+                                                                               s′x,j ∼ qϕt · | x, Rt (x) ,
+                                                                                                        
+These findings motivate both multi-operator evo-                                                               j = 1, . . . , K. (5)
+lution and bank fusion; the diagnostic protocol ap-
+                                                                             The candidate set for target x is
+pears in Appendix B.1.
+
+4                  Methodology                                                               Ct (x) = {s′x,j }K
+                                                                                                              j=1 .             (6)
+
+E VO S KILL -S1 trains a dedicated skill evolver to                             Each candidate child skill is evaluated by con-
+transform retrieved parent skills on hard negatives.                         ditioning the fixed base solver on that skill and
+Downstream rewards from the fixed solver both                                measuring its downstream task performance. The
+train the evolver and select child skills for bank                           evaluation can include a small set N (x) of related
+
+                                                                         4
+neighboring problems, with their scores aggregated                                           w/o GRPO            w/ GRPO
+                                                                     1300             +136    +122               +246         +208
+                                                                                          +103    +133                            +212 2250
+into the candidate reward Rx,j . This reward there-                                                     Math            +185
+fore reflects whether a child skill provides useful                  1200                                                                2100
+
+
+
+
+                                                                                                                                                Written-back children
+guidance beyond only its source problem.
+   The candidate-level rewards serve two connected                    1100                                                               1950
+
+
+
+
+                                                            Solved once
+                                                                                +12                        +19
+purposes. First, they provide the reinforcement-                     1000                                                                1800
+learning signal used to train the skill evolver to
+                                                                          660
+                                                                                            +18 +8 +5                                    1200
+generate stronger child skills in subsequent itera-                                                     Code
+                                                                                                                               +10
+                                                                          635         +23
+tions. Second, they guide the selection of beneficial                                                                                +30 1150
+                                                                                                                        +52
+child skills for write-back into the skill bank.                          610
+                                                                                                                 +51
+   We train the evolver using GRPO-style optimiza-                        585                                                            1100
+tion (Schulman et al., 2017; Ouyang et al., 2022;                               +5                         +3
+                                                                          560                                                            1050
+Shao et al., 2024; Yu et al., 2025). For each target
+problem, its K candidate child skills form a com-
+parison group, and we compute the group-relative
+                                                                                             Evolving operators
+advantage
+                                                            Figure 4: Effect of RL training on skill-evolution ef-
+                              K
+                            1 X                             ficiency. Solved once counts hard negatives solved at
+           Ax,j = Rx,j −              Rx,ℓ .     (7)        least once during evolution, while written-back children
+                            K
+                                ℓ=1                         counts child skills accepted into the bank.
+These relative advantages train the evolver to in-
+crease the likelihood of transformations that pro-          route. Cross-revision transfers a compatible motif
+duce more effective child skills. Unlike conven-            or safeguard from a related problem without replac-
+tional answer-level reinforcement learning, the op-         ing the target skill’s backbone. Mutation intro-
+timized output here is a reusable skill that can sub-       duces a coherent alternative route, typically chang-
+sequently support the fixed base solver. In parallel,       ing the underlying strategy or algorithmic fam-
+the downstream rewards determine which candi-               ily. Crossover preserves a strong backbone from
+date child skills are written back to the bank. Let         one parent and incorporates a compatible local im-
+Wt denote the accepted children from the current            provement from another. Finally, Dual-reflection
+batch. Within the write-back budget, we retain              strengthens correctness-critical safeguards while
+high-reward, non-redundant candidates and update            keeping the main route largely stable. Together,
+the operator-specific bank as                               these operators generate complementary descen-
+                                                           dants that address different forms of skill failure.
+            St+1 = Prune St ∪ Wt ,               (8)
+                                                               All operators follow a shared interface: they se-
+where Prune removes duplicate or low-priority en-           lect operator-specific support evidence, transform
+tries.                                                      one or more parent skills into a candidate child
+                                                            skill, and produce the guidance used for down-
+   Consequently, each iteration improves two com-
+                                                            stream evaluation. Detailed support-selection rules
+ponents: the skill bank acquires stronger child
+                                                            and prompt templates are provided in Appendix E.
+skills, while the evolver learns to produce more
+effective skill transformations.
+                                                            4.4             Complementary Skill Bank Fusion
+4.3   Genetic-Inspired Evolution Operators                  The operator-specific skill banks capture comple-
+Inspired by genetic evolution, E VO S KILL -S1 treats       mentary repair patterns: different operators recover
+existing skills as parent material and transforms           different subsets of failures and produce distinct
+them into candidate child skills through controlled         forms of skill guidance. We therefore introduce
+inheritance, variation, and recombination. Rather           Complementary Skill Bank Fusion, which consoli-
+than relying on unconstrained reflection, each op-          dates the five operator-specific banks into a single
+erator defines a distinct transformation over the           evolved skill bank under the same overall bank-size
+parent skills and their supporting evidence.                budget.
+   Specifically, Revision conservatively repairs a             Let O denote the set of five evolution operators.
+weak strategy while preserving its main solution            Given operator-specific banks {S (o) }o∈O and a tar-
+
+                                                        5
+                      Math                Code                                     • RQ1: Performance. Does direct skill evolu-
+    Revision                                                                         tion improve over initialized skill banks and
+
+
+
+
+                                                     Relative improvement
+Cross-rev.                                                                           non-direct-evolution baselines across math
+                                                                                     and code?
+    Mutation
+
+Crossover                                                                          • RQ2: Fusion. Under the same overall bank-
+    Dual-ref.                                                                        size budget, does fusion outperform average
+                                                                                     single-operator evolution on held-out bench-
+                                                                                     marks?
+
+Figure 5: Operator-level comparison for the five skill                             • RQ3: RL efficiency. Does RL-based train-
+evolution operators. The operators emphasize different                               ing of the skill evolver improve evolution effi-
+support metrics, explaining why Complementary Skill
+                                                                                     ciency under a comparable write-back budget?
+Bank Fusion can outperform reliance on a single opera-
+tor.
+                                                                                   • RQ4: Proceduralization. Does the Procedu-
+                                                                                     ral Skill Interface improve the retrieval and
+get bank size B, the fusion procedure selects                                        reuse quality of evolved skills on unseen prob-
+                     [                                                               lems?
+           S mix ⊆         S (o) ,   |S mix | ≤ B.   (9)
+                     o∈O                                                        5.1   Experimental Setup
+
+Rather than simply pooling all evolved skills, the                              Evolution targets and evaluation benchmarks.
+procedure balances problem coverage, source reli-                               Separate problem sets are used for skill evolution
+ability, operator complementarity, and embedding                                and held-out evaluation. Fixed hard-negative pools
+diversity, while removing duplicate or low-priority                             are constructed from problems on which the base
+records. This allows the fused bank to inherit com-                             solver fails during skill-bank initialization. This
+plementary strengths without increasing the overall                             procedure yields approximately 4,000 math prob-
+skill-bank budget.                                                              lems from DAPO (Yu et al., 2025) and 2,200 code
+   We refer to this configuration as Fusion; details                            problems from the APPS training set (Hendrycks
+are provided in Appendix C.                                                     et al., 2021a). These hard-negative pools serve as
+                                                                                evolution targets and support in-domain diagnostic
+4.5      Procedural Skill Interface                                             analyses.
+Skills evolved against specific hard negatives may                                 The resulting skill banks are evaluated on sep-
+retain source-specific details that are useful for the                          arate held-out benchmarks. The math evalua-
+source problem but less suitable for retrieval on new                           tion suite comprises AIME24, AIME25, AMC23,
+problems. After skill-bank fusion, the Procedural                               Minerva Math, and OlympiadBench (Mathemat-
+Skill Interface converts the selected evolved skills                            ical Association of America, 2024, 2025, 2023;
+into compact, retrieval-facing procedural skills and                            Lewkowycz et al., 2022; He et al., 2024). The code
+matches them to target problems at inference time.                              evaluation suite comprises APPS-test and Live-
+As summarized in Algorithm 1, the interface con-                                CodeBench (Hendrycks et al., 2021a; Jain et al.,
+sists of three stages: skill abstraction, query match-                          2025). Accuracy is reported for math, while mean
+ing, and solver-facing composition.                                             unit-test pass rate is reported for code.
+   This interface separates source-specific skill evo-
+                                                                                Baselines. The comparison includes representa-
+lution from retrieval-time reuse: evolution can
+                                                                                tive paradigms spanning no external support, tra-
+exploit detailed feedback from hard negatives,
+                                                                                jectory reuse, experience-derived reflection, and
+whereas the solver receives compact and reusable
+                                                                                static skill-bank retrieval. No skill evaluates the
+guidance at inference time. The prompt templates
+                                                                                solver without retrieved skill support, whereas Traj
+and filtering rules are provided in Appendix D.
+                                                                                RAG retrieves relevant trajectory-derived guidance.
+5      Experiments                                                              Reflexion generates verbal feedback from prior fail-
+                                                                                ures, and ExpeL-SI extracts reusable skills from
+We organize our evaluation around four research                                 accumulated experience (Shinn et al., 2023; Zhao
+questions.                                                                      et al., 2024). Init uses the initialized skill bank
+
+                                                                            6
+                                                    Math                                         Code
+                                    AIME    AIME    AMC        Minerva      Olymp.       APPS-     LiveCode
+  Model Method                       24      25      23         Math        Bench         test      Bench
+                         No skill   53.75   42.08   87.50          16.18     40.65       36.90          41.98
+                        Traj RAG    57.08   40.83   91.56          29.04     54.15       28.58          31.17
+                        Reflexion   57.92   42.92   93.12          32.35     66.77       41.82          42.18
+    Qwen3-4B-Instruct
+
+
+
+
+                        ExpeL-SI    59.17   41.67   92.50          30.88     66.32       41.64          39.63
+                                                    Tiny Skill Bank
+                           Init     60.42   45.00   91.56          33.82     66.32       44.31          41.92
+                        Single-op   61.50   45.75   92.31          34.93     68.63       44.79          43.44
+                         Fusion     62.92   47.08   92.81          36.03     69.88       45.08          45.55
+                                                    Large Skill Bank
+                           Init     61.67   46.67   92.19          37.13     67.36       44.38          44.02
+                        Single-op   66.67   50.42   93.44          37.13     67.95       44.75          44.78
+                         Fusion     67.08   51.67   94.38          38.24     68.40       44.92          45.17
+                         No skill   44.17   42.50   79.38          25.37     45.99       52.51          41.54
+                        Traj RAG    50.42   44.68   85.32          32.35     61.35       41.85          50.76
+                        Reflexion   50.42   46.54   86.12          31.99     60.83       42.23          46.44
+    GPT Family
+
+
+
+
+                        ExpeL-SI    47.92   45.83   86.57          33.89     59.94       52.63          47.01
+                                                    Tiny Skill Bank
+                          Init      48.75   42.92   86.25          33.46     61.72       53.80          52.80
+                         Fusion     50.83   43.75   86.88          34.12     62.02       53.85          53.50
+                                                    Large Skill Bank
+                          Init      48.75   43.75   88.75          34.56     60.24       53.98          53.94
+                         Fusion     52.08   49.17   89.69          35.29     61.57       54.13          55.53
+
+Table 1: Main results on math and code benchmarks. Math columns report accuracy (%), while code columns
+report mean unit-test pass rate (%). Single-op denotes the arithmetic mean across the five independently evolved
+operator-specific banks, while Fusion denotes Complementary Skill Bank Fusion under the same overall bank-size
+budget. Shaded rows indicate our evolved skill-bank variants, and bold values mark the best result within each
+backbone and skill-bank-size block. For the GPT Family rows, math uses GPT-4.1 mini and code uses GPT-4o mini.
+
+
+without subsequent evolution. Among the pro-                 GPT-4.1 mini for math and GPT-4o mini for code.
+posed evolution settings, Single-op reports the arith-       Tiny banks contain 500 initialized skills, whereas
+metic mean across the five independently evolved             large banks use the full curated bank for each do-
+operator-specific banks, while Fusion consolidates           main. Within each setting, all methods share the
+these banks under the same overall bank-size bud-            same solver, retriever, evaluator, prompts, decoding
+get.                                                         configuration, and metrics. Repeated-run statistics,
+  The representative baselines are adapted to the            seed settings, and implementation details are pro-
+common fixed-solver, retrieval, and evaluation               vided in Appendix B.
+protocol; implementation details appear in Ap-
+pendix B.                                                    5.2   Main Results
+Backbones and implementation. Qwen3-4B-                      Table 1 supports two main takeaways.
+Instruct serves as both the primary open-weight              Takeaway ❶: Direct skill evolution consistently
+solver and the initialization for the separately             improves initialized skill banks. Across both
+trained skill evolver; the solver remains frozen             bank sizes and both solver families, Fusion out-
+during RL training. GPT-family experiments use               performs the corresponding Init setting on every
+
+                                                         7
+                                                                               AIME AIME AMC Minerv Olym. APPS Live
+reported math and code benchmark. For Qwen3-                                    24    25    23     a   Bench       Code
+                                                                     Init      58.33 41.67 91.56 33.46 67.80 41.69 34.10
+4B-Instruct, the improvements are particularly pro-
+                                                                Init + Proc.   61.67 46.67 92.19 37.13 67.36 44.38 44.02
+nounced on AIME24 and AIME25. The same                          Crossover      56.25 48.33 93.13 36.76 67.66 42.79 42.11
+consistent trend holds for the GPT-family solvers,           Crossover + Proc. 66.67 50.42 93.44 37.13 67.95 44.75 44.78
+showing that the evolved skill banks remain effec-            Revision
+
+tive beyond the primary open-weight solver setting.              Cross-
+                                                               revision
+Takeaway ❷: Complementary Skill Bank Fu-                      Mutation
+sion improves over average single-operator evo-              Crossover
+lution. For Qwen3-4B-Instruct, Fusion outper-                     Dual-
+                                                             reflection
+forms Single-op on every benchmark under both                               1     2        3      4       5     6
+the tiny- and large-bank settings. This consistent           1 Applicability 2 Transferability 3 Robustness
+                                                             4 Coverage 5 Retrieval Utility 6 Procedural Guidance
+advantage supports consolidating complementary
+operator-specific banks under a fixed overall bud-           Figure 6: Effect of proceduralization on downstream
+get.                                                         performance and skill-interface quality. Top: perfor-
+                                                             mance before and after proceduralization for the ini-
+5.3    Efficiency Analysis                                   tialized and Crossover skill banks. Bottom: paired-
+                                                             judge score differences between proceduralized skills
+Takeaway ❸: RL training improves skill-
+                                                             and source skills across six interface-quality dimensions;
+evolution efficiency without simply increasing               positive values indicate improvement.
+write-back volume. Figure 4 compares each opera-
+tor with and without RL training of the skill evolver.
+Solved once denotes the number of hard negatives             problems, a dedicated skill evolver transforms exist-
+solved at least once during evolution, while written-        ing parent skills into candidate child skills through
+back children denotes the number of child skills             genetic-inspired operators, with downstream re-
+accepted into the bank. Across both math and code,           wards jointly training the evolver and guiding se-
+RL-trained evolvers recover more hard negatives              lective write-back. Complementary Skill Bank Fu-
+under comparable write-back budgets, indicating              sion consolidates operator-specific banks, while the
+that RL enables the evolver to generate more effec-          Procedural Skill Interface supports retrieval-time
+tive child skills.                                           reuse. Experiments across math and code show con-
+                                                             sistent improvements over initialized skill banks
+5.4    Operator Analysis                                     under both Qwen3-4B-Instruct and GPT-family
+Takeaway ❹: The five genetic-inspired opera-                 solvers, with analyses confirming the complemen-
+tors exhibit complementary strengths. Figure 3               tary strengths of the operators and the efficiency
+shows operator-unique recoveries. Figure 5 and Ap-           gains from RL training.
+pendix B.5 provide the full comparisons. Fusion
+combines these complementary strengths under the
+same bank-size budget (Table 1).                             References
+5.5    Proceduralization Analysis                            Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and
+                                                               Hannaneh Hajishirzi. 2024. Self-RAG: Learning to
+Takeaway ❺: The Procedural Skill Interface                     retrieve, generate, and critique through self-reflection.
+improves both downstream performance and                       In International Conference on Learning Representa-
+retrieval-facing skill quality. Figure 6 shows that            tions.
+proceduralization improves the initialized bank on
+                                                             Jacob Austin, Augustus Odena, Maxwell Nye, Maarten
+six of seven benchmarks and the Crossover bank                  Bosma, Henryk Michalewski, David Dohan, Ellen
+on all seven. Paired judgments of all five operators’           Jiang, Carrie Cai, Michael Terry, Quoc V. Le, and
+outputs show gains in five interface-quality dimen-             Charles Sutton. 2021. Program synthesis with large
+sions, with smaller changes in procedural guidance.             language models. arXiv preprint arXiv:2108.07732.
+The protocol appears in Appendix B.2.                        Sebastian Borgeaud, Arthur Mensch, Jordan Hoffmann,
+                                                               Trevor Cai, Eliza Rutherford, Katie Millican, George
+6     Conclusion                                               van den Driessche, Jean-Baptiste Lespiau, Bogdan
+                                                               Damoc, Aidan Clark, et al. 2022. Improving lan-
+We presented E VO S KILL -S1, an RL-driven frame-              guage models by retrieving from trillions of tokens.
+work that directly evolves reusable skills while               In Proceedings of the 39th International Conference
+keeping the base solver fixed. Given hard-negative             on Machine Learning, volume 162 of Proceedings
+
+
+                                                         8
+  of Machine Learning Research, pages 2206–2240.             Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia
+  PMLR.                                                        Yan, Tianjun Zhang, Sida Wang, Armando Solar-
+                                                               Lezama, Koushik Sen, and Ion Stoica. 2025. Live-
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie               CodeBench: Holistic and contamination free evalua-
+  Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind             tion of large language models for code. In Interna-
+  Neelakantan, Pranav Shyam, Girish Sastry, Amanda             tional Conference on Learning Representations.
+  Askell, et al. 2020. Language models are few-shot
+  learners. In Advances in Neural Information Process-       Vladimir Karpukhin, Barlas Oğuz, Sewon Min, Patrick
+  ing Systems.                                                 Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and
+                                                               Wen-tau Yih. 2020. Dense passage retrieval for open-
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming
+                                                               domain question answering. In Proceedings of the
+ Yuan, Henrique Ponde de Oliveira Pinto, Jared Ka-
+                                                               2020 Conference on Empirical Methods in Natural
+ plan, Harri Edwards, Yuri Burda, Nicholas Joseph,
+                                                               Language Processing.
+ Greg Brockman, et al. 2021. Evaluating large
+ language models trained on code. arXiv preprint             Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yu-
+ arXiv:2107.03374.                                             taka Matsuo, and Yusuke Iwasawa. 2022. Large lan-
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian,                guage models are zero-shot reasoners. In Advances
+  Mark Chen, Heewoo Jun, Łukasz Kaiser, Matthias               in Neural Information Processing Systems.
+  Plappert, Jerry Tworek, Jacob Hilton, Reiichiro            Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio
+  Nakano, Christopher Hesse, and John Schulman.                Petroni, Vladimir Karpukhin, Naman Goyal, Hein-
+  2021. Training verifiers to solve math word prob-            rich Küttler, Mike Lewis, Wen-tau Yih, Tim Rock-
+  lems. arXiv preprint arXiv:2110.14168.                       täschel, Sebastian Riedel, and Douwe Kiela. 2020.
+Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia,               Retrieval-augmented generation for knowledge-
+  Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang,          intensive NLP tasks. In Advances in Neural Informa-
+  and Haofen Wang. 2023. Retrieval-augmented gen-              tion Processing Systems.
+  eration for large language models: A survey. arXiv
+                                                             Aitor Lewkowycz, Anders Andreassen, David Dohan,
+  preprint arXiv:2312.10997.
+                                                               Ethan Dyer, Henryk Michalewski, Vinay Ramasesh,
+Yifu Guo, Jiaye Lin, Huacan Wang, Yuzhen Han, Sen              Ambrose Slone, Cem Anil, Imanol Schlag, Theo
+  Hu, Ziyi Ni, Licheng Wang, and Mingguang Chen.               Gutman-Solo, Yuhuai Wu, Behnam Neyshabur, Guy
+  2025. SE-Agent: Self-evolution trajectory optimiza-          Gur-Ari, and Vedant Misra. 2022. Solving quantita-
+  tion in multi-step reasoning with LLM-based agents.          tive reasoning problems with language models. In
+  In Advances in Neural Information Processing Sys-            Advances in Neural Information Processing Systems.
+  tems, volume 38.
+                                                             Yujia Li, David Choi, Junyoung Chung, Nate Kushman,
+Kelvin Guu, Kenton Lee, Zora Tung, Panupong Pasupat,           Julian Schrittwieser, Rémi Leblond, Tom Eccles,
+  and Mingwei Chang. 2020. REALM: Retrieval aug-               James Keeling, Felix Gimeno, Agustin Dal Lago,
+  mented language model pre-training. In Proceedings           et al. 2022. Competition-level code generation with
+  of the 37th International Conference on Machine              AlphaCode. Science.
+  Learning, volume 119 of Proceedings of Machine
+  Learning Research, pages 3929–3938. PMLR.                  Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harri-
+                                                               son Edwards, Bowen Baker, Teddy Lee, Jan Leike,
+Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu,              John Schulman, Ilya Sutskever, and Karl Cobbe.
+  Zhen Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie              2024. Let’s verify step by step. In International
+  Huang, Yuxiang Zhang, Jie Liu, Lei Qi, Zhiyuan               Conference on Learning Representations.
+  Liu, and Maosong Sun. 2024. OlympiadBench:
+  A challenging benchmark for promoting AGI with             Mathematical Association of America. 2023.
+  olympiad-level bilingual multimodal scientific prob-        2023 AMC 10/12.           https://maa.org/
+  lems. In Proceedings of the 62nd Annual Meeting of          student-programs/amc/.    Accessed 2026-05-
+  the Association for Computational Linguistics.              26.
+Dan Hendrycks, Steven Basart, Saurav Kadavath, Man-          Mathematical Association of America. 2024.
+  tas Mazeika, Akul Arora, Ethan Guo, Collin Burns,           2024 american invitational mathematics ex-
+  Samir Puranik, Horace He, Dawn Song, and Jacob              amination (AIME).         https://maa.org/
+  Steinhardt. 2021a. Measuring coding challenge com-          maa-invitational-competitions/.   Accessed
+  petence with APPS. In Advances in Neural Informa-           2026-05-26.
+  tion Processing Systems Datasets and Benchmarks
+  Track.                                                     Mathematical Association of America. 2025.
+                                                              2025 american invitational mathematics ex-
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul            amination (AIME).         https://maa.org/
+  Arora, Steven Basart, Eric Tang, Dawn Song, and             maa-invitational-competitions/.   Accessed
+  Jacob Steinhardt. 2021b. Measuring mathematical             2026-05-26.
+  problem solving with the MATH dataset. In Ad-
+  vances in Neural Information Processing Systems            Qirui Mi, Zhijian Ma, Mengyue Yang, Haoxuan Li,
+  Datasets and Benchmarks Track.                               Yisen Wang, Haifeng Zhang, and Jun Wang. 2026.
+
+
+                                                         9
+  Skill-Pro: Learning reusable skills from experience          Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-
+  via non-parametric PPO for LLM agents. arXiv                   dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and
+  preprint arXiv:2602.01869. Accepted at ICML 2026               Anima Anandkumar. 2024. Voyager: An open-ended
+  as a spotlight.                                                embodied agent with large language models. Trans-
+                                                                 actions on Machine Learning Research.
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida,
+  Carroll L. Wainwright, Pamela Mishkin, Chong                 Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V.
+  Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray,             Le, Ed H. Chi, Sharan Narang, Aakanksha Chowd-
+  et al. 2022. Training language models to follow in-            hery, and Denny Zhou. 2023. Self-consistency im-
+  structions with human feedback. In Advances in                 proves chain of thought reasoning in language mod-
+  Neural Information Processing Systems.                         els. In International Conference on Learning Repre-
+                                                                 sentations.
+Siru Ouyang, Jun Yan, I-Hung Hsu, Yanfei Chen,
+   Ke Jiang, Zifeng Wang, Rujun Han, Long T. Le,               Zefeng Wang, Minxi Yan, Jinhe Bi, Sikuan Yan, Volker
+   Samira Daruki, Xiangru Tang, Vishy Tirumalashetty,            Tresp, and Yunpu Ma. 2026. MetaSkill-Evolve:
+   George Lee, Mahsan Rofouei, Hangfei Lin, Jiawei               Recursive self-improvement of LLM agents via
+   Han, Chen-Yu Lee, and Tomas Pfister. 2026. Reason-            two-timescale meta-skill evolution. arXiv preprint
+   ingBank: Scaling agent self-evolving with reasoning           arXiv:2607.05297.
+   memory. In International Conference on Learning             Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten
+   Representations.                                               Bosma, Brian Ichter, Fei Xia, Ed Chi, Quoc V. Le,
+                                                                  and Denny Zhou. 2022. Chain-of-thought prompt-
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang,            ing elicits reasoning in large language models. In
+  Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez.          Advances in Neural Information Processing Systems.
+  2023. MemGPT: Towards LLMs as operating sys-
+  tems. arXiv preprint arXiv:2310.08560.                       Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu,
+                                                                 Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou, Xu-
+Joon Sung Park, Joseph C. O’Brien, Carrie J. Cai,                jiang Zhao, Haifeng Chen, Zeyu Zheng, Cihang Xie,
+  Meredith Ringel Morris, Percy Liang, and Michael S.            and Huaxiu Yao. 2026. SkillRL: Evolving agents
+  Bernstein. 2023. Generative agents: Interactive simu-          via recursive skill-augmented reinforcement learning.
+  lacra of human behavior. In Proceedings of the 36th            arXiv preprint arXiv:2602.08234.
+  Annual ACM Symposium on User Interface Software
+  and Technology.                                              Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak
+                                                                 Shafran, Karthik Narasimhan, and Yuan Cao. 2023.
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta             ReAct: Synergizing reasoning and acting in language
+  Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-              models. In International Conference on Learning
+  moyer, Nicola Cancedda, and Thomas Scialom. 2023.              Representations.
+  Toolformer: Language models can teach themselves
+  to use tools. In Advances in Neural Information Pro-         Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xi-
+  cessing Systems.                                               aochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gao-
+                                                                 hong Liu, Juncai Liu, LingJun Liu, Xin Liu, Haibin
+John Schulman, Filip Wolski, Prafulla Dhariwal,                  Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan
+  Alec Radford, and Oleg Klimov. 2017. Proxi-                    Tong, Chi Zhang, Mofan Zhang, and 17 others. 2025.
+  mal policy optimization algorithms. arXiv preprint             DAPO: An open-source LLM reinforcement learning
+  arXiv:1707.06347.                                              system at scale. In The Thirty-ninth Annual Confer-
+                                                                 ence on Neural Information Processing Systems.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu,
+  Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan               Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu
+  Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024.                    Lin, Yong-Jin Liu, and Gao Huang. 2024. ExpeL:
+  DeepSeekMath: Pushing the limits of mathematical               LLM agents are experiential learners. Proceedings
+  reasoning in open language models. arXiv preprint              of the AAAI Conference on Artificial Intelligence,
+  arXiv:2402.03300.                                              38(17):19632–19642.
+
+Noah Shinn, Federico Cassano, Ashwin Gopinath,
+  Karthik Narasimhan, and Shunyu Yao. 2023. Re-
+  flexion: language agents with verbal reinforcement
+  learning. In Advances in Neural Information Process-
+  ing Systems, volume 36, pages 8634–8652. Curran
+  Associates, Inc.
+
+Yash Vishe, Rohan Surana, Xunyi Jiang, Zihan Huang,
+  Xintong Li, Nikki Lijing Kuang, Tong Yu, Ryan A.
+  Rossi, Jingbo Shang, Julian McAuley, and Junda Wu.
+  2026. Skill-R1: Agent skill evolution via reinforce-
+  ment learning. arXiv preprint arXiv:2605.09359.
+
+
+                                                          10
+A     Further Method and Operator                           while controlling for the solver, retrieval, and eval-
+      Analysis                                              uation settings.
+
+Algorithm 1: Procedural Skill Interface                     B     Additional Experimental Details
+1: Input: evolved skill bank S evo , target                 B.1    Motivation Diagnostic Setup
+   problem x, retriever R. Output: solver                   The motivation diagnostic reported in the main
+   support Z(x).                                            paper uses the math-side DAPO-hard pool mined
+2: Skill abstraction: convert each evolved                  from failed initialization rollouts. We first retain the
+   skill into one or more reusable procedural               six-way intersection of problem identifiers with re-
+   skills.     [                                            sults under the initialized bank and all five operator-
+3: S proc ←          Proceduralize(s).                      specific evolved banks: Revision, Cross-revision,
+             s∈S evo                                        Mutation, Crossover, and Dual-reflection. The di-
+4: Query matching:                                          agnostic set consists of the first 1,000 problem iden-
+5: Extract problem keys:           Q(x) ←                   tifiers in this retained pool. All six settings use the
+   KeyExtract(x).                                           same solver, retrieval protocol, and evaluator, so
+6: Retrieve procedural skills:                              differences in the diagnostic are attributable to the
+   Ux ← R(Q(x), S proc ).                                   retrieved skills rather than changes in the test set or
+7: Filter retrieved skills by relevance, diver-             solver configuration.
+                          bx ← Filter(Ux ).
+   sity, and reliability: U
+8: Support composition:            Z(x)     ←               Operator complementarity. The operator-
+   Compose(Ux ).b                                           complementarity panel in the main paper measures
+9: return Z(x).                                             which initialized failures are recovered by each
+                                                            evolved skill bank. Let
+A.1    Operator-Level Interpretation                         Finit = {q : the initialized skill bank fails on q}
+Figure 5 shows that the relative gains of differ-                                                             (10)
+ent operators vary across benchmarks, consistent            be the subset of the shared evaluation set missed by
+with the operator-unique recoveries observed in             the initialized bank. For an operator o, let Solveo (q)
+Figure 3. Detailed results in the Supplementary Ma-         indicate whether the bank evolved by o solves q.
+terial further show that no single operator consis-         We define the recovered set as
+tently dominates across all benchmarks. This com-
+plementarity motivates Complementary Skill Bank                   Ro = {q ∈ Finit : Solveo (q) = 1}.           (11)
+Fusion, which consolidates the distinct strengths of        We decompose Ro into shared and unique recover-
+the operator-specific banks. In Table 1, Single-op          ies:
+reports the arithmetic mean across the five indepen-
+dently evolved banks, whereas Fusion measures                   Rshared
+                                                                 o      = {q ∈ Ro : ∃o′ ̸= o, q ∈ Ro′ },
+                                                                                                               (12)
+the benefit of consolidating them under the same                Runique
+                                                                 o      = Ro \ Rshared
+                                                                                o      .
+overall bank-size budget.
+                                                            The bar height is |Ro |, while the unique segment
+A.2    Baseline Comparability                               is |Runique
+                                                                 o      |. This analysis tests whether the oper-
+                                                            ators simply recover the same failures or provide
+Several recent skill-learning systems are tightly
+                                                            complementary repair behavior.
+coupled to specific agent environments, skill rep-
+resentations, or jointly optimized solving policies,        Retrieved-skill repair signature. The retrieved-
+making their complete pipelines unsuitable for di-          skill repair-signature panel in the main paper stud-
+rect comparison in the fixed-solver math and code           ies how retrieved skills change on flip cases where
+setting. Accordingly, benchmark-adapted instan-             the initialized solver fails and the operator-specific
+tiations of representative mechanisms are imple-            solver succeeds. For each operator, we indepen-
+mented under a common protocol. Traj RAG                    dently shuffle its flip set with random seed 29 and
+captures trajectory-level reuse, Reflexion captures         retain at most 50 cases. For each case, we col-
+failure-driven reflection, and ExpeL-SI captures            lect the retrieved skill context shown to the solver
+experience-to-skill induction. These implementa-            from the initialized bank and from the operator-
+tions isolate the core mechanism of each paradigm           specific evolved bank. The openai/gpt-5.4 judge
+
+                                                       11
+is queried with temperature 0.0 and scores each re-            top-k retrieved support; and procedural guidance,
+trieved context on a 1–5 scale along routine support,          whether it provides concrete, actionable solving
+validation support, route diversity, and transfer sup-         guidance.
+port. Each score is the four-call mean defined in
+                                                               Judge configuration. We use openai/gpt-5.4
+Section B.4. Routine support measures whether
+                                                               with temperature 0.0 and a maximum output length
+the retrieved skills provide executable steps; valida-
+                                                               of 900 tokens. Responses are constrained to JSON
+tion support measures whether they provide check-
+                                                               objects. Each request has a 180-second timeout
+ing mechanisms; route diversity measures whether
+                                                               and permits up to three retries, and evaluation jobs
+they give complementary solution routes rather
+                                                               are distributed across eight shards. Each reported
+than repeated hints; and transfer support measures
+                                                               judge score uses the four-call averaging protocol in
+whether the guidance abstracts beyond the source
+                                                               Section B.4.
+problem surface.
+                                                                  For dimension d, we compute the paired im-
+   For operator o and dimension d, the plotted value
+                                                               provement
+is
+                                                                                   100
+            1 X                                                                1 X
+  ∆o,d =               [Jd (Zo (q)) − Jd (Zinit (q))] ,              ∆b,d =        [Jd (Ub,i ) − Jd (sb,i )] .    (15)
+           |Qo |                                                              100
+                  q∈Qo                                                            i=1
+                                                  (13)         The paired comparison shows consistent gains in
+where Qo is the sampled case set, Zinit (q) and                applicability, transferability, robustness, coverage,
+Zo (q) are the retrieved contexts from the initialized         and retrieval utility. Procedural guidance remains
+and evolved banks, and Jd (·) is the judge score for           close to the source-skill level, indicating that the in-
+dimension d.                                                   terface primarily improves when and how skills can
+                                                               be retrieved and reused rather than merely length-
+B.2   Proceduralization Judge Study                            ening their procedural content.
+The proceduralization analysis in Figure 6 of
+the main paper uses paired comparisons between                 B.3    Benchmarks and Metrics
+source skills and the proceduralized units produced            Table 6 summarizes the benchmark splits, sources,
+from them. We evaluate outputs from the five                   and evaluation sizes. Math benchmarks use answer-
+operator-specific math skill banks: Revision, Cross-           level accuracy after benchmark-specific normaliza-
+revision, Mutation, Crossover, and Dual-reflection.            tion, while code benchmarks use mean unit-test
+Each proceduralized unit retains identifiers for its           pass rate.
+source skill, problem, and operator, enabling align-
+                                                               Computational budget. The primary open-
+ment with the source skill that produced it. When
+                                                               weight backbone is Qwen3-4B-Instruct, a 4B-
+one source skill yields multiple procedural units,
+                                                               parameter model. Each RL-driven skill-evolution
+those units are treated as one proceduralized sup-
+                                                               training run uses four NVIDIA A100 GPUs for
+port group.
+                                                               24 hours. GPT-family mini models are accessed
+   For each operator bank b, we shuffle the aligned
+                                                               through hosted APIs.
+pairs with sampling seed 20260526 and retain the
+first 100 pairs                                                Experimental setup and hyperparameters. We
+                                                               use fixed experimental settings across methods
+          (sb,i , Ub,i ),   i = 1, . . . , 100,   (14)         within each backbone and domain rather than tun-
+                                                               ing hyperparameters separately for each baseline.
+where sb,i is the source skill and Ub,i is its procedu-
+                                                               All methods are evaluated with the same solver,
+ralized support group. This gives 5 × 100 = 500
+                                                               retrieval protocol, evaluator, benchmark prompts,
+paired examples. The judge scores both sides of
+                                                               and metric scripts. We do not perform hyperpa-
+each pair on a 1–5 scale along six dimensions: ap-
+                                                               rameter search on test benchmarks; skill-bank size,
+plicability, whether the skill states when it should
+                                                               operator setting, write-back budget, and evaluation
+be used; transferability, whether it abstracts a pat-
+                                                               protocol are fixed before the final evaluations.
+tern applicable to unseen related problems; robust-
+ness, whether it remains reliable under ambiguous              Reporting convention and decoding parameters.
+or failure-prone conditions; coverage, whether it              Unless otherwise specified, decoding uses temper-
+captures the essential conditions and solution com-            ature 0.2, top-p 0.9, top-k 20, and a maximum
+ponents; retrieval utility, whether it would help as           generation length of 16,384 tokens.
+
+                                                          12
+B.4   Repeated Evaluation and Judge                          support but does not evolve it. Reflexion uses
+      Aggregation                                            a reflection-style feedback update, and ExpeL-SI
+Benchmark evaluation. For every fixed solver–                uses experience-summary-style skill induction. Init
+skill-bank configuration and benchmark, we con-              uses the initialized skill bank without evolution.
+duct eight independent evaluation runs. Each run             Single-op is the arithmetic mean across the five in-
+evaluates the full benchmark once and samples                dependently evolved operator-specific banks, while
+one solver completion per problem. We use infer-             Fusion uses Complementary Skill Bank Fusion un-
+ence seeds {2000, 2001, . . . , 2007} for all methods        der the same overall bank-size budget. All methods
+compared within a backbone–domain setting, en-               are evaluated with the same benchmark prompts
+abling paired comparisons under matched sampling             and metric scripts within each backbone block.
+conditions. If M (r) is the benchmark-level metric           B.7    Implementation Details
+from run r, the reported value is
+                                                             Math skill banks are initialized from rollouts over
+                        8                                    roughly 17k DAPO problems, and the approxi-
+                       1X
+                M=               M (r) .        (16)         mately 4k failed problems form DAPO-hard for
+                       8
+                           r=1                               subsequent evolution. Code skill banks are initial-
+These repetitions measure evaluation-time stochas-           ized from APPS training rollouts, and evolution is
+ticity; the skill evolver and skill bank are not re-         applied to approximately 2.2k failed APPS training
+trained between evaluation runs.                             examples. Tiny banks contain 500 initialized skills,
+   Tables 2–5 report M ± σM , where σM is the                while large banks use the larger curated bank. Code
+empirical standard deviation of the eight run-level          uses execution-based pass-rate signals; math uses
+metrics. All values are percentage points.                   answer-level correctness.
+
+Judge aggregation. For each item and scoring di-             GRPO training configuration. Table 8 summa-
+mension, we perform four independent judge calls             rizes the optimization, batching, and write-back
+with the same model, rubric, input, and decod-               settings used for the skill evolver.
+                         (h)                                    Each target problem produces four candidate
+ing configuration. Let Jd (z) denote the score
+                                                             child skills, which form its GRPO comparison
+assigned to item z on dimension d by judge call h.
+                                                             group. Training runs for five epochs without a
+We first compute
+                                                             separate maximum-step limit, so the epoch sched-
+                            4                                ule determines the total number of updates. After
+                      1 X (h)
+             Jd (z) =    Jd (z),                (17)         evaluation, at most two accepted child skills per
+                      4
+                           h=1                               problem are written back in each evolution round.
+                                                             The global update batch matches the rollout batch,
+and then aggregate these item-level means across
+                                                             while the update and experience phases use differ-
+examples and operators. Thus, the judge quantities
+                                                             ent per-GPU micro-batches.
+used in the diagnostic and proceduralization anal-
+yses are four-call averages rather than single-call          C     Complementary Skill Bank Fusion
+scores.                                                            Details
+Artifact licenses and terms. We use publicly                 For the full-size fused banks, the target size is N =
+available benchmarks and model artifacts for re-             22,133 for math and N = 7,644 for code. We set
+search evaluation and cite their original creators.          the failure-like record ratio to ρ = 0.15 and retain
+We do not redistribute third-party datasets or model         at most Bq = 2 raw skill records for any problem
+checkpoints. Any released code or derived skill-             identifier.
+bank artifacts are intended for research use and will           Each raw skill record z has an operator source
+be distributed only in accordance with the applica-          o(z), problem identifier q(z), score score(z), cor-
+ble licenses and terms of the underlying resources.          rectness metadata, and optional textual fields such
+B.5   Detailed Single-Operator Results                       as procedural steps, watchouts, and solution traces.
+                                                             We use Inc(z) and Corr(z) for incorrect and cor-
+B.6   Baseline Configuration                                 rect metadata. A record is reliable when ¬Inc(z)
+No skill removes skill retrieval from the solver             and either score(z) ≥ 0.5 or Corr(z) holds.
+context. Traj RAG retrieves trajectory-derived               A record is failure-like when Inc(z) holds or
+
+                                                        13
+  Skill bank Method         AIME 24      AIME 25        AMC 23      Minerva Math OlympiadBench
+  None         No skill 53.75±6.53 42.08±6.41 87.50±3.27             16.18±1.35         40.65±1.07
+               Traj RAG 57.08±6.53 40.83±6.36 91.56±2.97             29.04±1.66         54.15±1.08
+               Reflexion 57.92±6.41 42.92±6.53 93.12±2.59            32.35±1.71         66.77±1.03
+               ExpeL-SI 59.17±6.36 41.67±6.42 92.50±2.67             30.88±1.67         66.32±1.02
+  Tiny         Init      60.42±6.28 45.00±6.42 91.56±2.97            33.82±1.72         66.32±1.03
+               Single-op 61.50±6.42 45.75±6.61 92.31±2.81            34.93±1.75         68.63±1.00
+               Fusion    62.92±6.28 47.08±6.53 92.81±2.81            36.03±1.76         69.88±1.00
+  Large        Init      61.67±6.42 46.67±6.42 92.19±2.81            37.13±1.78         67.36±1.02
+               Single-op 66.67±6.17 50.42±6.53 93.44±2.65            37.13±1.76         67.95±1.01
+               Fusion    67.08±6.28 51.67±6.55 94.38±2.59            38.24±1.79         68.40±1.02
+
+Table 2: Repeated-evaluation results for the Qwen3-4B-Instruct math benchmarks. Values are mean ± standard
+deviation over eight inference seeds; the corresponding means appear in Table 1.
+
+
+
+
+                         Skill bank Method        APPS-test LiveCodeBench
+                         None         No skill 36.90±0.43        41.98±3.17
+                                      Traj RAG 28.58±0.41        31.17±2.97
+                                      Reflexion 41.82±0.45       42.18±3.22
+                                      ExpeL-SI 41.64±0.45        39.63±3.14
+                         Tiny         Init      44.31±0.45       41.92±3.17
+                                      Single-op 44.79±0.45       43.44±3.20
+                                      Fusion    45.08±0.45       45.55±3.21
+                         Large        Init      44.38±0.45       44.02±3.21
+                                      Single-op 44.75±0.45       44.78±3.19
+                                      Fusion    44.92±0.45       45.17±3.20
+
+Table 3: Repeated-evaluation results for the Qwen3-4B-Instruct code benchmarks. Values are mean ± standard
+deviation over eight inference seeds; the corresponding means appear in Table 1.
+
+
+
+
+  Skill bank Method         AIME 24      AIME 25        AMC 23      Minerva Math OlympiadBench
+  None         No skill 44.17±6.61 42.50±6.61 79.38±4.17             25.37±1.60         45.99±1.08
+               Traj RAG 50.42±6.53 44.68±6.41 85.32±3.64             32.35±1.71         61.35±1.06
+               Reflexion 50.42±6.53 46.54±6.67 86.12±3.54            31.99±1.71         60.83±1.06
+               ExpeL-SI 47.92±6.41 45.83±6.61 86.57±3.52             33.89±1.73         59.94±1.06
+  Tiny         Init       48.75±6.65 42.92±6.53 86.25±3.54           33.46±1.74         61.72±1.06
+               Fusion     50.83±6.61 43.75±6.53 86.88±3.47           34.12±1.75         62.02±1.06
+  Large        Init       48.75±6.41 43.75±6.53 88.75±3.27           34.56±1.72         60.24±1.05
+               Fusion     52.08±6.41 49.17±6.61 89.69±3.12           35.29±1.75         61.57±1.05
+
+Table 4: Repeated-evaluation results for the GPT-family mini math benchmarks. Values are mean ± standard
+deviation over eight inference seeds; the corresponding means appear in Table 1.
+
+
+
+                                                   14
+                            Skill bank Method        APPS-test LiveCodeBench
+                            None         No skill 52.51±0.45          41.54±3.16
+                                         Traj RAG 41.85±0.45          50.76±3.21
+                                         Reflexion 42.23±0.44         46.44±3.21
+                                         ExpeL-SI 52.63±0.45          47.01±3.21
+                            Tiny         Init        53.80±0.45       52.80±3.20
+                                         Fusion      53.85±0.45       53.50±3.24
+                            Large        Init        53.98±0.45       53.94±3.23
+                                         Fusion      54.13±0.45       55.53±3.21
+
+Table 5: Repeated-evaluation results for the GPT-family mini code benchmarks. Values are mean ± standard
+deviation over eight inference seeds; the corresponding means appear in Table 1.
+
+
+
+
+  Benchmark          Domain         Split / source                        Size    Use and metric
+  DAPO-hard          Math           Hard subset mined from the            ∼4k     Evolution target pool;
+                                    DAPO initialization pool after                answer-level correctness.
+                                    base-solver rollouts.
+  AIME24             Math           Official 2024 AIME I and II            30     Held-out math evaluation;
+                                    problems (Mathematical                        answer-level correctness.
+                                    Association of America, 2024).
+  AIME25             Math           Official 2025 AIME I and II            30     Held-out math evaluation;
+                                    problems (Mathematical                        answer-level correctness.
+                                    Association of America, 2025).
+  AMC23              Math           2023 AMC 12 A/B aggregate              40     Held-out math evaluation;
+                                    (Mathematical Association of                  answer-level correctness.
+                                    America, 2023).
+  Minerva Math       Math           Minerva quantitative-reasoning        272     Held-out math evaluation;
+                                    test set (Lewkowycz et al.,                   answer-level correctness.
+                                    2022).
+  OlympiadBench Math                Text-only open-ended math             675  Out-of-distribution math
+                                    subset (He et al., 2024).                  evaluation; answer-level
+                                                                               correctness.
+  APPS-train-        Code           Hard subset mined from APPS          ∼2.2k Evolution target pool;
+  hard                              training rollouts.                         mean unit-test pass rate.
+  APPS-test          Code           Official APPS test split             5,000 Held-out code evaluation;
+                                    (Hendrycks et al., 2021a).                 mean unit-test pass rate.
+  LiveCodeBench Code                131-problem code-generation           131 Out-of-distribution code
+                                    subset (Jain et al., 2025).                evaluation; mean unit-test
+                                                                               pass rate.
+
+Table 6: Benchmark splits, sources, and evaluation sizes. Internal hard subsets are mined only from initialization
+rollouts; held-out and out-of-distribution benchmarks are used for evaluation.
+
+
+
+
+                                                       15
+                                              Math                                            Code
+                     DAPO AIME AIME AMC Minerva Olympiad APPS-    APPS-                                 LiveCode
+Method               -hard 24   25   23  Math    Bench train-hard test                                   Bench
+Revision-500          12.77 61.25 46.25 92.19            34.56        67.95       20.61       44.98        44.15
+Cross-revision-
+                      13.50 62.92 45.42 91.56            34.93        69.29       21.12       44.39        43.12
+500
+Mutation-500          13.00 60.83 46.25 92.19            35.66        68.69       21.49       45.12        42.75
+Crossover-500         13.09 61.25 45.00 92.81            34.93        69.14       21.42       44.64        43.23
+Dual-reflection-
+                      13.27 61.25 45.83 92.81            34.56        68.10       20.66       44.83        43.96
+500
+Single-op-500
+                      13.13 61.50 45.75 92.31            34.93        68.63       21.06       44.79        43.44
+(avg.)
+
+Table 7: Detailed tiny-skill-bank single-operator results for Qwen3-4B. The average row is the arithmetic mean over
+the five independently evolved operator-specific banks. Code columns report mean unit-test pass rate (%).
+
+
+Setting                                          Value        Algorithm 1: Operator-Fused QID-Covered
+                                                              Skill Consolidation
+Learning rate                        1.0 × 10−6
+Rollout batch                                 32               1: Input: operator skill sets {S (o) }o∈O ,
+Global update batch                           32                  domain-specific target size N , failure ra-
+Update micro-batch / GPU                       2                  tio ρ = 0.15, max skills per question
+Experience micro-batch / GPU                   8                  Bq = 2. Output: consolidated raw skill
+Candidates per target                          4                  bank S mix .
+Training epochs                                5               2: Initialize S mix ← ∅ and soft operator
+Explicit step cap                           None                  quotas Qo ≈ N/|O|.
+Write-back cap               2 / problem / round               3: Normalize all records; compute q(z), re-
+                                                                  liability, failure-like flag, richness score,
+Table 8: GRPO training and write-back settings for the            and source hash.
+skill evolver.                                                 4: Deduplicate by source hash and group
+                                                                  candidates by q(z).
+                                                               5: Stage 1: QID coverage. For each q or-
+                                                                  dered by best candidate quality, add the
+                                                                  best reliable and informative record, pre-
+                                                                  ferring under-quota operators.
+                                                               6: Stage 2: failure evidence. While
+                                                                  |S mix | < N and failure count is below
+                                                                  ρN , add the best remaining failure-like
+                                                                  record with non-empty procedural evi-
+                                                                  dence.
+                                                               7: Require every added record to satisfy
+                                                                  deduplication and q(z) count < Bq .
+                                                               8: Stage 3: complementary reliable
+                                                                  records. Fill remaining slots with re-
+                                                                  liable records, preferring under-quota op-
+                                                                  erators and under-covered problem iden-
+                                                                  tifiers.
+                                                               9: Stage 4: final fill. Add the best remain-
+score(z) < 0.5. Failure-like records are not used                 ing valid informative records.
+as positive procedures during retrieval, but they             10: return S mix .
+may still yield useful Guard or Validation units.
+
+                                                         16
+   For the 500-skill setting, an additional diversity         Algorithm 3: Role-Consistent Filtering After
+step within each operator pool prevents the final             Proceduralization
+bank from concentrating on one semantic region.
+We use K = 500, reliable ratio α = 0.8 (and hence             1: Input: candidate procedural units U
+failure-like ratio 0.2), and Bq = 1. Before diver-               with source record z(u) and role r(u).
+sity selection, the quality-ranked candidate pool is             Output: filtered retrieval bank R.
+capped at five times the corresponding selection              2: Initialize R ← ∅.
+quota. Diversity is measured using each record’s              3: for each unit u ∈ U do
+precomputed 384-dimensional memory vector.                    4: if r(u) ∈ {G UARD, VALIDATION}
+                                                                 then add u to R.
+                                                              5: else          if       r(u)           ∈
+                                                                 {F RAMING, S TRATEGY, E XECUTION}
+                                                                 and z(u) is reliable then add u to R.
+                                                              6: end if
+                                                              7: end for
+                                                              8: return R.
+
+Algorithm 2: Small-Bank Vector-Diverse Fusion
+ 1: Input: operator skill sets {S (o) }o∈O ,
+    size K = 500, reliable ratio α = 0.8,
+    per-question cap Bq = 1, precomputed
+    384-dimensional vectors v(z). Output:
+    diversified bank S small .
+ 2: Set S small ← ∅ and per-operator quota
+    Qo = K/|O|.
+ 3: for each operator o ∈ O do
+ 4: Split S (o) into reliable candidates Ro
+    and failure-like candidates Fo .
+ 5: Keep at most one best candidate per
+    problem identifier in each split and retain
+    a quality pool of at most 5 times the cor-
+    responding selection quota.
+ 6: Select about αQo reliable records by
+    farthest-first traversal over normalized
+    vectors v(z).
+ 7: Select about (1 − α)Qo failure-like
+    records with the same rule.
+ 8: Add selected records while enforcing
+    global deduplication and one record per
+    problem identifier.
+ 9: end for
+10: If |S small | < K, fill remaining slots with
+    globally diverse high-quality candidates.
+11: return S small .
+
+
+
+
+  After fusion, selected raw skill records are proce-
+duralized into typed units. The retrieval bank filters
+positive and negative units differently.
+
+                                                         17
+D   Procedural Skill Interface                              Algorithm 4: Procedural Skill Interface
+                                                             1: Input: evolved skill bank S, target prob-
+                                                                lem x, and domain d. Output: retrieval
+                                                                context C(x).
+                                                             2: Skill-side proceduralization. For each
+                                                                skill s ∈ S, generate procedural units
+                                                                Us ← SkillPrompt(s, d).
+                                                             3: Normalize each unit as (Role, Procedu-
+                                                                ral Key, Trigger, Routine, Guard, Valida-
+                                                                tion).
+                                                             4: Remove source-specific constants, sto-
+                                                                ries, row IDs, and answer values.
+                                                             5: Keep Guard and Validation units; keep
+                                                                Framing, Strategy, and Execution units
+                                                                only when their source is reliable.
+                                                             6: Encode each retained unit key with the
+                                                                locally hosted BGE-M3 encoder, ℓ2 -
+                                                                normalize its vector, and add it to the
+                                                                role-specific index Ir(u) .
+                                                             7: Query-side                 proceduraliza-
+                                                                tion.       Extract procedural keys
+                                                                Q(x) ← QueryPrompt(x, d).
+                                                             8: Encode and ℓ2 -normalize the query keys;
+                                                                consolidate query subquestions whose
+                                                                cosine similarity is at least 0.92.
+                                                             9: for each remaining query key q ∈ Q(x)
+                                                                do
+                                                            10: Retrieve the top 10 role-compatible
+                                                                units from Ir(q) , ranked by the dot prod-
+                                                                uct of normalized vectors (cosine simi-
+                                                                larity).
+                                                            11: end for
+                                                            12: Merge the retrieved candidates in de-
+                                                                scending similarity-score order.
+                                                            13: Apply role caps (Framing: 1, Strategy:
+                                                                1, Guard: 1, Validation: 0, Execution: 1)
+                                                                and retain at most five units overall.
+                                                            14: Compose        solver-facing     Routines,
+                                                                Guards, and Validation cues, then return
+The Procedural Skill Interface (PSI) is used at re-             C(x).
+trieval time to make evolved skills usable on un-              All compared skill banks use this same re-
+seen problems. It introduces a shared procedural            trieval setup. The top-10 search has no additional
+language between the skill bank and the target prob-        relevance-score cutoff. The 0.92 threshold is used
+lem: evolved skills are converted into typed proce-         only to consolidate query-side subquestions; it is
+dural units, while each target problem is converted         not an embedding-based duplicate threshold for re-
+into typed procedural keys for retrieval. We use            trieved skills. The five-unit context limit is an outer
+the paper-facing roles Framing, Strategy, Guard,            cap, so the role caps can produce fewer than five
+Validation, and Execution, which correspond to              units.
+the implementation types Modeling, Core, Trap,
+Verification, and Implementation, respectively; Ex-         Prompt templates. The prompts below show the
+ecution is used only for code.                              domain-conditioned templates used to construct the
+
+                                                       18
+PSI. Math uses the roles Framing, Strategy, Guard,        Prompt (Skill-Side Proceduralization)
+and Validation; code additionally uses Execution
+for implementation-sensitive details.                     SYSTEM:
+                                                          You curate reusable procedural skills for
+                                                              math and code.
+
+                                                          USER:
+                                                          Convert one evolved skill into 0-3 units
+                                                              that help with
+                                                          unseen same-domain problems, not the source
+                                                              problem itself.
+
+                                                          GOAL:
+                                                          - Preserve transferable procedures,
+                                                              constraints,
+                                                            invariants, failure modes, and checks.
+                                                          - Remove source stories, constants, row IDs,
+                                                                exact
+                                                            answers, dataset names, long reasoning,
+                                                              and source code.
+
+                                                          UNIT FIELDS:
+                                                          - Role: Framing, Strategy, Guard, Validation
+                                                              , or Execution.
+                                                          - Procedural Key: a "How do I ...?"
+                                                              retrieval question.
+                                                          - Trigger: when the unit applies.
+                                                          - Routine: reusable actions for the solver.
+                                                          - Guard: a concrete mistake or false route
+                                                              to avoid.
+                                                          - Validation: a concrete result or
+                                                              implementation check.
+
+                                                          ROLE GUIDE:
+                                                          - Framing: variables, states, constraints,
+                                                              or models.
+                                                          - Strategy: method, recurrence, invariant,
+                                                              or reduction.
+                                                          - Guard: false assumptions, shortcuts, or
+                                                              boundary loss.
+                                                          - Validation: candidates, invariants, cases,
+                                                               or outputs.
+                                                          - Execution: indexing, I/O, updates, or
+                                                              formatting.
+
+                                                          RELIABILITY:
+                                                          Failed or low-score sources normally yield
+                                                              only Guard or
+                                                          Validation units. Use positive roles only
+                                                              for reliable evidence.
+
+                                                          INPUT:
+                                                          DOMAIN: {domain}
+                                                          SOURCE_PROBLEM: {problem_text}
+                                                          SOURCE_SCORE: {score}
+                                                          SOURCE_IS_CORRECT: {is_correct}
+                                                          EVOLVED_STEPS: {steps}
+                                                          EVOLVED_WATCHOUTS: {watchouts}
+                                                          OPTIONAL_SOLUTION_OR_CODE: {solution_or_code
+                                                              }
+
+                                                          OUTPUT:
+                                                          JSON only: 0-3 units with all six fields
+                                                              above.
+
+
+
+
+                                                     19
+Prompt (Query-Side Proceduralization)               E   Evolution Operator Details
+
+SYSTEM:                                             The following algorithm blocks summarize how
+You extract procedural retrieval keys for           each operator selects support skills and renders its
+    unseen math
+or coding problems.                                 child skill.
+
+USER:
+From only the target statement, produce 2-4         Revision.
+    keys for
+retrieving useful procedural units.                 Algorithm 5: Same-Problem Conservative Revi-
+                                                    sion
+RULES:
+- Do not solve the problem or compute the            1: Input: target skill s, skill bank B. Out-
+    final answer.
+- Do not overfit to samples, constants,                 put: revised child skill s′ .
+    labels, or stories.                              2: C ← SearchByQID(B, s.qid).
+- Prefer a few high-signal keys over broad           3: Remove target skill s and skills marked
+    coverage.
+- Be more general than the exact problem but            inactive from C.
+     more                                            4: Ccorrect ← {c ∈ C : c.is_correct}.
+  specific than "use DP" or "check cases".
+                                                     5: Corig ← {c ∈ C : c.is_original}.
+KEY FIELDS:                                          6: if Ccorrect ̸= ∅ then
+- Role: Framing, Strategy, Guard, Validation         7: b                                      ←
+    , or Execution.
+- Procedural Key: a stable "How do I ...?"              arg maxc∈Ccorrect (c.score, c.version).
+    question.                                        8: else if Corig ̸= ∅ then
+                                                     9: b                                      ←
+ROLE GUIDE:
+- Framing: model, variables, states, or                 arg maxc∈Corig (c.score, c.version).
+    constraints.                                    10: else              b                    ←
+- Strategy: a transferable method without               arg maxc∈C (c.score, c.version).
+    over-commitment.
+- Guard: likely false assumptions or traps.         11: F ← {c ∈ C : ¬c.is_correct ∧ c ̸= b}.
+- Validation: tests for the answer or               12: f ← arg maxc∈F (c.score, c.version).
+    algorithm.
+- Execution: indexing, I/O, or state-update
+                                                    13: P ← RenderRevisionPrompt(s, b, f ).
+    details.                                        14: s′ ← LLM(P ); return s′ .
+INPUT:
+DOMAIN: {domain}                                    Cross-revision.
+PROBLEM_STATEMENT: {problem_statement}
+                                                    Algorithm 6: Cross-Problem Transfer-Based
+OUTPUT:
+JSON only: 2-4 keys with Role and Procedural        Conservative Revision
+     Key.
+                                                    1: Input: target skill s, skill bank B. Out-
+                                                       put: cross-revised child skill s′ .
+                                                    2: C ← SemanticSearch(B, s.problem).
+                                                    3: Remove same-qid, inactive, and dupli-
+                                                       cate candidates from C.
+                                                    4: Partition C into tagged/fallback positive
+                                                       and negative pools.
+                                                                         +         +
+                                                    5: r ← PickTop(Ctagged     , Cfallback ).
+                                                    6: t ← PickTop(negative pools; exclude =
+                                                       r).
+                                                    7: if t = ∅ then choose best remaining c ∈
+                                                       C \ {r}.
+                                                    8: P                                      ←
+                                                       RenderCrossRevisionPrompt(s, r, t).
+                                                    9: s′ ← LLM(P ); return s′ .
+
+                                                    Mutation.
+
+                                               20
+Algorithm 7: Mutation Operator                        Algorithm 9:        Same-Problem Two-Parent
+                                                      Crossover
+ 1: Input: target skill s, skill bank B. Out-
+    put: mutated child skill s′ .                      1: Input: target skill s, skill bank B, parent
+ 2: Csame ← SearchByQID(B, s.qid).                        limit L. Output: crossover child skill s′ .
+ 3: Csem                                  ←            2: C ← SearchByQID(B, s.qid, L).
+    SemanticSearch(B, s.problem).                      3: Remove s, inactive/original/incorrect
+ 4: Remove s, inactive candidates, same-qid               skills, empty plans, and duplicate plan
+    semantic candidates, and duplicates.                  hashes.
+ 5: Partition Csem into correct and incorrect          4: if |C| < 2 then
+    semantic pools.                                    5: if |C|         =        1 then return
+ 6: A ← {c ∈ Csame : ¬c.is_correct}.                      Revision(s, B).
+ 7: r ← PickTop(A, Csem  − ).                          6: else return DualReflection(s, B).
+ 8: d ← PickTop(Csem + ; exclude = r).                 7: Sort C by (score, version) in descending
+ 9: P                                     ←               order.
+    RenderMutationPrompt(s, r, d).                     8: pb ← C[1].
+10: s′ ← LLM(P ); return s′ .                          9: Define q(c) by step difference, distance
+                                                          to 0.25, and negative score.
+                                                      10: pc ← arg minc∈C\{pb } q(c).
+                                                      11: P                                       ←
+                                                          RenderCrossoverPrompt(s, pb , pc ).
+Dual-reflection.                                      12: s′ ← LLM(P ); return s′ .
+
+                                                      E.1 Compact Operator Prompt Specifications
+                                                      For legibility, we factor the repeated output,
+                                                      schema, and content constraints into one shared
+Algorithm 8: Guard-Oriented Reflective En-            contract, followed by one operator-specific block
+hancement                                             per operator. The deployed prompt is the concate-
+ 1: Input: target skill s, skill bank B, fall-        nation of the shared contract and the selected op-
+    back flag ρ. Output: reflected child skill        erator block. This presentation removes repeated
+    s′ .                                              boilerplate and decorative separators while preserv-
+ 2: Csame ← SearchByQID(B, s.qid).                    ing the operator rules and implementation-specific
+ 3: Csem                                   ←          variables in Jinja form. The source package also
+    SemanticSearch(B, s.problem).                     retains the unabridged templates.
+ 4: Remove s, inactive candidates, same-qid              The runtime prompt is formed by prepending
+    semantic candidates, and duplicates.              the shared contract below to the selected operator-
+ 5: Partition semantic candidates into correct        specific block. This factorization removes repeated
+    and incorrect pools.                              boilerplate and decorative separators while retain-
+ 6: u ← PickTop(Csem  + ).                            ing the task, constraints, input variables, and output
+ 7: A ← {c ∈ Csame : ¬c.is_correct ∧ c ̸=             contract.
+    u}.
+ 8: t ← PickTop(A, Csem − ; exclude = u).
+
+ 9: if u = ∅ and t = ∅ and ρ = true then
+    return Mutation(s, B).
+10: P                                      ←
+    RenderDualReflectionPrompt(s, u, t).
+11: s′ ← LLM(P ); return s′ .
+
+
+
+
+Crossover.
+
+                                                 21
+Shared Prompt Contract                              Operator Block (Revision)
+
+
+ROLE:                                               TASK:
+You are a Strategy Skill Editor.                    Conservatively repair the current weak
+                                                        strategy.
+GOAL:
+Do not solve the target problem. Produce a          THINK:
+    reusable,                                       Identify the smallest useful repair. Do not
+concrete, information-dense method-level                solve the
+    plan that a                                     problem or replace a usable backbone.
+separate solver can execute. Avoid long
+    derivations,                                    REVISION RULES:
+low-level code narration, and line-by-line          - Stay in the same algorithm family when
+    instructions.                                       possible.
+                                                    - Use BACKBONE SUPPORT to stabilize the main
+OUTPUT:                                                  route.
+Return exactly:                                     - Use FAILURE SUPPORT to patch one weak
+<think> short operator-focused reasoning </             point.
+    think>                                          - Prefer a local bridge, ordering, guard, or
+followed by one valid JSON object and                    validation fix.
+    nothing else.                                   - Replace the global route only if it is
+                                                        unusable.
+JSON RULES:
+- No markdown, code fences, extra text, or          APPS PRIORITY:
+    trailing commas.                                - Treat revision as watchouts-first
+- Use double quotes for every key and string            conservative repair.
+     value.                                         - Change steps less than watchouts when the
+- Put all actionable content in the JSON                route works.
+    object.                                         - Add a contract, complexity, boundary, or
+                                                        state guard.
+SCHEMA:
+{                                                   INPUT FIELDS (Jinja):
+  "steps": [{"i": 1, "text": "string"}],            problem: {{ problem }}
+  "watchouts": ["string"]                           current_weak_plan: {{ current_plan }}
+}                                                   current_watchouts: {{
+                                                        target_failed_watchouts }}
+CONTENT RULES:                                        [if present]
+- Prefer 4-5 steps and 2-3 watchouts.               backbone_support: {{ backbone_support }}
+- Use at most 6 steps and at most 3                 backbone_watchouts: {{
+    watchouts.                                          backbone_support_watchouts }}
+- Each step states one concrete method-level          [if present]
+     action.                                        failure_support: {{ failure_support }}
+- Watchouts are distinct, realistic                 failure_watchouts: {{
+    guardrails.                                         failure_support_watchouts }}
+- Protect correctness, contract, state,               [if present]
+    boundaries,
+  implementation stability, and complexity          RETURN:
+    as applicable.                                  One revised strategy object under the shared
+- Keep the result reusable across related                contract.
+    problems.
+
+
+
+
+                                               22
+Operator Block (Cross-revision)                    Operator Block (Mutation)
+
+
+TASK:                                              TASK:
+Improve the target strategy using cross-           Replace the weak strategy with a stronger
+    problem support.                                   alternative.
+
+THINK:                                             THINK:
+Choose one transferable motif and one              Identify one justified backbone change in
+    realistic guard.                                   algorithm family,
+Do not solve the target problem.                   decomposition, or complexity tier. Do not
+                                                       solve the problem.
+CROSS-REVISION RULES:
+- Treat this as conservative cross-motif           MUTATION RULES:
+    transfer.                                      - Treat CURRENT WEAK PLAN as the baseline to
+- Never transplant a whole foreign route by             replace.
+    default.                                       - Use ROUTE TO AVOID as negative evidence.
+- Keep the target backbone primary.                - Use DIVERGENT SEED for one stronger
+- Borrow at most one compatible donor-local            backbone idea.
+    motif:                                         - Rebuild steps and watchouts as one
+  a maintenance trick, check pattern,                  coherent package.
+    complexity trick,                              - Do not merely paraphrase the current plan.
+  or contract-oriented watchout.                   - Reject a seed that repeats the route to
+- ROUTE DONOR may supply one transferable              avoid.
+    motif.                                         - Do not generate a random unrelated route.
+- TRAP DONOR may supply one watchout or
+    small repair.                                  APPS PRIORITY:
+- Reject donors that conflict with the             Prefer changes that fix the algorithm family
+    target contract.                                   , complexity
+- Do not output a stitched list of donor           tier, decision/reconstruction contract, or
+    steps.                                             state design.
+                                                   A new route must include its new failure
+APPS PRIORITY:                                         modes.
+Transfer only when it improves contract,
+    indexing, state,                               INPUT FIELDS (Jinja):
+complexity, or output consistency.                 problem: {{ problem }}
+                                                   current_weak_plan: {{ current_plan }}
+INPUT FIELDS (Jinja):                              current_watchouts: {{
+problem: {{ problem }}                                 target_failed_watchouts }}
+current_weak_plan: {{ current_plan }}                [if present]
+current_watchouts: {{                              route_to_avoid: {{ route_to_avoid }}
+    target_failed_watchouts }}                     route_to_avoid_watchouts: {{
+  [if present]                                         route_to_avoid_watchouts }}
+route_donor: {{ route_donor }} [if present]          [if present]
+route_donor_watchouts: {{                          divergent_seed: {{ divergent_seed }}
+    route_donor_watchouts }}                       divergent_seed_watchouts: {{
+  [if present]                                         divergent_seed_watchouts }}
+trap_donor: {{ trap_donor }} [if present]            [if present]
+trap_donor_watchouts: {{
+    trap_donor_watchouts }}                        RETURN:
+  [if present]                                     One alternative strategy object under the
+                                                       shared contract.
+RETURN:
+One cross-revised strategy object under the
+    shared contract.
+
+
+
+
+                                              23
+Operator Block (Dual-reflection)                    Operator Block (Crossover)
+
+
+TASK:                                               TASK:
+Keep one coherent route while strengthening         Combine one stable backbone with one small
+    its guardrails.                                     improvement.
+
+THINK:                                              THINK:
+Identify the strongest realistic failure            Identify the backbone and one compatible
+    mode and the                                        motif to borrow.
+smallest guard-heavy repair. Do not solve           Do not solve the target problem.
+    the problem.
+                                                    CROSSOVER RULES:
+DUAL-REFLECTION RULES:                              - Build around BACKBONE PARENT as the main
+- Keep plausible steps mostly stable and                route.
+    edits local.                                    - Use CONTRAST PARENT for at most one local
+- Rewrite or strengthen watchouts as the                idiom,
+    main operation.                                   maintenance trick, or guard motif.
+- Provide three concrete watchouts.                 - Never replace the backbone through free-
+- TRAP SUPPORT is direct evidence for                   form union.
+    failure guards.                                 - Do not splice incompatible states, data
+- MECHANISM SUPPORT may add one clean                   structures,
+    forward mechanism.                                invariants, or reconstruction contracts.
+- Trap support alone is sufficient when it          - If compatibility is unclear, keep the
+    is diagnostic.                                      backbone stable.
+- Do not invent a second competing route.           - Regenerate watchouts for the merged child.
+
+WATCHOUT PRIORITY:                                  APPS PRIORITY:
+Cover invariant/state-reset safety, boundary        Prefer contributions improving contract
+    /indexing,                                          stability,
+interface/contract safety, and complexity/          boundary/indexing safety, state maintenance,
+    contamination.                                       or complexity
+                                                    rather than novelty alone.
+INPUT FIELDS (Jinja):
+problem: {{ problem }}                              INPUT FIELDS (Jinja):
+target_failed_strategy: {{                          problem: {{ problem }}
+    target_failed_strategy }}                       backbone_parent: {{ backbone_parent }}
+target_watchouts: {{ target_failed_watchouts        backbone_watchouts: {{
+     }}                                                 backbone_parent_watchouts }}
+  [if present]                                        [if present]
+mechanism_support: {{ mechanism_support }} [        contrast_parent: {{ contrast_parent }}
+    if present]                                     contrast_watchouts: {{
+mechanism_watchouts: {{                                 contrast_parent_watchouts }}
+    mechanism_support_watchouts }}                    [if present]
+  [if present]
+trap_support: {{ trap_support }} [if present        RETURN:
+    ]                                               One crossover strategy object under the
+trap_watchouts: {{ trap_support_watchouts }}            shared contract.
+  [if present]
+
+RETURN:
+One reflected strategy object under the
+    shared contract.
+
+
+
+
+                                               24
+

@@ -1,0 +1,355 @@
+                                            Split learning for health: Distributed deep learning
+                                                      without sharing raw patient data
+
+
+                                                         Praneeth Vepakomma∗                                 Otkrist Gupta
+                                                   Massachusetts Institute of Technology           Massachusetts Institute of Technology
+                                                         Cambridge, MA 02139                             Cambridge, MA 02139
+arXiv:1812.00564v1 [cs.LG] 3 Dec 2018
+
+
+
+
+                                                            Tristan Swedish                                 Ramesh Raskar
+                                                   Massachusetts Institute of Technology           Massachusetts Institute of Technology
+                                                         Cambridge, MA 02139                             Cambridge, MA 02139
+
+
+
+                                                                                         Abstract
+
+                                                    Can health entities collaboratively train deep learning models without sharing sen-
+                                                    sitive raw data? This paper proposes several configurations of a distributed deep
+                                                    learning method called SplitNN to facilitate such collaborations. SplitNN does
+                                                    not share raw data or model details with collaborating institutions. The proposed
+                                                    configurations of splitNN cater to practical settings of i) entities holding different
+                                                    modalities of patient data, ii) centralized and local health entities collaborating on
+                                                    multiple tasks and iii) learning without sharing labels. We compare performance
+                                                    and resource efficiency trade-offs of splitNN and other distributed deep learning
+                                                    methods like federated learning, large batch synchronous stochastic gradient de-
+                                                    scent and show highly encouraging results for splitNN.
+
+
+                                        1       Introduction
+                                        Collaboration in health is heavily impeded by lack of trust, data sharing regulations such as HIPAA
+                                        [3, 4, 5, 6, 7] and limited consent of patients. In settings where different institutions hold differ-
+                                        ent modalities of patient data in the form of electronic health records (EHR), picture archiving and
+                                        communication systems (PACS) for radiology and other imaging data, pathology test results, or
+                                        other sensitive data such as genetic markers for disease, collaborative training of distributed ma-
+                                        chine learning models without any data sharing is desired. Deep learning methods in general have
+                                        found a pervasive suite of applications in biology, clinical medicine, genomics and public health as
+                                        surveyed in [24, 23, 25, 29, 30, 31]. Training of distributed deep learning models without sharing
+                                        model architectures and parameters in addition to not sharing raw data is needed to prevent undesir-
+                                        able scrutiny by other entities. As a concrete health example, consider the use case of training a deep
+                                        learning model for patient diagnosis via collaboration of two entities holding pathology test results
+                                        and radiology data respectively. These entities are unable to share their raw data with each other
+                                        due to the concerns noted above. That said, diagnostic performance of the distributed deep learning
+                                        model is highly contingent on being able to use data from both the institutions for its training. In ad-
+                                        dition to such multi-modal settings, this problem also manifests in settings with entities holding data
+                                        of the same modality as shown in Fig 1 below. As illustrated, local hospitals or tele-health screening
+                                        centers do not acquire an enormous number of diagnostic images on their own. These entitites may
+                                        also be limited by diagnostic manpower. A distributed machine learning method for diagnosis in
+                                        this setting would enable each individual center to contribute data to an aggregate model without
+                                        sharing any raw data. This configuration can achieve high accuracy while using significantly lower
+                                            ∗
+                                                Corresponding author, e-mail: vepakom@mit.edu
+
+
+                                        32nd Conference on Neural Information Processing Systems (NIPS 2018), Montréal, Canada.
+          (a) Non-cooperating health units             (b) Distributed learning without raw data sharing
+
+Figure 1: Distributed learning over retinopathy images (or undetected fast moving threats) over slow
+bit-rate (snail-pace), to detect the emerging threat by pooling their images but without exchanging
+raw patient data.
+
+
+computational resources and communication bandwidth than previously proposed approaches. This
+enables smaller hospitals to effectively serve those in need while also benefiting the distributed train-
+ing network as a whole. In this paper, we build upon splitNN introduced in [32] to propose specific
+configurations that cater to practical health settings such as these and furthermore as described in
+the sections below.
+
+1.1   Related work:
+
+In addition to splitNN [32], techniques of federated deep learning [1] and large batch synchronous
+stochastic gradient descent (SGD)[19] are currently available approaches for distributed deep learn-
+ing. There has been no work as yet on federated deep learning and large batch synchronous SGD
+methods with regards to their applicability to useful non-vanilla settings of distributed deep learn-
+ing studied in rest of this paper such as a) distributed deep learning with vertically partitioned data,
+b) distributed deep learning without label sharing, c) distributed semi-supervised learning and d)
+distributed multi-task learning. That said, with regards to non-neural network based federated learn-
+ing techniques, the work in [27] shows their applicability to vertically partitioned distributed data
+[33, 34, 26, 35] shows applicability to multi-task learning in distributed settings. We now propose
+configurations of splitNN for all these useful settings in the rest of this paper.
+
+2     SplitNN configurations for health
+In this section we propose several configurations of splitNN for various practical health settings:
+
+Simple vanilla configuration for split learning: This is the simplest of splitNN configura-
+tions as shown in Fig 2a. In this setting each client, (for example, radiology center) trains a partial
+deep network up to a specific layer known as the cut layer. The outputs at the cut layer are sent to a
+server which completes the rest of the training without looking at raw data (radiology images) from
+clients. This completes a round of forward propagation without sharing raw data. The gradients
+are now back propagated at the server from its last layer until the cut layer. The gradients at the
+cut layer (and only these gradients) are sent back to radiology client centers. The rest of back
+propagation is now completed at the radiology client centers. This process is continued until the
+distributed split learning network is trained without looking at each others raw data.
+
+U-shaped configurations for split learning without label sharing: The other two configu-
+rations described in this section involve sharing of labels although they do not share any raw input
+data with each other. We can completely mitigate this problem by a U-shaped configuration that
+does not require any label sharing by clients. In this setup we wrap the network around at end layers
+of servers network and send the outputs back to client entities as seen in Fig.2b. While the server
+still retains a majority of its layers, the clients generate the gradients from the end layers and use
+
+
+                                                   2
+    (a) Simple vanilla split learning   (b) Split learning without label   (c) Split learning for vertically
+                                        sharing                            partitioned data
+
+Figure 2: Split learning configurations for health shows raw data is not transferred between the
+client and server health entities for training and inference of distributed deep learning models with
+SplitNN.
+
+
+them for backpropagation without sharing the corresponding labels. In cases where labels include
+highly sensitive information like the disease status of patients, this setup is ideal for distributed deep
+learning.
+
+Vertically partitioned data for split learning: This configuration allows for multiple insti-
+tutions holding different modalities of patient data [27, 33, 34] to learn distributed models without
+data sharing. In Fig. 2c, we show an example configurations of splitNN suitable for such multi-
+modal multi-institutional collaboration. As a concrete example we walkthrough the case where
+radiology centers collaborate with pathology test centers and a server for disease diagnosis. As
+shown in Fig. 2c radiology centers holding imaging data modalities train a partial model upto the
+cut layer. In the same way the pathology test center having patient test results trains a partial model
+upto its own cut layer. The outputs at the cut layer from both these centers are then concatenated
+and sent to the disease diagnosis server that trains the rest of the model. This process is continued
+back and forth to complete the forward and backward propagations in order to train the distributed
+deep learning model without sharing each others raw data. We would like to note that although
+these example configurations show some versatile applications for splitNN, they are by no means
+the only possible configurations.
+
+
+3      Results about resource efficiency
+
+We share a comparison from [32] of validation accuracy and required client computational resources
+in Figure 3 for the three techniques of federated learning, large batch synchronous SGD and splitNN
+as they are tailored for distributed deep learning. As seen in this figure, the comparisons were done
+on the CIFAR 10 and CIFAR 100 datasets using VGG and Resnet-50 architectures for 100 and 500
+client based setups respectively. In this distributed learning experiment we clearly see that SplitNN
+outperforms the techniques of federated learning and large batch synchronous SGD in terms of
+higher accuracies with drastically lower computational requirements on the side of clients. In tables
+1 and 2 we share more comparisons from [32] on computing resources in TFlops and communica-
+tion bandwidth in GB required by these techniques. SplitNN again has a drastic improvement of
+computational resource efficiency on the client side. In the case with a relatively smaller number
+of clients the communication bandwidth required by federated learning is less than splitNN. These
+improvements on the client side resource efficiency are even more dramatic due to the presence of a
+smaller number of parameters in earlier layers of convolutional neural networks (CNNs) like VGG
+and Resnet in addition to the fact that computation is split due to the cut layers. This uneven distri-
+
+
+                                                       3
+(a) Accuracy vs client-side flops on 100 clients with       (b) Accuracy vs client-side flops on 500 clients with
+VGG on CIFAR 10                                             Resnet-50 on CIFAR 100
+
+Figure 3: We show dramatic reduction in computational burden (in tflops) while maintaining higher
+accuracies when training over large number of clients with splitNN. Blue line denotes distributed
+deep learning using splitNN, red line indicate federated averaging and green line indicates large
+batch SGD.
+
+
+bution of network parameters holds for the vast majority of modern CNNs, a property that SplitNN
+can effectively exploit.
+
+                         Method                     100 Clients          500 Clients
+                         Large Batch SGD            29.4 TFlops          5.89 TFlops
+                         Federated Learning         29.4 TFlops          5.89 TFlops
+                         SplitNN                    0.1548 TFlops        0.03 TFlops
+
+Table 1: Computation resources consumed per client when training CIFAR 10 over VGG (in ter-
+aflops) are drastically lower for SplitNN than Large Batch SGD and Federated Learning.
+                           Method                       100 Clients    500 Clients
+                           Large Batch SGD              13 GB          14 GB
+                           Federated Learning           3 GB           2.4 GB
+                           SplitNN                      6 GB           1.2 GB
+
+Table 2: Computation bandwidth required per client when training CIFAR 100 over ResNet (in
+gigabytes) is lower for splitNN than large batch SGD and federated learning with a large number of
+clients. For setups with a smaller number of clients, federated learning requires a lower bandwidth
+than splitNN. Large batch SGD methods popular in data centers use a heavy bandwidth in both
+settings.
+
+
+
+4    Conclusion and future work
+Simple configurations of distributed deep learning do not suffice for various practical setups of col-
+laboration across health entities. We propose novel configurations of a recently proposed distributed
+deep learning technique called splitNN that is dramatically resource efficient in comparison to cur-
+rently available distributed deep learning methods of federated learning and large batch synchronous
+SGD. SplitNN is versatile in allowing for many plug and play configurations based on the required
+application. Generaton of such novel configurations in health and beyond is a good avenue for future
+
+
+                                                        4
+work. SplitNN is also scalable to large-scale settings and can use any state of the art deep learning
+architectures. In addition, the boundaries of resource efficiency can be pushed further in distributed
+deep learning by combining splitNN with neural network compression methods [36, 37, 38] for
+seamless distributed learning with edge devices.
+
+5     Supplementary material:
+5.1   Additional configurations
+
+In this supplementary section we propose some more split learning configurations of splitNN for
+versatile collaborations in health to train and infer from distributed deep learning models without
+sharing raw patient data.
+Extended vanilla split learning: As shown in Fig. 4a we give another modification of vanilla
+split learning where the result of concatenated outputs is further processed at another client before
+passing it to the server.
+
+Configurations for multi-task split learning: As shown in Fig. 4b, in this configuration
+multi-modal data from different clients is used to train partial networks up to their corresponding
+cut layers. The outputs from each of these cut layers are concatenated and then sent over to multiple
+servers. These are used by each server to train multiple models that solve different supervised
+learning tasks.
+
+Tor [28] like configuration for multi-hop split learning: This configuration is an analo-
+gous extension of the vanilla configuration. In this setting multiple clients train partial networks in
+sequence where each client trains up to a cut layer and transfers its outputs to the next client. This
+process is continued as shown in Fig. 4c as the final client sends its activations from its cut layer to
+a server to complete the training.
+
+
+
+
+(a) Extended vanilla split learning   (b) Split learning for multi-task    (c) ’Tor’[28] like multi-hop split
+                                      output with vertically partitioned   learning
+                                      input
+
+Figure 4: Split learning configurations for health shows raw data is not transferred between the
+client and server health entities for training and inference of distributed deep learning models with
+SplitNN.
+
+
+References
+ [1] McMahan, H. B. , Moore, E., Ramage, D., Hampson, S. and Aguera y Arcas, B.,
+     Communication-efficient learning of deep networks from decentralized data, 20’th Interna-
+     tional Conference on Artificial Intelligence and Statistics (AISTATS), 2017.
+ [2] Swedish, T. and Raskar, R., Deep Visual Teach and Repeat on Path Networks, The IEEE
+     Conference on Computer Vision and Pattern Recognition (CVPR) Workshops, 2018.
+
+
+                                                     5
+ [3] Annas, George J. , HIPAA regulations-a new era of medical-record privacy?, New England
+     Journal of Medicine, Vol.348 (15), pp.1486–1490, 2003.
+ [4] U.S. Centers for Disease Control and Prevention , HIPAA privacy rule and public health. Guid-
+     ance from CDC and the US Department of Health and Human Services, MMWR: Morbidity
+     and mortality weekly report, Vol.52 (1), pp.1–17, 2003.
+ [5] Mercuri, Rebecca T. , The HIPAA-potamus in health care data security, Communications of
+     the ACM, Vol.47 (7), pp.25–28, 2004.
+ [6] Gostin, Lawrence O., Levit, Laura A. and Nass, Sharyl J. , Beyond the HIPAA privacy rule:
+     enhancing privacy, improving health through research, National Academies Press, 2009.
+ [7] Luxton, David D and Kayl, Robert A and Mishkind, Matthew C. , mHealth data security: The
+     need for HIPAA-compliant standardization, Telemedicine and e-Health, Vol.18(4), pp. 284–
+     288, 2012.
+ [8] Konečny, Jakub and McMahan, H Brendan and Yu, Felix X and Richtárik, Peter and Suresh,
+     Ananda Theertha and Bacon, D. , Federated learning: Strategies for improving communication
+     efficiency, arXiv preprint arXiv:1610.05492, 2016.
+ [9] Hynes, Nick and Cheng, Raymond and Song, Dawn , Efficient Deep Learning on Multi-Source
+     Private Data, arXiv preprint arXiv:1807.06689, 2018.
+[10] Abadi, Martin and Chu, Andy and Goodfellow, Ian and McMahan, H Brendan and Mironov,
+     Ilya and Talwar, Kunal and Zhang, Li, Deep learning with differential privacy, Proceedings of
+     the 2016 ACM SIGSAC Conference on Computer and Communications Security, pp.308–318,
+     2016.
+[11] Shokri, Reza and Shmatikov, Vitaly, Privacy-preserving deep learning, Proceedings of the 22nd
+     ACM SIGSAC conference on computer and communications security, pp.1310–1321 2015.
+[12] Papernot, Nicolas and Abadi, Martı́n and Erlingsson, Ulfar and Goodfellow, Ian and Talwar,
+     Kunal, Semi-supervised knowledge transfer for deep learning from private training data, arXiv
+     preprint arXiv:1610.05755, 2016.
+[13] Geyer, Robin C and Klein, Tassilo and Nabi, Moin, Differentially private federated learning:
+     A client level perspective, arXiv preprint arXiv:1712.07557, 2017.
+[14] Rouhani, Bita Darvish and Riazi, M Sadegh and Koushanfar, Farinaz, Deepsecure: Scalable
+     provably-secure deep learning, arXiv preprint arXiv:1705.08963, 2017.
+[15] Rouhani, Bita Darvish and Riazi, M Sadegh and Koushanfar, Farinaz, SecureML: A system for
+     scalable privacy-preserving machine learning, 38th IEEE Symposium on Security and Privacy
+     (SP), 2017.
+[16] Hesamifard, Ehsan and Takabi, Hassan and Ghasemi, Mehdi, CryptoDL: Deep Neural Net-
+     works over Encrypted Data, arXiv preprint arXiv:1711.05189, 2017.
+[17] Hardy, Stephen and Henecka, Wilko and Ivey-Law, Hamish and Nock, Richard and Patrini,
+     Giorgio and Smith, Guillaume and Thorne, Brian, Private federated learning on vertically
+     partitioned data via entity resolution and additively homomorphic encryption, arXiv preprint
+     arXiv:1711.10677, 2017.
+[18] Aono, Yoshinori and Hayashi, Takuya and Wang, Lihua and Moriai, Shiho, Privacy-preserving
+     deep learning via additively homomorphic encryptionn, IEEE Transactions on Information
+     Forensics and Security, Vol.13(5), pp.1333–1345arXiv preprint arXiv:1711.10677, 2018.
+[19] Chen, Jianmin and Pan, Xinghao and Monga, Rajat and Bengio, Samy and Jozefowicz, Rafal,
+     Revisiting distributed synchronous SGD, IEEE Transactions on Information Forensics and Se-
+     curity, Vol.13(5), arXiv preprint arXiv:1604.00981, 2016.
+[20] Bonawitz, Keith and Ivanov, Vladimir and Kreuter, Ben and Marcedone, Antonio and McMa-
+     han, H Brendan and Patel, Sarvar and Ramage, Daniel and Segal, Aaron and Seth, Karn,
+     Practical secure aggregation for privacy-preserving machine learning, Proceedings of the 2017
+     ACM SIGSAC Conference on Computer and Communications Security, pp.1175–1191, 2017.
+[21] Bonawitz, Keith and Ivanov, Vladimir and Kreuter, Ben and Marcedone, Antonio and McMa-
+     han, H Brendan and Patel, Sarvar and Ramage, Daniel and Segal, Aaron and Seth, Karn,
+     Practical secure aggregation for privacy-preserving machine learning, Proceedings of the 2017
+     ACM SIGSAC Conference on Computer and Communications Security, pp.1175–1191, 2017.
+
+
+                                                6
+[22] Ben-Nun, Tal and Hoefler, Torsten, Demystifying Parallel and Distributed Deep Learning: An
+     In-Depth Concurrency Analysis, arXiv preprint arXiv:1802.09941, 2018.
+[23] Shickel, Benjamin and Tighe, Patrick James and Bihorac, Azra and Rashidi, Parisa, Deep
+     EHR: A survey of recent advances in deep learning techniques for electronic health record
+     (EHR) analysis, IEEE journal of biomedical and health informatics, Vol.22(5) pp.1589–1604,
+     2018.
+[24] Ching, Travers and Himmelstein, Daniel S and Beaulieu-Jones, Brett K and Kalinin, Alexandr
+     A and Do, Brian T and Way, Gregory P and Ferrero, Enrico and Agapow, Paul-Michael and
+     Zietz, Michael and Hoffman, Michael M , Opportunities and obstacles for deep learning in
+     biology and medicine, Journal of The Royal Society Interface, Vol.15(141), 2018.
+[25] Miotto, Riccardo and Wang, Fei and Wang, Shuang and Jiang, Xiaoqian and Dudley, Joel T.,
+     Deep learning for healthcare: review, opportunities and challenges, Briefings in bioinformatics,
+     2017.
+[26] Smith, Virginia and Chiang, Chao-Kai and Sanjabi, Maziar and Talwalkar, Ameet S., Advances
+     in Neural Information Processing Systems, pp.4424–4434, 2017.
+[27] Hardy, Stephen and Henecka, Wilko and Ivey-Law, Hamish and Nock, Richard and Patrini,
+     Giorgio and Smith, Guillaume and Thorne, Brian, Private federated learning on vertically
+     partitioned data via entity resolution and additively homomorphic encryption, arXiv preprint
+     arXiv:1711.10677, 2017.
+[28] Syverson, Paul and Dingledine, R and Mathewson, N, Tor: The second generation onion
+     router,Usenix Security, 2004.
+[29] Ravı, Daniele and Wong, Charence and Deligianni, Fani and Berthelot, Melissa and Andreu-
+     Perez, Javier and Lo, Benny and Yang, Guang-Zhong, Deep learning for health informatics,
+     IEEE journal of biomedical and health informatics, Vol.21(1), pp.4–21, 2017.
+[30] Alipanahi, Babak and Delong, Andrew and Weirauch, Matthew T and Frey, Brendan J, Pre-
+     dicting the sequence specificities of DNA-and RNA-binding proteins by deep learning, Nature
+     biotechnology, Vol.33(8), 2015.
+[31] Litjens, Geert and Kooi, Thijs and Bejnordi, Babak Ehteshami and Setio, Arnaud Arindra
+     Adiyoso and Ciompi, Francesco and Ghafoorian, Mohsen and van der Laak, Jeroen AWM
+     and Van Ginneken, Bram and Sánchez, Clara I, A survey on deep learning in medical image
+     analysis, Medical image analysis, Vol.42, pp.60–88, 2017.
+[32] Gupta, Otkrist and Raskar, Ramesh, Distributed learning of deep neural network over multiple
+     agents, Journal of Network and Computer Applications, Vol.116, pp.1–8, 2018.
+[33] Navathe, Shamkant and Ceri, Stefano and Wiederhold, Gio and Dou, Jinglie, Vertical partition-
+     ing algorithms for database design, ACM Transactions on Database Systems (TODS), Vol.9(4),
+     pp.680–710, 1984.
+[34] Agrawal, Sanjay and Narasayya, Vivek and Yang, Beverly, Integrating vertical and horizontal
+     partitioning into automated physical database design, Proceedings of the 2004 ACM SIGMOD
+     international conference on Management of data, pp.359–370, 2004.
+[35] Abadi, Daniel J and Marcus, Adam and Madden, Samuel R and Hollenbach, Kate, Scalable se-
+     mantic web data management using vertical partitioning, Proceedings of the 33rd international
+     conference on Very large data bases, pp.411–422, 2007.
+[36] Lin, Yujun and Han, Song and Mao, Huizi and Wang, Yu and Dally, William J, Deep gradient
+     compression: Reducing the communication bandwidth for distributed training, arXiv preprint
+     arXiv:1712.01887, 2017.
+[37] Louizos, Christos and Ullrich, Karen and Welling, Max, Bayesian compression for deep learn-
+     ing, Advances in Neural Information Processing Systems, pp.3288–3298, 2017.
+[38] Han, Song and Mao, Huizi and Dally, William J, Deep compression: Compressing deep
+     neural networks with pruning, trained quantization and huffman coding, arXiv preprint
+     arXiv:1510.00149, 2015.
+[39] Fung, Clement and Yoon, Chris JM and Beschastnikh, Ivan, Mitigating Sybils in Federated
+     Learning Poisoning, arXiv preprint arXiv:1808.04866, 2018.
+
+
+
+                                                 7
+

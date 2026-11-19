@@ -1,0 +1,1145 @@
+                                                             CLAM: Selective Clarification for Ambiguous Questions
+                                                                     with Generative Language Models
+
+
+                                                                             Lorenz Kuhn * 1 Yarin Gal 1 Sebastian Farquhar 1
+
+
+                                                                   Abstract
+                                                Users often ask dialogue systems ambiguous ques-
+arXiv:2212.07769v2 [cs.CL] 20 Feb 2023
+
+
+
+
+                                                tions that require clarification. We show that
+                                                current language models rarely ask users to clar-
+                                                ify ambiguous questions and instead provide in-                               (a) Normal LM behaviour.
+                                                correct answers. To address this, we introduce
+                                                CLAM: a framework for getting language models
+                                                to selectively ask for clarification about ambigu-
+                                                ous user questions. In particular, we show that we
+                                                can prompt language models to detect whether a
+                                                given question is ambiguous, generate an appro-
+                                                priate clarifying question to ask the user, and give
+                                                a final answer after receiving clarification. We
+                                                also show that we can simulate users by provid-
+                                                ing language models with privileged information.
+                                                This lets us automatically evaluate multi-turn clar-                              (b) CLAM (ours)
+                                                ification dialogues. Finally, CLAM significantly
+                                                improves language models’ accuracy on mixed                Figure 1. (a) Normally, LMs answer one of many interpretations
+                                                ambiguous and unambiguous questions relative               given an ambiguous question. (b) Our method uses few-shot clas-
+                                                to SotA.                                                   sification to detect ambiguous questions and selectively asks for
+                                                                                                           clarifying information needed to answer the question.
+
+                                         1. Introduction
+                                                                                                           far received little attention in the LLM question-answering
+                                         Recent Transformer-based large language models (LLMs)
+                                                                                                           community. This is despite widespread reports of models
+                                         are often accurate on open- and closed-book question-
+                                                                                                           “hallucinating” responses when faced with unanswerable
+                                         answering tasks (Chung et al., 2022; Hoffmann et al., 2022).
+                                                                                                           questions (see Ji et al. (2022) for an overview). In this paper,
+                                         These data sets typically consist of well-defined questions
+                                                                                                           we show that state-of-the-art language models rarely ask for
+                                         with enough information to have a unique answer. As these
+                                                                                                           clarification about ambiguous user inputs and thus perform
+                                         language models are deployed, however, they will often face
+                                                                                                           poorly when answering ambiguous questions.
+                                         vague user questions. A user will have some well-defined
+                                         question in mind but accidentally pass an under-specified         To address this issue, we introduce CLAM, a framework
+                                         question to the question-answering model. For example, a          that can significantly improve language models’ question-
+                                         user might want to ask “On what date did Alan Bean land on        answering performance in a setting we describe as selec-
+                                         the moon?” but accidentally pass the question “When did           tive clarification question answering. The framework in-
+                                         he land on the moon?” to the language model, as illustrated       volves: identifying ambiguous questions, prompting the
+                                         in Figure 1. The fact that user requests are often ambigu-        model to resolve ambiguity, and answering the disam-
+                                         ous is well-established in the information retrieval literature   biguated question. In this paper, we demonstrate some of the
+                                         (see Keyvan & Huang (2022) for an overview) but has so            tools that can be used to implement this procedure, showing
+                                            1
+                                                                                                           that even a relatively simple implementation can greatly im-
+                                              OATML Group, Department of Computer Science, Uni-            prove performance. We also show that this method reliably
+                                         versity of Oxford.     Correspondence to: Lorenz Kuhn
+                                         <lorenz.kuhn@cs.ox.ac.uk>.                                        only asks for clarification when the user input is actually
+                                                                                                           ambiguous and thus avoids asking unnecessary clarifying
+                                                                                                           questions.
+                             CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+                                                                                 tive clarification QA (Section 4).
+
+                                                                               • We show that our implementation of CLAM delivers
+                         Step 1a       User: Ask question
+                                                                                 large accuracy improvements on data sets that contain
+                                                                                 ambiguous questions (Section 5).
+                                                      Not ambiguous
+                         Step 1b
+
+                                    Ambiguous                               In Section 2, we introduce our selective clarification QA
+                                                                            task and the data set we create to evaluate it. In Section 3,
+                         Step 2    LM: Ask clarifying question
+                                                                            we describe our framework for getting large language mod-
+                                                                            els to ask for clarification about ambiguous user requests. In
+                         Step 3     User: Provide clari cation              Section 4, we describe how we can automatically evaluate
+                                                                            how good a language model is at asking for clarification
+                                                                            about ambiguous user questions. In Section 5, we present
+                         Step 4       LM: Give nal answer
+                                                                            our experiments and show that our method leads to large per-
+                                                                            formance improvements in answering ambiguous questions
+                                                                            while not affecting the performance on answering unam-
+fi   fi
+                                                                            biguous questions. We review related work in Section 6. In
+                  Figure 2. Overview of Selective Clarification             Section 7, we summarize our results and draw conclusions.
+
+
+          Conceptually, CLAM can be seen as a form of meta-                 2. Selective Clarification QA Data Set
+          cognition—often described as thinking-about-thinking (Lai,        In this section, we introduce a data set that allows us to
+          2011). That is, CLAM is a way of improving model perfor-          evaluate the performance on selective clarification QA (Fig-
+          mance by prompting the model to explicitly “reason” about         ure 2). Selective clarification QA models the real-world
+          a property of the given problem before trying to solve it.        observation that some user questions will be well-defined
+          Our method provides a proof of concept for the use of meta-       and thus will not need clarification, while other user ques-
+          cognition for language models as a strategy for more reliable     tions will be ambiguous, and require clarification. The
+          and safer deployment. We introduce “meta-cognition” as a          desired behaviour of a language model is to directly provide
+          term of art for machine learning systems design because we        answers to unambiguous questions without asking for un-
+          believe it will be an important component of future founda-       necessary clarification and on the other hand, ask the user
+          tion model-based research.                                        for clarification if the user’s question is ambiguous.
+          Selective clarification QA involves interactive multi-turn        Existing data sets such as ClariQ (Aliannejadi et al., 2020)
+          dialogue. Evaluating multi-turn dialogue with human par-          and CLAQUA (Xu et al., 2019) do not allow us to evaluate
+          ticipants is expensive, hard to reproduce, and can require        models on all the steps of the selective clarification QA
+          ethics-board approval. At the same time, automatic evalua-        setting, see Table 1. We describe existing data sets and their
+          tions for multi-turn dialogue are often unreliable (Liu et al.,   limitations in Section 5.
+          2016; Wahde & Virgolin, 2022). In order to allow scalable
+          model evaluation we describe an automatic prompt-driven           To study this setting, we therefore introduce a data set of
+          evaluation protocol that allows a language model that is          pairs of questions that we call Ambiguous TriviaQA. For
+          given privileged information to stand in for a person during      each pair, there is one ambiguous question and one precisely
+          evaluation. In this way, we propose that language model           disambiguated question. We construct the data set so that
+          research should shift towards evaluation data-generating          just one piece of clarifying information is needed to make
+          processes rather than evaluation data sets.                       an ambiguous question precise. In Section 4, we explain
+                                                                            how these sets of ambiguous and unambiguous questions
+          In summary, our contributions are:                                let us automatically provide clarify ambiguous questions.
+
+             • We introduce the CLAM framework for detecting am-            Our data set consists of 200 pairs of ambiguous and un-
+               biguous questions and clarifying them through multi-         ambiguous questions that we derive from TriviaQA (Joshi
+               turn dialogue in LLMs (Section 3).                           et al., 2017). Given a randomly sampled TriviaQA question,
+                                                                            we derive an ambiguous question by either:
+             • We introduce the concept of language model meta-
+               cognition as a general category of which CLAM is a
+               proof-of-concept (Section 3.1).                                 • Replacing a name or noun with a generic pronoun,
+                                                                                 e.g. “Where in England was Dame Judi Dench born?”
+             • We desribe an automatic evaluation protocol for selec-            becomes “Where in England was she born?”.
+                          CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+
+                                                    Chat interface                                       LM prompts
+
+
+               Step 1a & 1b:                                                                                                             Step 2:
+               User asks                                                               User: On what date did he land on the moon?       LM generates
+                                    On what date did he land on the moon?              Bot: To answer your question, I have to ask the
+               question and                                                                                                              clarifying
+               question is                                                             following clarifying question:                    question
+               classi ed as
+               ambiguous
+                                                                                                Generative Language model
+
+
+
+                                                                     Who is “he”?                      Who is “he”?
+
+
+
+
+                                                                                       User: On what date did he land on the moon?       Step 4:
+               Step 3:
+                                    Alan Bean.                                         Bot: Who is “he”?                                 LM
+               User provides
+                                                                                       User: Alan Bean.                                  provides
+               clari cation
+                                                                                       Bot:                                              answer
+
+
+
+                                                                                                Generative Language model
+                                                               November 19, 1969
+
+
+                                                                                                    November 19, 1969
+                                    I
+
+
+
+
+                  fi fi
+
+
+
+
+Figure 3. Overview of the prompts used to clarify ambiguous user inputs. In step 1a, the user asks an ambiguous question. In step
+1b (omitted for clarity) the question is classified as ambiguous using a few-shot prompt. In step 2, the model is few-shot prompted to
+generate a clarifying question about the ambiguous user input. In step 3, the user (or an oracle model, see Section 4) provides clarifying
+information given the clarifying question. In step 4, the model is prompted to answer the initial question given the clarification from the
+user.
+
+
+   • Replacing a noun phrase with a class the noun belongs                          recur the clarification process until the entire dialogue is
+     to, e.g. “Which country is Europe’s largest silk pro-                          considered to unambiguously ask a precise question which
+     ducer?” becomes “Which country is Europe’s largest                             is an interesting direction for future research. We describe
+     producer?”                                                                     this formally in Algorithm 1.
+                                                                                    Implementing the CLAM framework requires choosing a
+We use closed-book TriviaQA questions, that is, questions                           specific technique for:
+that stand alone and for which no accompanying context is
+provided. An additional advantage of deriving a data set                              • classifying questions as ambiguous or not ambiguous;
+from TriviaQA is that the reference answers are typically
+short, and only contain few non-essential words both of                               • producing a clarifying question to follow up with.
+which increase the reliability of automatic accuracy metrics
+to evaluate models.                                                                 In this paper, we implement both of these steps using
+                                                                                    prompting. To classify a question’s ambiguity, we prompt
+3. CLAM: Selective clarification Framework                                          the model using few-shot prompts consisting of examples
+                                                                                    of ambiguous and unambiguous questions from the given
+In this section, we introduce CLarify-if-AMbiguous                                  data set. For Ambiguous TriviaQA, for instance, we use the
+(CLAM)—a framework for language models to ask for                                   following prompt:
+selective clarification about possibly vague user questions.
+The framework involves four stages, illustrated in Figure                                Q: Who was the first woman to make a solo flight
+2. In the first stage, the user asks a language model a ques-                            across this ocean?
+tion. The question is then classified as ambiguous or not                                This question is ambiguous: True.
+ambiguous. For questions that are not ambiguous, we re-
+                                                                                         Q: Who was the first woman to make a solo flight
+turn the answer immediately. However, when questions
+                                                                                         across the Atlantic?
+are ambiguous, we generate a disambiguating follow-up
+                                                                                         This question is ambiguous: False.
+question, as illustrated in Figure 3. The model then uses
+the entire dialogue, including clarifying information, to an-                           Q: In which city were Rotary Clubs set up in
+swer the original question as it was intended. Although                                 1905?
+we complete only a single iteration, it is also possible to                             This question is ambiguous: False.
+                   CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+     Q: Who along with Philips developed the CD in                  constructive frame by selecting an alternative prompt, allow-
+     the late 70s?                                                  ing it to answer the question in a less toxic way. Using this
+     This question is ambiguous: False.                             sort of pipeline, predictable failure modes can be gracefully
+     Q: Where is the multinational corporation based?               and easily recovered from without resulting in any errors
+     This question is ambiguous: True.                              that are visible to the user. Chain-of-thought prompting
+                                                                    (Wei et al., 2022) can be thought of as an implicit form of
+     Q: [question to be classified]                                 meta-cognition, while a more sophisticated pipeline might
+     This question is ambiguous:                                    use additional information about the problem to shape the
+                                                                    prompt construction.
+We then take the model’s log probability of the next token
+being True as a continuous predictor of whether the given           4. Automatic Evaluation Protocol
+question is ambiguous or not.                                       In this section, we introduce an automatic evaluation proto-
+Interestingly, the fact that this works means that SotA mod-        col that allows us to evaluate multi-turn dialogues without
+els are able to detect ambiguous questions but do normally          requiring human input. In the selective clarification QA
+not ask the user for clarification. We conjecture that this         setting (Figure 2), the user provides clarification when the
+is the case because there are few dialogues including clar-         model asks a clarifying question about an ambiguous user
+ifying questions in the pre-training or finetuning data sets        input. We show that we can automate this step of providing
+of these models. We leave a thorough investigation of why           clarification using a language model that is given privileged
+current models do not ask for clarification for future work.        information about the ambiguous question. On a high-level,
+                                                                    we thus suggest that model evaluation should move towards
+We then produce a clarifying question using another prompt.         evaluation data-generating processes rather than evaluation
+We simply append the string:                                        data sets.
+
+     “In order to answer this question, I have to ask               The automated evaluation of dialogue systems is attrac-
+     the following clarifying question:”                            tive given that human evaluations have numerous problems.
+                                                                    They are too expensive for most researchers to access. They
+                                                                    cannot be easily reproduced and are idiosyncratic in ways
+to the original ambiguous question.
+                                                                    that are hard for external researchers to observe and critique
+We use a zero-shot prompt on the Ambiguous TriviaQA                 (unlike automatic evaluations, whose flaws are relatively
+data set, and a few-shot prompt on the more challeng-               easy to examine). Lastly, in many cases experiments in-
+ing CLAQUA data sets. We describe the data set specific             volve humans can create additional ethics risks that in even
+prompts in Appendix B.                                              the best cases incur additional administrative and ethical ap-
+                                                                    provals costs, which can reduce research iteration speed, and
+We then present the user with the clarifying question that
+                                                                    in the worst cases create hazards for research participants.
+is generated by the model based on this newly constructed
+prompt. Lastly, we present the combination of ambiguous             Instead, we therefore use a language model to provide clari-
+question, clarifying question and the user’s clarification to       fying information when asked. This then allows us to auto-
+the language model to generate a final answer to the original       matically evaluate performance on the selective clarification
+question.                                                           task. Using machine learning models to simulate users to
+                                                                    evaluate dialogue systems has been suggested before (see
+3.1. Meta-cognition                                                 e.g. Su et al. (2016)). To the best of our knowledge, our
+                                                                    work is the first to suggest that a parallel corpus of unam-
+In humans, meta-cognition is the process of thinking about          biguous and ambiguous questions can be used to prompt
+your own thought process. Working with foundation models,           large language models to provide clarifying information
+meta-cognition can involve using information that we have           about ambiguous questions.
+about the default sequence completion task to choose a new
+sequence completion task to perform instead.                        For selective clarification QA, the language model may ask
+                                                                    the user for clarifying information about the user’s initial
+In this paper, we use the example of prompting the model            question (see Figure 3). Instead of a human, in our protocol,
+to detect whether a given question is ambiguous to then ask         an ‘oracle’ language model which has access to privileged
+the user a clarifying question, rather than directly trying to      information about the unambiguous question provides the
+answer the ambiguous question. But in broader contexts,             clarifying information when asked (see Figure 4). Since our
+one can imagine many useful pipelines in which a secondary          data set contains both ambiguous and corresponding unam-
+classifier is used to ‘redirect’ the ‘thought process’ of a foun-   biguous questions, we provide the oracle model with privi-
+dation model. For example, a classifier detecting some form         leged information by including the unambiguous question
+of toxicity might be able to redirect the question to a more
+  fi
+                        CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+
+                                 This is a conversation between a     Table 1. Overview of which data sets can be used to evaluate which
+                                 user and a question-answering bot.   of the steps of selective clarification QA.
+                                 The user wants to get an answer to
+       Question-speci c          the following question: “On what                                                                     A MBIGUOUS
+       privileged information    date did Alan Bean land on the                                  C LARI Q   CLAQUA I   CLAQUA II
+                                                                                                                                   T RIVIAQA (O URS )
+       from eval dataset         moon?”                                                             √          √          √                √
+                                                                       1 B : D ETECT AMBIGUITY
+                                                                       2: A SK CLARIFYING                      √          √                √
+       Ambiguous user question   User: On what date did he land on       QUESTIONS
+                                 the moon?                             2-4: F INAL ACCURACY                    √          √                √
+       Clarifying question       Bot: Who is “he”?                       ( AMBIGUOUS ONLY )
+                                 User:                                 2-4: F INAL ACCURACY                                                √
+                                                                         ( UNAMBIGUOUS ONLY )
+
+
+
+
+                                     Generative Language Model
+                                                                      and text-davinci-002 1 is a GPT-3 model with an
+                                                                      additional supervised fine-tuning stage on human-written
+                                                                      demonstrations. These models are publicly available to
+                                             Alan Bean.
+                                                                      researchers from any institution, which improves the repro-
+                                                                      ducibility of our results and evaluation protocol. It can, how-
+                                                                      ever, be difficult to confirm whether the currently actively
+Figure 4. Using a language model to provide clarification. We         served version of the model is the same as the one used in
+prompt a language model to provide clarifying information given
+                                                                      these experiments, which is a challenge for reproducibility.
+a clarifying question about an ambiguous user input. Our parallel
+corpus of ambiguous and corresponding unambiguous questions           Data sets: There are many different types of ambiguity in
+allows us to provide the unambiguous question to the oracle LM,       text (see (Keyvan & Huang, 2022) for a taxonomy). To
+based on which it can then provide appropriate clarifying informa-    account for this, we evaluate CLAM on a range of data
+tion about the ambiguous question. See Figure 3 for a description     sets that cover different types of ambiguity. Our own data
+of the other conversational turns.
+                                                                      set Ambiguous TriviaQA (described in Section 2) primarily
+                                                                      covers under-specified user questions. ClariQ (Aliannejadi
+                                                                      et al., 2020) is an information retrieval data set consisting
+in its prompt. When appropriately asked for clarification,            of real search engine queries from the TREC Web Track
+the oracle can then reliably provide clarifying information           (Clarke et al., 2012). For each query human labellers also
+based on the unambiguous question in its prompt.                      indicate on a scale of 1 to 4 to what extent clarification
+                                                                      is needed. We convert ClariQ into a binary classification
+5. Experiments                                                        problem by labelling queries with clarification needs of
+                                                                      1 and 2 as unambiguous and queries with clarification
+In this section, we experimentally validate the ability of            needs of 3 and 4 as ambiguous. Furthermore, we evaluate
+CLAM to successfully detect and seek clarification to am-             CLAM on CLAQUA (Xu et al., 2019), a data set consisting
+biguous questions.                                                    of two sub-datasets that cover different types of ambiguity:
+We first demonstrate its overall improved accuracy on the             a task that we call CLAQUA I, in which a proper noun in the
+end-to-end task of question answering on a data set that              question can refer to different entities, and a task that we
+contains both ambiguous and unambiguous questions.                    call CLAQUA II which consists of multi-turn conversation
+                                                                      where the last turn is a question that could refer to multiple
+We then evaluate the performance on CLAM on each step                 different previous conversational turns. To reduce the costs
+of the pipeline (Figure 2) that involves the language model           of our experiments from calling the OpenAI API, we use
+individually: step 1b, distinguishing ambiguous from unam-            random sub-samples of 400 of each data set when evaluating
+biguous questions; step 2, generating appropriate clarifying          ambiguity detection, and 100 random samples from each
+questions; and step 4, giving correct final answers given             data set to evaluate the generation of clarifying questions
+clarifying information.                                               and question answering accuracy.
+Lastly, we evaluate whether our automatic evaluation setup            However, only our data set can be used to evaluate all of the
+works reliably. That is, we test whether the oracle language          steps of our pipeline end-to-end. Because of limitations in
+model reliably provides the correct clarification when pre-           the design of the other data sets, which were designed for
+sented with a clarifying question.                                    different purposes, they can only be used for a subset of the
+Models: In principle, our framework should apply to any               steps in our pipeline. Table 1 provides an overview of which
+large language model architecture. In our experiments, we             data set can be used to test which of the steps.
+use the text-davinci-002 and davinci models via                       Metrics: We measure the accuracy of a model answer by
+the OpenAI API. davinci is a pre-trained language model
+                                                                         1
+similar to the original GPT-3 model (Brown et al., 2020)                     https://beta.openai.com/docs/model-index-for-researchers
+                 CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+evaluating whether the model answer contains the reference                              55
+                                                                                             Default GPT
+answer. This accounts for the fact that the language model                                   Prompting baseline
+often answers in full sentences while the reference answer                              50   Always prompt for clarification
+consists only of the target terms themselves.                                                CLAM (ours)
+
+
+
+
+                                                                        Adjusted accuracy
+                                                                                        45
+One challenge in the automatic evaluation of free-form gen-
+erations is that one answer can be expressed in many differ-                            40
+ent ways, see e.g. Kuhn et al. (2022). To account for this,
+we manually evaluate the accuracy metric on all of our data                             35
+sets. Similarly, we manually evaluate whether the language
+models ask appropriate clarifying questions.                                            30
+                                                                                                            (a)
+In addition to the raw accuracy, we introduce an adjusted
+accuracy which is suitable for selective clarification QA                               55
+specifically. This measure penalizes the language model
+system for asking unnecessary clarifying questions about                                50
+unambiguous questions. To adjust the accuracies we begin
+                                                                                        45
+
+
+
+
+                                                                        Accuracy
+with a score of 1 for a correct answer and 0 for an incor-
+rect answer (as normal) but then multiply it with 0.8 if the                            40
+question is unambiguous and the model nonetheless asks
+for clarification. The specific value of 0.8 is arbitrary and                           35
+our results hold for a range of penalty terms, see Table 4.
+                                                                                        30
+To evaluate how well the different methods can distinguish                                                  (b)
+ambiguous from unambiguous questions, we measure the
+commonly used Area Under the Receiver Operator Charac-          Figure 5. CLAM improves question-answering accuracy on a
+teristic Curve (AUROC). The AUROC metric is equivalent          set of ambiguous and unambiguous Trivia questions. (a)
+to the probability that a randomly chosen correct answer has    CLAM clarifies ambiguous questions without asking for unnec-
+a predictor score than a randomly chosen incorrect answer.      essary clarification on unambiguous questions (which is reflected
+Higher scores are better, with perfect uncertainty scoring 1    in the adjusted accuracy metric). Always prompting the language
+while a random uncertainty measure would score 0.5.             model to ask the user for clarification increases the accuracy on
+                                                                ambiguous questions but incurs a penalty on unambiguous ques-
+Baselines: We compare CLAM to three baselines. De-              tions. The prompting baseline rarely asks the user for clarification
+fault GPT prepends the question with a question-answering       and thus only improves the accuracy slightly. (b) Accuracy on
+prompt: This is a conversation between a                        full data set: Without penalizing unnecessary clarifying questions,
+user and a question-answering bot.                              always prompting for clarification and CLAM perform comparably
+                                                                well, and much better than default GPT and the prompting baseline.
+Prompting baseline uses a prompt that explicitly instructs      CLAQUA and ClariQ only cover parts of the selective clarification
+the model to selectively ask the user for clarifying            pipeline which is why only TriviaQA results are reported here.
+questions: This is a conversation between
+a user and a question-answering bot.
+The bot asks the user for clarification
+if the user’s question is ambiguous or
+imprecise.                                                      receiving clarification (step 4). Lastly, we show that our
+                                                                automatic evaluation scheme for selective clarification QA
+Force clarification does not distinguish between ambiguous      works reliably, by showing that the oracle language model
+and unambiguous questions, and always prompts the lan-          correctly provides clarification when asked (step 3).
+guage model to ask for clarification about the user’s input.
+                                                                We report the results of the text-davinci-002 model
+5.1. Results                                                    in the main part of the model and provide the results
+                                                                for davinci in the Appendix. davinci performs less
+We first establish the overall accuracy improvement of our      well across all tasks but the differences between the dif-
+implementation of the CLAM framework on selective clari-        ferent methods are qualitatively similar to those of the
+fication QA (steps 1 through 4 in Figure 2). Then, we study     text-davinci-002 model.
+the performance on each of the necessary steps in Figure 2:
+detecting ambiguous questions (step 1b), generating useful      ClariQ and CLAQUA each only contain components to
+clarifying questions (step 2), and giving final answers after   evaluate some of the parts of the pipeline (see Table 1), and
+                                                                some figures thus report results on a subset of the data sets.
+                       CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+         1.0                                                           Table 2. LMs can accurately generate clarifying questions and
+                                              Default GPT
+         0.9                                  Prompting Baseline       provide clarification during evaluation. Human evaluation of
+         0.8                                  Force Clarification      each of the conversational turns. ClariQ does not contain answers
+                                              CLAM
+     AUROC
+
+
+                                                                       for the ambiguous questions and is thus not displayed in this table.
+         0.7
+         0.6
+         0.5                                                             M ETHOD
+                                                                                                  A MBIGUOUS
+                                                                                                   T RIVIAQA
+                                                                                                                CLAQUA I     CLAQUA II
+
+         0.4                                                             S TEP 2:C ORRECT
+                                                                                                     84.0%        99.0%         95.0%
+                              riQ
+
+
+
+                                              AI
+
+
+
+                                                           I
+                                                          AI
+                     QA us
+
+
+
+                                                                           CLARIFYING QUESTION
+
+
+
+                                           U
+                  via uo
+
+
+                             Cla
+
+
+
+
+                                                          U
+                                        AQ
+                                                                         S TEP 3: C ORRECT
+
+
+
+
+                                                       AQ
+               Tri big
+
+
+
+
+                                                                                                     98.8%        67.7%         98.7%
+                                       CL
+
+
+                                                     CL
+                                                                           ORACLE ANSWER
+               Am
+
+
+
+
+                                   Datasets
+
+Figure 6. CLAM reliably distinguishes ambiguous from unam-             5.1.2. I NDIVIDUAL PIPELINE COMPONENTS
+biguous questions. The AUROC measures how accurately the
+different methods predict whether a given question is ambiguous        Step 1b: Detect Ambiguity
+or not. Default GPT almost never asks for clarification whereas        CLAM reliably distinguishes ambiguous from unambiguous
+Force clarification always asks for clarification. Both methods thus   questions, see Figure 6. The few-shot prompting-based log
+do not distinguish ambiguous from unambiguous questions.
+                                                                       probability of a given question being ambiguous or unam-
+                                                                       biguous achieves high AUROCs on all data sets. Default
+                                                                       GPT almost never asks for clarification and thus achieves
+5.1.1. OVERALL PERFORMANCE                                             an AUROC of roughly 0.5 on all data sets. Force clarifi-
+                                                                       cation on the other hand treats all questions as ambiguous
+Overall, we find that CLAM boosts the language model’s
+                                                                       questions, and thus always has an AUROC of 0.5. The
+adjusted accuracy on ambiguous TriviaQA (containing both
+                                                                       Prompting baseline does sometimes asks for clarification on
+ambiguous and unambiguous questions) by roughly 20 per-
+                                                                       ambiguous questions and almost never asks for clarification
+centage points (Figure 5a). Recall that the adjusted accu-
+                                                                       on unambiguous questions, and is thus slightly better than
+racy multiplies the accuracy on a given question with a
+                                                                       random at detecting ambiguity.
+penalty term λ = 0.8 each time the model unnecessarily
+asks for clarification on unambiguous questions as described           Step 2: Ask clarifying questions
+in Section 5. Force clarification improves the accuracy on
+                                                                       We manually label 100 randomly selected pairs of ambigu-
+ambiguous questions but incurs a large penalty on unam-
+                                                                       ous questions and model-generated corresponding clarifying
+biguous questions for unnecessarily asking for clarification.
+                                                                       questions for each data set to test how reliably the language
+Using the Prompting baseline only leads to a moderate ac-
+                                                                       model generates the correct clarifying question (Table 2).
+curacy improvement. Without the penalty term for asking
+                                                                       According to our judgment, the model generates the correct
+unnecessary clarifying questions, the performance of always
+                                                                       clarifying question for 84%, 99% and 95% of the questions
+prompting for clarification and CLAM on the data set of both
+                                                                       in Ambiguous TriviaQA, CLAQUA I and CLAQUA II re-
+ambiguous and unambiguous questions is comparable, and
+                                                                       spectively. We find that on TriviaQA the model sometimes
+they both clearly outperform default GPT and the prompting
+                                                                       asks incorrect clarifying questions either by just repeating
+baseline (Figure 5b).
+                                                                       the given ambiguous question or by asking an unrelated
+On the ambiguous questions only, we find that, as expected,            additional question about the subject of the ambiguous ques-
+both Force clarification and CLAM greatly improve the                  tion.
+question-answering accuracy as compared to the default
+                                                                       Steps 2 through 4: Final answer after clarification
+GPT performance, see appendix Figure 10a. Importantly,
+always clarifying and CLAM almost entirely close the gap               Ignoring the task of detecting ambiguity and focusing only
+on performance on ambiguous questions as compared to                   on questions which are known to be ambiguous, asking
+the performance on unambiguous questions, see appendix                 the user for clarification lets the model answer ambiguous
+Figure 10b. On the unambiguous questions, the different                questions much more accurately for all data sets (Figure 7).
+methods generally do not affect the model performance as
+                                                                       Step 3: Oracle automatic evaluation
+compared to the default GPT behaviour. However, always
+prompting for clarification always leads to unnecessary turns          Our oracle language model (Section 4) provides accurate
+of conversation on unambiguous questions which is bad                  clarifying information given a clarifying question by the
+for the user experience, and sometimes actually hurts the              language model under evaluation. We manually label 100
+accuracy by leading the conversation off-topic.                        randomly sampled conversations based on ambiguous ques-
+                      CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+            70                                                      from Natural Questions (Kwiatkowski et al., 2019). How-
+                               Correct initial answer               ever, Min et al. (2020) note that the ambiguity in their data
+            60                 Correct answer after clarification
+                                                                    set is “sometimes subtle” and that “many [ambiguities]
+            50                                                      are only apparent after examining one or more Wikipedia
+     Accuracy
+
+
+            40                                                      pages”. Furthermore, Krasheninnikov et al. (2022) then find
+            30                                                      that the performance of AmbigNQ, a baseline they intro-
+            20                                                      duce to find various precise questions for a given ambiguous
+                                                                    question, is low, attesting to the difficulty of this task. Given
+            10                                                      how difficult AmbigNQ seems to be, we suggest that our
+                       QA us
+
+
+
+
+                                           AI
+
+
+
+
+                                                                I
+                                                               AI
+                    via uo
+
+
+
+
+                                          U
+                                                                    Ambiguous TriviaQA data set, which requires less factual
+
+
+
+
+                                                              U
+                                       AQ
+
+
+
+
+                                                           AQ
+                 Tri big
+
+
+
+
+                                     CL
+
+
+
+
+                                                          CL
+                 Am
+
+
+
+
+                                                                    knowledge, is a more effective evaluation tool for selective
+                                   Datasets                         clarification QA.
+                                                                    In transformer-based dialogue systems, however, dealing
+Figure 7. Prompting the model to ask the user for clarification     with ambiguous queries has received little attention so far.
+improves QA accuracy on ambiguous questions. ClariQ does            To the best of our knowledge, Krasheninnikov et al. (2022)
+not contain answers for the ambiguous questions and is thus not     (concurrent with our work), is the only paper that addresses
+displayed in this figure.
+                                                                    ambiguous question resolution in GPT-like language models.
+                                                                    The authors fine-tune a 175B parameter GPT-3 model on
+                                                                    a data set of conversations consisting of ambiguous user
+tions from Ambiguous TriviaQA, CLAQUA I and CLAQUA                  requests, clarifying questions, and final answers. They show
+II. We report for what fraction of correct clarifications the       that fine-tuning the model on this data set leads to a slight
+oracle language model provides.                                     accuracy improvement in answering ambiguous questions
+The oracle model reliablly provides the correct clarifying          derived from AmbigQA (Min et al., 2020). The authors note
+information on TriviaQA and CLAQUA II, see Table 2. On              that under this approach the model often does not recognize
+CLAQUA I the clarifying information has to disambiguate             ambiguous inputs (false omission rate of 44.5%). We further
+two possible meanings of a proper noun. We find that,               note that in contrast to this method our approach does not
+while the model is generally able to do so, it will sometimes       require any fine-tuning, neither to improve the performance
+provide information that applies to both possible entities,         of the question-answering nor for the oracle model.
+and thus does not correctly disambiguate the two options.
+                                                                    7. Conclusion
+6. Related work                                                     In this paper, we introduce CLAM, a framework for se-
+A range of approaches for i) detecting ambiguous questions          lective clarification QA with large language models which
+and then ii) asking clarifying questions have been proposed         detects and resolves ambiguity by asking clarifying ques-
+in information retrieval and in the conversational search           tions. We provide this as an example of meta-cognition
+literature (see Keyvan & Huang (2022) for an overview).             in foundation models. We implement the framework us-
+In terms of detecting ambiguous queries, Trienes & Ba-              ing few-shot prompting. This additional clarifying con-
+log (2019) use a logistic regression to identify ambiguous          versational turn significantly increases language models’
+queries based on the characteristics of similar queries. Dhole      question-answering accuracy on ambiguous questions with-
+(2020) use a BiLSTM model to distinguish ambiguous from             out affecting unambiguous questions. Moreover, we show
+unambiguous queries. In terms of generating clarifying              that few-shot prompting is a highly reliable way of detecting
+questions, both rule-based and neural network-based ap-             whether a given question is ambiguous which allows us to
+proaches have been proposed. Wang & Li (2021), for in-              answer clarifying questions about ambiguous questions only
+stance, use a clarifying question template that is completed        and avoid asking unnecessary questions about precise user
+with words from a vocabulary. Dhole (2020) frame disam-             inputs.
+biguation as distinguishing between different plausible user        In order to support scalable research, we motivate a shift
+intents for a given question. They use a set of syntactic           towards evaluation data-generating processes and introduce
+transformations of a given ambiguous question, and then             a method to automatically evaluate multi-turn dialogues
+select a clarifying question that will best disambiguate be-        involving ambiguous questions using an oracle language
+tween different user intents. Rao & Daumé III (2019) use a         model with access to extra information.
+GAN to generate clarifying questions.
+AmbigQA (Min et al., 2020) is an alternative data set in-
+tended to explore ambiguous question answering derived
+                  CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+Acknowledgements                                                   Krasheninnikov, D., Krasheninnikov, E., and Krueger, D.
+                                                                     Assistance with large language models. In NeurIPS ML
+Sebastian Farquhar carried out this work in his capacity             Safety Workshop, 2022. URL https://openreview.
+as an associate member of the OATML lab, but he is also              net/forum?id=OE9V81spp6B.
+employed by DeepMind.
+We are grateful to Geoffrey Irving and Laura Rimell for            Kuhn, L., Gal, Y., and Farquhar, S. Semantic uncertainty:
+their advice and feedback on earlier drafts of this paper. We        Linguistic invariances for uncertainty estimation in natu-
+are also grateful to the members of the OATML group for              ral language generation. In NeurIPS ML Safety Workshop,
+helpful discussions about this project.                              2022.
+
+                                                                   Kwiatkowski, T., Palomaki, J., Redfield, O., Collins, M.,
+References                                                          Parikh, A., Alberti, C., Epstein, D., Polosukhin, I., Kel-
+                                                                    cey, M., Devlin, J., Lee, K., Toutanova, K. N., Jones,
+Aliannejadi, M., Kiseleva, J., Chuklin, A., Dalton, J., and
+                                                                    L., Chang, M.-W., Dai, A., Uszkoreit, J., Le, Q., and
+  Burtsev, M. Convai3: Generating clarifying questions for
+                                                                    Petrov, S. Natural questions: a benchmark for question
+  open-domain dialogue systems (clariq). arXiv preprint
+                                                                    answering research. Transactions of the Association of
+  arXiv:2009.11352, 2020.
+                                                                    Computational Linguistics, 2019.
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D.,
+  Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G.,            Lai, E. R. Metacognition: A literature review research
+  Askell, A., et al. Language models are few-shot learners.          report. Research Reports, 41, 2011.
+  Advances in neural information processing systems, 33:           Liu, C.-W., Lowe, R., Serban, I. V., Noseworthy, M., Char-
+  1877–1901, 2020.                                                   lin, L., and Pineau, J. How not to evaluate your dialogue
+Chung, H. W., Hou, L., Longpre, S., Zoph, B., Tay, Y.,               system: An empirical study of unsupervised evaluation
+  Fedus, W., Li, E., Wang, X., Dehghani, M., Brahma,                 metrics for dialogue response generation. arXiv preprint
+  S., et al. Scaling instruction-finetuned language models.          arXiv:1603.08023, 2016.
+  arXiv preprint arXiv:2210.11416, 2022.
+                                                                   Min, S., Michael, J., Hajishirzi, H., and Zettlemoyer, L.
+Clarke, C. L., Craswell, N., and Voorhees, E. M. Overview           Ambigqa: Answering ambiguous open-domain questions.
+  of the trec 2012 web track. Technical report, NA-                 arXiv preprint arXiv:2004.10645, 2020.
+  TIONAL INST OF STANDARDS AND TECHNOLOGY
+                                                                   Rao, S. and Daumé III, H. Answer-based adversarial train-
+  GAITHERSBURG MD, 2012.
+                                                                     ing for generating clarification questions. arXiv preprint
+Dhole, K. D. Resolving intent ambiguities by retriev-                arXiv:1904.02281, 2019.
+  ing discriminative clarifying questions. arXiv preprint
+  arXiv:2008.07559, 2020.                                          Su, P.-H., Gasic, M., Mrksic, N., Rojas-Barahona, L., Ultes,
+                                                                     S., Vandyke, D., Wen, T.-H., and Young, S. Continuously
+Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E.,             learning neural dialogue management. arXiv preprint
+  Cai, T., Rutherford, E., Casas, D. d. L., Hendricks, L. A.,        arXiv:1606.02689, 2016.
+ Welbl, J., Clark, A., et al. Training compute-optimal
+  large language models. arXiv preprint arXiv:2203.15556,          Trienes, J. and Balog, K. Identifying unclear questions
+  2022.                                                              in community question answering websites. In Euro-
+                                                                     pean conference on information retrieval, pp. 276–289.
+Ji, Z., Lee, N., Frieske, R., Yu, T., Su, D., Xu, Y., Ishii, E.,     Springer, 2019.
+   Bang, Y., Madotto, A., and Fung, P. Survey of halluci-
+   nation in natural language generation. ACM Computing            Wahde, M. and Virgolin, M. Conversational agents: Theory
+   Surveys, 2022.                                                   and applications. arXiv preprint arXiv:2202.03164, 2022.
+
+Joshi, M., Choi, E., Weld, D. S., and Zettlemoyer, L.              Wang, J. and Li, W. Template-guided clarifying question
+  Triviaqa: A large scale distantly supervised challenge            generation for web search clarification. In Proceedings of
+  dataset for reading comprehension. arXiv preprint                 the 30th ACM International Conference on Information
+  arXiv:1705.03551, 2017.                                           & Knowledge Management, pp. 3468–3472, 2021.
+
+Keyvan, K. and Huang, J. X. How to approach ambiguous              Wei, J., Wang, X., Schuurmans, D., Bosma, M., Chi, E.,
+  queries in conversational search? a survey of techniques,         Le, Q., and Zhou, D. Chain of thought prompting elic-
+  approaches, tools and challenges. ACM Computing Sur-              its reasoning in large language models. arXiv preprint
+  veys (CSUR), 2022.                                                arXiv:2201.11903, 2022.
+                CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+Xu, J., Wang, Y., Tang, D., Duan, N., Yang, P., Zeng, Q.,
+  Zhou, M., and Sun, X. Asking clarification questions in
+  knowledge-based question answering. In Proceedings
+  of the 2019 Conference on Empirical Methods in Natu-
+  ral Language Processing and the 9th International Joint
+ Conference on Natural Language Processing (EMNLP-
+ IJCNLP), pp. 1618–1629, 2019.
+                  CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+                                     0.70
+                                                                           Default GPT
+                                     0.65                                  Prompting Baseline
+                                     0.60                                  Force Clarification
+                                                                           CLAM
+
+
+
+
+                                 AUROC
+                                     0.55
+                                     0.50
+                                     0.45
+                                     0.40
+
+
+
+
+                                                            riQ
+
+
+
+                                                                           AI
+
+
+
+                                                                                         I
+                                                                                       AI
+                                                  QA s
+                                               via ou
+
+
+
+
+                                                                          U
+                                                          Cla
+
+
+
+
+                                                                                       U
+                                                                       AQ
+                                            Tri bigu
+
+
+
+
+                                                                                    AQ
+                                                                     CL
+
+
+                                                                                  CL
+                                            Am
+                                                                Datasets
+
+Figure 8. Using the davinci model for CLAM, we are able to detect ambiguous questions more reliably than Default GPT, Force
+clarification and Prompting baseline. davinci detects ambiguous questions less well than thetext-davinci-002 model used in
+the main part of the paper.
+
+
+                  Table 3. The davinci model reliably generates the correct clarifying question and clarification
+
+                                                         A MBIGUOUS T RIVIAQA      CLAQUA I      CLAQUA II
+                    C ORRECT CLARIFYING QUESTION                 97%                 99%           92%
+                    C ORRECT ORACLE ANSWER                       98%                 76%           67%
+
+
+A. Additional experimental results
+A.1. Results on davinci model
+In this section, we report the results of our experiments using the davinci model whereas we used the
+text-davinci-002 model in the main part of the paper. Overall, we observe qualitatively similar results using
+the davinci model as with the text-davinci-002, although at a lower level. In summary, we find that
+
+   • We find that davinci is also able to distinguish ambiguous from unambiguous questions, see Figure 8, although less
+     reliably than text-davinci-002.
+   • davinci is able to reliably generate clarifying questions across all data sets, and relatively reliably provides clarifica-
+     tion, see Table 3.
+
+   • Lastly, we show that clarifying improves QA accuracy on ambiguous questions across all data sets Figure 9.
+
+
+A.2. Ablation of penalty term in adjusted accuracy
+In Table 4, we show that our adjusted accuracy results hold up across different penalty terms λ. The results in the main part
+of the paper use λ = 0.8
+
+A.3. Additional analysis of CLAM performance
+In Figure 5a in the main part of the paper, we show that CLAM improves the question-answering accuracy on the full
+Ambiguous TriviaQA data set. In this section, we additionally compare the different baselines on the ambiguous and
+unambiguous questions separately, see Figure 10. We find that, as expected, both Force clarification and CLAM lead to
+a large accuracy improvmenet on ambiguous questions, and largely leave the performance on unambiguous questions
+unaffected.
+                         CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+
+
+
+                                              40
+
+                                              30
+
+
+
+
+                                       Accuracy
+                                              20
+
+                                              10
+
+                                                  0
+
+
+
+
+                                                                                 AI
+
+
+
+
+                                                                                                                I
+                                                                                                            AI
+                                                            QA s
+                                                         via ou
+
+
+
+
+                                                                                U
+
+
+
+
+                                                                                                            U
+                                                                             AQ
+                                                      Tri bigu
+
+
+
+
+                                                                                                         AQ
+                                                                            CL
+
+
+
+
+                                                                                                       CL
+                                                      Am
+                                                                          Datasets
+
+Figure 9. davinci: Prompting the model to ask the user for clarification improves QA accuracy on ambiguous questions. ClariQ
+does not contain answers for the ambiguous questions and is thus not displayed in this figure.
+
+
+
+
+Table 4. Adjusted accuracy results for different penalty terms on the full Ambiguous TriviaQA data set. In our adjusted accuracy
+metric, the accuracy of the subset of questions that are unambiguous and on which the language model nonetheless asks for clarification
+are multiplied with a penalty term 0 < λ < 1. We show that CLAM outperforms the default GPT model and the baselines regardless of
+the particular choice of λ. Note that default GPT and the prompting baseline never ask for clarification on unambiguous questions and
+thus do not incur a penalty.
+                          Method / λ                                0.5       0.6               0.7      0.8        0.9     1.0
+                          Default GPT                              34.25     34.25             34.25    34.25    34.25    34.25
+                          Prompting baseline                       37.50     37.50             37.50    37.50    37.50    37.50
+                          Always prompt for clarification          40.37      43.0             45.62    48.25    50.88    53.5
+                          CLAM (ours)                              53.88     54.05             54.22    54.40    54.58    54.75
+
+
+
+
+                    70                                                                    70
+                    60                                                                    60
+                    50                                                                    50
+                              Default GPT                                                              Default GPT
+                    40                                                                    40
+         Accuracy
+
+
+
+
+                                                                               Accuracy
+
+
+
+
+                              Prompting baseline                                                       Prompting baseline
+                    30        Always prompt for clarification                             30           Always prompt for clarification
+                              CLAM (ours)                                                              CLAM (ours)
+                    20                                                                    20
+                    10                                                                    10
+                     0                                                                     0
+                                       (a)                                                                      (b)
+
+Figure 10. (a) Accuracy on ambiguous questions from Ambiguous TriviaQA only: CLAM and always prompting the language model
+to ask the user for clarification yields large improvements in accuracy over the default GPT behaviour and the prompting baseline. (b)
+Accuracy on unambiguous questions from Ambiguous TriviaQA only: The model performance on unnecessary questions remains
+largely unaffected. Note that always prompting for clarification leads to unnecessary turns of conversation on unambiguous questions
+which is in itself undesirable and sometimes decreases the accuracy by leading the conversation off-topic.
+                 CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+B. Additional information on data sets and prompts
+In this section, we provide additional details on the data sets and prompts used in our experiments.
+
+B.1. Ambiguous TriviaQA
+As described in Section 2, we derive the ambiguous TriviaQA from the original TriviaQA Joshi et al. (2017) data set. Given
+an unambiguous question from the TriviaQA data set, we derive an ambiguous question as follows:
+
+  • Replacing a name or noun with a generic pronoun, e.g. “Where in England was Dame Judi Dench born?” becomes
+    “Where in England was she born?”.
+
+  • Replacing a noun phrase with a class the noun belongs to, e.g. “Which country is Europe’s largest silk producer?”
+    becomes “Which country is Europe’s largest producer?”
+
+Ambiguity detection
+
+Q: Who was the first woman to make a solo flight across this ocean?
+This question is ambiguous: True.
+
+Q: Who was the first woman to make a solo flight across the Atlantic?
+This question is ambiguous: False.
+
+Q: In which city were Rotary Clubs set up in 1905?
+This question is ambiguous: False.
+
+Q: Who along with Philips developed the CD in the late 70s?
+This question is ambiguous: False.
+
+Q: Where is the multinational corporation based?
+This question is ambiguous: True.
+
+Q: [question to be classified]
+This question is ambiguous:
+
+As explained in the main part of the paper, we then take the log probability of the next token being True as a continuous
+predictor of whether the given question is ambiguous or not.
+Clarifying question generation
+
+This is a conversation between a user and a question-answering bot.
+User: On what date did he land on the moon?
+Bot: To answer this question, I need to ask the following clarifying question:
+Who is he?
+
+###
+
+User: Which country on this continent has the largest population?
+Bot: To answer this question, I need to ask the following clarifying question:
+Which continent?
+
+###
+
+User: {initial_question}
+Bot: To answer this question, I need to ask the following clarifying question:
+                  CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+B.2. ClariQ
+ClariQ (Aliannejadi et al., 2020) is based on search engine queries from the TREC Web Track 2009-2012 data set (Clarke
+et al., 2012). Every query in the data set has a human label clarification need (1-4) that indicates how unclear the human
+labeller perceives this question to be. We convert this data into a binary classification data set by labelling queries with
+clarification needs of 1 and 2 as unambiguous, and queries with clarification needs of 3 and 4 as ambiguous.
+This data set does not contain reference answers for the given questions. We can thus only use this data set to measure
+ambiguity detection
+Ambiguity detection
+
+This bot determines whether a given question is ambiguous or not.
+Question: Tell me about Obama family tree.
+This question is ambiguous: False.
+
+Question: TV on computer.
+This question is ambiguous: True.
+
+Question: What is Fickle Creek Farm
+This question is ambiguous: False.
+
+Question: Find condos in Florida.
+This question is ambiguous: True.
+
+[Three additional examples]
+
+Question: [question to be classified]
+This question is ambiguous:
+
+As explained in the main part of the paper, we then take the log probability of the next token being True as a continuous
+predictor of whether the given question is ambiguous or not.
+
+B.3. CLAQUA I
+This data set corresponds to the single-turn part of the CLAQUA (Xu et al., 2019) data set. A given sample in this data
+set consists of the following components: two fields entity1 and entity2 that provide descriptions on two entities which
+both have the same name but are two distinct entities. Each sample also contains a question that is either ambiguous or
+unambiguous, that is a question that could possibly refer to either of the two entities or not. For the ambiguous question, the
+data set additionally contains a label that indicates which of the two entities the question is supposed to refer to, as well as
+an answer to the ambiguous initial question. This data set does not contain answers for the unambiguous questions in the
+data set.
+As done in Xu et al. (2019), the description of the two entities is provided to the question answering model together with the
+given question.
+Ambiguity detection
+We use the following few-shot prompt to detect whether a given question is ambiguous or not
+
+
+This bot determines whether a given question is ambiguous or not.
+
+entity1: Aggrenox Aggrenox (Aspirin, Dipyridamole) (...)
+entity2: Aggrenox Aggrenox contains a combination of (...)
+"What is Aggrenox’s ingredient?" could refer to both entities "Aggrenox": True.
+
+entity1: Jack Shelton Jack Shelton (born November 30, 1931) is an American bebop and(...)
+                 CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+entity2: Jack Shelton John Jack Shelton was an English footballer who played as a right-half a
+"What are the written works of Jack Shelton?" could refer to both \\
+entities "Jack Shelton": False.
+
+[Three additional examples]
+
+[description of entity1]
+[description of entity2]
+[question] could refer to both entities [entity name]:
+
+
+As explained in the main part of the paper, we then take the log probability of the next token being True as a continuous
+predictor of whether the given question is ambiguous or not.
+Clarifying question generation
+
+Question: Casting director for Fakers
+When you say Fakers, are you referring to the TV movie or the movie?
+
+###
+
+Question: What is name of place where Ernest Pollard was born?
+When you say Ernest Pollard, are you referring to the Nebraska Republican politician or the pr
+
+###
+
+Question: Cunningham Elementary\’s rank
+Which Cunningham Elementary are you referring to?
+
+###
+
+Question: Who is the host of Room 101?
+Which Room 101?
+
+
+###
+Question: {initial_question}
+
+B.4. CLAQUA II
+This data set corresponds to the multi-turn part of the CLAQUA (Xu et al., 2019) data set. Every sample of the data set
+contains the following components: A three-turn dialogue where the last turn is a question. For some samples, this question
+can refer to
+Ambiguity detection
+
+This bot determines whether a given question is ambiguous or not.
+
+Context: Bazil Broketail. Bazil Broketail (1992) is a fantasy novel written by (...)
+Context: A Sword for a Dragon. A Sword for a Dragon is a fantasy novel written (...)
+User: Is there a sequel to bazil broketail
+Bot: A Sword for a Dragon
+User: How about the style of this creative work?
+"How about the style of this creative work?" could refer both \\
+to Bazil Broketail and A Sword for a Dragon: True
+                 CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+###
+
+Context: 807 Ceraskia. 807 Ceraskia is a minor planet orbiting the Sun.
+Context: Eos family. The Eos family (adj. Eoan; FIN: 606) is a very large asteroid (...)
+User: What is family for 807 ceraskia
+Bot: Eos family
+User: What is the star system of the object
+"What is the star system of the object" could refer both \\
+to 807 Ceraskia and Eos family: False.
+
+[Three additional examples]
+
+###
+
+[context]
+[dialogue]
+{question} could refer both to [entity1] and [entity2]:
+
+As explained in the main part of the paper, we then take the log probability of the next token being True as a continuous
+predictor of whether the given question is ambiguous or not.
+Clarifying question generation
+
+This is a conversation between a user and a question-answering bot.
+Is there a sequel to bazil broketail <EOS>\\
+A Sword for a Dragon <EOS>\\
+How about the style of this creative work?
+Bot: To answer this question, I need to ask the following clarfiying question:
+Are you referring to bazil broketail or a sword for a dragon?
+
+###
+
+What is higher classification for schadonia <EOS>\\
+Lecanorineae <EOS>\\
+Which cataloge it should be classified into?
+To answer this question, I need to ask the following clarfiying question:
+Are you referring to schadonia or Lecanorineae?
+
+[Two additional examples]
+
+###
+
+{question}
+Bot: To answer this question, I need to ask the following clarfiying question:
+                 CLAM: Selective Clarification for Ambiguous Questions with Generative Language Models
+
+C. CLAM Algorithm
+We tune the decision threshold τ used to detect ambiguity in CLAM (see Algorithm 1) to maximize the QA accuracy on a
+holdout data set of ambiguous and unambiguous questions and use τ = −0.3 in the remaining experiments.
+
+Algorithm 1 Selective clarification of imprecise questions
+Require: A language model M, a question Q, a user U, ambiguity classifier f .
+  A ← M(Q) {Ask language model to answer question Q}
+  ambiguous ← f (Q, M) {Classify ambiguity, e.g., with few-shot prompted LLM}
+  if ambiguous then
+     Q0 ← concat(Q, “To answer this question, I have to ask the following clarifying question”)
+     Q̂ ← M(Q0 ) {Ask a clarifying question Q̂}
+     Â ← U(concat(Q, Q̂)) {Get clarification from user or oracle}
+     A ← M(concat(Q, Q̂, Â)) {Return answer given entire dialogue}
+  end if
+  return A
+
