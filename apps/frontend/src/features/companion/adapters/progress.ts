@@ -1,6 +1,7 @@
 import { workflowApi } from '@/services/api/workflow'
 import { EMPTY_PROGRESS } from '../types'
 import type { ProgressPort, ProgressSnapshot } from '../types'
+import { companionRuntimeBridge } from '../runtimeBridge'
 
 export const COMPANION_RUN_STORAGE_KEY = 'companion.active_run_id.v1'
 
@@ -15,21 +16,7 @@ export function parseRunIdFromLocation(href: string): string | null {
 
 export class WorkflowProgressPort implements ProgressPort {
   resolveRunId(): string | null {
-    let fromLocation: string | null = null
-    try {
-      fromLocation = parseRunIdFromLocation(window.location.href)
-      if (!fromLocation && window.location.hash) {
-        fromLocation = parseRunIdFromLocation(window.location.hash)
-      }
-    } catch {
-      fromLocation = null
-    }
-    if (fromLocation) return fromLocation
-    try {
-      return localStorage.getItem(COMPANION_RUN_STORAGE_KEY) || null
-    } catch {
-      return null
-    }
+    return companionRuntimeBridge.selection?.runId ?? null
   }
 
   async read(runId: string, signal?: AbortSignal): Promise<ProgressSnapshot> {

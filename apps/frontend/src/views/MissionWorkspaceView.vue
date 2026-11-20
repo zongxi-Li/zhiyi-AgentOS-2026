@@ -238,6 +238,7 @@ import { registerOpenFile } from '@/workbench/core/openFileRequest'
 import { createWorkbenchContext } from '@/workbench/context'
 import { RuntimeObservationAdapter, type RuntimeObservation, type RuntimeSelection } from '@/workbench/runtime/observation'
 import { acquireRunRuntimeStore, releaseRunRuntimeStore, type RunRuntimeStore } from '@/workbench/runtime/runtimeEvents'
+import { companionRuntimeBridge } from '@/features/companion/runtimeBridge'
 import type { RunDocumentSymbol } from '@/workbench/runtime/runDocument'
 import type { ArtifactDocumentModel } from '@/workbench/runtime/artifactProjection'
 import { beginRunRecovery, pendingRunRecovery, completeRunRecovery } from '@/workbench/runtime/recoveryIdentity'
@@ -262,6 +263,8 @@ const hasConversationBinding = inject(conversationBindingKey, () => false)
 let viewActive = true
 let suspended = false
 const isWorkspaceVisible = () => viewActive && router.currentRoute.value.path === route.path
+const companionOwner = Symbol('mission-workspace')
+companionRuntimeBridge.activate(companionOwner)
 const emit = defineEmits<{
   'open-workspace-file': [request: WorkspaceFileOpenRequest]
 }>()
@@ -740,6 +743,7 @@ const consumeDeliveryIntent = (workspace: MissionWorkspaceProjection, runId: str
 const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgress?: boolean } = {}) => {
   if (!isWorkspaceVisible()) return
   if (!missionId.value) {
+    companionRuntimeBridge.clear(companionOwner)
     loadError.value = '缺少 missionId，无法加载 Mission Workspace。'
     return
   }
@@ -752,6 +756,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   const preserveRenderedWorkspace = Boolean(projection.value && !runSelectionChanged)
   controller?.abort()
   if (!preserveRenderedWorkspace) {
+    companionRuntimeBridge.clear(companionOwner)
     pendingObservation = null
     runtimeObservationAdapter.stop()
     runtimeObservation.value = null
@@ -785,6 +790,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
     if (preserveRenderedWorkspace && nextRevision >= 0 && previousRevision > nextRevision) return
     projection.value = nextProjection
     selectedRunId.value = nextProjection.activeRun?.runId || runId || null
+    companionRuntimeBridge.selectVerified(companionOwner, nextProjection, missionId.value, runId)
     nextProjection.entries.forEach(entry => { entryCache.value[entry.entryId] = entry })
     syncProgressEditorIdentity(nextProjection, runId)
     followLifecycle()
@@ -821,6 +827,7 @@ const loadWorkspace = async (runId = selectedRunId.value, options: { focusProgre
   } catch (error: unknown) {
     if (!viewActive || controller !== requestController || requestController.signal.aborted) return
     if (isAbortError(error)) return
+    companionRuntimeBridge.clear(companionOwner)
     // A known unapplied watermark is retried with backoff, preserving content.
     const status = responseStatus(error)
     loadError.value = status === 401 || status === 403 ? '无权访问所选 Run，未切换到其他 Run。'
@@ -853,6 +860,7 @@ const selectRun = async (runId: string, userSelected = true) => {
     return
   }
   selectedRunId.value = runId
+  companionRuntimeBridge.clear(companionOwner)
   selectedSymbolId.value = null
   selectedSymbolType.value = null
   selectedSymbol.value = null
@@ -1190,6 +1198,7 @@ onMounted(() => {
 })
 const suspendWorkspace = () => {
   viewActive = false
+  companionRuntimeBridge.release(companionOwner)
   unregisterOpenFile?.()
   unregisterOpenFile = null
   pendingObservation = null
@@ -1210,6 +1219,7 @@ onActivated(() => {
   if (!suspended) return
   suspended = false
   viewActive = true
+  companionRuntimeBridge.activate(companionOwner)
   unregisterOpenFile = registerOpenFile(openWorkspaceFile)
   const routeRunId = typeof route.query.runId === 'string' ? route.query.runId : selectedRunId.value
   void loadWorkspace(routeRunId)

@@ -1,0 +1,61 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { MissionWorkspaceProjection } from '@/services/api/agentos'
+import { CompanionRuntimeBridge } from './runtimeBridge'
+
+const projection = (runId = 'a', missionId = 'm') => ({ mission: { missionId },
+  activeRun: { runId, status: 'running' }, runs: [{ runId, status: 'running' }] } as MissionWorkspaceProjection)
+
+describe('verified companion runtime bridge', () => {
+  it('accepts only the active owner and verifies mission, requested run and projection membership', () => {
+    const bridge = new CompanionRuntimeBridge()
+    const a = Symbol('a'), b = Symbol('b')
+    bridge.activate(a)
+    bridge.selectVerified(a, projection(), 'm', 'a')
+    expect(bridge.selection).toEqual({ missionId: 'm', runId: 'a', status: 'running' })
+    bridge.activate(b)
+    expect(bridge.selection).toBeNull()
+    bridge.selectVerified(a, projection(), 'm')
+    expect(bridge.selection).toBeNull()
+    bridge.selectVerified(b, projection('b'), 'm', 'wrong')
+    expect(bridge.selection).toBeNull()
+    bridge.selectVerified(b, projection('b', 'foreign'), 'm')
+    expect(bridge.selection).toBeNull()
+    bridge.selectVerified(b, { ...projection('b'), runs: [] }, 'm')
+    expect(bridge.selection).toBeNull()
+    bridge.selectVerified(b, projection('b'), 'm')
+    expect(bridge.selection?.runId).toBe('b')
+    bridge.clear(a)
+    bridge.release(a)
+    expect(bridge.selection?.runId).toBe('b')
+    bridge.clear(b)
+    expect(bridge.selection).toBeNull()
+    bridge.selectVerified(b, projection('b'), 'm')
+    bridge.release(b)
+    expect(bridge.selection).toBeNull()
+  })
+
+  it('filters other runs and snapshot replays, has no stream, and removes subscribers', () => {
+    const bridge = new CompanionRuntimeBridge()
+    const owner = Symbol('workspace')
+    const events = vi.fn(), selections = vi.fn()
+    const stopSelection = bridge.subscribeSelection(selections)
+    const stopEvents = bridge.subscribeEvents(events)
+    const fetch = vi.spyOn(globalThis, 'fetch')
+    const event = { eventId: 'e1', eventType: 'node.started', runId: 'a', sequence: 1 }
+    bridge.publishAccepted(event)
+    bridge.activate(owner)
+    bridge.selectVerified(owner, projection(), 'm')
+    bridge.publishAccepted({ ...event, runId: 'b' })
+    bridge.publishAccepted({ ...event, eventType: 'runtime.display.snapshot' })
+    bridge.publishAccepted(event)
+    expect(events).toHaveBeenCalledOnce()
+    expect(events).toHaveBeenCalledWith(event)
+    expect(selections).toHaveBeenLastCalledWith({ missionId: 'm', runId: 'a', status: 'running' })
+    stopEvents(); stopSelection()
+    bridge.release(owner)
+    bridge.publishAccepted(event)
+    expect(events).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+    fetch.mockRestore()
+  })
+})

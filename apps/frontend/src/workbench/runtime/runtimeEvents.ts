@@ -4,6 +4,7 @@ import { apiUrl } from '@/platform'
 import { readSseFrames } from '@/utils/sse'
 import { planningContent, streamingContent } from './streamingContent'
 import { createStreamBatcher } from '../../../../backend/src/shared/chat-stream/index.mjs'
+import { companionRuntimeBridge } from '@/features/companion/runtimeBridge'
 
 export interface RuntimeEvent {
   eventId: string
@@ -162,11 +163,11 @@ export class RunRuntimeStore {
     }
   }
 
-  apply(event: RuntimeEvent) {
-    if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) return
+  apply(event: RuntimeEvent): boolean {
+    if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) return false
     if (event.runId === this.runId && event.eventType === 'runtime.display.snapshot') {
       const snapshot = event.payload
-      if (snapshot?.schemaVersion !== 1 || !Array.isArray(snapshot.events)) return
+      if (snapshot?.schemaVersion !== 1 || !Array.isArray(snapshot.events)) return false
       this.batcher.flush()
       this.pending.clear()
       this.pendingPlanning = null
@@ -182,10 +183,10 @@ export class RunRuntimeStore {
       }
       this.batcher.flush()
       this.lastSequence = event.sequence
-      return
+      return true
     }
-    if (event.runId !== this.runId || event.sequence <= this.lastSequence) return
-    if (this.terminal) return
+    if (event.runId !== this.runId || event.sequence <= this.lastSequence) return false
+    if (this.terminal) return false
     this.lastSequence = event.sequence
     if (!['model.output.delta', 'planner.model.output.delta'].includes(event.eventType)) this.batcher.flush()
     if (['tool.approval_required', 'tool.approval_resolved', 'tool.execution_started', 'tool.execution_completed',
@@ -198,19 +199,19 @@ export class RunRuntimeStore {
     }
     if (PLANNER_EVENTS.has(event.eventType) || event.eventType.startsWith('planner.')) {
       this.applyPlanner(event)
-      return
+      return true
     }
     if (['run.completed', 'run.failed', 'run.cancelled', 'run.superseded'].includes(event.eventType)) {
       this.terminal = true
-      return
+      return true
     }
     const id = event.nodeId || ''
-    if (!id) return
+    if (!id) return true
     const n = this.node(id)
     const p = event.payload || {}
     if (typeof p.nodeTitle === 'string') n.title = p.nodeTitle
     const attempt = event.attemptId || n.currentAttemptId
-    if (attempt && this.retiredAttempts.get(id)?.has(attempt)) return
+    if (attempt && this.retiredAttempts.get(id)?.has(attempt)) return false
     const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
     if (attempt && n.currentAttemptId !== attempt) {
       this.archiveNode(id)
@@ -231,7 +232,7 @@ export class RunRuntimeStore {
       n.completedAt = null
       this.pending.delete(id)
     }
-    if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return
+    if (!attemptChanged && (n.status === 'COMPLETED' || n.status === 'FAILED')) return false
     if (event.eventType === 'node.started') n.status = 'RUNNING'
     else if (event.eventType === 'model.started') {
       this.archiveNode(id)
@@ -276,6 +277,7 @@ export class RunRuntimeStore {
       n.status = 'FAILED'
       n.phase = 'FAILED'
     }
+    return true
   }
 
   private applyPlanner(event: RuntimeEvent) {
@@ -509,7 +511,8 @@ export class RuntimeEventClient {
     try { event = JSON.parse(data) as RuntimeEvent }
     catch { return /* A malformed frame must not terminate the runtime stream. */ }
     if (!event || typeof event.eventType !== 'string') return
-    this.store.apply(event)
+    const accepted = this.store.apply(event)
+    if (accepted && event.eventType !== 'runtime.display.snapshot') companionRuntimeBridge.publishAccepted(event)
     if (this.store.terminal) this.disconnect()
   }
 }

@@ -1,5 +1,6 @@
 import { apiUrl, localFetch } from '@/platform/api'
 import { parseChatStreamFrame } from '@/utils/sse'
+import { companionContextProjection } from '../persona'
 import type { ChatPort, CompanionContext } from '../types'
 
 const CONTEXT_STORAGE_KEY = 'companion.chat_context_id.v1'
@@ -51,7 +52,7 @@ export class StreamChatPort implements ChatPort {
     }
   }
 
-  async reply(text: string, _context: CompanionContext, signal?: AbortSignal): Promise<string> {
+  async reply(text: string, context: CompanionContext, signal?: AbortSignal): Promise<string> {
 
     const contextId = this.resolveContextId()
     const model = readModelOverride()
@@ -62,7 +63,8 @@ export class StreamChatPort implements ChatPort {
       },
       body: JSON.stringify({
         text,
-        tool_mode: 'auto',
+        tool_mode: 'disabled',
+        context: companionContextProjection(text, context),
         // 伙伴闲聊不需要深度思考；轻量档是它「回复快」的前提。
         thinking_mode: 'disabled',
         ...(model ? { model } : {}),
@@ -79,7 +81,9 @@ export class StreamChatPort implements ChatPort {
     let buffer = ''
     let content = ''
     let failure = ''
-    while (true) {
+    let complete = false
+    try { while (true) {
+      signal?.throwIfAborted()
       const { done, value } = await reader.read()
       buffer += decoder.decode(value, { stream: !done })
       const frames = buffer.replace(/\r\n/g, '\n').split('\n\n')
@@ -97,9 +101,13 @@ export class StreamChatPort implements ChatPort {
         this.rememberContextId(event.data.contextId ?? event.data.meta?.contextId)
         if (event.event === 'content_delta') content += String(event.data.delta ?? '')
         if (event.event === 'error') failure = String(event.data.code ?? 'AI_STREAM_FAILED')
-        if (event.event === 'done' || failure) break
+        if (event.event === 'done') complete = true
+        if (complete || failure) break
       }
-      if (done || failure) break
+      if (done || complete || failure) break
+    } } finally {
+      try { await reader.cancel() } catch { /* Fetch may have already aborted. */ }
+      reader.releaseLock()
     }
     if (failure) throw new Error(failure)
     return content.trim() || '模型没有返回内容，换个说法再问我一次吧。'

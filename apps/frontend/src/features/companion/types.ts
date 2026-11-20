@@ -25,7 +25,7 @@ export type SceneId =
 
 export type DiyShape = 'circle' | 'squircle' | 'drop' | 'star' | 'blob'
 
-/** 用户可自定义的形象配置。全部只存本地，不上送后端。 */
+/** 用户可自定义的形象配置。外观/声音仅本地；称呼与台词可作为模型风格上下文。 */
 export interface CompanionCustomization {
   version: 1
   name: string
@@ -60,7 +60,7 @@ export interface SkinManifest {
   /** 业务只发 CompanionState，由皮肤自己声明如何映射到具体形象状态。 */
   stateMap: Record<CompanionState, string>
   fallbackSkinId: string | null
-  /** 仅 diy-svg 携带：渲染器据此决定形状、配色、图片与动效。 */
+  /** 有效偏好：所有皮肤使用配色/动效；DIY 另使用形状和上传图片。 */
   custom?: CompanionCustomization
 }
 
@@ -115,6 +115,8 @@ export interface CompanionContext {
   messages: CompanionMessage[]
   progress: ProgressSnapshot | null
   personaName: string
+  /** Local style preferences, sent separately from user text for model replies. */
+  personaLines?: string[]
 }
 
 export interface ChatPort {

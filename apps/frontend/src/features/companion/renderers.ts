@@ -1,4 +1,5 @@
 import type { AvatarRenderer, CompanionState, DiyShape, SkinManifest } from './types'
+import type { GrokCharacterInstance } from '@/lib/grok-character'
 
 const NS = 'http://www.w3.org/2000/svg'
 
@@ -46,7 +47,7 @@ interface Face {
  * 表情层：三种皮肤共用的「眨眼 / 说话口型 / 收音光晕」。
  * 所有计时器都由 destroy() 对称清理，组件卸载不会留下跑动的 interval。
  */
-function createFace(svg: SVGElement, stroke: string, motion: boolean): Face {
+function createFace(svg: SVGElement, stroke: string, motion: boolean, voiceOnly = false): Face {
   const ring = createSvg('circle')
   ring.setAttribute('cx', '100')
   ring.setAttribute('cy', '100')
@@ -67,9 +68,11 @@ function createFace(svg: SVGElement, stroke: string, motion: boolean): Face {
     svg.appendChild(part)
     return part
   }
-  const leftEye = makeStroke()
-  const rightEye = makeStroke()
+  const leftEye = voiceOnly ? null : makeStroke()
+  const rightEye = voiceOnly ? null : makeStroke()
   const mouth = makeStroke()
+  mouth.setAttribute('class', 'companion-face-mouth')
+  if (voiceOnly) mouth.setAttribute('transform', 'translate(0 24)')
 
   let state: CompanionState = 'idle'
   let speaking = false
@@ -83,14 +86,16 @@ function createFace(svg: SVGElement, stroke: string, motion: boolean): Face {
 
   const paint = (): void => {
     const paths = EYE_PATHS[state]
-    leftEye.setAttribute('d', blinking ? BLINK_EYE : paths.left)
-    rightEye.setAttribute('d', blinking ? BLINK_EYE_RIGHT : paths.right)
+    leftEye?.setAttribute('d', blinking ? BLINK_EYE : paths.left)
+    rightEye?.setAttribute('d', blinking ? BLINK_EYE_RIGHT : paths.right)
     mouth.setAttribute('d', speaking ? TALK_FRAMES[frame % TALK_FRAMES.length] : paths.mouth)
+    mouth.setAttribute('opacity', voiceOnly && !speaking ? '0' : '1')
+    ring.setAttribute('opacity', listening ? '0.55' : speaking ? '0.3' : '0')
     svg.setAttribute('data-companion-speaking', speaking ? '1' : '0')
     svg.setAttribute('data-companion-listening', listening ? '1' : '0')
   }
 
-  if (motion) {
+  if (motion && !voiceOnly) {
     blinkTimer = setInterval(() => {
       if (disposed || speaking || state === 'sleeping') return
       blinking = true
@@ -138,7 +143,7 @@ function makeSvgRoot(): SVGSVGElement {
 
 /**
  * 默认皮肤：纯内联 SVG，零外部资源、零引擎依赖。
- * 只使用既有设计令牌，不引入新配色；状态差异靠形状而非颜色。
+ * 未提供本地偏好时使用既有设计令牌；状态差异靠形状而非颜色。
  */
 export class InlineSvgRenderer implements AvatarRenderer {
   private svg: SVGSVGElement | null = null
@@ -153,13 +158,13 @@ export class InlineSvgRenderer implements AvatarRenderer {
     body.setAttribute('cx', '100')
     body.setAttribute('cy', '100')
     body.setAttribute('r', '68')
-    body.setAttribute('fill', 'var(--accent-fade)')
-    body.setAttribute('stroke', 'var(--primary-line)')
+    body.setAttribute('fill', skin.custom?.background ?? 'var(--accent-fade)')
+    body.setAttribute('stroke', skin.custom?.primary ?? 'var(--primary-line)')
     body.setAttribute('stroke-width', '2')
     svg.appendChild(body)
     el.appendChild(svg)
     this.svg = svg
-    this.face = createFace(svg, 'var(--primary-color)', !prefersReducedMotion())
+    this.face = createFace(svg, skin.custom?.accent ?? 'var(--primary-color)', skin.custom?.motion !== false && !prefersReducedMotion())
     this.setState(this.state)
   }
 
@@ -298,16 +303,21 @@ export class DiySvgRenderer implements AvatarRenderer {
  * 加载或构造失败时由上层 SkinRegistry 的 fallbackSkinId 降级。
  */
 export class GrokRenderer implements AvatarRenderer {
-  private bot: { setState(name: string): void; destroy(): void } | null = null
+  private bot: GrokCharacterInstance | null = null
   private svg: SVGSVGElement | null = null
+  private overlay: SVGSVGElement | null = null
+  private face: Face | null = null
   private skin: SkinManifest | null = null
   private state: CompanionState = 'idle'
+  private speaking = false
+  private listening = false
   private disposed = false
 
   async mount(el: HTMLElement, skin: SkinManifest): Promise<void> {
     this.skin = skin
     const module = await import('@/lib/grok-character')
     if (this.disposed) return
+    const motion = skin.custom?.motion !== false && !prefersReducedMotion()
     const svg = makeSvgRoot()
     svg.setAttribute('class', 'companion-grok-svg')
     el.appendChild(svg)
@@ -318,26 +328,55 @@ export class GrokRenderer implements AvatarRenderer {
       scheme: 'light',
       mode: 'hold',
       state: skin.stateMap[this.state],
-      followPointer: true,
-      reduceMotion: prefersReducedMotion()
+      followPointer: motion,
+      reduceMotion: !motion
     })
+    if (skin.custom) {
+      this.bot.setInk(skin.custom.primary)
+      this.bot.setEyeColor(skin.custom.accent)
+    }
+    // Keep the engine's own eyes and geometry. A separate transparent layer is
+    // immune to its internal SVG rebuilds and only supplies voice feedback.
+    const overlay = makeSvgRoot()
+    overlay.setAttribute('class', 'companion-grok-voice')
+    overlay.setAttribute('aria-hidden', 'true')
+    overlay.removeAttribute('role')
+    overlay.removeAttribute('aria-label')
+    Object.assign(overlay.style, { position: 'absolute', inset: '0', pointerEvents: 'none' })
+    el.appendChild(overlay)
+    this.overlay = overlay
+    this.face = createFace(overlay, skin.custom?.accent ?? 'var(--primary-color)', motion, true)
+    this.setState(this.state)
+    this.setSpeaking(this.speaking)
+    this.setListening(this.listening)
   }
 
   setState(state: CompanionState): void {
     this.state = state
     this.bot?.setState(this.skin?.stateMap[state] ?? state)
+    this.face?.setState(state)
     this.svg?.setAttribute('data-companion-state', this.skin?.stateMap[state] ?? state)
-    this.svg?.setAttribute('data-companion-speaking', '0')
-    this.svg?.setAttribute('data-companion-listening', '0')
   }
 
-  setSpeaking(on: boolean): void { this.svg?.setAttribute('data-companion-speaking', on ? '1' : '0') }
-  setListening(on: boolean): void { this.svg?.setAttribute('data-companion-listening', on ? '1' : '0') }
+  setSpeaking(on: boolean): void {
+    this.speaking = on
+    this.face?.setSpeaking(on)
+    this.svg?.setAttribute('data-companion-speaking', on ? '1' : '0')
+  }
+  setListening(on: boolean): void {
+    this.listening = on
+    this.face?.setListening(on)
+    this.svg?.setAttribute('data-companion-listening', on ? '1' : '0')
+  }
 
   destroy(): void {
     this.disposed = true
     this.bot?.destroy()
     this.bot = null
+    this.face?.destroy()
+    this.face = null
+    this.overlay?.remove()
+    this.overlay = null
     this.svg?.parentNode?.removeChild(this.svg)
     this.svg = null
     this.skin = null

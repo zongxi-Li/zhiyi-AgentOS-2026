@@ -85,8 +85,15 @@ interface ScriptProcessorLike {
   disconnect(): void
 }
 
+interface MicrophoneNodeLike {
+  connect(node: unknown): void
+  disconnect(): void
+}
+
 interface AudioContextLike {
   readonly sampleRate: number
+  readonly destination: unknown
+  createMediaStreamSource(stream: MediaStream): MicrophoneNodeLike
   createScriptProcessor(bufferSize: number, inputChannels: number, outputChannels: number): ScriptProcessorLike
   resume?(): Promise<unknown>
   close(): Promise<unknown> | void
@@ -105,27 +112,47 @@ export async function openMicrophoneSource(): Promise<AudioSource> {
   const stream = await media.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
   })
-  const ctx = new Ctor()
-  try { await ctx.resume?.() } catch { /* autoplay policies */ }
-  const node = ctx.createScriptProcessor(4096, 1, 1)
-  const resample = createResampler(ctx.sampleRate, TARGET_SAMPLE_RATE)
-  const source: AudioSource = {
-    sampleRate: TARGET_SAMPLE_RATE,
-    onChunk: null,
-    async start() { /* 采集在 connect 后自动开始 */ },
-    close() {
-      node.onaudioprocess = null
-      try { node.disconnect() } catch { /* already disconnected */ }
-      for (const track of stream.getTracks()) track.stop()
-      void Promise.resolve(ctx.close()).catch(() => undefined)
+  let ctx: AudioContextLike | null = null
+  let input: MicrophoneNodeLike | null = null
+  let node: ScriptProcessorLike | null = null
+  let closed = false
+  const close = (): void => {
+    if (closed) return
+    closed = true
+    if (node) node.onaudioprocess = null
+    try { input?.disconnect() } catch { /* already disconnected */ }
+    try { node?.disconnect() } catch { /* already disconnected */ }
+    for (const track of stream.getTracks()) {
+      try { track.stop() } catch { /* detached track */ }
     }
+    try { void Promise.resolve(ctx?.close()).catch(() => undefined) } catch { /* closed context */ }
   }
-  node.onaudioprocess = (event) => {
-    const down = resample(event.inputBuffer.getChannelData(0))
-    if (down.length) source.onChunk?.(down)
+  try {
+    ctx = new Ctor()
+    try { await ctx.resume?.() } catch { /* autoplay policies */ }
+    node = ctx.createScriptProcessor(4096, 1, 1)
+    input = ctx.createMediaStreamSource(stream)
+    const resample = createResampler(ctx.sampleRate, TARGET_SAMPLE_RATE)
+    const source: AudioSource = {
+      sampleRate: TARGET_SAMPLE_RATE,
+      onChunk: null,
+      async start() { /* 采集在 connect 后自动开始 */ },
+      close() {
+        source.onChunk = null
+        close()
+      }
+    }
+    node.onaudioprocess = (event) => {
+      const down = resample(event.inputBuffer.getChannelData(0))
+      if (down.length) source.onChunk?.(down)
+    }
+    input.connect(node)
+    node.connect(ctx.destination)
+    return source
+  } catch (error) {
+    close()
+    throw error
   }
-  node.connect((ctx as unknown as { destination: unknown }).destination)
-  return source
 }
 
 export class AsrUnavailableError extends Error {
@@ -164,7 +191,7 @@ export interface ServerRecognitionDeps {
 
 interface PendingSegment {
   pcm: Int16Array
-  startedAt: number
+  index: number
 }
 
 /**
@@ -187,8 +214,8 @@ export class ServerSpeechRecognition implements RecognitionLike {
   private lastVoiceAt = 0
   private segmentStartedAt = 0
   private segmentFailures = 0
-  private resultBase = 0
-  private queue: Promise<void> = Promise.resolve()
+  private queue: PendingSegment[] = []
+  private uploading = false
   /** 识别结果累积区：必须是可写的真数组（push/按下标回填），对外满足 ArrayLike 即可。 */
   private readonly results: Array<RecognitionEventLike['results'][number]> = []
 
@@ -206,13 +233,16 @@ export class ServerSpeechRecognition implements RecognitionLike {
       this.segmentStartedAt = this.deps.now()
       source.onChunk = (chunk) => this.handleChunk(chunk)
     }).catch(() => {
+      if (this.state !== 'recording') return
       this.onerror?.({ error: 'audio-capture' })
       this.finish()
     })
   }
 
   stop(): void {
-    if (this.state === 'idle' || this.state === 'ended') return
+    if (this.state !== 'recording') return
+    this.state = 'finishing'
+    this.closeCapture()
     // continuous 模式把当前段一并识别完再收尾；单次模式整段上传。
     this.flushSegment(this.continuous)
     this.finish()
@@ -220,9 +250,7 @@ export class ServerSpeechRecognition implements RecognitionLike {
 
   abort(): void {
     if (this.state === 'idle' || this.state === 'ended') return
-    this.buffer = []
-    this.bufferedSamples = 0
-    this.finish()
+    this.end()
   }
 
   private handleChunk(chunk: Float32Array): void {
@@ -242,8 +270,7 @@ export class ServerSpeechRecognition implements RecognitionLike {
     }
     // 单次模式：说过话之后持续静音即自动断句，用户不必手动停。
     if (this.speechStarted && this.lastVoiceAt > 0 && now - this.lastVoiceAt >= SILENCE_STOP_MS) {
-      this.flushSegment(false)
-      this.finish()
+      this.stop()
     }
   }
 
@@ -262,50 +289,74 @@ export class ServerSpeechRecognition implements RecognitionLike {
     this.buffer = []
     this.bufferedSamples = 0
     this.segmentStartedAt = this.deps.now()
-    const startedAt = this.deps.now()
     const index = this.results.length
     this.results.push({ 0: { transcript: '' }, isFinal: true })
-    this.queue = this.queue
-      .then(async () => {
-        const result = await this.deps.upload(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
-        this.segmentFailures = 0
-        this.results[index] = { 0: { transcript: result.text }, isFinal: true }
-        if (this.state === 'ended') return
-        if (result.text) {
-          this.resultBase = index
-          this.onresult?.({ resultIndex: this.resultBase, results: this.results })
-        } else if (!this.continuous && this.speechStarted) {
-          // 说过话但一个字都没识别出来：按浏览器语义报 no-speech。
-          this.onerror?.({ error: 'no-speech' })
+    this.queue.push({ pcm, index })
+    void this.drainUploads()
+  }
+
+  private isEnded(): boolean { return this.state === 'ended' }
+
+  private async drainUploads(): Promise<void> {
+    if (this.uploading) return
+    this.uploading = true
+    try {
+      while (this.queue.length && !this.isEnded()) {
+        const { pcm, index } = this.queue.shift()!
+        try {
+          const result = await this.deps.upload(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
+          if (this.isEnded()) return
+          this.segmentFailures = 0
+          this.results[index] = { 0: { transcript: result.text }, isFinal: true }
+          if (result.text) {
+            this.onresult?.({ resultIndex: index, results: this.results })
+          } else if (!this.continuous && this.speechStarted) {
+            // 说过话但一个字都没识别出来：按浏览器语义报 no-speech。
+            this.onerror?.({ error: 'no-speech' })
+          }
+        } catch (error: unknown) {
+          if (this.isEnded()) return
+          this.segmentFailures += 1
+          if (this.segmentFailures >= MAX_SEGMENT_FAILURES || !this.continuous) {
+            const code = error instanceof AsrUnavailableError ? 'asr-unavailable' : 'network'
+            this.onerror?.({ error: code })
+            this.finish()
+          }
         }
-      })
-      .catch((error: unknown) => {
-        if (this.state === 'ended') return
-        this.segmentFailures += 1
-        if (this.segmentFailures >= MAX_SEGMENT_FAILURES || !this.continuous) {
-          const code = error instanceof AsrUnavailableError ? 'asr-unavailable' : 'network'
-          this.onerror?.({ error: code })
-          this.finish()
-        }
-      })
-    void startedAt
+      }
+    } finally {
+      this.uploading = false
+      if (this.state === 'finishing') this.end()
+    }
   }
 
   private finish(): void {
     if (this.state === 'ended') return
-    this.state = 'ended'
+    this.state = 'finishing'
+    this.closeCapture()
+    // 不等待当前上传自身的 promise；上传循环会在排空后结束。
+    if (!this.uploading) this.end()
+  }
+
+  private closeCapture(): void {
     const source = this.source
     this.source = null
+    if (source) source.onChunk = null
     source?.close()
-    source && (source.onChunk = null)
-    // 等在途上传结束后再触发 onend，保证「结果先于结束」的事件顺序。
-    this.queue = this.queue.then(() => {
-      if (this.state !== 'ended') return
-      this.onend?.()
-      this.onresult = null
-      this.onerror = null
-      this.onend = null
-    })
+  }
+
+  private end(): void {
+    if (this.state === 'ended') return
+    this.state = 'ended'
+    this.buffer = []
+    this.bufferedSamples = 0
+    this.queue = []
+    this.closeCapture()
+    const onend = this.onend
+    this.onresult = null
+    this.onerror = null
+    this.onend = null
+    onend?.()
   }
 }
 

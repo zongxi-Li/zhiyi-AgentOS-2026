@@ -1,6 +1,7 @@
 import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import { RunRuntimeStore, RuntimeEventClient, acquireRunRuntimeStore, releaseRunRuntimeStore } from './runtimeEvents'
+import { companionRuntimeBridge } from '@/features/companion/runtimeBridge'
 
 const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a1', delta = '') => ({
   eventId: `e${sequence}`, eventType, runId: 'run', nodeId, attemptId, sequence,
@@ -8,6 +9,34 @@ const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a
 })
 
 describe('RunRuntimeStore streaming projection', () => {
+  it('publishes only accepted live envelopes from the shared SSE, never snapshot history or rejected frames', async () => {
+    const publish = vi.spyOn(companionRuntimeBridge, 'publishAccepted')
+    const frames = [
+      { ...event(0, 'node.started'), runId: 'foreign' },
+      { ...event(5, 'runtime.display.snapshot'), payload: { schemaVersion: 1, events: [event(4, 'planner.failed')] } },
+      event(5, 'planner.failed'), // duplicate watermark
+      event(6, 'model.started'),
+      event(7, 'model.started', 'A', 'a2'),
+      event(8, 'node.failed', 'A', 'a1'), // retired attempt
+      { ...event(8.5, 'run.failed') },
+      event(9, 'run.completed'), event(10, 'node.failed')
+    ]
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(frames.map(value => `data: ${JSON.stringify(value)}\n\n`).join(''))) }
+    })
+    const fetch = vi.fn().mockResolvedValue(new Response(stream))
+    vi.stubGlobal('fetch', fetch)
+    const store = new RunRuntimeStore('run')
+    const client = new RuntimeEventClient(store)
+    try {
+      client.connect()
+      await flushPromises()
+      expect(store.lastSequence).toBe(9)
+      expect(publish.mock.calls.map(([value]) => value.sequence)).toEqual([6, 7, 9])
+      expect(fetch).toHaveBeenCalledOnce()
+    } finally { client.disconnect(); store.dispose(); publish.mockRestore(); vi.unstubAllGlobals() }
+  })
+
   it('rebaselines after a restart and continues cumulative public text without duplication', () => {
     const store = new RunRuntimeStore('run')
     store.apply(event(99, 'model.output.delta', 'obsolete', 'old', 'stale'))

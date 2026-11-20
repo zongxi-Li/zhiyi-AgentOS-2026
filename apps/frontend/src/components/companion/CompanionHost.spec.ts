@@ -2,6 +2,15 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CompanionHost from './CompanionHost.vue'
 import { COMPANION_SKIN_STORAGE_KEY } from '@/features/companion/skins'
+import { companionRuntimeBridge } from '@/features/companion/runtimeBridge'
+import type { MissionWorkspaceProjection } from '@/services/api/agentos'
+
+const owner = Symbol('host-spec')
+const selectRun = (runId: string) => {
+  companionRuntimeBridge.activate(owner)
+  companionRuntimeBridge.selectVerified(owner, { mission: { missionId: 'm' }, activeRun: { runId, status: 'running' }, runs: [{ runId, status: 'running' }] } as MissionWorkspaceProjection, 'm')
+}
+const publish = (eventType: string, runId: string, sequence = 1) => companionRuntimeBridge.publishAccepted({ eventId: `${runId}:${sequence}`, eventType, runId, sequence })
 
 vi.mock('@/services/api/workflow', () => ({
   workflowApi: {
@@ -22,9 +31,12 @@ describe('CompanionHost', () => {
   })
 
   afterEach(() => {
+    companionRuntimeBridge.release(owner)
     document.body.innerHTML = ''
     localStorage.clear()
     vi.clearAllMocks()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   it('mounts a collapsed avatar with the static skin and no network activity', async () => {
@@ -80,26 +92,67 @@ describe('CompanionHost', () => {
   })
 
   it('maps runtime events onto the avatar state without opening a new connection', async () => {
+    selectRun('run_9')
     const wrapper = mount(CompanionHost)
     await flushPromises()
     query('[data-testid="companion-avatar"]')?.click()
     await flushPromises()
 
-    window.dispatchEvent(new CustomEvent('companion:run-event', {
-      detail: { eventType: 'run.failed', runId: 'run_9' }
-    }))
+    publish('run.failed', 'run_9')
     await flushPromises()
 
     expect(query('[data-testid="companion-state"]')?.textContent).toContain('出错了')
     expect(query('[data-testid="companion-avatar"] svg')?.getAttribute('data-companion-state')).toBe('error')
     expect(query('[data-testid="companion-messages"]')?.textContent).toContain('Trace')
 
-    window.dispatchEvent(new CustomEvent('companion:run-event', {
-      detail: { eventType: 'run.failed', runId: 'run_9' }
-    }))
+    publish('run.failed', 'run_9')
     await flushPromises()
     expect((query('[data-testid="companion-messages"]')?.textContent || '').split('Trace')).toHaveLength(2)
 
+    wrapper.unmount()
+  })
+
+  it('ignores unverified window events and other runs, while retaining selected-run errors past idle fallback', async () => {
+    selectRun('current')
+    const wrapper = mount(CompanionHost)
+    await flushPromises()
+    window.dispatchEvent(new CustomEvent('companion:run-event', { detail: { eventType: 'run.failed', runId: 'current' } }))
+    publish('run.failed', 'foreign')
+    await flushPromises()
+    expect(query('[data-testid="companion-root"]')?.getAttribute('data-state')).toBe('working')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+    publish('run.failed', 'current')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(query('[data-testid="companion-root"]')?.getAttribute('data-state')).toBe('error')
+    selectRun('next')
+    await flushPromises()
+    expect(query('[data-testid="companion-root"]')?.getAttribute('data-state')).toBe('working')
+    wrapper.unmount()
+  })
+
+  it('holds pending thought and restores the running task after the reply settles', async () => {
+    selectRun('current')
+    let resolve!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(r => { resolve = r })))
+    const wrapper = mount(CompanionHost)
+    await flushPromises()
+    query('[data-testid="companion-avatar"]')?.click()
+    await flushPromises()
+    query('[data-testid="companion-text-toggle"]')?.click()
+    await flushPromises()
+    const input = query('[data-testid="companion-input"]') as HTMLInputElement
+    input.value = '你好'
+    input.dispatchEvent(new Event('input'))
+    input.closest('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(query('[data-testid="companion-root"]')?.getAttribute('data-state')).toBe('thinking')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(query('[data-testid="companion-root"]')?.getAttribute('data-state')).toBe('thinking')
+    resolve(new Response('event: content_delta\ndata: {"delta":"我在。"}\n\nevent: done\ndata: {}\n\n'))
+    await flushPromises()
+    expect(query('[data-testid="companion-messages"]')?.textContent).toContain('我在。')
+    expect(query('[data-testid="companion-root"]')?.getAttribute('data-state')).toBe('working')
     wrapper.unmount()
   })
 

@@ -8,6 +8,7 @@ import { agentosApi, type MissionWorkspaceProjection, type WorkspaceEntry } from
 import MissionWorkspaceView from './MissionWorkspaceView.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
 import AcgCopilotPanel from '@/components/workbench/AcgCopilotPanel.vue'
+import { companionRuntimeBridge } from '@/features/companion/runtimeBridge'
 
 const workspaceEventCallbacks = vi.hoisted(() => new Map<string, (revision: number) => void>())
 vi.mock('@/workbench/runtime/workspaceEvents', () => ({
@@ -204,6 +205,17 @@ describe('MissionWorkspaceView', () => {
     expect(wrapper.get('.lifecycle-bar__follow').attributes('aria-pressed')).toBe('false')
     await wrapper.get('.lifecycle-bar__follow').trigger('click')
     expect(wrapper.get('.lifecycle-bar__follow').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('publishes only verified run selection and clears it on failed switching and unmount', async () => {
+    const { wrapper, router } = await mountWorkspace()
+    expect(companionRuntimeBridge.selection).toMatchObject({ missionId: 'mission_1', runId: 'run_2' })
+    vi.mocked(agentosApi.getMissionWorkspace).mockRejectedValueOnce({ response: { status: 404 } })
+    await router.push({ path: router.currentRoute.value.path, query: { runId: 'missing' } })
+    await flushPromises()
+    expect(companionRuntimeBridge.selection).toBeNull()
+    wrapper.unmount()
+    expect(companionRuntimeBridge.selection).toBeNull()
   })
 
   it('switches Inspector and ACG Copilot inside the shared right sidebar', async () => {

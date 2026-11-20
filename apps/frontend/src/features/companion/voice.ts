@@ -181,17 +181,17 @@ export function describeVoiceError(code: string | undefined): string {
   switch (code) {
     case 'not-allowed':
     case 'service-not-allowed':
-      return '麦克风权限没开。桌面端可以先用下面的指令按钮，或用系统语音输入（Win+H）。'
+      return '麦克风权限没开。桌面端可以先用「改用文字」输入消息。'
     case 'no-speech':
       return '没听见声音，再靠近一点说一次？'
     case 'network':
-      return '语音识别服务暂时连不上，先用指令按钮吧。'
+      return '语音识别服务暂时连不上，可以点「改用文字」继续对话。'
     case 'asr-unavailable':
-      return '本地语音模型还没就绪（后端需下载识别模型），先用指令按钮吧。'
+      return '本地语音模型还没就绪（后端需下载识别模型），可以点「改用文字」继续对话。'
     case 'audio-capture':
       return '没找到可用的麦克风。'
     default:
-      return '这个环境暂时听不见我说话，可以用指令按钮点我。'
+      return '这个环境暂时听不见我说话，可以点「改用文字」继续对话。'
   }
 }
 
@@ -204,7 +204,7 @@ export function voiceHint(
   if (phase === 'listening') return '在听呢，说吧～'
   if (phase === 'recognizing') return '我记一下…'
   if (phase === 'speaking') return '我在说，点一下可以打断'
-  if (!caps.recognition) return '这里不能语音输入，点指令或按 Win+H 用系统语音输入'
+  if (!caps.recognition) return '这里不能语音输入，可以点「改用文字」继续对话'
   return '点一下说话，说完我再回答'
 }
 
