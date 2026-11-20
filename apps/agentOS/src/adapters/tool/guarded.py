@@ -119,6 +119,10 @@ class GuardedToolRuntime:
         collect = getattr(self.delegate, 'verified_observations', None)
         return await collect(context) if collect else []
 
+    async def previous_attempt_observations(self, context):
+        collect = getattr(self.delegate, 'previous_attempt_observations', None)
+        return await collect(context) if callable(collect) else None
+
     async def run(
         self,
         text: str,

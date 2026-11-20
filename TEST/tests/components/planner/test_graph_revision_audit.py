@@ -165,7 +165,7 @@ def test_semantic_acceptance_protects_all_declared_ancestors(ready_boundary):
 
 def test_all_declared_semantic_ancestors_of_started_work_are_protected(ready_boundary, monkeypatch):
     runtime, store, ledger, run, candidate = ancestor_boundary(ready_boundary)
-    from runtime import planning_commit, graph_revision
+    from runtime.orchestration import planning_commit, graph_revision
     # Emulate the demonstrated old single-parent source guard to preserve the
     # historical accepted-source scenario. The real graph validator stays active.
     with monkeypatch.context() as legacy:
@@ -238,7 +238,7 @@ def test_conflicting_history_causes_atomic_schema_preparation_failure(ready_boun
 @pytest.mark.parametrize("change", ["attempt", "receipt", "scope", "plan", "graph", "observation", "checkpoint", "agent", "workflow_version", "workflow_domain"])
 def test_trusted_changes_after_derivation_are_fenced(ready_boundary, monkeypatch, change):
     runtime, store, ledger, run_id, source, _ = accepted_source(ready_boundary)
-    from runtime import graph_revision
+    from runtime.orchestration import graph_revision
     original = graph_revision.SemanticGraphPatchService.apply
     def derive_then_change(service, **kwargs):
         result = original(service, **kwargs)
@@ -332,7 +332,7 @@ def test_index_name_collision_does_not_bypass_transactional_source_guard(ready_b
 
 
 @pytest.mark.parametrize("excess", ["run_string", "receipts"])
-def test_oversized_current_evidence_cannot_accept(ready_boundary, excess):
+def test_large_changed_sources_still_reject_a_stale_semantic_commit(ready_boundary, excess):
     runtime, store, ledger, run_id, source, _ = accepted_source(ready_boundary)
     if excess == "run_string":
         run = store.get_run(run_id)
@@ -342,7 +342,43 @@ def test_oversized_current_evidence_cannot_accept(ready_boundary, excess):
         for i in range(1025):
             runtime.execution_value_store.prepare_node_commit(run_id=run_id, commit_id=f"unrelated:{i}")
     result = runtime.accept_graph_revision(run_id, source, idempotency_key="graph")
-    assert result.code == Code.INVALID_PROPOSAL and len(ledger.pending_events()) == 1
+    assert result.code == Code.STALE_STRATEGY and len(ledger.pending_events()) == 1
+
+
+def test_growing_current_sources_are_accepted_without_history_count_or_byte_ceiling(ready_boundary):
+    from contracts.runtime_planning import RuntimePlanningState, RuntimeUserInput
+    from contracts.workflow import utc_now
+
+    runtime, store, _, run_id, state = ready_boundary
+    run = store.get_run(run_id)
+    run.input["history"] = "x" * 2_000_001
+    store.save_run(run)
+    for index in range(1025):
+        runtime.execution_value_store.prepare_node_commit(run_id=run_id, commit_id=f"historical:{index}")
+    inputs = []
+    for index in range(96):
+        item = RuntimeUserInput(sourceRunId=run_id, operationId=f"confirmed:{index}",
+            content=f"confirmed source requirement {index}", submittedAt=utc_now())
+        inputs.append(item)
+        store.save_planning_input(run_id, item.operation_id, item.model_dump(by_alias=True, mode="json"))
+    assert len(store.list_planning_inputs(run_id)) == 96
+    with pytest.raises(ValueError, match="operation conflict"):
+        store.save_planning_input(run_id, "confirmed:0", {"content": "changed input"})
+    # Accept only after the Planner snapshot includes every confirmed input;
+    # an input arriving after this capture still invalidates the proposal.
+    run = store.get_run(run_id)
+    loop = RuntimePlanningState.model_validate(run.execution_state["planningLoop"])
+    loop = loop.model_copy(update={"user_inputs": tuple(inputs)})
+    run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
+    observation = runtime.runtime_planning_coordinator.observe(run, state, "user_input")
+    current = loop.current.model_copy(update={"observation": observation,
+        "observation_id": observation.fingerprint()})
+    run.execution_state["planningLoop"] = loop.model_copy(update={"current": current}).model_dump(by_alias=True, mode="json")
+    store.save_run(run)
+    _, _, ledger, _, source, agent = accepted_source(ready_boundary)
+    result = runtime.accept_graph_revision(run_id, source, idempotency_key="large-history")
+    assert result.status == "ACCEPTED", result.model_dump()
+    assert len(ledger.pending_events()) == 2 and not agent.calls
 
 
 def test_fresh_processes_reconstruct_identical_candidates(ready_boundary, tmp_path, monkeypatch):
@@ -403,7 +439,7 @@ print("CANDIDATE:"+runtime.planning_commit_authority.store.get(receipt.commit_id
 @pytest.mark.parametrize("kind", ["profile", "catalog"])
 def test_transient_profile_change_cannot_escape_frozen_derivation_inputs(ready_boundary, monkeypatch, kind):
     runtime, store, ledger, run_id, source, _ = accepted_source(ready_boundary)
-    from runtime import graph_revision
+    from runtime.orchestration import graph_revision
     baseline = []
     original_accept = PlanningCommitService.accept
     def capture(service, request):

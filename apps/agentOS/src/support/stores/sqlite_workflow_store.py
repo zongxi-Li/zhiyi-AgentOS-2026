@@ -23,6 +23,8 @@ from support.stores.mission_semantic_store import (
 from support.stores.workspace_projection import WorkspaceConnection, RUNTIME_SOURCES, install_revision_triggers, projection_revision
 
 from contracts.workflow import MissionRecordState, RunRecordState, RuntimeMissionRecord, RuntimeRunRecord, WorkflowStatus, utc_now
+from contracts.task_operator_policy import TaskOperatorPolicy, TaskOperatorPolicyChange
+from support.stores.task_operator_policy import prepare_policy, policy_receipt
 from support.stores._policy import matches_mission, reject_terminal_overwrite, validate_run_state, mission_status_from_runs
 from support.stores.workflow_store import (
     RuntimeMissionRunSummary,
@@ -957,6 +959,24 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             items=overviews, total=total, page=safe_page, page_size=safe_size
         )
 
+    def list_planning_wakeup_candidates(self, *, page: int = 1, page_size: int = 200) -> WorkflowStorePage[RuntimeRunRecord]:
+        """Internal paged recovery discovery, independent of user visibility.
+
+        Filter summary columns before deserializing this page's payloads. The
+        background Coordinator restores each Run's accepted actor before any
+        execution authority is consulted; discovery does not grant access.
+        """
+        where = "status IN (?, ?) AND COALESCE(record_state, 'active') != 'deleted'"
+        params = (WorkflowStatus.WAITING_REVIEW.value, WorkflowStatus.RETRYING.value)
+        safe_page, safe_size = max(1, page), max(1, page_size)
+        total = int(self._fetch_one(f"SELECT COUNT(*) FROM runs WHERE {where}", params)[0])
+        rows = self._fetch_all(
+            f"SELECT payload FROM runs WHERE {where} ORDER BY updated_at, run_id LIMIT ? OFFSET ?",
+            (*params, safe_size, (safe_page - 1) * safe_size),
+        )
+        return WorkflowStorePage(items=tuple(RuntimeRunRecord.model_validate_json(row["payload"]) for row in rows),
+            total=total, page=safe_page, page_size=safe_size)
+
     def list_non_terminal_runs(self, *, limit: int = 200) -> tuple[RuntimeRunRecord, ...]:
         """返回最新优先的未终态运行；数量下限为 1。
 
@@ -1087,6 +1107,7 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                                       "mission_semantic_commits", "mission_semantic_state"):
                             conn.execute(f"DELETE FROM {table} WHERE mission_id = ?", (mission_id,))
                     conn.execute("DELETE FROM task_copilot_permissions WHERE mission_id = ?", (mission_id,))
+                    conn.execute("DELETE FROM task_operator_policy_receipts WHERE mission_id = ?", (mission_id,))
                     cursor = conn.execute("DELETE FROM tasks WHERE mission_id = ?", (mission_id,))
                     mission_deleted = cursor.rowcount > 0
             orphan_runs = conn.execute(
@@ -1142,6 +1163,22 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
             conn.execute("""CREATE TABLE IF NOT EXISTS task_copilot_permissions (
                 mission_id TEXT PRIMARY KEY, permission TEXT NOT NULL
                 CHECK(permission IN ('read_only', 'task_collaboration')))""")
+            # All columns and the replay journal become visible atomically;
+            # interruption leaves the recognized legacy schema for retry.
+            conn.execute("SAVEPOINT task_operator_policy_schema")
+            policy_columns = {row[1] for row in conn.execute("PRAGMA table_info(task_copilot_permissions)")}
+            for column, definition in (
+                ("approval_mode", "TEXT NOT NULL DEFAULT 'ask' CHECK(approval_mode IN ('ask', 'full'))"),
+                ("policy_revision", "INTEGER NOT NULL DEFAULT 0 CHECK(policy_revision >= 0)"),
+                ("workspace_scope", "TEXT"), ("updated_by", "TEXT"),
+                ("updated_at", "TEXT"), ("operation_id", "TEXT"),
+            ):
+                if column not in policy_columns:
+                    conn.execute(f"ALTER TABLE task_copilot_permissions ADD COLUMN {column} {definition}")
+            conn.execute("""CREATE TABLE IF NOT EXISTS task_operator_policy_receipts (
+                mission_id TEXT NOT NULL, operation_id TEXT NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(mission_id, operation_id))""")
+            conn.execute("RELEASE task_operator_policy_schema")
             conn.execute("""CREATE TABLE IF NOT EXISTS run_planning_inputs (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
                 operation_id TEXT NOT NULL, payload TEXT NOT NULL,
@@ -1368,18 +1405,56 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
         return [json.loads(row[0]) for row in reversed(rows)]
 
     def get_task_copilot_permission(self, mission_id: str) -> str:
-        self.get_mission(mission_id)
-        with self._connect() as conn:
-            row = conn.execute("SELECT permission FROM task_copilot_permissions WHERE mission_id=?", (mission_id,)).fetchone()
-        return row[0] if row else "task_collaboration"
+        return self.get_task_operator_policy(mission_id).permission
 
     def set_task_copilot_permission(self, mission_id: str, permission: str) -> None:
+        self.set_task_operator_policy(mission_id, permission=permission)
+
+    @staticmethod
+    def _read_task_operator_policy(conn, mission_id: str) -> TaskOperatorPolicy:
+        row = conn.execute("""SELECT permission,approval_mode,policy_revision,workspace_scope,
+            updated_by,updated_at,operation_id FROM task_copilot_permissions WHERE mission_id=?""",
+            (mission_id,)).fetchone()
+        return TaskOperatorPolicy(mission_id=mission_id, permission=row[0], approval_mode=row[1],
+            policy_revision=row[2], workspace_scope=json.loads(row[3]) if row[3] else None,
+            updated_by=json.loads(row[4]) if row[4] else None, updated_at=row[5], operation_id=row[6]
+        ) if row else TaskOperatorPolicy(mission_id=mission_id)
+
+    def get_task_operator_policy(self, mission_id: str) -> TaskOperatorPolicy:
         self.get_mission(mission_id)
-        if permission not in {"read_only", "task_collaboration"}:
-            raise ValueError("invalid task Copilot permission")
-        with self._connect() as conn:
-            conn.execute("INSERT INTO task_copilot_permissions(mission_id,permission) VALUES(?,?) "
-                "ON CONFLICT(mission_id) DO UPDATE SET permission=excluded.permission", (mission_id, permission))
+        with self.task_operator_policy_lock(mission_id), self._connect() as conn:
+            return self._read_task_operator_policy(conn, mission_id)
+
+    def set_task_operator_policy(self, mission_id: str, *, permission, approval_mode="ask",
+            workspace_scope=None, actor=None, operation_id=None, expected_policy_revision=None) -> TaskOperatorPolicy:
+        change = TaskOperatorPolicyChange(permission=permission, approval_mode=approval_mode,
+            workspace_scope=workspace_scope, actor=actor, operation_id=operation_id,
+            expected_policy_revision=expected_policy_revision)
+        with self.task_operator_policy_lock(mission_id), self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM tasks WHERE mission_id=?", (mission_id,)).fetchone():
+                raise KeyError(f"workflow mission not found: {mission_id}")
+            row = conn.execute("SELECT payload FROM task_operator_policy_receipts WHERE mission_id=? AND operation_id=?",
+                (mission_id, change.operation_id)).fetchone() if change.operation_id else None
+            policy, replayed = prepare_policy(self._read_task_operator_policy(conn, mission_id),
+                change, json.loads(row[0]) if row else None)
+            if replayed:
+                return policy
+            serialized = policy.model_dump(by_alias=True, mode="json")
+            conn.execute("""INSERT INTO task_copilot_permissions(mission_id,permission,approval_mode,
+                policy_revision,workspace_scope,updated_by,updated_at,operation_id) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(mission_id) DO UPDATE SET permission=excluded.permission,
+                approval_mode=excluded.approval_mode,policy_revision=excluded.policy_revision,
+                workspace_scope=excluded.workspace_scope,updated_by=excluded.updated_by,
+                updated_at=excluded.updated_at,operation_id=excluded.operation_id""",
+                (mission_id, policy.permission, policy.approval_mode, policy.policy_revision,
+                 json.dumps(serialized["workspaceScope"]) if policy.workspace_scope else None,
+                 json.dumps(serialized["updatedBy"]) if policy.updated_by else None,
+                 serialized["updatedAt"], policy.operation_id))
+            if change.operation_id:
+                conn.execute("INSERT INTO task_operator_policy_receipts(mission_id,operation_id,payload) VALUES(?,?,?)",
+                    (mission_id, change.operation_id, json.dumps(policy_receipt(change, policy), ensure_ascii=False)))
+            return policy
 
     def list_task_copilot_exchanges(self, mission_id: str, *, limit: int = 30) -> list[dict]:
         with self._connect() as conn:
@@ -1400,8 +1475,6 @@ class SQLiteWorkflowStore(WorkflowStore, MissionSemanticStore):
                 if json.loads(row[0])["content"] != payload["content"]:
                     raise ValueError("planning input operation conflict")
                 return
-            if conn.execute("SELECT COUNT(*) FROM run_planning_inputs WHERE run_id=?", (run_id,)).fetchone()[0] >= 32:
-                raise ValueError("planning input budget exhausted")
             conn.execute("INSERT INTO run_planning_inputs(run_id,operation_id,payload) VALUES(?,?,?)",
                 (run_id, operation_id, json.dumps(payload, ensure_ascii=False)))
 

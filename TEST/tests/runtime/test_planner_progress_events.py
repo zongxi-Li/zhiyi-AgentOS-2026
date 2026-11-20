@@ -201,6 +201,19 @@ def test_planner_event_payload_whitelist_drops_unsafe_fields() -> None:
     assert "SECRET" not in repr(payload)
 
 
+def test_explicit_reasoning_display_event_never_becomes_a_trace_record() -> None:
+    runtime = _runtime()
+    task = runtime.create_mission("reasoning", workflow_id="acg-run")
+    _, run = runtime.prepare_run(task.mission_id)
+    before = runtime.workflow_store.get_run(run.run_id).model_dump_json()
+    runtime._append_planner_event(run, {
+        "eventType": "planner.model.reasoning.delta", "stage": "outline",
+        "delta": "Displayed thought", "persistTrace": True,
+    })
+    assert runtime.workflow_store.get_run(run.run_id).model_dump_json() == before
+    assert _planner_events(runtime, run.run_id) == []
+
+
 def test_plan_parsed_projects_only_safe_task_plan_fields() -> None:
     runtime = _runtime()
     task = runtime.create_mission("plan projection", workflow_id="acg-run")

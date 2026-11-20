@@ -77,4 +77,21 @@ def execution_permit_projection(record: ExecutionPermitRecord) -> dict:
     }
 
 
-__all__ = ["ExecutionPermitRecord", "ExecutionPermitReceipt", "execution_permit_projection"]
+def execution_permit_run_projection(source, record: ExecutionPermitRecord):
+    """Project the verified handoff boundary, preserving every evidence channel.
+
+    Handoff independently proves that review/current work are settled and puts
+    both markers at None in its candidate. Issuance must acknowledge that same
+    boundary in Workflow, not resurrect the source graph's Planner pause.
+    """
+    permitted = source.model_copy(deep=True)
+    activation = dict(permitted.execution_state["graphActivation"])
+    activation["executionPermit"] = execution_permit_projection(record)
+    permitted.execution_state.update({"graphActivation": activation,
+        "executionPermitId": record.permit_id, "executionGeneration": record.attempt_generation,
+        "checkpointId": record.promoted_checkpoint_id, "reviewPayload": None, "currentStepId": None})
+    permitted.current_step_id = None
+    return permitted
+
+
+__all__ = ["ExecutionPermitRecord", "ExecutionPermitReceipt", "execution_permit_projection", "execution_permit_run_projection"]

@@ -300,6 +300,8 @@ class PlanningEngine:
                 blueprint = self.acg_lowerer.lower(lowering_input)
                 blueprint.metadata["evidenceScope"] = profile.evidence_scope
                 blueprint.metadata["webExtraction"] = profile.web_extraction
+                blueprint.metadata["workspaceObservations"] = [r.model_dump(by_alias=True, mode="json")
+                    for r in profile.workspace_observations]
                 blueprint.metadata["topologyAudit"] = dict(
                     self.semantic_planner.last_topology_audit
                 )

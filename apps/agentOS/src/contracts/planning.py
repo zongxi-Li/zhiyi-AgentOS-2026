@@ -63,7 +63,7 @@ class TaskPlanRelation(BaseModel):
 
 
 class VerificationLoopPolicy(BaseModel):
-    """Semantic declaration for a bounded refinement loop.
+    """Semantic declaration for an acceptance-driven refinement loop.
 
     The TaskPlan remains a DAG. The ACG Builder owns the translation from this
     declaration to Runtime LOOP controls and therefore no execution identity is
@@ -80,7 +80,8 @@ class VerificationLoopPolicy(BaseModel):
     repeat_values: tuple[str, ...] = Field(
         default=("partial", "failed"), alias="repeatValues", min_length=1
     )
-    max_revisions: int = Field(default=2, alias="maxRevisions", ge=0, le=8)
+    # Legacy declarations remain readable; production never stops on this count.
+    max_revisions: int | None = Field(default=None, alias="maxRevisions", ge=0)
     on_exhausted: Literal["human_review", "fail"] = Field(
         default="human_review", alias="onExhausted"
     )

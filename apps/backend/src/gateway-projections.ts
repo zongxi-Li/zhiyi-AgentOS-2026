@@ -13,15 +13,33 @@ const producerFields = (value: unknown) => Object.entries(row(value)).map(([prod
 const lineage = (value: unknown) => pick(value, 'parentRunId sourceRunId rerunReason supersedesRunId supersededByRunId');
 const graphDisplay = (value: unknown) => pick(value, 'semanticTaskKey taskId logicalRole endpointRole agentName allowedSkills dependencyKeys displayOrder');
 const graphNode = (source: Row) => ({ ...pick(source, 'nodeId nodeType name description goal agentName capability controlType'), display: graphDisplay(source.metadata) });
-const graphEdge = (source: Row) => ({ ...pick(source, 'edgeId sourceId targetId edgeType activation'), display: graphDisplay(source.metadata) });
+const graphEdge = (source: Row) => ({ ...pick(source, 'edgeId sourceId targetId edgeType activation condition'), display: graphDisplay(source.metadata) });
 function graph(value: unknown): Row {
   const source = row(value);
-  return { ...pick(source, 'runId graphId missionId objective complexityLevel'), graphVersion: source.graphVersion ?? source.version ?? null,
+  return { ...pick(source, 'runId graphId missionId blueprintId historical taskPlanVersion objective complexityLevel'), graphVersion: source.graphVersion ?? source.version ?? null,
     nodes: rows(source.nodes, graphNode), edges: rows(source.edges, graphEdge),
-    completedStepIds: strings(source.completedStepIds), activeStepIds: strings(source.activeStepIds), skippedStepIds: strings(source.skippedStepIds) };
+    ...(source.historical === true ? {} : {
+      completedStepIds: strings(source.completedStepIds), activeStepIds: strings(source.activeStepIds), skippedStepIds: strings(source.skippedStepIds),
+      workspaceReview: copilotWorkspaceReview(source.workspaceReview) }) };
+}
+
+function graphVersions(source: Row): Row {
+  return { ...pick(source, 'runId graphId currentBlueprintId currentGraphVersion'),
+    items: rows(source.items, item => {
+      const inherited = row(item.inherited);
+      return { ...pick(item, 'blueprintId graphId graphVersion taskPlanVersion current status createdAt predecessorBlueprintId reason activationId handoffId'),
+        patch: item.patch == null ? null : {
+          ...pick(item.patch, 'patchId addedEdgeCount removedEdgeCount'),
+          addedNodeIds: strings(row(item.patch).addedNodeIds), updatedNodeIds: strings(row(item.patch).updatedNodeIds),
+          removedNodeIds: strings(row(item.patch).removedNodeIds) },
+        inherited: { completedStepIds: strings(inherited.completedStepIds), skippedStepIds: strings(inherited.skippedStepIds),
+          attemptIds: strings(inherited.attemptIds),
+          outputRefs: Object.fromEntries(Object.entries(row(inherited.outputRefs)).filter(([, value]) => typeof value === 'string')) } };
+    }),
+    proposals: [] };
 }
 const actionCapabilities = (value: unknown): unknown => value == null ? null : {
-  ...pick(value, 'schemaVersion missionId runId runtimeRevision status isExecutionActive isSuperseded canInspect canDiscuss canCancel canReview canExecuteFormalAction formalActions canResolveToolApproval canAnswerPlanner canCollaborate canRetrySuccessor retryStepId canRerunSuccessor canDecideRevision canApplyRevision canDelete'),
+  ...pick(value, 'schemaVersion missionId runId runtimeRevision status isExecutionActive isSuperseded canInspect canDiscuss canCancel canReview canExecuteFormalAction formalActions canResolveToolApproval canAnswerPlanner canCollaborate canSetPermission canRetrySuccessor canRecoverCurrentRun retryMode retryStepId canRerunSuccessor canDecideRevision canApplyRevision canDelete'),
   lineage: lineage(row(value).lineage), unavailableReasons: rows(row(value).unavailableReasons, source => pick(source, 'action code')),
 };
 
@@ -148,18 +166,65 @@ function copilotInitialPlan(value: unknown): Row | null {
 }
 
 function copilotToolActivity(source: Row): Row {
-  return Object.fromEntries('executionId tool status stepId attemptId receiptRef createdAt'.split(' ')
-    .map(key => [key, stringOrNull(source[key])]));
+  const decision = row(source.approvalDecision);
+  return { ...Object.fromEntries('executionId tool status stepId attemptId receiptRef createdAt'.split(' ')
+    .map(key => [key, stringOrNull(source[key])])),
+    ...(['policy', 'user'].includes(String(decision.source)) ? { approvalDecision: {
+      ...pick(decision, 'source decidedAt policyRevision'),
+      actor: decision.actor == null ? null : pick(decision.actor, 'userId tenantId'),
+    } } : {}) };
+}
+
+function taskOperatorPolicy(value: unknown): Row | null {
+  if (value == null) return null;
+  const source = row(value);
+  return { ...pick(source, 'missionId permission approvalMode policyRevision updatedAt operationId effectiveApprovalMode effectiveScopeMatch'),
+    workspaceScope: source.workspaceScope == null ? null : pick(source.workspaceScope, 'workspaceId grantId resourceId'),
+    updatedBy: source.updatedBy == null ? null : pick(source.updatedBy, 'userId tenantId') };
+}
+
+function copilotReview(value: unknown): Row | null {
+  if (value == null) return null;
+  const source = row(value);
+  // Keep the diagnostic display contract explicit. Runtime snapshots and
+  // continuation patches never cross this gateway whitelist.
+  return pick(source, 'subjectId subjectType reason reasonCode kind displayReason errorCode errorType canApprove decisionRejected expectedRunUpdatedAt');
+}
+
+function copilotPlanningProgress(value: unknown): Row | null {
+  if (value == null) return null;
+  const source = row(value);
+  return { ...pick(source, 'kind status message observationId errorCode'),
+    ...(typeof source.reason === 'string' ? { reason: source.reason } : {}),
+    ...(typeof source.errorType === 'string' ? { errorType: source.errorType } : {}),
+    ...(typeof source.canApprove === 'boolean' ? { canApprove: source.canApprove } : {}) };
+}
+
+function copilotWorkspaceReview(value: unknown): Row | null {
+  if (value == null) return null;
+  const source = row(value);
+  const gaps = row(source.gaps);
+  return {
+    ...pick(source, 'schemaVersion round graphVersion status'),
+    gaps: { ...pick(gaps, 'missingReadCount missingListingCount unsupportedEntryCount'),
+      missingReads: strings(gaps.missingReads), missingListings: strings(gaps.missingListings),
+      unsupportedEntries: strings(gaps.unsupportedEntries) },
+    rounds: rows(source.rounds, round => ({ ...pick(round, 'round graphVersion action reason observationRef decisionRef patchRef'),
+      stepIds: strings(round.stepIds), addedStepIds: strings(round.addedStepIds), traceRefs: strings(round.traceRefs) })),
+  };
 }
 
 function copilot(source: Row): Row {
-  return { ...pick(source, 'runId missionId latestRunId taskPermission status revision modelAvailable defaultModelId permissions'),
+  return { ...pick(source, 'runId missionId latestRunId taskPermission approvalMode policyRevision status revision modelAvailable defaultModelId permissions'),
+    approvalPolicy: taskOperatorPolicy(source.approvalPolicy),
     initialPlan: copilotInitialPlan(source.initialPlan), toolActivity: rows(source.toolActivity, copilotToolActivity),
+    workspaceReview: copilotWorkspaceReview(source.workspaceReview),
+    planningProgress: copilotPlanningProgress(source.planningProgress),
     question: source.question == null ? null : pick(source.question, 'questionId prompt choices'),
     humanAnswers: rows(source.humanAnswers, source => pick(source, 'questionId sourceRunId prompt answer operationId answeredAt')),
-    review: source.review == null ? null : pick(source.review, 'subjectId subjectType reason reasonCode canApprove decisionRejected expectedRunUpdatedAt'),
+    review: copilotReview(source.review),
     exchanges: rows(source.exchanges, source => ({ ...pick(source, 'operationId user assistant createdAt observedRevision permission modelId requestedModelId reasoningEffort sourceRunId'),
-      action: source.action == null ? null : pick(source.action, 'kind stepId expectedRevision capabilityCatalogRevision executionEnvironmentChanged executeStepIds reusedStepIds content'),
+      action: source.action == null ? null : pick(source.action, 'kind stepId expectedRevision retryMode capabilityCatalogRevision executionEnvironmentChanged executeStepIds reusedStepIds content'),
       receipt: source.receipt == null ? null : pick(source.receipt, 'proposalId runId kind status executeStepIds reusedStepIds') })),
     decision: source.decision == null ? null : pick(source.decision, 'observationId action reason'),
     steps: rows(source.steps, source => pick(source, 'stepId name status')),
@@ -209,6 +274,7 @@ export function projectAgentOsResponse(path: string, value: unknown): unknown {
   if (/^\/runs\/[^/]+$/u.test(suffix)) return run(source);
   if (/\/execution-tree$/u.test(suffix)) return executionTree(source);
   if (/\/workspace$/u.test(suffix)) return workspace(source);
+  if (/^\/runs\/[^/]+\/graph\/versions$/u.test(suffix)) return graphVersions(source);
   if (/\/graph$/u.test(suffix)) return graph(source);
   if (suffix === '/missions') return { ...pick(source, 'total page pageSize source'), items: rows(source.items, source => pick(source, 'missionId title description status latestRunId latestRunStatus createdAt updatedAt runCount')) };
   if (/^\/missions\/[^/]+$/u.test(suffix)) return { mission: pick(source.mission, 'missionId goal description status createdAt updatedAt'), tasks: rows(source.tasks, task),

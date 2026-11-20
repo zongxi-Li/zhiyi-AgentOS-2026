@@ -14,8 +14,16 @@ from support.stores.execution_permit_store import SQLiteExecutionPermitStore
 from contracts.workflow import WorkflowStatus
 from components.executor.graph import ACGSuperstepError
 from TEST.tests.components.planner.test_execution_permit import ready_handoff
+from TEST.tests.components.planner._runtime_events import isolated_runtime_events
 
 _PREPARED_SEED = None
+
+
+@pytest.fixture(autouse=True)
+def isolated_event_bus():
+    # Copied databases intentionally reuse Run IDs in different test folders.
+    with isolated_runtime_events():
+        yield
 
 
 @pytest.fixture

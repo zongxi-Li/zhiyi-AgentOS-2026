@@ -52,11 +52,6 @@ class AdaptiveHorizonSelector:
                  review_keys=(), deadline=float("inf")):
         self._deadline(deadline)
         policy = self.policy_revision
-        # Bound raw input BEFORE invoking the sole semantic/topology authority.
-        if len(plan.nodes) > 256 or len(plan.relations) > 1024:
-            raise HorizonError("HORIZON_INPUT_BUDGET_EXCEEDED")
-        if len(plan.model_dump_json()) + len(observation.model_dump_json()) > 300_000:
-            raise HorizonError("HORIZON_CONTENT_BUDGET_EXCEEDED")
         if (basis is None or basis.mission_id != plan.mission_id
                 or observation.mission_id != plan.mission_id
                 or observation.plan_version != plan.plan_version
@@ -80,8 +75,6 @@ class AdaptiveHorizonSelector:
         dependencies = tuple(sorted((r for r in validated.relations
             if r.relation_type == SemanticTaskRelationType.DEPENDS_ON),
             key=lambda r: (r.source_key, r.target_key)))
-        if len(dependencies) > 4096:
-            raise HorizonError("HORIZON_EDGE_BUDGET_EXCEEDED")
         by_key = {}
         review_keys = frozenset(review_keys)
         if not review_keys <= {n.key for n in plan.nodes}:

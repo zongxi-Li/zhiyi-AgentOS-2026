@@ -26,7 +26,7 @@ import { renderMarkdown } from '@/utils/markdown'
 import { transcriptBlockLabel } from '@/utils/transcript-fold'
 import ConversationWorkFeed from './ConversationWorkFeed.vue'
 
-const props = defineProps<{ block: TranscriptBlock; item?: ExecutionSummaryItem }>()
+const props = defineProps<{ block: TranscriptBlock; item?: ExecutionSummaryItem; renderText?: (source: string) => string }>()
 // Open live progress once; native user toggles remain authoritative afterwards.
 const reasoningOpen = ref(props.block.kind === 'reasoning' && props.block.state === 'streaming')
 const reasoningElement = ref<HTMLElement | null>(null)
@@ -43,7 +43,7 @@ watch([() => props.block.text, reasoningElement], ([, element]) => {
   if (element && props.block.state === 'streaming' && followTail) element.scrollTop = element.scrollHeight
 }, { flush: 'post' })
 const item = computed(() => props.item)
-const html = computed(() => props.block.kind === 'text' ? renderMarkdown(props.block.text || '') : '')
+const html = computed(() => props.block.kind === 'text' ? (props.renderText || renderMarkdown)(props.block.text || '') : '')
 const running = computed(() => ['streaming', 'running', 'approval_required'].includes(props.block.state))
 const label = computed(() => transcriptBlockLabel(props.block, item.value))
 </script>

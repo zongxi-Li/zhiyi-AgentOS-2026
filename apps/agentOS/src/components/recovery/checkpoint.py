@@ -23,6 +23,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from support.sqlite_connections import ThreadLocalSQLiteConnections
+
 
 class ExecutionInterrupt(Exception):
     """审核点暂停执行时抛出的 AgentOS 中断信号。
@@ -61,7 +63,7 @@ class ACGCheckpointStore:
         configured = os.getenv("AGENTOS_LANGGRAPH_CHECKPOINT_DB", "").strip()
         self.db_path = Path(db_path or configured or "data/langgraph_checkpoints.sqlite3")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.db_path)
+        self._connections = ThreadLocalSQLiteConnections(self.db_path)
         self._connection.execute("""CREATE TABLE IF NOT EXISTS acg_execution_checkpoints (
             thread_id TEXT NOT NULL, checkpoint_id TEXT NOT NULL, state_json TEXT NOT NULL,
             version INTEGER NOT NULL DEFAULT 1,
@@ -76,6 +78,10 @@ class ACGCheckpointStore:
                 "ALTER TABLE acg_execution_checkpoints ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
             )
         self._connection.commit()
+
+    @property
+    def _connection(self) -> sqlite3.Connection:
+        return self._connections.connection()
 
     def save(
         self,
@@ -225,8 +231,8 @@ class ACGCheckpointStore:
         return int(row[0] or 0)
 
     def close(self) -> None:
-        """关闭当前 SQLite 连接；仓库实例关闭后不得继续读写。"""
-        self._connection.close()
+        """工作线程结清后关闭全部 SQLite 连接；关闭后不得继续读写。"""
+        self._connections.close()
 
 
 __all__ = ["ACGCheckpointStore", "CheckpointConflictError", "ExecutionInterrupt", "ExecutionResumeCommand"]

@@ -59,6 +59,7 @@ export const renderMarkdown = (raw: string): string => {
   const mathPass = extractMath(withInlineCode)
   const lines = mathPass.text.split(/\r?\n/)
   const output: string[] = []
+  const paragraph: string[] = []
   let listType: 'ul' | 'ol' | null = null
   // 重试续写偶尔会把同一标题连续写入文档两次；逐字相同的连续标题只保留第一个。
   let previousHeading: string | null = null
@@ -76,14 +77,22 @@ export const renderMarkdown = (raw: string): string => {
     listType = type
   }
 
+  const closeParagraph = () => {
+    if (!paragraph.length) return
+    output.push(`<p>${paragraph.join('\n')}</p>`)
+    paragraph.length = 0
+  }
+
   for (let index = 0; index < lines.length; index += 1) {
     const trimmed = lines[index].trim()
     if (!trimmed) {
+      closeParagraph()
       closeList()
       continue
     }
 
     if (/^@@CODE_BLOCK_\d+@@$/.test(trimmed)) {
+      closeParagraph()
       closeList()
       previousHeading = null
       output.push(trimmed)
@@ -91,6 +100,7 @@ export const renderMarkdown = (raw: string): string => {
     }
 
     if (trimmed.includes('|') && index + 1 < lines.length && isTableDivider(lines[index + 1])) {
+      closeParagraph()
       closeList()
       previousHeading = null
       const headers = tableCells(trimmed)
@@ -113,6 +123,7 @@ export const renderMarkdown = (raw: string): string => {
 
     const heading = trimmed.match(/^(#{1,6})\s+(.+)$/)
     if (heading) {
+      closeParagraph()
       closeList()
       const level = heading[1].length
       const headingKey = `${level}:${heading[2].trim()}`
@@ -126,6 +137,7 @@ export const renderMarkdown = (raw: string): string => {
     if (trimmed) previousHeading = null
 
     if (/^(-{3,}|\*{3,})$/.test(trimmed)) {
+      closeParagraph()
       closeList()
       output.push('<hr>')
       continue
@@ -133,6 +145,7 @@ export const renderMarkdown = (raw: string): string => {
 
     const unorderedItem = trimmed.match(/^[-*+]\s+(.+)$/)
     if (unorderedItem) {
+      closeParagraph()
       openList('ul')
       const task = unorderedItem[1].match(/^\[([ xX])\]\s+(.+)$/)
       if (task) {
@@ -146,6 +159,7 @@ export const renderMarkdown = (raw: string): string => {
 
     const orderedItem = trimmed.match(/^\d+[.)]\s+(.+)$/)
     if (orderedItem) {
+      closeParagraph()
       openList('ol')
       output.push(`<li>${renderInline(orderedItem[1])}</li>`)
       continue
@@ -153,15 +167,21 @@ export const renderMarkdown = (raw: string): string => {
 
     const quote = trimmed.match(/^>\s?(.*)$/)
     if (quote) {
+      closeParagraph()
       closeList()
       output.push(`<blockquote>${renderInline(quote[1])}</blockquote>`)
       continue
     }
 
     closeList()
-    output.push(`<p>${renderInline(trimmed)}</p>`)
+    // A soft source newline is still part of the same Markdown paragraph.
+    // Only blank lines/block boundaries create paragraphs; explicit Markdown
+    // hard breaks retain their line break without adding paragraph spacing.
+    const hardBreak = /(?: {2,}|\\)$/.test(lines[index])
+    paragraph.push(renderInline(hardBreak ? trimmed.replace(/\\$/, '') : trimmed) + (hardBreak ? '<br>' : ''))
   }
 
+  closeParagraph()
   closeList()
   let html = output.join('\n')
   html = mathPass.restore(html)

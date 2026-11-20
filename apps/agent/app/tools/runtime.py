@@ -13,9 +13,7 @@ from uuid import uuid4
 from agents import (
     Agent,
     ModelSettings,
-    OpenAIChatCompletionsModel,
     RunConfig,
-    Runner,
     function_tool,
 )
 from agents.tool_context import ToolContext
@@ -40,6 +38,7 @@ from support.model_stream_policy import ModelStreamPolicy
 from app.llm.observable_chat_model import ObservableChatModel
 from app.context_compaction.protocol import model_tool_data
 from contracts.local_runtime import LocalRuntimeExecutionLimits
+from adapters.agent.sdk_loop import run_sdk_agent, stream_sdk_agent
 
 
 SYSTEM_INSTRUCTIONS = """You are a careful Coding Agent with access only to the tools listed below.
@@ -785,7 +784,7 @@ class AgentsToolRuntime:
             compaction_options = self._compaction_options(
                 enabled=oscode_context_compaction, agent=agent, context=context,
                 model=str(metadata.get("effectiveModel") or model), base_url=base_url, api_key=api_key, session=_session)
-            result = await Runner.run(
+            result = await run_sdk_agent(
                 agent,
                 text if _session else self._input(text, history),
                 context=context,
@@ -956,7 +955,7 @@ class AgentsToolRuntime:
             await client.close()
             raise
         projection = compaction_options.get('call_model_input_filter')
-        result = Runner.run_streamed(
+        result = stream_sdk_agent(
             agent,
             text if _session else self._input(text, history),
             context=context,

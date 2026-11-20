@@ -394,6 +394,12 @@ html, body, #app {
 html[data-color-scheme='codex-dark'] body,
 html[data-color-scheme='one-dark-modern'] body {
   background-color: var(--bg-app);
+  text-shadow: var(--interface-text-glow, none);
+}
+
+html[data-color-scheme='codex-dark'] :is(.cm-editor, .xterm, pre, code),
+html[data-color-scheme='one-dark-modern'] :is(.cm-editor, .xterm, pre, code) {
+  text-shadow: none;
 }
 
 html[data-color-scheme='codex-dark'] ::selection,

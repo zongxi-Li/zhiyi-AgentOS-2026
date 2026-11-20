@@ -1353,7 +1353,8 @@ const contextUsage = computed(() => {
       windowLabel: knownWindow ? formatContextTokens(windowTokens) : '未知', estimated, label, historicalNote }
   }
   const ratio = Math.min(1, used / windowTokens)
-  const percent = Math.round(ratio * 100)
+  // 保留一位小数（21.3%）；整数仍显示整数。
+  const percent = Math.round(ratio * 1000) / 10
   const level = ratio >= 0.9 ? 'danger' : ratio >= 0.7 ? 'warning' : 'normal'
   return {
     visible: true,

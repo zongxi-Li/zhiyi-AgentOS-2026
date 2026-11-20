@@ -574,6 +574,31 @@ const taskSymbol = (
     graphNodeId: group.graphNodeId,
     defaultExpanded: true
   }))
+  if (group.previousFailures?.length) children.push(symbol({
+    id: `history:${runId}:${group.graphNodeId}`,
+    type: 'stage',
+    status: 'warning',
+    title: '历史执行',
+    subtitle: `${group.previousFailures.length} 次失败记录`,
+    runId,
+    graphNodeId: group.graphNodeId,
+    children: group.previousFailures.map(failure => symbol({
+      id: `history:${runId}:${failure.eventId}`,
+      type: 'result',
+      status: 'failed',
+      title: '历史失败',
+      subtitle: [failure.timestamp, failure.errorCode].filter(Boolean).join(' · '),
+      detail: failure.errorCode,
+      runId,
+      graphNodeId: group.graphNodeId,
+      metrics: {
+        ...(failure.attemptId ? { Attempt: failure.attemptId } : {}),
+        ...(failure.durationMs != null ? { Duration: failure.durationMs } : {})
+      },
+      defaultExpanded: false
+    })),
+    defaultExpanded: false
+  }))
   return symbol({
     id: `task:${group.semanticTaskKey || group.graphNodeId || group.title}`,
     type: 'task',

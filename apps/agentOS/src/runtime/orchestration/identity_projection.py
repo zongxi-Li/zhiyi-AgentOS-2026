@@ -461,9 +461,20 @@ class IdentityProjectionBridge:
         prior = self.repositories.blueprints.get(domain_run.blueprint_id)
         if prior is None:
             raise EntityNotFoundError("source Identity Blueprint is missing")
+        package = ACGGraphCompiler().compile_package(blueprint, run_id=run.run_id)
+        planning_metadata = {
+            "runtimeGraphId": blueprint.graph_id,
+            "taskPlanVersion": task_plan.plan_version,
+            "compiledPackageId": package.package_id,
+            "compiledPackageChecksum": package.checksum,
+            "compiledPackageVersion": package.package_version,
+            "compiledPackageBlueprintHash": package.blueprint_hash,
+        }
         current_plan = self.repositories.task_plans.latest(run.mission_id)
         if (prior.graph == blueprint.model_dump(by_alias=True, mode="json")
-                and current_plan == task_plan and domain_run.graph_version == blueprint.version):
+                and current_plan == task_plan and domain_run.graph_version == prior.version):
+            self.repositories.runs.update_blueprint(run.run_id, prior.blueprint_id, prior.version,
+                                                   planning_metadata=planning_metadata)
             return
         prior_graph = RuntimeBlueprintSpec.model_validate(prior.graph)
         if not {node.node_id for node in prior_graph.step_nodes()} <= {node.node_id for node in blueprint.step_nodes()}:
@@ -478,7 +489,8 @@ class IdentityProjectionBridge:
         revised = self._ensure_blueprint(
             run.mission_id, blueprint, task_bindings_by_id, plan_version=task_plan.plan_version
         )
-        self.repositories.runs.update_blueprint(run.run_id, revised.blueprint_id, revised.version)
+        self.repositories.runs.update_blueprint(run.run_id, revised.blueprint_id, revised.version,
+                                               planning_metadata=planning_metadata)
 
     def on_graph_patch_prepared(
         self,
@@ -1075,6 +1087,18 @@ class IdentityProjectionBridge:
             run = self._run(run_id)
             if run.status is RunStatus.PENDING:
                 return
+            if run.status is RunStatus.RUNNING:
+                # A Planner wait keeps the identity Run running while its
+                # failed local Attempt has already ended. An explicit native
+                # retry retains that Run and creates a fresh Attempt; there is
+                # no terminal Run to reopen and no old Attempt to resurrect.
+                attempts = self.repositories.attempts.list_for_run(run_id)
+                if (any(item.status.value == "failed" for item in attempts)
+                        and not any(item.status.value in {"pending", "running"} for item in attempts)
+                        and not any(execution.status.value in {"pending", "running"}
+                            for item in attempts
+                            for execution in self.repositories.step_executions.list_for_attempt(item.attempt_id))):
+                    return
             if run.status is not RunStatus.FAILED:
                 raise IdentityConflictError("only a failed WorkflowRunV2 can be retried in place")
             self.lifecycle_service.retry_failed_run(run_id)

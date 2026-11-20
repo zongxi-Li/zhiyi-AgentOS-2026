@@ -12,6 +12,7 @@ from contracts.runtime_planning import RuntimePlanningWait, requirement_fingerpr
 from contracts.resource import ExecutionRequirement
 from contracts.workflow import WorkflowStatus, utc_now
 from runtime.composition.ports import CollaboratorAccess
+from runtime.orchestration.binding import assess_run_requirement
 
 
 class RuntimePlanningApplication(CollaboratorAccess):
@@ -27,6 +28,19 @@ class RuntimePlanningApplication(CollaboratorAccess):
         self.flush_identity = flush_identity
 
     def apply(self, run, state, observation, decision, loop) -> str:
+        # Public/recovery callers share the same deterministic decision gate;
+        # the executor re-observes again before the terminal lifecycle write.
+        from runtime.orchestration.planning_loop import REPAIRABLE_PLANNING_REJECTIONS, RuntimePlanningCoordinator
+        RuntimePlanningCoordinator.validate_decision(observation, decision)
+        commit_rejection = run.execution_state.get("planningCommitRejection")
+        if (not isinstance(commit_rejection, dict) or commit_rejection.get("observationId") != observation.fingerprint()
+                or decision.action != "wait"):
+            run.execution_state.pop("planningCommitRejection", None)
+            commit_rejection = None
+        if (commit_rejection is not None and loop.current is not None
+                and loop.current.observation_id == observation.fingerprint()):
+            loop = loop.model_copy(update={"current": loop.current.model_copy(update={
+                "status": "rejected", "rejection": f"{commit_rejection['code']}: {commit_rejection['reason']}"})})
         waiting = None
         if decision.wait_for is not None:
             if decision.wait_for.kind == "node_available":
@@ -43,6 +57,20 @@ class RuntimePlanningApplication(CollaboratorAccess):
             waiting = RuntimePlanningWait(observationId=observation.fingerprint(), condition=decision.wait_for)
         loop = loop.model_copy(update={"waiting": waiting, "user_input_pending": False})
         run.execution_state["planningLoop"] = loop.model_dump(by_alias=True, mode="json")
+        from runtime.orchestration.workspace_review import record_workspace_review
+        record_workspace_review(run, observation, decision, loop)
+        if commit_rejection is not None and commit_rejection.get("code") in REPAIRABLE_PLANNING_REJECTIONS:
+            # Keep denial feedback durable before another model call, but do
+            # not turn a rejected semantic proposal into a human approval gate.
+            # Started work and graph authority remain exactly as persisted.
+            RuntimePlanningCoordinator.prepare_rejection_feedback(run, state,
+                code=commit_rejection["code"], reason=commit_rejection["reason"],
+                source_observation_id=observation.fingerprint(),
+                proposal_ref=commit_rejection.get("proposalRef"))
+            run.runtime_revision += 1
+            run.updated_at = utc_now()
+            self.workflow_store.save_run(run)
+            return "replan"
         if decision.action in {"continue", "complete"}:
             run.runtime_revision += 1
             run.updated_at = utc_now()
@@ -62,7 +90,7 @@ class RuntimePlanningApplication(CollaboratorAccess):
                 fact = next(r for r in observation.resource_requirements
                     if r.step_id == observation.failed_step_ids[0])
                 if (requirement_fingerprint(requirement) != fact.requirement_id
-                        or not self.resource_binder.assess(requirement).ready):
+                        or not assess_run_requirement(self, run, requirement).ready):
                     raise ValueError("resource eligibility changed while Planner was deciding")
             # Reuse the Recovery authority's full validation before terminalizing
             # the source. A rejected proposal must leave a recoverable wait barrier.
@@ -89,7 +117,8 @@ class RuntimePlanningApplication(CollaboratorAccess):
         state.review_payload = {
             "subjectType": "planner", "subjectId": state.graph_id,
             "observationId": observation.fingerprint(), "reason": decision.reason,
-            "reasonCode": "PLANNER_REVISION" if decision.action == "revise" else "PLANNER_WAIT",
+            "reasonCode": ("PLANNING_COMMIT_REJECTED" if commit_rejection is not None else
+                           "PLANNER_REVISION" if decision.action == "revise" else "PLANNER_WAIT"),
             "question": decision.question.model_dump(mode="json") if decision.question else None,
         }
         state.current_step_id = None
@@ -100,7 +129,8 @@ class RuntimePlanningApplication(CollaboratorAccess):
         run.current_step_id = state.graph_id
         run.active_step_ids = []
         self.set_lifecycle(run, status=WorkflowStatus.WAITING_REVIEW, phase=WorkflowProgressPhase.REVIEW,
-            message="Planner 已暂停任务，等待外部条件或计划修订")
+            message="计划修订被正式校验拒绝，任务已暂停" if commit_rejection is not None else
+                "Planner 已暂停任务，等待外部条件或计划修订")
         self.workflow_store.save_run(run)
         self.mission_manager.mark_waiting_review(self.mission_manager.get_mission(run.mission_id))
         if decision.action == "revise":

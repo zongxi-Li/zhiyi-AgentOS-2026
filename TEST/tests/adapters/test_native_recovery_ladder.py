@@ -15,6 +15,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
+
+import pytest
 
 from adapters.model.protocols import StructuredGenerationError, StructuredGenerationResult
 from adapters.agent.native import NativeGeneralAgent
@@ -48,6 +52,11 @@ class _ScriptedRuntime:
                 "capacity",
                 audit={"finishReason": "length", "outputExhausted": True, "usage": {}},
             )
+        if kind == "invalid_json":
+            raise StructuredGenerationError(
+                "MODEL_OUTPUT_INVALID_JSON", "invalid JSON",
+                audit={"candidateFingerprint": payload, "provider": "test", "model": "test"},
+            )
         return StructuredGenerationResult(data=payload, provider="test", model="test")
 
 
@@ -76,7 +85,6 @@ def _context(*, capability: str | None = None, pack_data: dict | None = None,
         capabilityDescriptor=build_default_capability_catalog().get(cap_id),
         commitId="commit:task-ladder:analysis:0",
     )
-    return agent, context
 
 
 def test_workset_boundary_defers_exhausted_to_outer_bisection() -> None:
@@ -133,3 +141,167 @@ def test_empty_split_gets_corrective_retry_before_no_progress() -> None:
     assert any('"operation":"capacity_split_repair"' in prompt for prompt in runtime.prompts), (
         "structured corrective retry operation was never issued"
     )
+
+
+def test_plain_json_correction_continues_for_distinct_candidates() -> None:
+    runtime = _ScriptedRuntime([
+        *[("invalid_json", f"{index:064x}") for index in range(5)],
+        ("ok", {"task_summary": "accepted", "constraints": []}),
+    ])
+    agent, context = _context(runtime=runtime)
+
+    result = asyncio.run(agent.run(context))
+
+    assert result.output["task_summary"] == "accepted"
+    assert len(runtime.prompts) == len(result.model_invocations) == 6
+    assert all(item["effectiveReason"] == "invalid_json_before_repair"
+               for item in result.model_invocations[:-1])
+
+
+def test_plain_json_correction_stops_on_the_same_invalid_candidate() -> None:
+    runtime = _ScriptedRuntime([("invalid_json", "a" * 64)] * 2)
+    agent, context = _context(runtime=runtime)
+
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(agent.run(context))
+
+    assert caught.value.code == "AGENT_NO_PROGRESS"
+    assert len(runtime.prompts) == 2
+    assert len(caught.value.audit["modelInvocations"]) == 2
+
+
+def test_plain_contract_correction_can_exceed_the_old_single_repair_limit() -> None:
+    runtime = _ScriptedRuntime([
+        *[("ok", {"task_summary": {"correction": index}, "constraints": []}) for index in range(5)],
+        ("ok", {"task_summary": "accepted", "constraints": []}),
+    ])
+    agent, context = _context(runtime=runtime)
+
+    result = asyncio.run(agent.run(context))
+
+    assert result.output["task_summary"] == "accepted"
+    assert len(runtime.prompts) == len(result.model_invocations) == 6
+    assert all(item["effectiveReason"] == "retry_contract_repair"
+               for item in result.model_invocations[1:])
+
+
+def test_semantic_recovery_can_deepen_past_the_old_eight_level_limit() -> None:
+    script = []
+    for index in range(12):
+        script.append(("ok", {"subtasks": [{"title": f"part {index}", "goal": f"goal {index}",
+                                            "sourceScope": [f"scope {index}"]}]}))
+        script.append(("exhausted", None) if index < 11 else ("ok", {"summary": "accepted"}))
+    runtime = _ScriptedRuntime(script)
+    agent, context = _context(runtime=runtime)
+
+    output, _ = asyncio.run(agent._recover_capability_by_subtasks(
+        context=context, runtime=runtime, original_prompt="root request",
+        output_schema={"type": "object", "properties": {"summary": {"type": "string"}}},
+        thinking_mode="disabled", timeout_seconds=30, prompt_version="deep.v1", exhausted_audit={},
+    ))
+
+    assert output["summary"] == "accepted"
+    assert len(runtime.prompts) == 24
+
+
+def test_semantic_recovery_stops_repeated_goal_and_scope_even_if_the_title_changes() -> None:
+    runtime = _ScriptedRuntime([
+        ("ok", {"subtasks": [{"title": title, "goal": "same goal", "sourceScope": ["same source"]}]})
+        if index % 2 == 0 else ("exhausted", None)
+        for index, title in enumerate(("first", "", "renamed", ""))
+    ])
+    agent, context = _context(runtime=runtime)
+
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(agent._recover_capability_by_subtasks(
+            context=context, runtime=runtime, original_prompt="root request", output_schema={"type": "object"},
+            thinking_mode="disabled", timeout_seconds=30, prompt_version="repeat.v1", exhausted_audit={},
+        ))
+
+    assert caught.value.code == "MODEL_OUTPUT_NO_PROGRESS"
+    assert len(runtime.prompts) == 4
+
+
+def test_artifact_recovery_can_deepen_past_the_old_eight_level_limit() -> None:
+    script = []
+    for index in range(1, 12):
+        script.extend([("exhausted", None), ("ok", {"sections": [{
+            "title": f"section {index}", "goal": f"goal {index}", "sourceFields": [f"field {index}"],
+        }]})])
+    script.append(("ok", {"title": "accepted", "content": "complete", "sourceFields": ["field 11"]}))
+    runtime = _ScriptedRuntime(script)
+    agent, context = _context(runtime=runtime)
+
+    output, _ = asyncio.run(agent._generate_artifact_section(
+        context=context, runtime=runtime, original_prompt="root request",
+        section={"title": "root", "goal": "goal 0", "sourceFields": ["field 0"]},
+        thinking_mode="disabled", timeout_seconds=30, prompt_version="deep.v1", path="root",
+    ))
+
+    assert output[0]["content"] == "complete"
+    assert len(runtime.prompts) == 23
+
+
+def test_artifact_recovery_stops_repeated_goal_and_source_fields() -> None:
+    runtime = _ScriptedRuntime([("exhausted", None), ("ok", {"sections": [{
+        "title": "renamed", "goal": "same goal", "sourceFields": ["same source"],
+    }]})])
+    agent, context = _context(runtime=runtime)
+
+    with pytest.raises(StructuredGenerationError) as caught:
+        asyncio.run(agent._generate_artifact_section(
+            context=context, runtime=runtime, original_prompt="root request",
+            section={"title": "root", "goal": "same goal", "sourceFields": ["same source"]},
+            thinking_mode="disabled", timeout_seconds=30, prompt_version="repeat.v1", path="root",
+        ))
+
+    assert caught.value.code == "MODEL_OUTPUT_NO_PROGRESS"
+    assert len(runtime.prompts) == 2
+
+
+def test_full_text_retrieval_extracts_all_discovered_urls() -> None:
+    class Tools:
+        extracted_urls = []
+
+        async def execute(self, name, arguments, **kwargs):
+            rows = []
+            if name == "web_search":
+                rows = [{"url": f"https://example.org/{index}", "snippet": f"source {index}"}
+                        for index in range(7)]
+            elif name == "web_extract":
+                self.extracted_urls = arguments["urls"]
+                rows = [{"content": f"complete {url}"} for url in arguments["urls"]]
+            sources = [] if name == "knowledge_search" else [SimpleNamespace(
+                citation_id="web:source", public_dict=lambda: {"citationId": "web:source"},
+            )]
+            return SimpleNamespace(text=json.dumps({"ok": True, "data": {"results": rows}}),
+                                   sources=sources, tool_executions=[])
+
+    agent, context = _context(capability="information_retrieval")
+    context.run.acg_blueprint = {"metadata": {"webExtraction": "full_text"}}
+    context.tool_runtime = tools = Tools()
+
+    output = asyncio.run(agent.run(context))
+
+    assert tools.extracted_urls == [f"https://example.org/{index}" for index in range(7)]
+    assert sum(item.startswith("complete ") for item in output.output["retrieved_information"]) == 7
+
+
+def test_requested_industrial_calculations_are_all_executed() -> None:
+    class Tools:
+        calls = []
+
+        async def execute(self, name, arguments, **kwargs):
+            self.calls.append((name, arguments))
+            return SimpleNamespace(text=json.dumps({"ok": True, "data": {"value": arguments["index"]}}),
+                                   tool_executions=[])
+
+    runtime = _ScriptedRuntime([("ok", {"task_summary": "accepted", "constraints": []})])
+    agent, context = _context(runtime=runtime)
+    context.step.capability = "industrial_capacity_analysis"
+    context.task.input["industrialCalculations"] = [{"index": index} for index in range(9)]
+    context.tool_runtime = tools = Tools()
+
+    asyncio.run(agent.run(context))
+
+    assert tools.calls == [("industrial_calculator", {"index": index}) for index in range(9)]

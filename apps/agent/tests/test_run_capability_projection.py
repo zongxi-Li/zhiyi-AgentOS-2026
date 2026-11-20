@@ -44,6 +44,7 @@ def test_each_status_has_independent_offers_and_no_fabricated_current(authority,
     assert not caps['canReview']  # no authoritative checkpoint
     assert not caps['canExecuteFormalAction']  # no C2 authority
     assert not caps['canRetrySuccessor']  # no persisted compiled recovery evidence
+    assert caps['canSetPermission'] == (status.value in {'pending', 'planning', 'running', 'retrying', 'waiting_review', 'failed'})
     assert 'currentRunId' not in caps
     assert runtime.workflow_store.get_run(run.run_id).model_dump(mode='json') == before
 
@@ -94,8 +95,48 @@ def test_unknown_state_is_not_an_actionable_pending_state(authority):
     assert not any(value for key, value in caps.items() if key.startswith('can') and key not in {'canInspect', 'canDiscuss'})
 
 
+@pytest.mark.parametrize('gate', ['ready', 'authority_denied', 'retry_evidence_missing', 'snapshot_changed'])
+def test_current_run_retry_offer_requires_both_read_only_authority_gates(authority, monkeypatch, gate):
+    from runtime.orchestration.planning_operations import RuntimeTaskOperations
+    runtime, run = authority
+    run.status = WorkflowStatus.FAILED
+    run.execution_state['executionPermitId'] = 'permit:test'
+    run.steps = [WorkflowStep(stepId='failed', name='Failed', agentName='test', status=StepStatus.FAILED)]
+    runtime.workflow_store.save_run(run)
+    calls = []
+
+    def verify(_self, source):
+        calls.append(('authority', source.run_id))
+        if gate == 'authority_denied':
+            raise PermissionError('no live authority')
+
+    def validate(run_id, step_id, **kwargs):
+        calls.append(('recovery', run_id, step_id, kwargs))
+        assert kwargs == {'expected_runtime_revision': run.runtime_revision,
+                          'reuse_source_run': True, 'validate_only': True}
+        if gate == 'retry_evidence_missing':
+            raise ValueError('missing settled execution evidence')
+        if gate == 'snapshot_changed':
+            changed = runtime.workflow_store.get_run(run_id)
+            changed.runtime_revision += 1
+            runtime.workflow_store.save_run(changed)
+
+    monkeypatch.setattr(RuntimeTaskOperations, 'assert_current_run_recovery', verify)
+    runtime.runtime_recovery_coordinator = SimpleNamespace(prepare_single_step_retry=validate)
+    before = run.model_dump(mode='json')
+    cap = project_run_capabilities(runtime, run)
+    assert cap['canRecoverCurrentRun'] is (gate == 'ready')
+    assert cap['canRetrySuccessor'] is False
+    assert cap['retryMode'] == ('current_run' if gate == 'ready' else None)
+    assert cap['retryStepId'] == ('failed' if gate == 'ready' else None)
+    assert calls[0] == ('authority', run.run_id)
+    assert len(calls) == (1 if gate == 'authority_denied' else 2)
+    if gate != 'snapshot_changed':
+        assert runtime.workflow_store.get_run(run.run_id).model_dump(mode='json') == before
+
+
 def test_real_failed_node_offer_reuses_existing_recovery_validator_without_mutating_source(tmp_path):
-    from test_single_step_retry import _RetryAgent, _retry_runtime
+    from TEST.tests.runtime.test_single_step_retry import _RetryAgent, _retry_runtime
     from contracts.planning import TaskPlan, PlannedTask, TaskPlanRelation, TaskImplementationBinding
     runtime, blueprint = _retry_runtime(tmp_path, _RetryAgent())
     owner = {'authenticatedUserId': 'owner', 'authenticatedTenantId': 'tenant'}
@@ -119,6 +160,7 @@ def test_real_failed_node_offer_reuses_existing_recovery_validator_without_mutat
         before = failed.model_dump(mode='json')
         cap = project_run_capabilities(runtime, failed)
         assert cap['canRetrySuccessor'] is True and cap['retryStepId'] == 'final'
+        assert cap['retryMode'] == 'successor_run' and cap['canRecoverCurrentRun'] is False
         assert runtime.workflow_store.list_runs(owner_user_id='owner', owner_tenant_id='tenant').total == 1
         assert runtime.workflow_store.get_run(source.run_id).model_dump(mode='json') == before
         with pytest.raises(ValueError, match='changed'):

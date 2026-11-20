@@ -4,8 +4,10 @@ import { afterEach, expect, it, vi } from 'vitest'
 import FormalToolApprovals from './FormalToolApprovals.vue'
 import { agentosRequest } from '@/services/api/agentos/client'
 
+vi.mock('@/workbench/runtime/runtimeEvents', () => ({ acquireRunRuntimeStore: vi.fn(() => null), releaseRunRuntimeStore: vi.fn() }))
+
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
-it('stops approval polling while cached, ignores its late read, and releases the resumed loop', async () => {
+it('ignores late reads while cached and resumes explicit refresh without a background timer', async () => {
   vi.useFakeTimers()
   let finish!: (value: any) => void
   const read = vi.spyOn(agentosRequest, 'get').mockImplementationOnce(() => new Promise(ok => { finish = ok }))
@@ -21,7 +23,9 @@ it('stops approval polling while cached, ignores its late read, and releases the
   visible.value = true; await nextTick(); await flushPromises()
   expect(wrapper.text()).not.toContain('obsolete')
   expect(read).toHaveBeenCalledTimes(2)
-  await vi.advanceTimersByTimeAsync(1000); expect(read).toHaveBeenCalledTimes(3)
+  await vi.advanceTimersByTimeAsync(5000); expect(read).toHaveBeenCalledTimes(2)
+  await wrapper.getComponent(FormalToolApprovals).vm.refresh(); await flushPromises()
+  expect(read).toHaveBeenCalledTimes(3)
   wrapper.unmount(); await vi.advanceTimersByTimeAsync(5000)
   expect(read).toHaveBeenCalledTimes(3)
 })

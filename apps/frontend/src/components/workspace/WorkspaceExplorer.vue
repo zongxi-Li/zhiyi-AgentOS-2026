@@ -15,7 +15,10 @@
             <small>PROJECT · {{ missionDisplayLabel(projection) }}</small>
           </div>
         </div>
-        <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
+        <div class="workspace-explorer__meta-row">
+          <code class="workspace-explorer__mission-id" :title="projection.mission.missionId">{{ projection.mission.missionId }}</code>
+          <span v-if="workspaceRoot" class="workspace-explorer__workspace-root" :title="workspaceRoot">{{ workspaceRoot }}</span>
+        </div>
       </div>
     </header>
 
@@ -38,6 +41,11 @@
         </button>
         <div v-if="isExpanded(section.group)" class="workspace-tree__items">
           <template v-for="(entry, entryIndex) in section.items" :key="entry.entryId">
+            <div class="workspace-tree__entry-row">
+            <button v-if="entry.kind === 'graph' && graphVersions" class="workspace-tree__graph-toggle" type="button"
+              :aria-expanded="graphVersionsExpanded" aria-label="展开或收起图版本" @click="graphVersionsExpanded = !graphVersionsExpanded">
+              <el-icon aria-hidden="true"><ArrowDown v-if="graphVersionsExpanded" /><ArrowRight v-else /></el-icon>
+            </button>
             <button
               type="button"
               class="workspace-tree__entry"
@@ -71,6 +79,10 @@
               <span v-if="entry.kind === 'task' && entry.artifactCount" class="workspace-tree__artifact-count">{{ entry.artifactCount }}</span>
               <span v-if="entry.identityQuality === 'legacy'" class="workspace-tree__legacy">legacy</span>
             </button>
+            </div>
+            <div v-if="entry.kind === 'graph' && graphVersions && graphVersionsExpanded" class="workspace-tree__graph-versions">
+              <GraphVersionList @open-graph="openVersionGraph" />
+            </div>
             <div v-if="entry.kind === 'task' && taskChildren(entry).length" class="workspace-tree__children">
               <button
                 v-for="child in taskChildren(entry)"
@@ -101,10 +113,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import GraphVersionList from './GraphVersionList.vue'
+import { graphVersionsKey } from './graphVersions'
 import { missionDisplayObjective, missionDisplayLabel } from './missionSemanticDisplay'
-import { ArrowLeft, FolderOpened } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, FolderOpened } from '@element-plus/icons-vue'
 import type { MissionWorkspaceProjection, WorkspaceEntry } from '@/services/api/agentos'
+import { agentosApi } from '@/services/api/agentos'
+import { getElectronBridge } from '@/platform/electron/bridge'
 import { workspaceEntryIcon } from './workspaceEntryIcon'
 import { useDragReorder } from '@/composables/useDragReorder'
 import {
@@ -130,6 +146,26 @@ const emit = defineEmits<{
   open: [entry: WorkspaceEntry]
   selectRun: [runId: string]
 }>()
+const graphVersions = inject(graphVersionsKey, null)
+const graphVersionsExpanded = ref(true)
+const openVersionGraph = () => {
+  const entry = props.projection.entries.find(item => item.kind === 'graph')
+  if (entry) emit('open', entry)
+}
+
+// —— 本机工作区：桌面壳当前绑定优先，网页端回退 mission 工作区清单（与 ProblemsPanel 同一解析顺序）——
+const workspaceRoot = ref('')
+const resolveWorkspaceRoot = async () => {
+  const missionId = props.projection.mission.missionId
+  if (!missionId) { workspaceRoot.value = ''; return }
+  try {
+    const folder = await getElectronBridge()?.workspace?.current?.()
+    if (folder?.root) { workspaceRoot.value = folder.root; return }
+    const listing = await agentosApi.listWorkspaceFiles(missionId, '.')
+    workspaceRoot.value = listing.workspaceRoot || ''
+  } catch { workspaceRoot.value = '' }
+}
+watch(() => props.projection.mission.missionId, resolveWorkspaceRoot, { immediate: true })
 
 const expandedSections = ref<Record<string, boolean>>({
   overview: true,
@@ -250,6 +286,12 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 </script>
 
 <style scoped>
+.workspace-tree__entry-row { display: flex; align-items: center; min-width: 0; }
+.workspace-tree__entry-row > .workspace-tree__entry { flex: 1; min-width: 0; }
+.workspace-tree__graph-toggle { display: grid; place-items: center; flex: 0 0 19px; width: 19px; height: 28px; padding: 0; border: 0; border-radius: 3px; color: var(--wb-text-muted); background: transparent; cursor: pointer; font-size: 10px; }
+.workspace-tree__graph-toggle:hover { color: var(--wb-accent); }
+.workspace-tree__graph-toggle:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: -2px; }
+.workspace-tree__graph-versions { margin: 0 0 5px 23px; border-left: 1px solid var(--wb-border-soft); }
 .workspace-explorer {
   display: flex;
   flex-direction: column;
@@ -327,15 +369,31 @@ const formatOrder = (order: number) => String(order + 1).padStart(2, '0')
 
 .workspace-explorer__title-row small {
   margin-top: 2px;
-  color: var(--wb-text-secondary);
+  color: var(--wb-text);
   font-size: 11px;
 }
 
-.workspace-explorer__mission-id {
-  display: block;
+.workspace-explorer__meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   margin-top: 9px;
+}
+
+.workspace-explorer__mission-id {
+  flex-shrink: 0;
   overflow: hidden;
-  color: var(--wb-text-muted);
+  color: var(--wb-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-explorer__workspace-root {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wb-text-secondary);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;

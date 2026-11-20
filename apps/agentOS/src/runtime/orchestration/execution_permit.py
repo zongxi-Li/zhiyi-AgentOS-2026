@@ -206,15 +206,8 @@ class ExecutionPermitAuthority:
                 self._assert_workflow_fence(record, handoff, require_unissued=True, conn=self.store._local.connection)
                 self._assert_external_promotions(record, handoff, promoted_cp)
                 issued = self.store._issue(record)
-                permitted = run.model_copy(deep=True)
-                projection = dict(permitted.execution_state["graphActivation"])
-                projection["executionPermit"] = execution_permit_projection(issued)
-                permitted.execution_state.update({
-                    "graphActivation": projection,
-                    "executionPermitId": issued.permit_id,
-                    "executionGeneration": issued.attempt_generation,
-                    "checkpointId": issued.promoted_checkpoint_id,
-                })
+                from contracts.execution_permit import execution_permit_run_projection
+                permitted = execution_permit_run_projection(run, issued)
                 permitted.runtime_revision += 1
                 permitted.updated_at = utc_now()
                 conn = self.store._local.connection
@@ -275,7 +268,10 @@ class ExecutionPermitAuthority:
         identity_run = repos.runs.get(record.run_id)
         if identity_run is None or identity_run.blueprint_id != handoff.identity_link.source_blueprint_id:
             raise ExecutionPermitError(Code.STALE_GRAPH, "Identity Run is not at the frozen source version")
-        if identity_run.graph_version != int(handoff.identity_link.source_graph.version):
+        source_blueprint = repos.blueprints.get(identity_run.blueprint_id)
+        if (source_blueprint is None or identity_run.graph_version != source_blueprint.version
+                or source_blueprint.graph_id != handoff.identity_link.source_graph.graph_id
+                or source_blueprint.graph.get("version") != int(handoff.identity_link.source_graph.version)):
             raise ExecutionPermitError(Code.STALE_GRAPH, "Identity Run version differs from the frozen source")
         self.runtime.identity_lifecycle.on_execution_permit_blueprint_promoted(
             SimpleNamespace(run_id=record.run_id, mission_id=record.mission_id),
@@ -289,7 +285,11 @@ class ExecutionPermitAuthority:
         proposal = getattr(graph, "proposal_payload", None)
         if record.source_kind == "initial_plan":
             from runtime.orchestration.initial_execution import initial_content
-            _, _, content = initial_content(self.store, activation)
+            # An issued Permit carries an immutable materialization. Upgrading
+            # the compiler cannot change that accepted graph; unissued work
+            # still requires the current recipe before execution admission.
+            _, _, content = initial_content(self.store, activation,
+                allow_historical_recipe=record.status == "ISSUED")
             return SimpleNamespace(candidate_graph=content.blueprint, next_plan=content.plan, next_bindings=content.bindings,
                                    mission_revision=graph.source_revision)
         if not isinstance(proposal, GraphRevisionProposal):
@@ -306,19 +306,14 @@ class ExecutionPermitAuthority:
         if identity_run is None or identity_run.mission_id != record.mission_id:
             return False
         blueprint = repos.blueprints.get(identity_run.blueprint_id)
-        if record.source_kind == "initial_plan":
-            # Identity Blueprint versions are Mission-scoped allocations, while
-            # the Activation Head versions this Run's graph. On a later Run of
-            # the same Mission those counters need not both be 1. Bind BOTH the
-            # Identity allocation and the complete Runtime graph/package.
-            if (blueprint is None or identity_run.graph_version != blueprint.version
-                    or blueprint.mission_id != record.mission_id or blueprint.graph_id != record.graph_id
-                    or blueprint.graph.get("version") != record.graph_version
-                    or blueprint.graph.get("graphId") != record.graph_id
-                    or identity_run.metadata.get("runtimeGraphId") != record.graph_id
-                    or identity_run.metadata.get("compiledPackageChecksum") != record.package_checksum):
-                return False
-        elif identity_run.graph_version != record.graph_version:
+        # Identity allocations are Mission-scoped; Runtime graph versions are
+        # Run-scoped. Both identities must match their own immutable snapshot.
+        if (blueprint is None or identity_run.graph_version != blueprint.version
+                or blueprint.mission_id != record.mission_id or blueprint.graph_id != record.graph_id
+                or blueprint.graph.get("version") != record.graph_version
+                or blueprint.graph.get("graphId") != record.graph_id
+                or identity_run.metadata.get("runtimeGraphId") != record.graph_id
+                or identity_run.metadata.get("compiledPackageChecksum") != record.package_checksum):
             return False
         plan = repos.task_plans.latest(record.mission_id)
         proposal = self._proposal_for(record)
@@ -411,7 +406,8 @@ class ExecutionPermitAuthority:
             if owns:
                 context.__exit__(None, None, None)
 
-    def _assert_dispatch_authority(self, record, *, check_run_fingerprint=False, check_checkpoint=True):
+    def _assert_dispatch_authority(self, record, *, check_run_fingerprint=False, check_checkpoint=True,
+                                   failed_recovery=False):
         rt = self.runtime
         if record.source_kind == "initial_plan" and rt.execution_permit_authority is not self:
             raise ExecutionPermitError(Code.AUTHORITY_DENIED, "Initial execution Permit authority detached")
@@ -431,9 +427,10 @@ class ExecutionPermitAuthority:
             raise ExecutionPermitError(Code.STALE_GRAPH, "Run does not carry the current permit projection")
         if check_run_fingerprint and content_fingerprint(run) != record.source_run_fingerprint:
             raise ExecutionPermitError(Code.STALE_GRAPH, "Run changed before permit issuance")
-        if rt._run_cancellation_requested(run.run_id) or run.status in {
-            WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED,
-        }:
+        terminal = {WorkflowStatus.COMPLETED, WorkflowStatus.CANCELLED, WorkflowStatus.SUPERSEDED}
+        if not failed_recovery:
+            terminal.add(WorkflowStatus.FAILED)
+        if rt._run_cancellation_requested(run.run_id) or run.status in terminal:
             raise ExecutionPermitError(Code.AUTHORITY_DENIED, "Run is cancelled or terminal")
         principal = rt.semantic_principal_provider() if rt.semantic_principal_provider else None
         principal_fp = fingerprint(principal.model_dump(mode="json") if hasattr(principal, "model_dump") else principal)
@@ -448,11 +445,15 @@ class ExecutionPermitAuthority:
         if record.source_kind == "initial_plan":
             from runtime.orchestration.initial_execution import assert_initial_sources
             assert_initial_sources(rt, self.store, run, commitment, allow_candidate_identity=True,
-                                   principal_fingerprint=record.principal_fingerprint)
+                                   principal_fingerprint=record.principal_fingerprint, failed_recovery=failed_recovery,
+                                   issued_permit=record.status == "ISSUED")
         else:
+            if source is None or rt.planning_commit_authority is None:
+                raise ExecutionPermitError(Code.AUTHORITY_DENIED, "current Mission execution authority unavailable")
             provider = GraphProvider(rt.planning_commit_authority, record.run_id, commitment.proposal_payload, source, principal)
             provider.store = self.store
-            if source is None or not provider.authorize():
+            authorized = provider._authorize_mission_scope(run) if failed_recovery else provider.authorize()
+            if not authorized:
                 raise ExecutionPermitError(Code.AUTHORITY_DENIED, "current Mission execution authority denied")
         with self.store.connection() as conn:
             row = conn.execute("SELECT revision FROM mission_semantic_state WHERE mission_id=?", (record.mission_id,)).fetchone()
@@ -507,6 +508,21 @@ class ExecutionPermitAuthority:
         if record is None or record.status != "ISSUED" or projection != execution_permit_projection(record):
             raise ExecutionPermitError(Code.AUTHORITY_DENIED, "execution permit is missing, stale or revoked")
         self._assert_dispatch_authority(record)
+
+    def assert_recoverable(self, run, *, operator_recovery=None):
+        """Validate a failed current Run without granting another execution right."""
+        from runtime.orchestration.permit_recovery import is_failed_planner_recovery
+        if run.status != WorkflowStatus.FAILED and not is_failed_planner_recovery(run):
+            raise ExecutionPermitError(Code.AUTHORITY_DENIED, "current-run recovery requires a failed Run")
+        projection = (run.execution_state.get("graphActivation") or {}).get("executionPermit")
+        record = self.store.get_permit(run.execution_state.get("executionPermitId"))
+        if record is None or record.status != "ISSUED" or projection != execution_permit_projection(record):
+            raise ExecutionPermitError(Code.AUTHORITY_DENIED, "recovery requires the current issued execution permit")
+        self._assert_dispatch_authority(record, failed_recovery=True)
+        if content_fingerprint(self._workflow_run(run.run_id)) != content_fingerprint(run):
+            raise ExecutionPermitError(Code.STALE_GRAPH, "Run changed during recovery validation")
+        from runtime.orchestration.permit_recovery import assert_replay_safe_operations
+        assert_replay_safe_operations(self.runtime, run, operator_recovery=operator_recovery)
 
     def assert_invocation(self, run, state, step_id, attempt_id):
         """Bind the live Scheduler selection to durable Identity at invocation."""

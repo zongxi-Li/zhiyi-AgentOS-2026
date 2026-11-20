@@ -331,7 +331,7 @@ def test_runtime_stream_emits_approval_events_while_original_tool_waits(monkeypa
         monkeypatch.setattr(runtime_module.settings, 'OSCODE_CONTEXT_COMPACTION_MODELS', {
             'https://example.test/v1::test-model': {'context_window': 10000, 'output_reserve': 100}
         })
-        monkeypatch.setattr(runtime_module.Runner, "run_streamed", fake_run_streamed)
+        monkeypatch.setattr(runtime_module, "stream_sdk_agent", fake_run_streamed)
         monkeypatch.setattr(
             runtime_module,
             "provider_model_capabilities",

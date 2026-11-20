@@ -54,6 +54,7 @@ class GraphActivationReceipt(GraphContract):
     active_graph_version: int | None = Field(default=None, alias="activeGraphVersion")
     code: PlanningCommitRejectionCode | None = None
     reason: str | None = Field(default=None, max_length=500)
+    retryable: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 def activation_projection(record: GraphActivationRecord, *, superseded_checkpoint_id) -> dict:

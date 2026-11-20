@@ -1,6 +1,6 @@
 import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import { RunRuntimeStore, RuntimeEventClient, acquireRunRuntimeStore, releaseRunRuntimeStore } from './runtimeEvents'
+import { RunRuntimeStore, RuntimeEventClient, acquireRunRuntimeStore, releaseRunRuntimeStore, reconcileRunRuntimeStore } from './runtimeEvents'
 
 const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a1', delta = '') => ({
   eventId: `e${sequence}`, eventType, runId: 'run', nodeId, attemptId, sequence,
@@ -8,6 +8,108 @@ const event = (sequence: number, eventType: string, nodeId = 'A', attemptId = 'a
 })
 
 describe('RunRuntimeStore streaming projection', () => {
+  it('reconnects a terminal observation only on a newer formal active Run revision', () => {
+    const fetchMock = vi.fn(() => new Promise(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = acquireRunRuntimeStore('run')!
+    try {
+      reconcileRunRuntimeStore({ runId: 'run', status: 'running', runtimeRevision: 10 })
+      store.apply(event(1, 'model.started'))
+      store.apply(event(2, 'node.failed'))
+      store.apply(event(3, 'run.failed', '', ''))
+      reconcileRunRuntimeStore({ runId: 'other', status: 'running', runtimeRevision: 99 })
+      reconcileRunRuntimeStore({ runId: 'run', status: 'running', runtimeRevision: 10 })
+      expect(store.terminal).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      reconcileRunRuntimeStore({ runId: 'run', status: 'retrying', runtimeRevision: 11 })
+      expect(store.terminal).toBe(false)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      store.apply({ ...event(4, 'runtime.display.snapshot', '', ''), payload: {
+        schemaVersion: 1, events: [event(1, 'model.started'), event(2, 'node.failed')], retiredAttempts: { A: ['a1'] },
+      } })
+      store.apply(event(5, 'model.started', 'A', 'a2'))
+      store.apply(event(6, 'model.output.delta', 'A', 'a1', 'late old output'))
+      expect(store.nodes.A.currentAttemptId).toBe('a2')
+      expect(store.nodes.A.status).toBe('RUNNING')
+      store.apply(event(7, 'run.failed', '', ''))
+      reconcileRunRuntimeStore({ runId: 'run', status: 'retrying', runtimeRevision: 11 })
+      expect(store.terminal).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally { releaseRunRuntimeStore('run', store); vi.unstubAllGlobals() }
+  })
+  it('keeps workspace review diagnostics separate from planning, model output and node attempts', () => {
+    const store = new RunRuntimeStore('run')
+    const apply = (sequence: number, eventType: string, payload: Record<string, unknown> = {}) => store.apply({
+      ...event(sequence, eventType, '', ''), payload,
+    })
+    apply(1, 'planner.model.started', { stage: 'outline', callKey: 'outline' })
+    apply(2, 'planner.model.reasoning.delta', { delta: '核对当前输入' })
+    apply(3, 'planner.model.output.delta', { publicText: '保留已生成的规划' })
+    apply(4, 'planner.model.completed')
+    store.apply(event(5, 'model.started'))
+    store.apply(event(6, 'model.reasoning.delta', 'A', 'a1', '保留节点思考'))
+    store.apply(event(7, 'model.output.delta', 'A', 'a1', '{"content":"保留节点正文"}'))
+    store.apply(event(8, 'model.completed'))
+    const baseline = JSON.stringify({ planning: store.planning, nodes: store.nodes, history: store.outputHistory })
+    apply(9, 'workspace.review.retry', { stage: 'workspace_review', status: 'retrying', errorCode: 'REVIEW_BUSY' })
+    expect(store.workspaceReview).toEqual({ status: 'RETRYING', errorCode: 'REVIEW_BUSY', lastActivityAt: event(9, '').timestamp })
+    // Even an unexpected node envelope cannot turn a review diagnostic into a node attempt.
+    store.apply({ ...event(10, 'workspace.review.blocked', 'unexpected', 'new'), payload: { errorCode: 'REVIEW_EVIDENCE_MISSING' } })
+    expect(store.workspaceReview.status).toBe('BLOCKED')
+    expect(store.workspaceReview.errorCode).toBe('REVIEW_EVIDENCE_MISSING')
+    expect(JSON.stringify({ planning: store.planning, nodes: store.nodes, history: store.outputHistory })).toBe(baseline)
+    apply(11, 'workspace.review.resumed', { stage: 'workspace_review', status: 'resumed' })
+    expect(store.workspaceReview).toEqual({ status: 'IDLE', errorCode: null, lastActivityAt: event(11, '').timestamp })
+    expect(JSON.stringify({ planning: store.planning, nodes: store.nodes, history: store.outputHistory })).toBe(baseline)
+    expect(store.terminal).toBe(false)
+    store.dispose()
+  })
+  it('resets and replays workspace review diagnostics while isolating stale, foreign and terminal events', () => {
+    const store = new RunRuntimeStore('run')
+    const diagnostic = { ...event(2, 'workspace.review.retry', '', ''), payload: { errorCode: 'REVIEW_BUSY' } }
+    store.apply({ ...event(1, 'workspace.review.blocked', '', ''), payload: { errorCode: 'OBSOLETE' } })
+    store.apply({ ...event(3, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events: [diagnostic] } })
+    expect(store.workspaceReview).toEqual({ status: 'RETRYING', errorCode: 'REVIEW_BUSY', lastActivityAt: diagnostic.timestamp })
+    store.apply({ ...event(4, 'workspace.review.blocked', '', ''), runId: 'other', payload: { errorCode: 'FOREIGN' } })
+    store.apply({ ...diagnostic, payload: { errorCode: 'STALE' } })
+    expect(store.workspaceReview.errorCode).toBe('REVIEW_BUSY')
+    const resumed = { ...event(4, 'workspace.review.resumed', '', ''), payload: { stage: 'workspace_review', status: 'resumed' } }
+    store.apply({ ...event(5, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events: [diagnostic, resumed] } })
+    expect(store.workspaceReview).toEqual({ status: 'IDLE', errorCode: null, lastActivityAt: resumed.timestamp })
+    store.apply({ ...event(6, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events: [] } })
+    expect(store.workspaceReview).toEqual({ status: 'IDLE', errorCode: null, lastActivityAt: null })
+    store.apply(event(7, 'run.completed', '', ''))
+    store.apply({ ...event(8, 'workspace.review.retry', '', ''), payload: { errorCode: 'LATE' } })
+    expect(store.workspaceReview.status).toBe('IDLE')
+    store.dispose()
+  })
+  it('streams reasoning separately from JSON, archives it by call and isolates runs', () => {
+    const store = new RunRuntimeStore('run')
+    const apply = (sequence: number, eventType: string, payload: Record<string, unknown>) => store.apply({ ...event(sequence, eventType, '', ''), payload })
+    apply(1, 'planner.model.started', { stage: 'outline', callKey: 'outline' })
+    apply(2, 'planner.model.reasoning.delta', { delta: '先核对约束，' })
+    apply(3, 'planner.model.reasoning.delta', { delta: '再拆分任务。' })
+    apply(4, 'planner.model.output.delta', { publicText: '功能性需求规格' })
+    apply(5, 'planner.model.completed', {})
+    expect(store.planning.reasoningBuffer).toBe('先核对约束，再拆分任务。')
+    expect(JSON.parse(store.planning.outputBuffer)).toEqual({ content: '功能性需求规格' })
+    store.apply({ ...event(6, 'planner.model.reasoning.delta', '', ''), runId: 'other', payload: { delta: 'other run' } })
+    expect(store.planning.reasoningBuffer).not.toContain('other run')
+    apply(7, 'planner.stage.retry', { stage: 'outline', callKey: 'outline' })
+    expect(store.outputHistory).toMatchObject([{ reasoning: '先核对约束，再拆分任务。', text: '功能性需求规格', state: 'retrying', stage: 'outline' }])
+    expect(store.planning.reasoningBuffer).toBe('')
+    apply(8, 'planner.model.started', { stage: 'outline', callKey: 'outline' })
+    apply(9, 'planner.model.reasoning.delta', { delta: '思'.repeat(70000) + '最新片段' })
+    apply(10, 'planner.model.completed', {})
+    expect(store.planning.reasoningBuffer).toHaveLength(65536)
+    expect(store.planning.reasoningBuffer.endsWith('最新片段')).toBe(true)
+    expect(store.planning.reasoningTruncated).toBe(true)
+    // A baseline contains public task output; prior ephemeral thoughts are not invented.
+    store.apply({ ...event(10, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events: [] } })
+    expect(store.planning.reasoningBuffer).toBe('')
+    expect(store.planning.reasoningTruncated).toBe(false)
+    store.dispose()
+  })
   it('rebaselines after a restart and continues cumulative public text without duplication', () => {
     const store = new RunRuntimeStore('run')
     store.apply(event(99, 'model.output.delta', 'obsolete', 'old', 'stale'))
@@ -88,6 +190,30 @@ describe('RunRuntimeStore streaming projection', () => {
       callbacks.forEach(callback => callback(0))
       expect(store.nodes.A.outputBuffer).toContain('说明 39')
     } finally { raf.mockRestore() }
+  })
+  it('replays planner call boundaries, stage labels and retry outcomes from a display snapshot', () => {
+    const store = new RunRuntimeStore('run')
+    const plannerEvent = (sequence: number, eventType: string, payload: Record<string, unknown>) => ({ ...event(sequence, eventType, '', ''), payload })
+    const events = [
+      plannerEvent(1, 'planner.model.started', { stage: 'intent_profile', callKey: 'profile' }),
+      plannerEvent(2, 'planner.model.output.delta', { publicText: '核对三个校区的边界' }),
+      plannerEvent(3, 'planner.model.completed', { elapsedMs: 1200 }),
+      plannerEvent(4, 'planner.stage.started', { stage: 'detail', callKey: 'detail:1' }),
+      plannerEvent(5, 'planner.model.started', { stage: 'detail', callKey: 'detail:1' }),
+      plannerEvent(6, 'planner.model.output.delta', { publicText: '补充验收条件' }),
+      plannerEvent(7, 'planner.stage.retry', { stage: 'detail', callKey: 'detail:1' }),
+      plannerEvent(8, 'planner.model.started', { stage: 'detail', callKey: 'detail:1' }),
+    ]
+    store.apply({ ...event(8, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events } })
+    expect(store.outputHistory).toMatchObject([
+      { id: 'e1', stage: 'intent_profile', state: 'completed', elapsedMs: 1200, text: '核对三个校区的边界' },
+      { id: 'e5', stage: 'detail', state: 'retrying', text: '补充验收条件' },
+    ])
+    expect(store.planning.elapsedMs).toBeNull()
+    // Rebaselining must not duplicate archived process records.
+    store.apply({ ...event(8, 'runtime.display.snapshot', '', ''), payload: { schemaVersion: 1, events } })
+    expect(store.outputHistory).toHaveLength(2)
+    store.dispose()
   })
   it('notifies inline approval consumers without changing the durable Run revision', () => {
     const store = new RunRuntimeStore('run')

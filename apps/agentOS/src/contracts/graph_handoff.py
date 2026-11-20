@@ -15,11 +15,17 @@ class GraphVersionIdentityLink(GraphContract):
     candidate_package_checksum: Digest = Field(alias="candidatePackageChecksum")
     # Existing Attempt identities remain attached to their original graph.
     prefix_attempt_ids: tuple[Ref, ...] = Field(alias="prefixAttemptIds")
+    retained_attempt_ids: tuple[Ref, ...] = Field(default=(), alias="retainedAttemptIds", exclude_if=lambda v: not v)
 
     @model_validator(mode="after")
     def source_boundary(self):
+        if (len(set(self.prefix_attempt_ids)) != len(self.prefix_attempt_ids)
+                or len(set(self.retained_attempt_ids)) != len(self.retained_attempt_ids)
+                or set(self.prefix_attempt_ids) & set(self.retained_attempt_ids)):
+            raise ValueError("completed and retained Attempt identities must be distinct")
         if self.source_kind == "initial_plan":
-            if self.source_graph is not None or self.source_blueprint_id is not None or self.prefix_attempt_ids or self.candidate_graph.version != "1":
+            if (self.source_graph is not None or self.source_blueprint_id is not None
+                    or self.prefix_attempt_ids or self.retained_attempt_ids or self.candidate_graph.version != "1"):
                 raise ValueError("initial Identity has no historical graph or prefix")
         elif self.source_graph is None or self.source_blueprint_id is None:
             raise ValueError("revision requires the existing Identity source")
@@ -93,3 +99,4 @@ class GraphHandoffReceipt(GraphContract):
     handoff_id: Ref | None = Field(default=None, alias="handoffId")
     code: str | None = None
     reason: str | None = Field(default=None, max_length=500)
+    retryable: bool = Field(default=False, strict=True, exclude_if=lambda value: not value)

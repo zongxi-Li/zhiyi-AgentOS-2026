@@ -11,6 +11,7 @@ import sqlite3
 from typing import Protocol
 
 from contracts.governance import PolicyDecision
+from support.sqlite_connections import ThreadLocalSQLiteConnections
 
 
 class DecisionStore(Protocol):
@@ -137,7 +138,7 @@ class SQLiteDecisionStore(InMemoryDecisionStore):
         super().__init__()
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.db_path)
+        self._connections = ThreadLocalSQLiteConnections(self.db_path)
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS acg_audit_decisions (
                 decision_id TEXT PRIMARY KEY,
@@ -149,6 +150,10 @@ class SQLiteDecisionStore(InMemoryDecisionStore):
             )"""
         )
         self._connection.commit()
+
+    @property
+    def _connection(self) -> sqlite3.Connection:
+        return self._connections.connection()
 
     def save(self, *, run_id: str, step_id: str, decision: PolicyDecision) -> None:
         """原子保存决定；同一决定标识不能被后续不同内容改写。"""
@@ -224,8 +229,8 @@ class SQLiteDecisionStore(InMemoryDecisionStore):
         )
 
     def close(self) -> None:
-        """关闭独立审计数据库连接。"""
-        self._connection.close()
+        """工作线程结清后关闭全部独立审计数据库连接。"""
+        self._connections.close()
 
 
 __all__ = [

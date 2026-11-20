@@ -1,11 +1,11 @@
-"""Bounded corrections must use fresh errors without replaying valid units."""
+"""Corrections follow semantic progress without replaying valid units."""
 from copy import deepcopy
 import json
 
 import pytest
 
 from adapters.model.protocols import StructuredGenerationError
-from components.planner.task_decomposer import TaskDecomposer, TaskDecompositionError, TASK_PLAN_MAX_REPAIRS, TASK_DECOMPOSITION_PROMPT_VERSION
+from components.planner.task_decomposer import TaskDecomposer, TaskDecompositionError, TASK_DECOMPOSITION_PROMPT_VERSION
 from contracts.acg.schema import ComplexityLevel
 from contracts.acg.semantic_profile import TaskSemanticProfile
 from support.packs.native_capabilities import build_default_capability_catalog
@@ -43,7 +43,7 @@ def test_corrections_receive_latest_problem_and_stop_on_success(successful_round
     expected = ["business_objective_required", "acceptance_criteria_required", "unknown_capability"]
     for attempt in range(1, successful_round + 1):
         prompt = llm.calls[attempt]["prompt"]
-        assert f"Repair attempt {attempt}/{TASK_PLAN_MAX_REPAIRS}" in prompt
+        assert f"Validation correction {attempt}." in prompt
         assert f'"code": "{expected[attempt - 1]}"' in prompt
         assert "Validation detail:" in prompt
         assert "Previous invalid TaskPlan JSON: " + json.dumps(invalid[attempt - 1]) in prompt
@@ -53,7 +53,7 @@ def test_corrections_receive_latest_problem_and_stop_on_success(successful_round
     assert starts == ["decompose", "repair", "repair:2", "repair:3"][:successful_round + 1]
 
 
-def test_three_repairs_share_the_existing_deadline(monkeypatch):
+def test_unchanged_invalid_plan_stops_before_spending_the_existing_deadline(monkeypatch):
     import components.planner.complexity as complexity
     clock = [100.0]
     monkeypatch.setattr(complexity, "monotonic", lambda: clock[0])
@@ -67,7 +67,7 @@ def test_three_repairs_share_the_existing_deadline(monkeypatch):
     llm = ClockLLM({"tasks": [], "relations": []})
     with pytest.raises(TaskDecompositionError):
         run(llm, planning_deadline=100.5)
-    assert [call["timeout_seconds"] for call in llm.calls] == pytest.approx([0.5, 0.4, 0.3, 0.2])
+    assert [call["timeout_seconds"] for call in llm.calls] == pytest.approx([0.5, 0.4])
 
 
 @pytest.mark.parametrize("code,calls", [("MODEL_TIMEOUT", 3), ("MODEL_INPUT_BUDGET_EXCEEDED", 1)])
@@ -86,19 +86,36 @@ def test_transport_and_input_failures_do_not_trigger_content_corrections(monkeyp
     assert all("Repair attempt" not in call["prompt"] for call in llm.calls)
 
 
-def test_staged_third_detail_correction_keeps_outline_and_prior_units():
+def test_staged_corrections_keep_outline_and_prior_units():
     outline = {"tasks": [{key: value for key, value in task().items() if key != "objective"}]}
     invalid = {"tasks": [{**task(), "objective": ""}]}
     details = {"tasks": [task()]}
-    llm = _SequencePlanLLM(outline, invalid, invalid, invalid, details, {"relations": [], "controlPolicies": []})
+    llm = _SequencePlanLLM(outline, invalid,
+        {"tasks": [{**task(), "acceptanceCriteria": []}]},
+        details, {"relations": [], "controlPolicies": []})
     run(llm, task_input={"_effectiveCapabilityProfile": "full"})
-    assert len(llm.calls) == 6
+    assert len(llm.calls) == 5
     assert [call["prompt_version"].removeprefix(TASK_DECOMPOSITION_PROMPT_VERSION) for call in llm.calls] == [
-        ".outline", ".detail", ".detail.repair1", ".detail.repair2", ".detail.repair3", ".relations",
+        ".outline", ".detail", ".detail.repair1", ".detail.repair2", ".relations",
     ]
-    for attempt in (1, 2, 3):
-        assert '"code": "business_objective_required"' in llm.calls[attempt + 1]["prompt"]
-        assert '"fieldPath": ["tasks", 0, "objective"]' in llm.calls[attempt + 1]["prompt"]
+    for attempt, code in enumerate(("business_objective_required", "acceptance_criteria_required"), 1):
+        assert f'"code": "{code}"' in llm.calls[attempt + 1]["prompt"]
+
+
+def test_distinct_corrections_can_pass_the_old_three_repair_ceiling():
+    llm = _PlanLLM({})
+    decomposer = TaskDecomposer(build_default_capability_catalog(), llm)
+    values = iter({"remaining": remaining} for remaining in range(6, -1, -1))
+    decomposer._call_llm = lambda **kwargs: next(values)
+
+    def validate(value):
+        if value["remaining"]:
+            raise ValueError(f"remaining requirements: {value['remaining']}")
+        return value
+
+    _, accepted = decomposer._generate_validated(stage="detail", prompt="Resolve remaining requirements",
+        schema={"type": "object"}, validate=validate, reasoning_effort=None, planning_deadline=None, run_id=None)
+    assert accepted == {"remaining": 0}
 
 
 @pytest.mark.parametrize("invalid_patch,detail", [

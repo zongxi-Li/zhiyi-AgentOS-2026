@@ -8,7 +8,7 @@ from contracts.acg.semantic_profile import TaskSemanticProfile
 from support.packs.native_capabilities import build_default_capability_catalog
 
 
-def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop() -> None:
+def test_lowering_freezes_reasoning_tiers_and_compiles_acceptance_driven_verification_loop() -> None:
     from contracts.resource import ModelDemand
     from support.capabilities import CapabilityCatalog
 
@@ -73,11 +73,51 @@ def test_lowering_freezes_reasoning_tiers_and_compiles_bounded_verification_loop
         if isinstance(node, ControlNode) and node.control_type is ControlType.LOOP
     )
     assert loop.loop_spec is not None
-    assert loop.loop_spec.max_iterations == 3
+    assert loop.loop_spec.max_iterations is None
     assert loop.loop_spec.on_limit == "review"
     package = ACGGraphCompiler().compile_package(blueprint, run_id="run_123456789abc")
     demanded_step = next(step.node_id for step in blueprint.step_nodes() if step.capability == "solution_design")
     assert package.binding_manifest.for_step(demanded_step).model_demand == demand
     assert restored.resource_plan.models == blueprint.resource_plan.models
     rule = next(item for item in package.control_manifest.rules if item.loop is not None)
-    assert rule.loop.max_iterations == 3
+    assert rule.loop.max_iterations is None
+
+
+def loop_graph():
+    from types import SimpleNamespace
+    from components.executor.graph import ACGExecutionGraph, ACGExecutionState
+    from contracts.compiled_acg import ControlManifest, ControlRule, ConditionalControlSpec, LoopControlSpec
+
+    manifest = ControlManifest(entryNodeIds=("read",), exitNodeIds=("done",),
+        rules=(ControlRule(controlId="review-loop", controlType="loop", loop=LoopControlSpec(
+        bodyEntryId="read", bodyExitId="verify", maxIterations=1,
+        condition=ConditionalControlSpec(sourceStepId="verify", jsonPointer="/status", operator="IN",
+            targetsByCase={"partial": "read", "passed": "done"}))),))
+    graph = ACGExecutionGraph(nodes=("read", "verify", "done"), edges=(("read", "verify"), ("verify", "done")),
+        compiled_package=SimpleNamespace(control_manifest=manifest))
+    return graph, ACGExecutionState(runId="run-loops")
+
+
+def test_legacy_iteration_count_cannot_stop_real_progress_and_acceptance_exits():
+    graph, state = loop_graph()
+    for index in range(40):
+        state.completed_step_ids = ["read", "verify"]
+        graph._advance_loop_frames(state, {"read": {"observedPath": f"part-{index}.py"},
+                                          "verify": {"status": "partial", "remaining": 40 - index}})
+        assert state.review_payload is None
+    assert state.loop_iterations["review-loop"] == 40
+    state.completed_step_ids = ["read", "verify"]
+    graph._advance_loop_frames(state, {"verify": {"status": "passed"}})
+    assert state.control_frames == [] and state.review_payload is None
+
+
+def test_unchanged_loop_evidence_waits_for_new_input_without_accepting_failed_review():
+    import json
+
+    graph, state = loop_graph()
+    values = {"read": {"text": "PRIVATE SOURCE"}, "verify": {"status": "partial"}}
+    for _ in range(2):
+        state.completed_step_ids = ["read", "verify"]
+        graph._advance_loop_frames(state, values)
+    assert state.review_payload["reasonCode"] == "LOOP_NO_PROGRESS"
+    assert "PRIVATE SOURCE" not in json.dumps(state.model_dump())

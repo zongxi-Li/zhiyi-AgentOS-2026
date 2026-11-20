@@ -38,6 +38,13 @@ export function planningProfileText(metrics: ModelOutputMetrics) {
   return facts.length ? `已梳理任务需求，识别出 ${facts.join('、')}。` : '已完成任务需求的初步梳理。'
 }
 
+export function planningStageLabel(stage?: string | null): string {
+  const key = (stage || '').split(/[.:]/)[0]
+  const labels: Record<string, string> = { intent_profile: '理解目标与约束', profile: '理解目标与约束', decompose: '拆分任务与规划依据', tasks: '拆分任务步骤', outline: '拟定任务步骤', detail: '补充步骤目标与验收标准', relations: '梳理步骤依赖', coverage: '检查交付覆盖', repair_coverage: '修正交付覆盖', repair: '修正规划并重新校验', planning: '校验初步规划' }
+  const suffix = /repair/.test(stage || '') && key !== 'repair' && key !== 'repair_coverage' ? ' · 修正' : ''
+  return (labels[key] || '形成执行方案') + suffix
+}
+
 // Describe recorded facts, without treating a finished model call as an accepted plan.
 export function planningProgressText(item: ModelOutputItem) {
   switch (item.kind) {

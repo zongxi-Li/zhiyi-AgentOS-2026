@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 from uuid import uuid4
 
-from components.resource.domain.models import RuntimeCandidate, RuntimeHealth
 from components.resource.application.resource_plane import ResourcePlane
 from components.resource.scheduler.placement_policy import placement_preference
 from contracts.resource import (
@@ -27,7 +26,6 @@ from contracts.resource import (
     RuntimeProfile,
     RuntimeKind,
     RuntimeSnapshot,
-    TrustLevel,
     ResourceLease,
 )
 
@@ -299,6 +297,7 @@ class ResourceBinder:
             profile = self.plane.runtime(candidate.runtime_id)
             if (profile.kind is not RuntimeKind.AGENT_INSTANCE or profile.agent_registration != candidate.agent_registration
                     or profile.host_runtime_id != host_id or not profile.enabled or profile.draining
+                    or profile.runtime_id in requirement.excluded_runtime_ids
                     or not set(requirement.required_capabilities).issubset(profile.capabilities)
                     or (requirement.domain and profile.domains and requirement.domain not in profile.domains
                         and "general" not in profile.domains)

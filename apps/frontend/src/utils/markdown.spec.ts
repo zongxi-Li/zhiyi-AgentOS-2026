@@ -1,6 +1,31 @@
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown } from './markdown'
 
+describe('renderMarkdown paragraph flow', () => {
+  it('keeps soft line breaks within one paragraph instead of adding a gap after every line', () => {
+    const html = renderMarkdown('先检查任务约束，\n再分析策略冲突与依赖。\n最后说明需要用户确认的取舍。')
+    expect(html.match(/<p>/g)).toHaveLength(1)
+    expect(html).toContain('先检查任务约束，\n再分析策略冲突与依赖。\n最后说明需要用户确认的取舍。')
+    expect(html).not.toContain('<br>')
+  })
+
+  it('retains intentional blank paragraphs and explicit hard breaks', () => {
+    const html = renderMarkdown('第一段\n延续第一段\n\n第二段  \n第二段换行\\\n末行')
+    expect(html.match(/<p>/g)).toHaveLength(2)
+    expect(html).toContain('<p>第一段\n延续第一段</p>')
+    expect(html).toContain('<p>第二段<br>\n第二段换行<br>\n末行</p>')
+  })
+
+  it('separates prose, lists, headings, tables and code without turning each prose line into a paragraph', () => {
+    const html = renderMarkdown('已调整的区域：\n- 移除不可点击的标签\n- 保留当前进展\n\n接下来检查\n实际页面。\n## 验证\n| 项目 | 状态 |\n|---|---|\n| 布局 | 正常 |\n```text\n原样\n保留换行\n```')
+    expect(html).toContain('<p>已调整的区域：</p>\n<ul>')
+    expect(html).toContain('<p>接下来检查\n实际页面。</p>\n<h2>验证</h2>')
+    expect(html.match(/<li>/g)).toHaveLength(2)
+    expect(html).toContain('<table>')
+    expect(html).toContain('原样\n保留换行')
+  })
+})
+
 describe('renderMarkdown 数学公式', () => {
   it('渲染块级 $$..$$ 公式为 KaTeX HTML', () => {
     const html = renderMarkdown('$$PE_{(pos, 2i)} = \\sin\\left(\\frac{pos}{10000^{2i/d_{model}}}\\right)$$')

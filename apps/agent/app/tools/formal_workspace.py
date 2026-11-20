@@ -1,15 +1,19 @@
 """AgentOS-owned, NodeRunner-bound workspace tools. Hands owns no Agent loop."""
 import asyncio
+import hashlib
 import json
 import os
-from uuid import uuid4
-from datetime import timedelta
 from pathlib import Path
+import re
+from uuid import uuid4
 
 from adapters.tool.audited_runtime import AuditedToolRuntime
 from adapters.tool.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown
 from support.async_tasks import await_settled
 from components.resource.scheduler.binder import LeaseKeepAlive
+from components.executor.value_store import SQLiteExecutionValueStore
+from contracts import stable_checksum
+from contracts.execution import NodeExecutionRecord
 from contracts.resource import ExecutionRequirement, RuntimeKind
 from contracts.local_runtime import LocalRuntimeExecutionRequest, LocalRuntimeExecutionLimits
 from contracts.runtime_events import RuntimeEvent
@@ -17,6 +21,7 @@ from contracts.tools import hands_tools, ToolExecutionResult
 from contracts.communication import validate_contract_payload
 from runtime.events.live_events import runtime_event_broker
 from app.tools.permissions import get_chat_permission_service, normalize_relative_path
+from app.tools.task_approval import ApprovalPolicyChanged, TaskApprovalCoordinator
 from support.work_timeouts import human_approval_wait
 
 TOOLS = {'read_file':'fs.read','list_files':'fs.list','write_file':'fs.write','patch_file':'fs.patch','run_tests':'shell.exec'}
@@ -42,6 +47,65 @@ class FormalWorkspaceTools:
 
     def describe(self, name):
         return next((tool for tool in self.list_tools() if tool.name == name), None)
+
+    def prove_not_dispatched(self, *, run, node, operation, tool, raw_arguments,
+                             workspace, connection, execution_value_store):
+        """Read the formal write-ahead barrier; never infer an approval decision.
+
+        execute() commits its request before dispatch. Only this exact adapter
+        and ledger implementation can turn an absent request into non-invocation
+        evidence. The core separately proves the Attempt ended and closes every
+        declaration/activity in the operation before admitting a fresh Attempt.
+        """
+        if (type(self) is not FormalWorkspaceTools or self.runtime.tool_runtime is not self
+                or any(name in vars(self) or getattr(type(self), name) is not implementation
+                       for name, implementation in _FORMAL_WRITE_AHEAD_BOUNDARY)):
+            raise ValueError('tool recovery requires the installed formal write-ahead adapter')
+        store = self.runtime.execution_value_store
+        if (store is not execution_value_store or type(store) is not SQLiteExecutionValueStore
+                or 'put_tool_value' in vars(store)
+                or type(store).put_tool_value is not _SQLITE_TOOL_WRITE_AHEAD):
+            raise ValueError('tool recovery requires the unchanged formal write-ahead ledger')
+        database = next((row[2] for row in connection.execute('PRAGMA database_list') if row[1] == 'main'), '')
+        if not database or Path(database).resolve() != store.db_path.resolve():
+            raise ValueError('tool recovery proof and execution ledger use different databases')
+        empty_session = tool == 'native.tool-session' and operation == node.operation_id and raw_arguments is None
+        if (workspace != run.input.get('workspaceBinding') or not empty_session and (
+                tool not in {'fs.write', 'fs.patch', 'shell.exec'}
+                or re.fullmatch(re.escape(node.operation_id) + r':tools:\d+:call:\d+', operation) is None)):
+            raise ValueError('tool recovery declaration or frozen workspace does not match')
+        row = connection.execute('SELECT payload_json FROM acg_node_executions WHERE run_id=? AND operation_id=?',
+                                 (run.run_id, node.operation_id)).fetchone()
+        if row is None or NodeExecutionRecord.model_validate_json(row[0]) != node:
+            raise ValueError('tool recovery lacks the exact durable node identity')
+        if empty_session:
+            prefix = node.operation_id + ':'
+            model_ref = 'tool:' + hashlib.sha256((run.run_id + ':' + node.operation_id + ':tools:0:model-turn').encode()).hexdigest()
+            if connection.execute(
+                    "SELECT 1 FROM execution_values WHERE run_id=? AND reference LIKE 'tool:%' AND ("
+                    "reference=? OR substr(json_extract(payload_json,'$.request.invocationId'),1,?)=? "
+                    "OR substr(json_extract(payload_json,'$.response.requestId'),1,?)=? "
+                    "OR json_extract(payload_json,'$.identity.commitId')=? "
+                    "OR json_extract(payload_json,'$.record.commitId')=? "
+                    "OR json_extract(payload_json,'$.commitId')=?) LIMIT 1",
+                    (run.run_id, model_ref, len(prefix), prefix, len(prefix), prefix,
+                     node.operation_id, node.operation_id, node.operation_id)).fetchone():
+                raise ValueError('native session has admitted model or tool work')
+            return {'source': 'formal-workspace-write-ahead.v1',
+                    'identity': dict(runId=run.run_id, stepId=node.step_id, attemptId=node.attempt_id,
+                                    commitId=node.operation_id),
+                    'operationKey': operation, 'capabilityId': tool,
+                    'workspaceId': workspace['workspaceId'], 'grantId': workspace['grantId'], 'dispatched': False}
+        for suffix in (':request', ':admission', ':receipt', ':result', ':unsettled'):
+            reference = 'tool:' + hashlib.sha256((run.run_id + ':' + operation + suffix).encode()).hexdigest()
+            if connection.execute('SELECT 1 FROM execution_values WHERE reference=?', (reference,)).fetchone():
+                raise ValueError('tool was admitted or dispatched; explicit side-effect reconciliation required')
+        return {'source': 'formal-workspace-write-ahead.v1',
+                'identity': dict(runId=run.run_id, stepId=node.step_id, attemptId=node.attempt_id,
+                                 commitId=node.operation_id),
+                'operationKey': operation, 'capabilityId': tool,
+                'declarationHash': stable_checksum({'tool': tool, 'arguments': raw_arguments}),
+                'workspaceId': workspace['workspaceId'], 'grantId': workspace['grantId'], 'dispatched': False}
 
     async def verified_observations(self, context):
         """Verify only receipt references delivered by this node's ContextPack.
@@ -75,6 +139,14 @@ class FormalWorkspaceTools:
             observations.append({'kind':'hands_execution_receipt','executionId':record['executionId'],
                 'receiptRef':ref,'receiptChecksum':receipt['checksum'],'content':receipt})
         return observations
+
+    async def previous_attempt_observations(self, context):
+        """Read admitted retry evidence through the same bound tool authority."""
+        if self.context is not context or self.guard is None:
+            raise PermissionError('Bound NodeRunner context required for retry evidence')
+        self.guard()
+        from runtime.orchestration.permit_recovery import settled_retry_observations
+        return settled_retry_observations(self.runtime, context.run, context.step.step_id)
 
     async def execute(self, name, arguments, *, operation_key=None, **kwargs):
         requested_name = name
@@ -161,38 +233,73 @@ class FormalWorkspaceTools:
                     rt.formal_tool_pending.pop(approval_id, None)
                     approval_ids.discard(approval_id)
             await runtime_event_broker.publish(run_id,RuntimeEvent(eventType='tool.'+kind,runId=run_id,
-                nodeId=step_id,attemptId=context.attempt_id,sequence=0,payload=payload))
-        try:
-            with human_approval_wait():
-                await self.permissions.authorize(tool_name=approval_name,arguments=approval_data,call_id=operation_key,
-                    session_id=run_id,workspace_id=authorization.workspace_id,emit=emit)
-        finally:
-            for approval_id in tuple(approval_ids):
-                approval = rt.formal_tool_pending.get(approval_id)
-                if approval:
-                    await emit('approval_resolved', {'approval': {**approval, 'status': 'cancelled'}})
-        self.guard()  # Human approval may have yielded while a permit was revoked.
-        if authority: authorization = authority.resolve(context.run)
-        healthy = await rt.local_runtime_health_projector.refresh(rt.local_runtime_transport)
-        if not healthy: raise RuntimeError('Execution resource is not healthy')
-        # A released capacity lease is terminal. Each tool operation needs its
-        # own lease identity even when the enclosing node attempt stays stable.
-        scheduled = rt.resource_binder.bind_ready(run_id=run_id,step_id=step_id,
-            attempt_id=f'{context.attempt_id}:tool:{operation_key}:lease:{uuid4().hex}',
-            requirement=ExecutionRequirement(requiredCapabilities=[TOOLS.get(name,name)],runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
-                allowedRuntimeIds=[rt.local_runtime_resource.profile.runtime_id]))
-        if scheduled.binding is None or scheduled.lease is None: raise RuntimeError('Hands lease unavailable: '+str(scheduled.reason))
-        keepalive = LeaseKeepAlive(rt.resource_binder.coordinator,scheduled.lease)
-        keepalive.start()
+                nodeId=step_id,attemptId=context.attempt_id,sequence=0,payload={**payload,
+                    'operationKey':operation_key,
+                    'target':str(approval_data.get('path') or approval_data.get('command') or approval_data.get('cwd') or '')[:512]}))
+        coordinator = TaskApprovalCoordinator(rt, self.permissions)
+        approval_context = coordinator.bind_context(context, self.guard, authorization)
         outcome_unknown = False
+        async def cleanup():
+            try:
+                await keepalive.stop()
+            finally:
+                if not outcome_unknown:
+                    rt.resource_binder.release(scheduled.lease.lease_id)
+
+        while True:
+            approval_decision = previous.get('approvalDecision') if previous else None
+            if previous is None:
+                try:
+                    with human_approval_wait():
+                        approval_decision = await self.permissions.authorize(
+                            tool_name=approval_name, arguments=approval_data, call_id=operation_key,
+                            session_id=run_id, workspace_id=authorization.workspace_id, emit=emit,
+                            trusted_context=approval_context,
+                            automatic_decision=lambda: coordinator.automatic_decision(approval_context))
+                finally:
+                    for approval_id in tuple(approval_ids):
+                        approval = rt.formal_tool_pending.get(approval_id)
+                        if approval:
+                            await emit('approval_resolved', {'approval': {**approval, 'status': 'cancelled'}})
+            self.guard()  # Approval may have yielded while a permit was revoked.
+            if authority: authorization = authority.resolve(context.run)
+            healthy = await rt.local_runtime_health_projector.refresh(rt.local_runtime_transport)
+            if not healthy: raise RuntimeError('Execution resource is not healthy')
+            # Every tool operation receives its own terminal capacity lease.
+            scheduled = rt.resource_binder.bind_ready(run_id=run_id,step_id=step_id,
+                attempt_id=f'{context.attempt_id}:tool:{operation_key}:lease:{uuid4().hex}',
+                requirement=ExecutionRequirement(requiredCapabilities=[TOOLS.get(name,name)],runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
+                    allowedRuntimeIds=[rt.local_runtime_resource.profile.runtime_id]))
+            if scheduled.binding is None or scheduled.lease is None: raise RuntimeError('Hands lease unavailable: '+str(scheduled.reason))
+            keepalive = LeaseKeepAlive(rt.resource_binder.coordinator,scheduled.lease)
+            keepalive.start()
+            try:
+                request = LocalRuntimeExecutionRequest(protocolVersion='1',requestId=operation_key,invocationId=operation_key,
+                    resourceId=scheduled.binding.resource_id,capabilityId=TOOLS.get(name,name),authorization=authorization,
+                    input=data,limits=LocalRuntimeExecutionLimits(timeoutSeconds=90,maxStdoutBytes=64000,maxStderrBytes=32000),
+                    idempotencyKey=operation_key)
+                payload = {'request': request.model_dump(by_alias=True, mode='json'), 'identity': identity}
+                if approval_decision:
+                    payload['approvalDecision'] = approval_decision
+                if previous is not None:
+                    # A durable request already passed admission. Preserve its
+                    # original authorization even after the policy is disabled.
+                    if payload != previous:
+                        raise HandsOutcomeUnknown('Frozen Hands request changed during replay')
+                    request_ref = rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,
+                        key=operation_key+':request',payload=previous)
+                else:
+                    request_ref = coordinator.admit(context=approval_context,
+                        approval_decision=approval_decision,resource_id=scheduled.binding.resource_id,
+                        commit=lambda: rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,
+                            key=operation_key+':request',payload=payload))
+            except BaseException as exc:
+                await await_settled(asyncio.create_task(cleanup(), name=f'hands-lease-cleanup:{operation_key}'))
+                if isinstance(exc, ApprovalPolicyChanged):
+                    continue
+                raise
+            break
         try:
-            request = LocalRuntimeExecutionRequest(protocolVersion='1',requestId=operation_key,invocationId=operation_key,
-                resourceId=scheduled.binding.resource_id,capabilityId=TOOLS.get(name,name),authorization=authorization,
-                input=data,limits=LocalRuntimeExecutionLimits(timeoutSeconds=90,maxStdoutBytes=64000,maxStderrBytes=32000),
-                idempotencyKey=operation_key)
-            key = operation_key+':request'
-            rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,key=key,
-                payload={'request':request.model_dump(by_alias=True,mode='json'),'identity':identity})
             self.guard()
             if authority: authority.resolve(context.run)
             await emit('execution_started',{'tool':requested_name,'bindingId':scheduled.binding.binding_id,**identity})
@@ -207,11 +314,17 @@ class FormalWorkspaceTools:
             ref = rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,key=operation_key+':receipt',payload=receipt)
             record = {'tool':requested_name,'status':result.status,'executionId':result.output['executionId'],
                 'receiptChecksum':receipt['checksum'],'receiptRef':ref,'resourceId':scheduled.binding.resource_id,
-                'bindingId':scheduled.binding.binding_id,**identity}
+                'bindingId':scheduled.binding.binding_id,'requestRef':request_ref,**identity}
             record['workspaceId'] = authorization.workspace_id
             record['grantId'] = authorization.grant_id
+            if approval_decision: record['approvalDecision'] = approval_decision
             if name == 'run_tests': record['managedTest'] = True
-            await emit('execution_completed',record)
+            # Bounded display projection; receipts and authorization remain owned
+            # by the execution ledger, not by the transcript.
+            preview = {key: result.output[key] for key in ('text', 'content', 'entries', 'stdout', 'stderr', 'exitCode')
+                       if key in result.output}
+            await emit('execution_completed',{**record,
+                'resultPreview': json.dumps(preview, ensure_ascii=False, default=str)[:4096] if preview else ''})
             if cancellation is not None:
                 raise cancellation
             # Drain a renewal already in flight before declaring/cacheing success.
@@ -233,10 +346,9 @@ class FormalWorkspaceTools:
                          'reason':'external_outcome_unknown', **identity})
             raise
         finally:
-            async def cleanup():
-                try:
-                    await keepalive.stop()
-                finally:
-                    if not outcome_unknown:
-                        rt.resource_binder.release(scheduled.lease.lease_id)
             await await_settled(asyncio.create_task(cleanup(), name=f"hands-lease-cleanup:{operation_key}"))
+
+
+_FORMAL_WRITE_AHEAD_BOUNDARY = tuple((name, getattr(FormalWorkspaceTools, name))
+    for name in ('execute', 'describe', 'list_tools', 'bind_context', 'scoped'))
+_SQLITE_TOOL_WRITE_AHEAD = SQLiteExecutionValueStore.put_tool_value

@@ -19,14 +19,10 @@ from copy import deepcopy
 import logging
 from typing import Any
 
+from contracts.agents import AgentRegistrationRef
 from contracts.identity import new_attempt_id, new_step_execution_id
 from components.executor import ACGExecutionState, ACGGraphCompiler
 from components.mission.state_machine import StateMachine
-
-
-class ResourceNotFoundError(KeyError):
-    """冻结范围内没有可用的替代执行资源。"""
-
 from contracts.execution import WorkflowProgressPhase
 from contracts.resource import ExecutionRequirement
 from contracts.workflow import (
@@ -45,6 +41,10 @@ from support.stores._policy import acg_review_subject
 
 
 logger = logging.getLogger(__name__)
+
+
+class ResourceNotFoundError(KeyError):
+    """冻结范围内没有可用的替代执行资源。"""
 
 
 def _normalize_runtime_engine(runtime_engine: str) -> str:
@@ -366,6 +366,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         reuse_source_run: bool = False,
         validate_only: bool = False,
         restart_from_step: bool = False,
+        operator_recovery: dict | None = None,
     ) -> RuntimeRunRecord:
         """Prepare a successor Run that resumes from a failed ACG step.
 
@@ -383,11 +384,14 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
 
         source = self.workflow_store.get_run(source_run_id)
         permit_mode = bool(source.execution_state.get("executionPermitId"))
+        readonly_retry_proofs = []
+        settled_retry_proofs = []
         if permit_mode:
             if not reuse_source_run:
                 raise ValueError("Permit retry must retain its formally activated Run")
-            from runtime.orchestration.permit_recovery import assert_settled_operations
-            assert_settled_operations(self, source)
+            from runtime.orchestration.permit_recovery import assert_replay_safe_operations
+            assert_replay_safe_operations(self, source, readonly_proofs=readonly_retry_proofs,
+                operator_recovery=operator_recovery, settled_proofs=settled_retry_proofs)
         from contracts.task_acceptance import frozen_task_acceptance
 
         acceptance = frozen_task_acceptance(source)
@@ -410,9 +414,10 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED,
         }:
             raise ValueError("node rerun requires a terminal, nonsuperseded source Run")
-        if not restart_from_step and source.status is not WorkflowStatus.FAILED and not (
-            validate_only and source.status in {WorkflowStatus.RUNNING, WorkflowStatus.WAITING_REVIEW}
-        ):
+        from runtime.orchestration.permit_recovery import is_failed_planner_recovery
+        planner_recovery = permit_mode and reuse_source_run and is_failed_planner_recovery(source)
+        if not restart_from_step and source.status is not WorkflowStatus.FAILED and not (planner_recovery or
+            validate_only and source.status in {WorkflowStatus.RUNNING, WorkflowStatus.WAITING_REVIEW}):
             raise ValueError("single-step retry requires a failed source Run")
         if expected_runtime_revision is not None and source.runtime_revision != expected_runtime_revision:
             raise ValueError("source Run changed after the retry request was prepared")
@@ -448,6 +453,10 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         if not restart_from_step and source_step.status is not StepStatus.FAILED:
             raise ValueError("single-step retry target must be failed")
         source_state = acg_execution_state_from_run(source)
+        if planner_recovery:
+            # An explicit retry replaces the failed Planner barrier. It neither
+            # approves a node result nor fabricates an acceptance decision.
+            source_state.review_payload = None
         if (permit_mode and source.status == WorkflowStatus.FAILED
                 and (source_state.review_payload or {}).get("subjectType") == "planner"
                 and any(event.event_type == TraceEventType.REVIEW_DECIDED
@@ -655,6 +664,34 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             "retryTargetStepId": step_id,
             "reusedStepIds": sorted(copied_refs),
         })
+        if readonly_retry_proofs:
+            # Record why a fresh Attempt was safe without promoting old reads
+            # to observations or pretending an unacknowledged read is settled.
+            retry.execution_state.setdefault("readOnlyRetryProofs", {}).update({
+                proof["operationId"]: proof for proof in readonly_retry_proofs
+            })
+        if settled_retry_proofs:
+            fresh = [proof for proof in settled_retry_proofs if not proof.get("authorizationRef")]
+            if fresh:
+                if operator_recovery is None:
+                    raise ValueError("settled-session retry requires an explicit operator admission")
+                authorization_ref = self.execution_value_store.put_tool_value(
+                    run_id=retry.run_id, step_id=step_id,
+                    key=operator_recovery["operationId"] + ":settled-session-authorization",
+                    payload={"authorization": operator_recovery,
+                        "proofs": [{"operationId": proof["operationId"], "evidenceFingerprint": proof["evidenceFingerprint"]}
+                                   for proof in fresh]},
+                )
+                for proof in fresh:
+                    proof["authorizationRef"] = authorization_ref
+            retry.execution_state.setdefault("settledSessionRetryProofs", {}).update({
+                proof["operationId"]: proof for proof in settled_retry_proofs
+            })
+            retry.execution_state["singleStepRetry"]["settledSessionProofs"] = [
+                {"operationId": proof["operationId"], "attemptId": proof["attemptId"],
+                 "evidenceFingerprint": proof["evidenceFingerprint"], "authorization": proof["authorization"]}
+                for proof in settled_retry_proofs
+            ]
         if restart_from_step:
             retry.execution_state["nodeRerun"] = {
                 "sourceRunId": source.run_id, "targetStepId": step_id,
@@ -842,27 +879,67 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         if not current_agent_id:
             raise ValueError(f"ACG step has no frozen resource binding: {step_id}")
         history = list(run.execution_state.get("bindingHistory") or [])
-        if any(item.get("stepId") == step_id for item in history if isinstance(item, dict)):
-            raise ValueError(f"alternate binding budget exhausted for step: {step_id}")
+        step_history = [item for item in history if isinstance(item, dict) and item.get("stepId") == step_id]
+        excluded_agents, excluded_resources = set(), set()
+        for item in step_history:
+            for agent_key, registration_key, resource_key in (
+                ("previousAgentId", "previousAgentRegistration", "previousAgentResourceId"),
+                ("agentId", "agentRegistration", "agentResourceId"),
+            ):
+                if isinstance(item.get(registration_key), dict):
+                    registration = AgentRegistrationRef.model_validate(item[registration_key])
+                    if item.get(agent_key) != registration.agent_id:
+                        raise ValueError("alternate binding history registration mismatch")
+                    excluded_resources.add(registration.resource_id)
+                elif isinstance(item.get(resource_key), str):
+                    excluded_resources.add(item[resource_key])
+                elif item.get(agent_key):
+                    # Legacy history did not capture generations. Without exact
+                    # identity, do not retry the same logical candidate blindly.
+                    excluded_agents.add(item[agent_key])
+        current_registration = allocated.get("agentRegistration")
+        if not isinstance(current_registration, dict):
+            current_registration = next((item["agentRegistration"] for item in reversed(step_history)
+                if item.get("agentId") == current_agent_id and isinstance(item.get("agentRegistration"), dict)), None)
+        if current_registration is not None:
+            current_registration = AgentRegistrationRef.model_validate(current_registration)
+            if current_registration.agent_id != current_agent_id:
+                raise ValueError("current alternate binding registration mismatch")
+        else:
+            try:
+                current = self.agent_registry.resolve_by_id(current_agent_id, allowed_agent_ids=scope.agent_ids)
+                current_registration = self.agent_registry.registration_for(current)
+            except KeyError:
+                excluded_agents.add(current_agent_id)
+        if current_registration is not None:
+            excluded_resources.add(current_registration.resource_id)
+        requirements = dict(run.execution_state.get("bindingRequirements") or {})
+        requirement_payload = requirements.get(step_id)
+        requirement = (ExecutionRequirement.model_validate(requirement_payload)
+                       if isinstance(requirement_payload, dict) else None)
+        if requirement is not None:
+            excluded_resources.update(requirement.excluded_runtime_ids)
         # 角色重绑定在嵌入式后端内完成：候选来自冻结 scope 内的逻辑 Agent
         # 注册表，选择权威是角色解析顺序（能力优先级），不是资源调度。
         candidates = self._alternate_logical_agents(
-            run=run, step=step, scope=scope, excluded_agent_id=current_agent_id,
+            run=run, step=step, scope=scope, excluded_agent_ids=excluded_agents,
+            excluded_resource_ids=excluded_resources,
         )
         if not candidates:
             raise ResourceNotFoundError(f"no healthy alternate resource for step: {step_id}")
         selected_agent_id = candidates[0]
         # Resolve the instance now so a stale registry entry cannot enter
         # persisted state.
-        self.agent_registry.resolve_by_id(selected_agent_id, allowed_agent_ids=scope.agent_ids)
+        selected = self.agent_registry.resolve_by_id(selected_agent_id, allowed_agent_ids=scope.agent_ids)
+        selected_registration = self.agent_registry.registration_for(selected)
+        if selected_registration.resource_id in excluded_resources:
+            raise ValueError("alternate registration changed during selection")
         bindings[step_id] = selected_agent_id
         run.execution_state["resourceBindings"] = bindings
-        requirements = dict(run.execution_state.get("bindingRequirements") or {})
-        requirement_payload = requirements.get(step_id)
-        if isinstance(requirement_payload, dict):
-            requirement = ExecutionRequirement.model_validate(requirement_payload)
+        if requirement is not None:
             requirements[step_id] = requirement.model_copy(
                 update={
+                    "excluded_runtime_ids": sorted(excluded_resources),
                     "preferences": {
                         **requirement.preferences,
                         "agentRole": selected_agent_id,
@@ -875,6 +952,11 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
                 "stepId": step_id,
                 "previousAgentId": current_agent_id,
                 "agentId": selected_agent_id,
+                "previousAgentRegistration": (current_registration.model_dump(by_alias=True, mode="json")
+                    if current_registration is not None else None),
+                "previousAgentResourceId": current_registration.resource_id if current_registration is not None else None,
+                "agentRegistration": selected_registration.model_dump(by_alias=True, mode="json"),
+                "agentResourceId": selected_registration.resource_id,
                 "reason": reason,
             }
         )
@@ -896,7 +978,7 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         return selected_agent_id
 
     def _alternate_logical_agents(
-        self, *, run, step, scope, excluded_agent_id: str
+        self, *, run, step, scope, excluded_agent_ids: set[str], excluded_resource_ids: set[str]
     ) -> list[str]:
         """列出冻结 scope 内具备步骤能力的候选逻辑 Agent 标识。
 
@@ -905,16 +987,26 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         """
         domain = (self._load_workflow(run).domain or "").strip().lower()
         required = (step.capability or "").strip().lower()
-        allowed = set(scope.agent_ids) if scope.agent_ids else None
+        allowed = set(scope.agent_ids)
         candidates: list[tuple[int, str]] = []
         for agent in self.agent_registry.all():
             agent_id = str(self.agent_registry.agent_id(agent))
-            if agent_id == excluded_agent_id:
+            if agent_id in excluded_agent_ids:
                 continue
-            if allowed is not None and agent_id not in allowed:
+            if agent_id not in allowed:
                 continue
             profile = agent.profile
-            if not profile.enabled:
+            if not profile.enabled or not self.agent_registry.is_enabled(agent_id):
+                continue
+            try:
+                registration = self.agent_registry.registration_for(agent)
+                resource = self.resource_plane.runtime(registration.resource_id)
+            except KeyError:
+                continue
+            if registration.resource_id in excluded_resource_ids:
+                continue
+            if (not resource.enabled or resource.draining
+                    or not self.resource_plane.health_monitor.health(resource.runtime_id).healthy):
                 continue
             agent_domain = (profile.domain or "").strip().lower()
             if agent_domain not in {domain, "general"}:

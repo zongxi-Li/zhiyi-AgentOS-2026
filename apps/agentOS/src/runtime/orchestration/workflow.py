@@ -14,13 +14,14 @@ import threading
 from time import monotonic
 from typing import Any, Callable, Mapping, Optional
 
+from contracts import stable_checksum
 from adapters.agent import AgentRegistry
 from contracts.acg.schema import RuntimeBlueprintSpec
 from support.async_tasks import run_blocking
 from components.auditor.governance.evaluation import WorkflowEvaluator
 from components.mission.store import WorkflowRegistry
 from components.auditor.governance.review import ReviewManager
-from components.mission.state_machine import StateMachine
+from components.mission.state_machine import InvalidStateTransition, StateMachine
 from components.mission.service import MissionManager
 from components.auditor.governance.trace import TraceStore
 from components.auditor.decision_store import DecisionStore, SQLiteDecisionStore
@@ -444,6 +445,7 @@ class RuntimeApplication(CollaboratorAccess):
         from runtime.orchestration.planning_wait import RuntimePlanningWaitService
         self.runtime_planning_wait_service = RuntimePlanningWaitService(
             collaborators=self.ports, state_machine=self.state_machine,
+            state_persistence=self.acg_state_persistence,
             validate_references=self._validate_acg_state_references,
             flush_identity=self._flush_identity_outbox,
         )
@@ -463,6 +465,8 @@ class RuntimeApplication(CollaboratorAccess):
         self.execution_permit_authority = None
         self.execution_dispatch_enabled = False
         self.execution_dispatch_store = None
+        from runtime.orchestration.workspace_review import WorkspaceReviewContinuation
+        self.workspace_review_continuation = WorkspaceReviewContinuation(self)
         if planning_commit_store is not None:
             self.enable_planning_commit(planning_commit_store)
         self.recovery_recipe_registry = recovery_recipe_registry
@@ -956,6 +960,9 @@ class RuntimeApplication(CollaboratorAccess):
             binding_manifest=compiled_package.binding_manifest,
         )
         run.acg_blueprint = blueprint.model_dump(by_alias=True, mode="json")
+        from contracts.execution_evidence import freeze_workspace_observations
+        freeze_workspace_observations(run, run.input.get("workspaceObservations",
+            blueprint.metadata.get("workspaceObservations", ())))
         run.execution_state.update(
             {
                 "workflowVersion": workflow.version,
@@ -1153,13 +1160,18 @@ class RuntimeApplication(CollaboratorAccess):
             finally:
                 self._release_execution_slot(executed_run_id)
                 self._discard_run_cancellation(executed_run_id)
+            continued = await run_blocking(self.workspace_review_continuation.resume, result)
             successor_id = result.execution_state.get("supersededByRunId")
-            if result.status == WorkflowStatus.SUPERSEDED and successor_id and isinstance(result.execution_state.get("planningLoop"), dict):
+            if continued is not None:
+                run = continued
+            elif result.execution_state.get("workspaceReviewContinuation"):
+                return self.workflow_store.get_run(result.run_id)
+            elif result.status == WorkflowStatus.SUPERSEDED and successor_id and isinstance(result.execution_state.get("planningLoop"), dict):
                 run = self.workflow_store.get_run(successor_id)
             elif result.status == WorkflowStatus.RETRYING and isinstance(result.execution_state.get("planningLoop"), dict):
                 run = result
             else:
-                return result
+                return self.workflow_store.get_run(result.run_id)
             self._claim_acg_execution(run)
             state = acg_execution_state_from_run(run)
             command = None
@@ -1344,7 +1356,8 @@ class RuntimeApplication(CollaboratorAccess):
             self._mark_planning_commit_required(self.workflow_store.get_run(run_id))
 
     async def _gate_planning_commit_decision(self, run, observation, decision):
-        """Persist only wait after acceptance, so restart cannot adopt a revision."""
+        """Settle the executor before a formal graph continuation can be accepted."""
+        run.execution_state.pop("planningCommitRejection", None)
         if decision.action != "revise":
             return decision
         if self.planning_commit_authority is None and not run.execution_state.get("planningCommitRequired"):
@@ -1354,17 +1367,39 @@ class RuntimeApplication(CollaboratorAccess):
             self._assert_runtime_planning_current(run)
             if self.planning_commit_authority is None:
                 reason = "Planning Commit authority unavailable; revision remains unaccepted"
+                run.execution_state["planningCommitRejection"] = {
+                    "observationId": observation.fingerprint(), "code": "AUTHORITY_DENIED", "reason": reason}
             else:
                 try:
                     self._mark_planning_commit_required(run)
                     self.runtime_planning_coordinator.validate_decision(observation, decision)
+                    from runtime.orchestration.workspace_review import automatic_workspace_review, queue_workspace_revision
+                    # A workspace binding only selects the durable continuation
+                    # lane. The queued semantic proposal is still checked by the
+                    # formal Planning Commit authority at the settled boundary.
+                    # Keep model proposed additive/retire/replace revisions in the
+                    # same lane so valid repairs do not become manual-only waits.
+                    if automatic_workspace_review(run):
+                        queue_workspace_revision(run, observation, decision)
+                        return RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait",
+                            reason="Workspace review revision queued; settle the evidence barrier before formal graph activation")
                     receipt = self.planning_commit_authority.accept_patch_locked(run.run_id, decision.task_plan_patch,
                         proposal_id="runtime:" + observation.fingerprint(),
                         idempotency_key="runtime-planning:" + run.run_id + ":" + observation.fingerprint())
                     reason = (f"Planning Commit {receipt.commit_id} accepted; awaiting materialization"
                               if receipt.status != "REJECTED" else f"Planning Commit rejected: {receipt.code.value}: {receipt.reason}")
+                    if receipt.status == "REJECTED":
+                        run.execution_state["planningCommitRejection"] = {
+                            "observationId": observation.fingerprint(), "code": receipt.code.value,
+                            "reason": receipt.reason[:800],
+                            "proposalRef": stable_checksum(decision.task_plan_patch.model_dump(mode="json", by_alias=True))}
                 except (ValueError, KeyError, PermissionError) as exc:
-                    reason = f"Planning Commit rejected: {type(exc).__name__}"
+                    reason = f"Planning Commit rejected: {type(exc).__name__}: {str(exc)[:800]}"
+                    run.execution_state["planningCommitRejection"] = {
+                        "observationId": observation.fingerprint(),
+                        "code": "INVALID_PROPOSAL" if isinstance(exc, ValueError) else type(exc).__name__,
+                        "reason": str(exc)[:800],
+                        "proposalRef": stable_checksum(decision.task_plan_patch.model_dump(mode="json", by_alias=True))}
         return RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait", reason=reason)
 
     async def _resume_pending_commit_wait(self, run, state, loop):
@@ -1393,6 +1428,21 @@ class RuntimeApplication(CollaboratorAccess):
             # its arrival must not indefinitely block this crash-recovery barrier.
             self._assert_runtime_planning_current(run, allow_unconsumed_operator_input=True)
             return self.runtime_planning_application.apply(run, state, current.observation, decision, applied)
+
+    def prepare_planning_commit_rejection_feedback(self, run, state, *, code: str, reason: str,
+                                                   source_observation_id: str | None = None,
+                                                   proposal_ref: str | None = None):
+        """Prepare a fresh Planner observation after formal revision rejection.
+
+        Workspace continuation recovery calls this after it durably records the
+        authority denial. The returned state is ready for
+        ``runtime_planning_coordinator.boundary(run, state, "resume")``;
+        callers still own the Run lock/fence and must persist the returned Run.
+        """
+        return self.runtime_planning_coordinator.prepare_rejection_feedback(
+            run, state, code=code, reason=reason,
+            source_observation_id=source_observation_id, proposal_ref=proposal_ref,
+        )
 
     def _assert_runtime_planning_current(self, run: RuntimeRunRecord, *, allow_unconsumed_operator_input=False) -> None:
         latest = self.workflow_store.get_run(run.run_id)
@@ -1532,7 +1582,7 @@ class RuntimeApplication(CollaboratorAccess):
         if planner_event_type not in {
             "planner.started", "planner.stage.started", "planner.stage.retry",
             "planner.model.started", "planner.model.first_token",
-            "planner.model.activity", "planner.model.output.delta", "planner.model.completed", "planner.model.failed",
+            "planner.model.activity", "planner.model.output.delta", "planner.model.reasoning.delta", "planner.model.completed", "planner.model.failed",
             "planner.draft.updated",
             "planner.stage.completed", "planner.profile.resolved",
             "planner.plan.parsed", "planner.graph.compiled", "planner.completed",
@@ -1549,7 +1599,7 @@ class RuntimeApplication(CollaboratorAccess):
                 "completed": "planner.completed",
                 "failed": "planner.failed",
             }.get(str(payload.get("kind")), "")
-        persist_trace = bool(event.get("persistTrace", True))
+        persist_trace = planner_event_type != "planner.model.reasoning.delta" and bool(event.get("persistTrace", True))
         if planner_event_type:
             # Mirror planner lifecycle/activity onto the existing transient broker.
             # The planning phase is run-scoped, so node/attempt identity remains null.
@@ -2170,27 +2220,30 @@ class RuntimeApplication(CollaboratorAccess):
     async def prepare_planning_wakeups(self, *, page_size: int = 200, now=None) -> list[str]:
         """Reconcile stored waits with current authorities; never call a model.
 
-        Use the existing paged Run query so older waits cannot be starved by
-        the latest N active Runs. Collect ids before changing query membership.
+        Scan internal recovery candidates across owners and tenants. User list
+        visibility is unrelated to background discovery; the Coordinator still
+        restores each accepted actor before executing. Collect all pages before
+        changing query membership so older waits cannot be starved.
         """
         if not 1 <= page_size <= 500:
             raise ValueError("planning wakeup page_size must be between 1 and 500")
         candidates, page = [], 1
         while True:
-            result = self.workflow_store.list_runs(statuses=(WorkflowStatus.WAITING_REVIEW, WorkflowStatus.RETRYING),
-                page=page, page_size=page_size)
+            result = self.workflow_store.list_planning_wakeup_candidates(page=page, page_size=page_size)
             candidates.extend(r.run_id for r in result.items if
                 (r.execution_state.get("planningLoop") or {}).get("waiting")
+                or self.runtime_planning_wait_service.is_resource_wait(r)
                 or (r.execution_state.get("planningLoop") or {}).get("userInputPending")
+                or (r.execution_state.get("workspaceReviewContinuation") and (not
+                    r.execution_state["workspaceReviewContinuation"].get("blocked")
+                    or self.workspace_review_continuation.can_replan(r)))
+                or ((r.execution_state.get("planningLoop") or {}).get("restartPending")
+                    and r.execution_state.get("planningCommitRejection"))
                 or self.workflow_store.list_planning_inputs(r.run_id))
             if page * page_size >= result.total:
                 break
             page += 1
             await asyncio.sleep(0)
-        if any(((self.workflow_store.get_run(run_id).execution_state.get("planningLoop") or {})
-                .get("waiting") or {}).get("condition", {}).get("kind") == "requirement_available"
-                for run_id in candidates):
-            self.runtime_binding_service.refresh_embedded_runtime()
         ready = []
         for run_id in candidates:
             async with self.run_lock_manager.lock_for(run_id):
@@ -2200,6 +2253,18 @@ class RuntimeApplication(CollaboratorAccess):
                     continue
                 try:
                     run = self.workflow_store.get_run(run_id)
+                    pending = run.execution_state.get("workspaceReviewContinuation")
+                    if (pending and (not pending.get("blocked") or self.workspace_review_continuation.can_replan(run))
+                            and self.execution_dispatch_enabled):
+                        # The app coordinator restores the accepted Dispatch's
+                        # actor before replaying any formal authority stage.
+                        ready.append(run_id)
+                        continue
+                    if (run.status == WorkflowStatus.RETRYING
+                            and (run.execution_state.get("planningLoop") or {}).get("restartPending")
+                            and run.execution_state.get("planningCommitRejection")):
+                        ready.append(run_id)
+                        continue
                     if self.runtime_planning_wait_service.prepare(run, now=now):
                         ready.append(run_id)
                 except (ValueError, KeyError):

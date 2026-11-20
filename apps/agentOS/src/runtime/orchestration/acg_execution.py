@@ -22,7 +22,6 @@ from contracts.identity import new_attempt_id, new_step_execution_id
 from contracts.artifacts import is_final_synthesis_role
 from contracts.acg.schema import RuntimeBlueprintSpec
 
-logger = logging.getLogger(__name__)
 from components.communicator import (
     CommunicationBroker,
     CommunicatorService,
@@ -78,11 +77,13 @@ from adapters.tool.protocols import configured_tool_runtime
 from support.stores._policy import acg_review_subject
 from runtime.compatibility.execution_migration import ExecutionEngineMigratingError
 from runtime.composition.ports import CollaboratorAccess, RuntimeCollaborators
-from runtime.orchestration.binding import execution_requirements_for, requirements_match_manifest
+from runtime.orchestration.binding import RuntimeBindingService, execution_requirements_for, requirements_match_manifest
 from components.resource.model_quota import ModelCallQuota
 from runtime.orchestration.state_persistence import ACGStatePersistenceService
 from support.async_tasks import await_settled, cancel_and_wait
 from contracts.runtime_events import TRANSIENT_RUNTIME_EVENT_TYPES
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionRunCancelled(RuntimeError):
@@ -598,13 +599,12 @@ class ACGExecutionService(CollaboratorAccess):
                 raise ValueError("activated Run binding requirements differ from its compiled package")
         if not isinstance(raw_requirements, dict):
             return runner
-        # A recreated Runtime resumes an already-prepared run without repeating
-        # prepare_run. Re-project the embedded agent runtime so every resource
-        # starts UNKNOWN and becomes usable only after this live registration.
-        refresh_embedded_agents_runtime(self.resource_plane, self.agent_registry)
-        agent_pool = AgentPool(registry=self.agent_registry, resource_plane=self.resource_plane,
-                               host_runtime_id=EMBEDDED_AGENTS_RUNTIME_ID)
-        agent_pool.synchronize()
+        # The first Planner boundary precedes READY dispatch. Publish the same
+        # current local registrations here that the Binder will consume below.
+        binding_service = RuntimeBindingService(
+            agent_registry=self.agent_registry, resource_plane=self.resource_plane,
+            resource_execution_adapters=self.resource_execution_adapters)
+        binding_service.local_candidates(run)
 
         async def execute(step_id: str, state: ACGExecutionState):
             scheduling_started = monotonic()
@@ -676,27 +676,12 @@ class ACGExecutionService(CollaboratorAccess):
                 raise ResourceExecutionError("unfinished Agent operation requires explicit reconciliation", outcome_unknown=True)
             retry_delay = 0.05
             while True:
-                # The embedded agent runtime executes in this process. Its
-                # continued presence is the authoritative liveness signal;
-                # without this heartbeat a valid long Run becomes permanently
-                # ineligible once the registration heartbeat reaches its TTL.
-                try:
-                    self.resource_plane.heartbeat_runtime(
-                        EMBEDDED_AGENTS_RUNTIME_ID, source="local"
-                    )
-                    embedded_node = self.resource_plane.runtime(
-                        EMBEDDED_AGENTS_RUNTIME_ID
-                    ).node_id
-                    self.resource_plane.heartbeat_node(embedded_node)
-                except KeyError:
-                    pass
                 decision = self.resource_binder.bind_ready(
                     run_id=run.run_id,
                     step_id=step_id,
                     attempt_id=attempt_id,
                     requirement=requirement,
-                    agent_candidates=agent_pool.local_candidates(
-                        run.execution_scope.agent_ids if run.execution_scope is not None else None),
+                    agent_candidates=binding_service.local_candidates(run),
                     existing_binding=existing_binding,
                 )
                 if decision.status == "allocated":
@@ -794,7 +779,6 @@ class ACGExecutionService(CollaboratorAccess):
                         else f"execution:{attempt_id}",
                     )
                 )
-                profile = selected_profile
                 base_events = [
                     self._lifecycle_event(
                         f"attempt.ensured:{attempt_id}", "attempt.ensured", run.run_id,
@@ -1243,7 +1227,21 @@ class ACGExecutionService(CollaboratorAccess):
                 )
 
     def _complete_run(self, run, state, blueprint, task):
-        """Finalize through the same lifecycle after an authorized completion."""
+        """Validate completion independently of optional model observation hooks."""
+        if state.active_step_ids or state.review_payload or state.control_frames:
+            raise ValueError("ACG cannot complete with active work or unresolved control/review")
+        from runtime.orchestration.planning_observation import RuntimePlanningObservationBuilder
+        from runtime.orchestration.planning_loop import RuntimePlanningCoordinator
+        from contracts.runtime_planning import RuntimePlanningDecision
+        observation = RuntimePlanningObservationBuilder(
+            collaborators=self.ports,
+            load_goal=lambda mission_id: self._load_mission(mission_id).title,
+            validate_references=self.validate_state_references,
+        ).observe(run, state, "exhausted")
+        RuntimePlanningCoordinator.validate_decision(observation, RuntimePlanningDecision(
+            observationId=observation.fingerprint(), action="complete",
+            reason="Deterministic final check of current committed execution evidence",
+        ))
         run.output = self._acg_output(state, blueprint)
         run = self._set_run_lifecycle(run, status=WorkflowStatus.COMPLETED,
             phase=WorkflowProgressPhase.COMPLETED,

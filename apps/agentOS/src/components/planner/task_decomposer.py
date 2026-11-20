@@ -44,14 +44,15 @@ from .intent_analyzer import IntentLLM
 
 
 TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v9"
-TASK_PLAN_MAX_REPAIRS = 3
+TASK_PLAN_MAX_REPAIRS = None  # Legacy import; validation corrections have no count ceiling.
 INITIAL_DAG_CONTRACT = (
     "INITIAL DAG CONTRACT: this Run's formal initial graph materializer accepts a DAG only. "
     "controlPolicies MUST be []. Do not create verification_loop, backward edges or control nodes. "
     "Preserve all requested checks, correction requirements and acceptance criteria. "
-    "Represent a bounded check/correction/recheck sequence as distinct forward-dependent tasks, "
-    "with explicit limits and a final unresolved-issues report when checks still fail. "
-    "Never silently remove a user requirement or claim an unbounded loop is supported."
+    "Represent the current check/correction/recheck work as forward-dependent tasks. "
+    "The runtime can add supplemental work from real remaining evidence gaps after review. "
+    "Stop only when acceptance passes, external input is needed, or the semantic state cannot progress. "
+    "Never silently remove a user requirement or invent successful verification."
 )
 
 _SCHEMA = {
@@ -120,7 +121,7 @@ _SCHEMA = {
                     "conditionSourceKey": {"type": "string"},
                     "statusPointer": {"type": "string"},
                     "repeatValues": {"type": "array", "items": {"type": "string"}},
-                    "maxRevisions": {"type": "integer", "minimum": 0, "maximum": 8},
+                    "maxRevisions": {"type": ["integer", "null"], "minimum": 0},
                     "onExhausted": {"type": "string", "enum": ["human_review", "fail"]},
                 },
                 "required": [
@@ -331,7 +332,7 @@ class TaskDecomposer:
             call_key=self.last_audit.get("lastCallKey"),
         )
         return (
-            f"\nRepair attempt {attempt}/{TASK_PLAN_MAX_REPAIRS}. "
+            f"\nValidation correction {attempt}. "
             "Correct the latest validation errors while preserving unaffected task identities and requirements. "
             "Return only the JSON required by the supplied schema.\n"
             f"Latest validation issues: {json.dumps(issues, ensure_ascii=False)}\n"
@@ -344,7 +345,7 @@ class TaskDecomposer:
         reasoning_effort: str | None, planning_deadline: float | None, run_id: str | None,
         call_key: str | None = None, repair: Callable | None = None,
     ) -> tuple[Any, Any]:
-        """Generate one unit, then allow at most three validation-driven corrections.
+        """Generate one unit, correcting until valid or semantic state repeats.
 
         Network retries remain owned by call_planning_model. A failed patch leaves
         the current plan and its compiler conflict intact for the next correction.
@@ -354,7 +355,9 @@ class TaskDecomposer:
         key = call_key or stage
         repair_stage = "repair" if stage == "decompose" else f"{stage}.repair"
         version = TASK_DECOMPOSITION_PROMPT_VERSION + ("" if stage == "decompose" else f".{stage}")
-        for attempt in range(TASK_PLAN_MAX_REPAIRS + 1):
+        failed_states = set()
+        attempt = 0
+        while True:
             generated = False
             try:
                 if attempt and repair is not None:
@@ -384,14 +387,15 @@ class TaskDecomposer:
                 if not isinstance(exc, (ValueError, KeyError, TypeError, StructuredGenerationError)):
                     raise
                 self._record_validation_failure(exc)
-                if attempt == TASK_PLAN_MAX_REPAIRS or (
-                    isinstance(exc, TopologyCompileError) and not is_model_repair_eligible(exc.conflict)
-                ):
+                state = schema_hash({"candidate": current, "errorType": type(exc).__name__, "error": str(exc)})
+                if state in failed_states or (
+                    isinstance(exc, TopologyCompileError) and not is_model_repair_eligible(exc.conflict)):
                     raise
+                failed_states.add(state)
                 if generated or validation_error is None:
                     validation_error = exc
                 latest_error = exc
-        raise AssertionError("unreachable planning repair loop")
+                attempt += 1
 
     def _repair_task_plan(
         self, raw, validation_error, attempt, latest_error, *, profile, strategy,
@@ -412,7 +416,7 @@ class TaskDecomposer:
                 + "Return patch operations only. Never change frozen tasks, capability requirements, "
                 "source identities, or catalog edges. Use originalRelationIndex.\n"
                 + (INITIAL_DAG_CONTRACT if strategy == "initial_commit_candidate" else
-                   "Express feedback with add_verification_loop when a supported bounded loop is needed.")
+                   "Express feedback with add_verification_loop when an acceptance-driven loop is needed.")
                 + feedback,
                 schema=REPAIR_PATCH_SCHEMA,
                 prompt_version=f"{TASK_DECOMPOSITION_PROMPT_VERSION}.relations.cycle-repair{attempt}",
@@ -574,7 +578,7 @@ class TaskDecomposer:
             relation_prompt = (
                 "STAGE RELATIONS: create the acyclic prerequisite-to-dependent topology for these frozen tasks. "
                 + (INITIAL_DAG_CONTRACT + "\n" if strategy == "initial_commit_candidate" else
-                   "Add a verification_loop only when a refinement-to-verification region is present; use maxRevisions=2.\n")
+                   "Add a verification_loop only when a refinement-to-verification region is present; use maxRevisions=null.\n")
                 + f"Tasks: {json.dumps(compact, ensure_ascii=False)}"
             )
 
@@ -872,7 +876,8 @@ class TaskDecomposer:
         if strategy == "initial_commit_candidate" and isinstance(payload, dict) and payload.get("controlPolicies"):
             raise TaskDecompositionError(
                 "INITIAL_CONTROL_GRAPH_UNSUPPORTED: formal initial graphs require controlPolicies=[]. "
-                "Preserve verification/correction obligations with a bounded forward-only task sequence.",
+                "Preserve verification/correction obligations with a forward-only initial task sequence; "
+                "runtime review may add work for verified remaining gaps until acceptance.",
                 validation_code="initial_dag_required", field_path=("controlPolicies",))
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(tasks, list) or not tasks:

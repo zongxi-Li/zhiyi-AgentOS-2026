@@ -10,7 +10,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from components.planner import ACGPlanningError, TaskDecompositionError
-from support.async_tasks import cancel_and_wait
+from support.async_tasks import cancel_and_wait, run_blocking
 
 if TYPE_CHECKING:
     from runtime import ExecutionRuntime
@@ -29,6 +29,7 @@ class RunExecutionCoordinator:
         self._accepting = True
         self._wake_signal = asyncio.Event()
         self._wake_task: asyncio.Task[None] | None = None
+        self._deferred_dispatches: dict[str, tuple[float, float]] = {}
 
     async def submit(self, run_id: str) -> bool:
         """Submit one new or explicitly retrying Run once in this process."""
@@ -42,12 +43,19 @@ class RunExecutionCoordinator:
             run_status = run.status.value
             is_new_run = run_status == "pending" and run.started_at is None
             is_in_place_retry = run_status == "retrying"
-            if not (is_new_run or is_in_place_retry):
+            pending = getattr(run, "execution_state", {}).get("workspaceReviewContinuation")
+            continuation = getattr(self.runtime, "workspace_review_continuation", None)
+            can_replan = getattr(continuation, "can_replan", lambda _: False)
+            is_workspace_review = (run_status == "waiting_review" and isinstance(pending, dict)
+                and (not pending.get("blocked") or can_replan(run)))
+            if not (is_new_run or is_in_place_retry or is_workspace_review):
                 return False
             dispatch_store = getattr(self.runtime, "execution_dispatch_store", None)
             if dispatch_store is not None and "graphActivation" in getattr(run, "execution_state", {}):
                 command = dispatch_store.get(run_id)
                 return await self._schedule_permitted(command, recover=True) if command else False
+            if is_workspace_review:
+                return False  # No accepted identity from which to restore authority.
             task = asyncio.create_task(self._run_managed(run_id), name=f"workflow-run:{run_id}")
             self._track_task(run_id, task)
             self._ensure_wait_monitor()
@@ -130,12 +138,33 @@ class RunExecutionCoordinator:
 
     async def _schedule_permitted(self, command, *, recover):
         """Caller owns coordinator lock. Recovery remains the Runtime's decision."""
-        from support.run_execution_fence import acquire_run_fence
+        from support.run_execution_fence import acquire_run_fence, RunFenceBusy
         task = self._tasks.get(command.run_id)
         if task is not None and not task.done():
+            self._deferred_dispatches.pop(command.run_id, None)
             return False
-        run = self.runtime.workflow_store.get_run(command.run_id)
+        if monotonic() < self._deferred_dispatches.get(command.run_id, (0.0, 0.0))[0]:
+            return False
+        try:
+            run = self.runtime.workflow_store.get_run(command.run_id)
+            pending = getattr(run, "execution_state", {}).get("workspaceReviewContinuation")
+            settled_review = (run.status.value == "waiting_review" or
+                getattr(run, "execution_state", {}).get("graphVersion", 0) > (pending or {}).get("sourceGraphVersion", 0))
+            continuation = getattr(self.runtime, "workspace_review_continuation", None)
+            can_replan = getattr(continuation, "can_replan", lambda _: False)
+            if isinstance(pending, dict) and (not pending.get("blocked") or can_replan(run)) and settled_review:
+                with self._dispatch_identity(command):
+                    resumed = await run_blocking(continuation.resume, run) if continuation is not None else None
+                if resumed is None:
+                    self._deferred_dispatches.pop(command.run_id, None)
+                    return False
+                run = resumed
+                command = self.runtime.execution_dispatch_store.get(command.run_id)
+        except (sqlite3.Error, RunFenceBusy):
+            self._defer_dispatch(command.run_id)
+            return False
         if run.status.value in {"waiting_review", "completed", "failed", "cancelled", "superseded"}:
+            self._deferred_dispatches.pop(command.run_id, None)
             return False
         with self._dispatch_identity(command):
             try:
@@ -144,16 +173,30 @@ class RunExecutionCoordinator:
                 with self.runtime.run_lock_manager.lock_for(command.run_id), acquire_run_fence(
                         self.runtime.workflow_store.db_path, command.run_id):
                     self._validate_permitted(self.runtime.workflow_store.get_run(command.run_id), command)
-            except (ValueError, KeyError, RuntimeError, PermissionError, sqlite3.Error) as exc:
+            except (sqlite3.Error, RunFenceBusy) as exc:
+                # A busy fence or unavailable ledger proves neither failure
+                # nor permission to invoke. Retry the accepted journal fact
+                # through the existing wake monitor after process-local backoff.
+                self._defer_dispatch(command.run_id)
+                logger.warning("dispatch_recovery_deferred", extra={"runId": command.run_id, "errorType": type(exc).__name__})
+                return False
+            except (ValueError, KeyError, RuntimeError, PermissionError) as exc:
                 # Existing lifecycle authority records a durable, explicit block;
                 # no failed execution receipt or external-effect proof is invented.
+                self._deferred_dispatches.pop(command.run_id, None)
                 await self.runtime.fail_run_safely(command.run_id, error_code="dispatch_recovery_blocked",
                     error_message="Dispatch recovery could not prove safe execution; operator review required")
                 logger.warning("dispatch_recovery_blocked", extra={"runId": command.run_id, "errorType": type(exc).__name__})
                 return False
+            self._deferred_dispatches.pop(command.run_id, None)
             self._create_permitted_task(command)
             self._ensure_wait_monitor()
             return True
+
+    def _defer_dispatch(self, run_id: str) -> None:
+        delay = min(60.0, self._deferred_dispatches.get(run_id, (0.0, 0.5))[1] * 2)
+        self._deferred_dispatches[run_id] = (monotonic() + delay, delay)
+        self._ensure_wait_monitor()
 
     def is_active(self, run_id: str) -> bool:
         task = self._tasks.get(run_id)
@@ -171,6 +214,7 @@ class RunExecutionCoordinator:
 
     async def startup(self, *, orphan_limit: int = 200) -> list[str]:
         self._accepting = True
+        self._deferred_dispatches.clear()
         closed = await self.runtime.close_orphaned_runs(limit=orphan_limit)
         # close_orphaned_runs persists terminal Runtime state and its
         # run.finished lifecycle event.  Runtime construction performs the
@@ -205,14 +249,41 @@ class RunExecutionCoordinator:
         self._wake_signal.set()
 
     def _ensure_wait_monitor(self) -> None:
-        if not callable(getattr(self.runtime, "prepare_planning_wakeups", None)):
+        if not callable(getattr(self.runtime, "prepare_planning_wakeups", None)) and not self._deferred_dispatches:
             return
         if self._wake_task is None or self._wake_task.done():
             self._wake_task = asyncio.create_task(self._watch_waits(), name="workflow-planning-waits")
 
     async def reconcile_waits(self) -> None:
+        from support.run_execution_fence import RunFenceBusy
+        if not self._accepting:
+            return
+        dispatch_store = getattr(self.runtime, "execution_dispatch_store", None)
+        for run_id, (at, _) in tuple(self._deferred_dispatches.items()):
+            if monotonic() < at:
+                continue
+            async with self._lock:
+                if not self._accepting:
+                    return
+                try:
+                    # Read the latest accepted graph's command. The timer is
+                    # only a wake hint, never cached authority for execution.
+                    command = dispatch_store.get(run_id) if dispatch_store is not None else None
+                except (sqlite3.Error, RunFenceBusy):
+                    self._defer_dispatch(run_id)
+                    continue
+                except (ValueError, KeyError, RuntimeError, PermissionError) as exc:
+                    self._deferred_dispatches.pop(run_id, None)
+                    await self.runtime.fail_run_safely(run_id, error_code="dispatch_recovery_blocked",
+                        error_message="Dispatch recovery could not prove safe execution; operator review required")
+                    logger.warning("dispatch_recovery_blocked", extra={"runId": run_id, "errorType": type(exc).__name__})
+                    continue
+                if command is None:
+                    self._deferred_dispatches.pop(run_id, None)
+                    continue
+                await self._schedule_permitted(command, recover=True)
         prepare = getattr(self.runtime, "prepare_planning_wakeups", None)
-        if prepare is None or not self._accepting:
+        if prepare is None:
             return
         for run_id in await prepare():
             await self.submit(run_id)
@@ -224,6 +295,8 @@ class RunExecutionCoordinator:
                 await self.reconcile_waits()
             except Exception:
                 logger.exception("Planner wait reconciliation failed")
+            if not callable(getattr(self.runtime, "prepare_planning_wakeups", None)) and not self._deferred_dispatches:
+                return
             try:
                 # Timers and missed notifications use the same durable checks.
                 # No model is called while a condition remains unsatisfied.

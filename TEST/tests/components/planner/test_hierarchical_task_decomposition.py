@@ -190,7 +190,7 @@ def test_dependency_cycle_is_rejected() -> None:
         )
 
 
-def test_failed_contract_stops_after_three_repairs() -> None:
+def test_failed_contract_stops_on_unchanged_validation_state() -> None:
     llm = _PlanLLM({"tasks": [], "relations": []})
     events = []
     with pytest.raises(TaskDecompositionError, match="TASK_PLAN_VALIDATION_FAILED") as caught:
@@ -202,11 +202,11 @@ def test_failed_contract_stops_after_three_repairs() -> None:
             use_llm=True,
         )
 
-    assert len(llm.calls) == 4
+    assert len(llm.calls) == 2
     assert 'Previous invalid TaskPlan JSON: {"tasks": [], "relations": []}' in llm.calls[1]["prompt"]
     assert caught.value.metadata["validationFailures"] == [
         {"stage": stage, "callKey": key, "code": "tasks_required", "fieldPath": ["tasks"]}
-        for stage, key in (("decompose", "decompose"), ("repair", "repair"), ("repair", "repair:2"), ("repair", "repair:3"))
+        for stage, key in (("decompose", "decompose"), ("repair", "repair"))
     ]
     repair_start = next(event for event in events if event.get("stage") == "repair" and event.get("status") == "started")
     assert repair_start["validationFailures"] == caught.value.metadata["validationFailures"][:1]
@@ -226,7 +226,7 @@ def test_workset_diagnostics_preserve_location_without_invalid_values(workset, c
         )
     failures = planning_validation_failures(caught.value)
     assert [(item["stage"], item["code"], item["fieldPath"]) for item in failures] == [
-        (stage, code, path) for stage in ("decompose", "repair", "repair", "repair")
+        (stage, code, path) for stage in ("decompose", "repair")
     ]
     assert "PRIVATE" not in repr(failures)
 
@@ -263,9 +263,9 @@ def test_task_diagnostics_identify_the_invalid_field_without_repeating_its_value
             mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation", task_input={}, use_llm=True,
         )
     failures = planning_validation_failures(caught.value)
-    assert len(llm.calls) == 4
+    assert len(llm.calls) == 2
     assert [(item["stage"], item["code"], item["fieldPath"]) for item in failures] == [
-        (stage, code, ["tasks", 0, field]) for stage in ("decompose", "repair", "repair", "repair")
+        (stage, code, ["tasks", 0, field]) for stage in ("decompose", "repair")
     ]
     assert "PRIVATE" not in repr(failures)
 
@@ -525,7 +525,7 @@ def test_staged_invalid_material_reference_is_repaired_before_compilation(repair
                 mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
                 task_input={"_effectiveCapabilityProfile": "full"}, use_llm=True,
             )
-        assert len(llm.calls) == 5  # Outline plus the detail unit's initial output and three corrections.
+        assert len(llm.calls) == 3  # Outline and the repeated unchanged invalid detail.
         return
     plan = TaskDecomposer(build_default_capability_catalog(), llm).decompose(
         mission_id="mission_0123456789ab", profile=_profile(), strategy="dynamic_generation",
@@ -570,7 +570,7 @@ def test_empty_staged_outline_is_repaired_once() -> None:
     assert "Previous invalid outline JSON" in llm.calls[1]["prompt"]
 
 
-def test_empty_staged_outline_fails_after_three_repairs() -> None:
+def test_empty_staged_outline_fails_when_the_same_invalid_state_repeats() -> None:
     llm = _SequencePlanLLM(*[{"tasks": []} for _ in range(4)])
 
     with pytest.raises(TaskDecompositionError, match="TASK_PLAN_STAGED_FAILED: staged outline returned no tasks") as caught:
@@ -582,9 +582,9 @@ def test_empty_staged_outline_fails_after_three_repairs() -> None:
             use_llm=True,
         )
 
-    assert len(llm.calls) == 4
+    assert len(llm.calls) == 2
     assert [(failure["stage"], failure["code"]) for failure in caught.value.metadata["validationFailures"]] == [
-        ("outline", "tasks_required"), *[("outline.repair", "tasks_required")] * 3,
+        ("outline", "tasks_required"), ("outline.repair", "tasks_required"),
     ]
 
 
@@ -890,7 +890,7 @@ def test_focused_coverage_repair_rejects_incomplete_assignments() -> None:
             use_llm=True,
         )
 
-    assert len(llm.calls) == 4
+    assert len(llm.calls) == 3
 
 
 def test_catalog_dependency_completion_does_not_depend_on_model_task_order() -> None:
@@ -1099,3 +1099,67 @@ def test_expected_artifact_omission_is_completed_before_acg_build() -> None:
     )
     assert terminal.metadata["producesArtifact"] is True
     assert "final_answer" in terminal.output_spec["properties"]
+
+
+def test_automatic_final_report_waits_for_recheck_and_consumes_revised_report() -> None:
+    """Regress the mission whose final report ran beside filesystem extraction."""
+    from components.executor.compiler import ACGGraphCompiler
+    from components.executor.graph import ACGExecutionState
+
+    catalog = build_default_capability_catalog()
+    work = [("scan", "information_extraction"), ("draft", "artifact_generation"),
+            ("check", "verification"), ("revision", "artifact_generation"),
+            ("recheck", "verification")]
+    payload = {
+        "tasks": [{
+            "key": key, "title": key, "objective": f"Execute the {key} responsibility for the report",
+            "capabilityId": capability, "acceptanceCriteria": ["The report is traceable to source files"],
+            "sourceRefs": ["artifact:1"],
+        } for key, capability in work],
+        "relations": [{"sourceKey": source, "targetKey": target, "relationType": "depends_on"}
+                      for source, target in zip([key for key, _ in work], [key for key, _ in work][1:])],
+    }
+    profile = TaskSemanticProfile(
+        primaryGoal="Read the workspace and deliver a verified dependency report",
+        expectedArtifacts=["dependency report"],
+        requiredCapabilities=["information_extraction", "artifact_generation", "verification"],
+    )
+    plan = TaskDecomposer(catalog, _PlanLLM(payload)).decompose(
+        mission_id="mission_0123456789ab", profile=profile,
+        strategy="dynamic_generation", task_input={}, use_llm=True,
+    )
+    final = next(node for node in plan.nodes if node.logical_role == "final_synthesis")
+    assert final.key == "required:artifact_generation:final"
+    pairs = {(item.source_key, item.target_key) for item in plan.relations
+             if item.relation_type.value == "depends_on"}
+    assert {("revision", final.key), ("recheck", final.key)} <= pairs
+    assert ("draft", final.key) not in pairs
+
+    network = CollaborationNetwork(bindings=[
+        CapabilityBinding(capability=capability, agent_name="native_general_agent", score=1.0)
+        for capability in dict.fromkeys(node.capability_requirements[0] for node in plan.nodes)
+    ])
+    lowering = build_acg_lowering_input(
+        mission_id=plan.mission_id, profile=profile, network=network,
+        task_plan=plan, capability_catalog=catalog,
+    )
+    bindings = {binding.plan_node_key: binding.acg_node_id for binding in lowering.implementation_bindings}
+    blueprint = ACGLowerer().lower(lowering)
+    terminal = blueprint.get_node(bindings[final.key])
+    assert "deliverable" in terminal.input_spec["from"][bindings["revision"]]
+    assert "verification" in terminal.input_spec["from"][bindings["recheck"]]
+    channels = {(item.producer_step_id, item.consumer_step_id): item.allowed_fields
+                for item in blueprint.resource_plan.communication}
+    assert "deliverable" in channels[(bindings["revision"], terminal.node_id)]
+    assert "verification" in channels[(bindings["recheck"], terminal.node_id)]
+
+    graph = ACGGraphCompiler().compile(blueprint, run_id="run_0123456789ab")
+    state = ACGExecutionState(
+        runId="run_0123456789ab", graphId=blueprint.graph_id,
+        completedStepIds=[bindings[node.key] for node in plan.nodes
+                          if node.key not in {"recheck", final.key}],
+    )
+    assert terminal.node_id not in graph.ready_steps(state)
+    assert bindings["recheck"] in graph.ready_steps(state)
+    state.completed_step_ids.append(bindings["recheck"])
+    assert graph.ready_steps(state) == (terminal.node_id,)

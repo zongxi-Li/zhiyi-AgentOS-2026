@@ -16,6 +16,26 @@ def rejected(code, reason):
     return GraphMaterializationReceipt(status="REJECTED", code=code, reason=reason)
 
 
+def validate_acceptance_ancestry(store, record, *, mission_id):
+    """Validate the complete retained chain, independently of its length."""
+    current, seen = record, set()
+    while current is not None:
+        if current.commit_id in seen:
+            raise ValueError("cyclic acceptance ancestry")
+        seen.add(current.commit_id)
+        if current.mission_id != mission_id:
+            raise ValueError("acceptance ancestor belongs to another Mission")
+        if current.parent_commit_id is None:
+            if current.commitment_revision != 1:
+                raise ValueError("missing acceptance ancestor")
+            return
+        parent = store.get(current.parent_commit_id)
+        if parent is None or parent.commitment_revision + 1 != current.commitment_revision:
+            raise ValueError("invalid acceptance ancestor")
+        current = parent
+    raise ValueError("missing acceptance ancestor")
+
+
 class GraphMaterializationAuthority:
     def __init__(self, runtime, store):
         if runtime.planning_commit_authority is None or store.db_path != runtime.planning_commit_authority.store.db_path:
@@ -53,20 +73,10 @@ class GraphMaterializationAuthority:
                 or proposal.graph_patch.base_graph_version != source.sources.graph_version
                 or store.latest(graph.mission_id) != graph):
             raise GraphRevisionError(Code.STALE_COMMITMENT, "graph acceptance chain or head mismatch")
-        # Verify the complete retained ancestry, bounded rather than truncating.
-        current, seen = source, set()
-        while current is not None:
-            if current.commit_id in seen or len(seen) >= 256:
-                raise GraphRevisionError(Code.INVALID_PROPOSAL, "acceptance ancestry exceeds bounded policy")
-            seen.add(current.commit_id)
-            if current.parent_commit_id is None:
-                if current.commitment_revision != 1:
-                    raise GraphRevisionError(Code.INVALID_PROPOSAL, "missing acceptance ancestor")
-                break
-            parent = store.get(current.parent_commit_id)
-            if parent is None or parent.mission_id != graph.mission_id or parent.commitment_revision + 1 != current.commitment_revision:
-                raise GraphRevisionError(Code.INVALID_PROPOSAL, "invalid acceptance ancestor")
-            current = parent
+        try:
+            validate_acceptance_ancestry(store, source, mission_id=graph.mission_id)
+        except ValueError as exc:
+            raise GraphRevisionError(Code.INVALID_PROPOSAL, str(exc)) from exc
         caller = runtime.semantic_principal_provider() if runtime.semantic_principal_provider else None
         if principal is not None and caller != principal:
             raise GraphRevisionError(Code.AUTHORITY_DENIED, "caller identity changed")
@@ -125,20 +135,10 @@ class GraphMaterializationAuthority:
                 raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "initial Run execution slot occupied")
         if store.latest(record.mission_id) != record:
             raise GraphRevisionError(Code.STALE_COMMITMENT, "initial acceptance head changed")
-        ancestor, seen = record, set()
-        while ancestor is not None:
-            if ancestor.commit_id in seen or len(seen) >= 256:
-                raise GraphRevisionError(Code.INVALID_PROPOSAL, "initial acceptance ancestry exceeds bounded policy")
-            seen.add(ancestor.commit_id)
-            if ancestor.parent_commit_id is None:
-                if ancestor.commitment_revision != 1:
-                    raise GraphRevisionError(Code.INVALID_PROPOSAL, "missing initial acceptance ancestor")
-                break
-            parent = store.get(ancestor.parent_commit_id)
-            if (parent is None or parent.mission_id != record.mission_id
-                    or parent.commitment_revision + 1 != ancestor.commitment_revision):
-                raise GraphRevisionError(Code.INVALID_PROPOSAL, "invalid initial acceptance ancestor")
-            ancestor = parent
+        try:
+            validate_acceptance_ancestry(store, record, mission_id=record.mission_id)
+        except ValueError as exc:
+            raise GraphRevisionError(Code.INVALID_PROPOSAL, str(exc)) from exc
         failure = PlanningCommitService(current_state_provider=provider, store=store).validate_sources(record.sources)
         if failure is not None:
             raise GraphRevisionError(failure.code, failure.reason)
@@ -183,8 +183,6 @@ class GraphMaterializationAuthority:
             missionId=graph.mission_id, sourceRunId=run_id, graphId=package.blueprint_id,
             sourceGraphVersion=None, candidateGraphVersion=1, sources=graph.sources,
             proofFingerprint=graph.source_provenance.static_fingerprint, package=package, packageChecksum=package.checksum)
-        if len(record.model_dump_json()) > 4_000_000:
-            return rejected(Code.INVALID_PROPOSAL, "initial materialization exceeds bounded policy")
         with runtime.run_lock_manager.lock_for(run_id), store._transaction():
             store._check_schema(store._local.connection)
             self._validate(graph.commit_id, expected=graph, principal=principal)
@@ -243,9 +241,8 @@ class GraphMaterializationAuthority:
                 sourceGraphVersion=graph.sources.graph_version, candidateGraphVersion=package.blueprint_version,
                 sources=graph.sources, proofFingerprint=content_fingerprint(proposal.safe_cut),
                 package=package, packageChecksum=package.checksum)
-            if (package.blueprint_hash != stable_checksum(proposal.candidate_graph.model_dump(mode="json", by_alias=True))
-                    or len(record.model_dump_json()) > 4_000_000):
-                return rejected(Code.INVALID_PROPOSAL, "invalid or oversized compiled materialization")
+            if package.blueprint_hash != stable_checksum(proposal.candidate_graph.model_dump(mode="json", by_alias=True)):
+                return rejected(Code.INVALID_PROPOSAL, "invalid compiled materialization")
             with self.runtime.run_lock_manager.lock_for(run_id), self.store._transaction():
                 self.store._check_schema(self.store._local.connection)
                 self._validate(commit_id, expected=graph, principal=principal)

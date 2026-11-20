@@ -1551,6 +1551,7 @@ async def test_api_copilot_conversation_and_answer_resume_real_runtime(tmp_path)
     coordinator = RunExecutionCoordinator(runtime)
     app = FastAPI()
     app.include_router(create_router(runtime, coordinator))
+    actor_token = _operator_context()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             created = await client.post("/agentos/v2/missions", json={"title": "Interactive task", "workflowId": "api-workflow",
@@ -1591,6 +1592,7 @@ async def test_api_copilot_conversation_and_answer_resume_real_runtime(tmp_path)
             assert (await client.post(path + "/answers", json=answer)).status_code == 202
     finally:
         await coordinator.shutdown()
+        _trusted_user_context.reset(actor_token)
 
 
 @pytest.mark.parametrize("method,suffix,body", [

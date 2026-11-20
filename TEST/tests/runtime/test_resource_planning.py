@@ -38,9 +38,9 @@ def resource_plane(path):
         node_store=SQLiteNodeStore(path / "nodes.sqlite3"))
 
 
-def blocked_model_run(tmp_path):
+def blocked_model_run(tmp_path, *, owner_input=None):
     plane = resource_plane(tmp_path)
-    runtime, agent, run = prepared(tmp_path, resource_plane=plane)
+    runtime, agent, run = prepared(tmp_path, resource_plane=plane, input=owner_input)
     run.execution_state["bindingRequirements"]["B"].update(
         model={"requiredFeatures": ["json_schema"], "minContextTokens": 8000},
         policyMetadata={"secret": "DO_NOT_EXPORT"})
@@ -71,7 +71,11 @@ def blocked_model_run(tmp_path):
 
 
 def test_missing_model_wait_restart_then_recover_without_reexecuting_upstream(tmp_path):
-    runtime, agent, paused, planner, deadline = blocked_model_run(tmp_path)
+    runtime, agent, paused, planner, deadline = blocked_model_run(tmp_path, owner_input={
+        "authenticatedUserId": "reviewer", "authenticatedTenantId": "tenant-b",
+    })
+    assert runtime.workflow_store.list_runs().total == 0
+    assert runtime.workflow_store.list_runs(owner_user_id="reviewer", owner_tenant_id="tenant-a").total == 0
     failure = planner.observations[0]
     assert failure.failure_source == "scheduler" and failure.failure_reason == "NO_MODEL_ENDPOINT"
     assert failure.failure_step_id == "B"

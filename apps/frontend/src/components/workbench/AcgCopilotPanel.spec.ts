@@ -3,12 +3,13 @@ import { defineComponent, h, KeepAlive, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AcgCopilotPanel from './AcgCopilotPanel.vue'
 import { agentosApi } from '@/services/api/agentos'
-import type { CopilotState } from '@/services/api/agentos/api/copilot'
+import type { CopilotPermissionReceipt, CopilotState } from '@/services/api/agentos/api/copilot'
 import { clearCopilotSession } from './copilotSessionCache'
 import FormalExecutionControls from '@/components/workspace/FormalExecutionControls.vue'
 import FormalToolApprovals from '@/components/workspace/FormalToolApprovals.vue'
 import { capabilitiesFixture } from '@/test/fixtures/runCapabilities'
 import { renderMarkdown } from '@/utils/markdown'
+import { agentosRequest } from '@/services/api/agentos/client'
 
 vi.mock('@/services/api/agentos', () => ({ agentosApi: { getCopilot: vi.fn(), getAgentPool: vi.fn(), setCopilotPermission: vi.fn(), streamCopilotMessage: vi.fn(), answerPlanner: vi.fn(), listRunResourceCalls: vi.fn(), previewCopilotAction: vi.fn(), applyCopilotAction: vi.fn(), applyWorkflowReview: vi.fn(), submitFormalControl: vi.fn() } }))
 vi.mock('@/services/api/agentos/client', () => ({ agentosRequest: { get: vi.fn(async () => ({ data: { items: [] } })), post: vi.fn() } }))
@@ -18,11 +19,82 @@ vi.mock('@/utils/markdown', async importOriginal => {
   return { ...original, renderMarkdown: vi.fn(original.renderMarkdown) }
 })
 const state = (): CopilotState => ({ runId: 'run-1', status: 'running', revision: 3, modelAvailable: true,
+  approvalMode: 'ask', policyRevision: 0,
   question: null, humanAnswers: [], exchanges: [], decision: null, steps: [] })
 const wrappers: ReturnType<typeof mount>[] = []
 const review = (rejected = false) => ({ subjectId: 'graph-1', subjectType: 'planner', reason: 'Recovery authority rejected proposal', reasonCode: 'PLANNER_WAIT', canApprove: !rejected, decisionRejected: rejected, expectedRunUpdatedAt: '2026-10-06T12:00:00Z' })
 
 describe('explicit review interaction', () => {
+  it('shows a durable graph transition rejection with details and without an approval action', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'retrying', planningProgress: {
+      kind: 'blocked', status: 'blocked', message: '自动修订暂时停止，已完成结果已保留',
+      observationId: 'transition-observation', errorCode: 'GRAPH_TRANSITION_REJECTED', reason: 'source fingerprint differs', errorType: 'TransitionRejected', canApprove: false
+    } })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'retrying', 3, { canReview: true }) })
+    expect(w.get('.planning-progress--blocked').text()).toContain('source fingerprint differs')
+    expect(w.get('.context-strip').text()).toContain('图交接受阻')
+    expect(w.getComponent(FormalExecutionControls).props('showReview')).toBe(false)
+    expect(w.find('.planning-progress .is-loading').exists()).toBe(false)
+    expect(w.find('.review-card').exists()).toBe(false)
+  })
+  it('shows active automatic correction as progress without approval or a review form', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'retrying', planningProgress: {
+      kind: 'repairing', status: 'retrying', message: '正在根据审查反馈自动修正计划',
+      observationId: 'denied-observation', errorCode: 'INVALID_PROPOSAL',
+    } })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'retrying', 3, { canReview: true }) })
+    expect(w.get('.planning-progress[role="status"]').text()).toBe('正在根据审查反馈自动修正计划')
+    expect(w.get('.context-strip').text()).toContain('自动修正中')
+    expect(w.find('.review-card').exists()).toBe(false)
+    expect(w.find('[aria-label="审核意见"]').exists()).toBe(false)
+    expect(w.find('.attention-dot').exists()).toBe(false)
+    expect(w.getComponent(FormalExecutionControls).props('showReview')).toBe(false)
+    expect(w.text()).not.toContain('确认条件已满足')
+    expect(agentosApi.applyWorkflowReview).not.toHaveBeenCalled()
+  })
+  it('shows automatic revision as internal work without manual barrier confirmation', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: {
+      ...review(), kind: 'workspace_revision_pending', canApprove: false,
+      reason: 'Workspace review revision queued; settle the evidence barrier before formal graph activation',
+      displayReason: '系统正在处理审查计划的自动修订，完成正式校验后会继续执行。',
+    } })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'waiting_review', 3, { canReview: true }) })
+    expect(w.get('.review-card strong').text()).toBe('正在自动修订审查计划')
+    expect(w.get('.context-strip').text()).toContain('自动修订中')
+    expect(w.get('.review-card').text()).not.toContain('确认条件已满足')
+    expect(w.get('.review-card').text()).not.toContain('预览调整方案')
+    expect(w.find('[aria-label="审核意见"]').exists()).toBe(false)
+    expect(w.find('.attention-dot').exists()).toBe(false)
+    expect(agentosApi.applyWorkflowReview).not.toHaveBeenCalled()
+  })
+  it('shows the true revision rejection and failed step even if a stale approve flag is present', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: {
+      ...review(), kind: 'workspace_revision_blocked', canApprove: true, decisionRejected: false,
+      reasonCode: 'WORKSPACE_REVIEW_REVISION_BLOCKED', errorCode: 'INVALID_PROPOSAL', errorType: '_TransitionRejected',
+      reason: 'Workspace review graph transition rejected: INVALID_PROPOSAL: started or settled work cannot be changed',
+      displayReason: '修订方案试图更改已开始或已有最终结果的步骤，正式校验已拒绝该方案。',
+    }, decision: { action: 'wait', reason: 'Workspace review revision queued; settle the evidence barrier before formal graph activation' },
+    steps: [{ stepId: 'S2', name: '核对完整代码证据', status: 'failed' }] })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'waiting_review', 3, { canReview: true }) })
+    expect(w.get('.review-card strong').text()).toBe('审查计划修订受阻')
+    expect(w.get('.review-card > p').text()).toContain('已开始或已有最终结果的步骤')
+    expect(w.get('.review-card').text()).toContain('核对完整代码证据 · 执行失败')
+    expect(w.get('.review-card details').text()).toContain('INVALID_PROPOSAL')
+    expect(w.get('.review-card').text()).not.toContain('确认条件已满足')
+    expect(w.get('.review-card small').text()).toContain('仍须通过正式校验')
+    expect(agentosApi.applyWorkflowReview).not.toHaveBeenCalled()
+    await w.findAll('.review-actions button').find(button => button.text() === '查看失败详情')!.trigger('click')
+    expect(w.get('.trajectory-view').exists()).toBe(true)
+  })
+  it('keeps external waits distinct and offers confirmation only for an approvable review', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: {
+      ...review(), kind: 'planner_wait', reason: '等待补充外部文件',
+    } })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'waiting_review', 3, { canReview: true }) })
+    expect(w.get('.review-card strong').text()).toBe('等待外部条件确认')
+    expect(w.get('.review-card').text()).toContain('等待补充外部文件')
+    expect(w.findAll('.review-actions button').find(button => button.text() === '确认条件已满足')!.attributes('disabled')).toBeUndefined()
+  })
   it('shows a rejected proposal as blocked and previews new requirements without approving failed work', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: review(true), decision: { action: 'recover', reason: 'Retry failed nodes' }, steps: [{ stepId: 'A', name: '提取事实', status: 'failed' }] })
     vi.mocked(agentosApi.previewCopilotAction).mockResolvedValue({ operationId: 'proposal', user: '恢复', assistant: '待确认', createdAt: '2026-10-06T12:00:00Z', observedRevision: 3 })
@@ -57,8 +129,134 @@ async function panel(props = {}) {
   await flushPromises()
   return wrapper
 }
-beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.setCopilotPermission).mockImplementation(async (_, permission) => ({ missionId: 'mission-1', taskPermission: permission })); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
+beforeEach(() => { vi.clearAllMocks(); clearCopilotSession('run-1'); clearCopilotSession('run-2'); vi.mocked(agentosApi.getCopilot).mockResolvedValue(state()); vi.mocked(agentosApi.setCopilotPermission).mockImplementation(async (_, permission, change) => ({ missionId: 'mission-1', taskPermission: permission, approvalMode: change?.approvalMode ?? 'ask', policyRevision: (change?.expectedPolicyRevision ?? 0) + 1, autoApprovedCount: 0 })); vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValue({ runId: 'run-1', items: [], total: 0 }) })
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.useRealTimers() })
+describe('task automatic approval mode', () => {
+  it('offers local recovery on a failed Planner barrier without asking to approve its conditions', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'waiting_review', review: review(),
+      steps: [{ stepId: 'reviewer', name: 'Review', status: 'failed' }] })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'waiting_review', 3, {
+      canRecoverCurrentRun: true, retryStepId: 'reviewer',
+    }) })
+    expect(w.text()).not.toContain('确认条件已满足')
+    expect(w.get('[aria-label="任务操作"]').attributes('disabled')).toBeUndefined()
+    expect(agentosApi.applyWorkflowReview).not.toHaveBeenCalled()
+  })
+  it('can enable a task policy on the latest failed Run without starting recovery', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'failed' })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'failed', 3) })
+    expect(w.get('[aria-label="选择权限"]').attributes('disabled')).toBeUndefined()
+    await (w.vm as any).changePermission('task_collaboration', 'full')
+    expect(agentosApi.setCopilotPermission).toHaveBeenCalledWith('run-1', 'task_collaboration',
+      expect.objectContaining({ approvalMode: 'full' }))
+    expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
+  })
+  const receipt = (overrides: Partial<CopilotPermissionReceipt> = {}): CopilotPermissionReceipt => ({
+    missionId: 'mission-1', taskPermission: 'task_collaboration', approvalMode: 'full', policyRevision: 5, autoApprovedCount: 2, ...overrides,
+  })
+  it('shows the persisted effective mode without changing collaboration actions', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), taskPermission: 'task_collaboration', approvalMode: 'full', policyRevision: 4 })
+    const w = await panel()
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('自动审批')
+    expect(w.getComponent(FormalExecutionControls).props('executionReadonly')).toBe(false)
+    await w.get('[aria-label="选择权限"]').trigger('click')
+    expect(w.findAll('[role="menuitemradio"]').map(button => button.text())).toEqual([
+      '仅对话查看状态、解释问题和提供建议；不暂停正在执行的任务',
+      '按需确认继续协作，文件修改和命令执行按现有规则询问',
+      '自动审批自动批准文件修改与命令执行，跨图版本和断点恢复持续有效，直到关闭',
+    ])
+    expect(w.get('[aria-checked="true"]').text()).toContain('自动审批')
+    expect(agentosApi.setCopilotPermission).not.toHaveBeenCalled()
+  })
+  it('waits for the server receipt and compares the independent policy revision', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), policyRevision: 4 })
+    let finish!: (value: CopilotPermissionReceipt) => void
+    vi.mocked(agentosApi.setCopilotPermission).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const w = await panel()
+    await w.get('[aria-label="选择权限"]').trigger('click')
+    await w.get('.permission-menu button:last-of-type').trigger('click')
+    expect(agentosApi.setCopilotPermission).toHaveBeenCalledWith('run-1', 'task_collaboration', {
+      approvalMode: 'full', expectedPolicyRevision: 4, operationId: expect.any(String),
+    })
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('正在设置…')
+    expect((w.vm as any).approvalMode).toBe('ask')
+    finish(receipt()); await flushPromises()
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('自动审批')
+    expect(w.get('.permission-receipt').text()).toBe('已开启自动审批，已处理 2 项待审批操作')
+    expect(agentosRequest.post).not.toHaveBeenCalled()
+  })
+  it('keeps the previous mode on network failure and retries the identical operation body', async () => {
+    const w = await panel()
+    vi.mocked(agentosApi.setCopilotPermission).mockRejectedValueOnce(new Error('连接中断'))
+    await (w.vm as any).changePermission('task_collaboration', 'full')
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('按需确认')
+    expect(w.get('[role="alert"]').text()).toContain('连接中断')
+    const first = vi.mocked(agentosApi.setCopilotPermission).mock.calls[0]
+    // A reconciliation may observe the committed policy before its lost receipt is retried.
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), approvalMode: 'full', policyRevision: 1 })
+    await (w.vm as any).refresh(true)
+    await (w.vm as any).changePermission('task_collaboration', 'full')
+    expect(vi.mocked(agentosApi.setCopilotPermission).mock.calls[1]).toEqual(first)
+    await (w.vm as any).changePermission('task_collaboration', 'ask')
+    const third = vi.mocked(agentosApi.setCopilotPermission).mock.calls[2]
+    expect(third[2]).toMatchObject({ approvalMode: 'ask', expectedPolicyRevision: 1 })
+    expect(third[2]!.operationId).not.toBe(first[2]!.operationId)
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('按需确认')
+    expect(w.get('.permission-receipt').text()).toBe('后续操作将按需确认')
+  })
+  it('does not let an older GET roll back an acknowledged policy', async () => {
+    const w = await panel()
+    let finish!: (value: CopilotState) => void
+    vi.mocked(agentosApi.getCopilot).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const reading = (w.vm as any).refresh(true)
+    await (w.vm as any).changePermission('task_collaboration', 'full')
+    finish({ ...state(), revision: 99 }); await reading
+    expect((w.vm as any).state.revision).toBe(99)
+    expect((w.vm as any).state.policyRevision).toBe(1)
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('自动审批')
+  })
+  it('does not replace a newer server policy with a delayed permission receipt', async () => {
+    const w = await panel()
+    let finish!: (value: CopilotPermissionReceipt) => void
+    vi.mocked(agentosApi.setCopilotPermission).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const setting = (w.vm as any).changePermission('task_collaboration', 'full')
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), approvalMode: 'ask', policyRevision: 6 })
+    await (w.vm as any).refresh(true)
+    finish(receipt()); await setting
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('按需确认')
+    expect(w.find('.permission-receipt').exists()).toBe(false)
+  })
+  it('ignores an old Run receipt after selecting a different Run', async () => {
+    const w = await panel()
+    let finish!: (value: CopilotPermissionReceipt) => void
+    vi.mocked(agentosApi.setCopilotPermission).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const setting = (w.vm as any).changePermission('task_collaboration', 'full')
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), runId: 'run-2' })
+    await w.setProps({ runId: 'run-2', actionCapabilities: capabilitiesFixture('run-2', 'mission-1', 'running', 3) }); await flushPromises()
+    finish(receipt()); await setting
+    expect((w.vm as any).state.runId).toBe('run-2')
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('按需确认')
+    expect(w.find('.permission-receipt').exists()).toBe(false)
+  })
+  it('uses the effective ask mode when a stored full policy no longer matches the workspace', async () => {
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), approvalMode: 'ask', policyRevision: 4,
+      approvalPolicy: { missionId: 'mission-1', permission: 'task_collaboration', approvalMode: 'full', policyRevision: 4,
+        workspaceScope: { workspaceId: 'old-workspace', grantId: 'old-grant', resourceId: 'old-resource' } },
+    })
+    const w = await panel()
+    expect(w.get('[aria-label="选择权限"]').text()).toBe('按需确认')
+  })
+  it('supports keyboard selection and restores focus on Escape', async () => {
+    const w = await panel()
+    await w.get('[aria-label="选择权限"]').trigger('keydown', { key: 'ArrowDown' })
+    expect(w.find('.permission-menu').exists()).toBe(true)
+    await w.get('.permission-picker').trigger('keydown', { key: 'End' })
+    expect(w.findAll('[role="menuitemradio"]')).toHaveLength(3)
+    await w.get('.permission-picker').trigger('keydown', { key: 'Escape' })
+    expect(w.find('.permission-menu').exists()).toBe(false)
+    expect(agentosApi.setCopilotPermission).not.toHaveBeenCalled()
+  })
+})
 const readyState = (): CopilotState => ({ ...state(), status: 'planning', initialPlan: {
   planVersion: 1, commitId: 'commit', commitmentRevision: 1, objective: '检查加载问题', constraints: [], expectedArtifacts: [], tasks: [],
 } })
@@ -69,6 +267,73 @@ const readyProps = () => ({
 })
 
 describe('Copilot formal action availability during refresh', () => {
+  it.each([false, true])('coalesces formal refreshes after the workspace settles (revision changed: %s)', async changed => {
+    vi.useFakeTimers()
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue(readyState())
+    const w = await panel({ ...readyProps(), projectionRevision: 1, workspaceRefreshing: false })
+    const controls = w.getComponent(FormalExecutionControls)
+    await w.get('form textarea').setValue('Preserve this draft')
+    controls.vm.$emit('refresh'); controls.vm.$emit('refresh'); await flushPromises()
+    await w.setProps({ workspaceRefreshing: true })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(1)
+    expect(controls.get('.formal-control__primary').attributes('disabled')).toBeUndefined()
+    await w.setProps({ workspaceRefreshing: false, projectionRevision: changed ? 2 : 1 })
+    await vi.advanceTimersByTimeAsync(150); await flushPromises()
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+    expect((w.get('form textarea').element as HTMLTextAreaElement).value).toBe('Preserve this draft')
+    expect(agentosApi.submitFormalControl).not.toHaveBeenCalled()
+  })
+
+  it('revalidates an explicit refresh after access recovers and clears the previous error', async () => {
+    vi.useFakeTimers()
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue(readyState())
+    const w = await panel(readyProps())
+    const controls = w.getComponent(FormalExecutionControls)
+    vi.mocked(agentosApi.getCopilot).mockRejectedValueOnce({ response: { status: 403 }, message: 'Access denied' })
+    await (w.vm as any).refresh(); await flushPromises()
+    expect(controls.props('readonly')).toBe(true)
+    expect(w.get('[role="alert"]').text()).toContain('Access denied')
+    controls.vm.$emit('refresh'); await vi.advanceTimersByTimeAsync(150); await flushPromises()
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(3)
+    expect(w.find('[role="alert"]').exists()).toBe(false)
+    expect(controls.props('readonly')).toBe(false)
+    expect(agentosApi.submitFormalControl).not.toHaveBeenCalled()
+  })
+
+  it('does not starve conversation reads when workspace refreshes keep arriving', async () => {
+    vi.useFakeTimers()
+    const w = await panel({ ...readyProps(), projectionRevision: 1, workspaceRefreshing: false })
+    w.getComponent(FormalExecutionControls).vm.$emit('refresh')
+    for (let revision = 2; revision <= 4; revision++) {
+      await w.setProps({ workspaceRefreshing: true })
+      await vi.advanceTimersByTimeAsync(200)
+      await w.setProps({ workspaceRefreshing: false, projectionRevision: revision })
+      await vi.advanceTimersByTimeAsync(1); await flushPromises()
+      expect(agentosApi.getCopilot).toHaveBeenCalledTimes(revision)
+    }
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(4)
+  })
+
+  it('reconciles a formal refresh arriving during an outstanding conversation read', async () => {
+    vi.useFakeTimers()
+    const w = await panel(readyProps())
+    const controls = w.getComponent(FormalExecutionControls)
+    let finish!: (value: CopilotState) => void
+    vi.mocked(agentosApi.getCopilot).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const reading = (w.vm as any).refresh()
+    controls.vm.$emit('refresh'); await vi.advanceTimersByTimeAsync(1000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(2)
+    finish(state()); await reading; await flushPromises()
+    await vi.advanceTimersByTimeAsync(150); await flushPromises()
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(agentosApi.getCopilot).toHaveBeenCalledTimes(3)
+  })
+
   it.each([false, true])('validates the first snapshot before allowing formal operations (cached: %s)', async cached => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue(readyState())
     if (cached) {
@@ -85,13 +350,14 @@ describe('Copilot formal action availability during refresh', () => {
   })
 
   it('keeps a validated formal action available while its conversation snapshot refreshes', async () => {
+    vi.useFakeTimers()
     vi.mocked(agentosApi.getCopilot).mockResolvedValue(readyState())
     const w = await panel(readyProps())
     const controls = w.getComponent(FormalExecutionControls)
     expect(controls.get('.formal-control__primary').attributes('disabled')).toBeUndefined()
     let finish!: (next: CopilotState) => void
     vi.mocked(agentosApi.getCopilot).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-    controls.vm.$emit('refresh'); await nextTick()
+    controls.vm.$emit('refresh'); await vi.advanceTimersByTimeAsync(150); await nextTick()
     expect(controls.props('readonly')).toBe(false)
     expect(controls.get('.formal-control__primary').attributes('disabled')).toBeUndefined()
     expect(w.text()).not.toContain('当前视图仅供查看')
@@ -101,6 +367,7 @@ describe('Copilot formal action availability during refresh', () => {
   })
 
   it('preserves a pending formal command and its receipt when an overlapping refresh completes', async () => {
+    vi.useFakeTimers()
     vi.mocked(agentosApi.getCopilot).mockResolvedValue(readyState())
     const w = await panel(readyProps())
     const controls = w.getComponent(FormalExecutionControls)
@@ -108,7 +375,7 @@ describe('Copilot formal action availability during refresh', () => {
     vi.mocked(agentosApi.submitFormalControl).mockImplementationOnce(() => new Promise(resolve => { acknowledge = resolve }))
     await controls.get('.formal-control__primary').trigger('click')
     expect(agentosApi.submitFormalControl).toHaveBeenCalledTimes(1)
-    controls.vm.$emit('refresh'); await flushPromises()
+    controls.vm.$emit('refresh'); await vi.advanceTimersByTimeAsync(150); await flushPromises()
     expect(controls.get('.formal-control__primary').text()).toBe('正在提交…')
     expect(controls.get('.formal-control__primary').attributes('disabled')).toBeDefined()
     await controls.get('.formal-control__primary').trigger('click')
@@ -160,7 +427,7 @@ describe('task Copilot', () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'failed' })
     const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [{ eventId: 'planning-failed', runId: 'run-1', eventType: 'task_status_changed',
       payload: { planningProgress: true, kind: 'failed', stage: 'repair', errorCode: 'TASK_PLAN_CONTRACT_FAILED' } }] } })
-    expect(w.get('.run-timeline__planning').text()).toContain('本次规划未完成')
+    expect(w.get('.run-timeline__progress').text()).toContain('本次规划未完成')
     expect(w.find('.empty-watermark').exists()).toBe(false)
   })
   it('puts frozen planning explanations in the conversation and keeps the composer available', async () => {
@@ -180,7 +447,8 @@ describe('task Copilot', () => {
     const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [
       { eventId: 'progress', runId: 'run-1', eventType: 'task_status_changed', timestamp: '2026-11-14T10:00:02Z', payload: { planningProgress: true, kind: 'stage_completed', stage: 'decompose' } },
     ] } })
-    const rows = Array.from(w.get('.run-timeline').element.children).filter(el => el.tagName === 'ARTICLE').map(el => el.textContent)
+    const rows = Array.from(w.get('.run-timeline').element.querySelectorAll('article.message, article.run-timeline__progress-item'))
+      .map(el => el.querySelector('.message-content, .chat-recovery')?.textContent)
     expect(rows).toEqual(['请检查加载问题', '开始检查', '已生成任务步骤与规划依据，后续还需校验是否满足任务约束。', '说明下一步', '等待你确认'])
     await w.get('.run-timeline__history-toggle').trigger('click')
     expect(w.get('.run-timeline__progress').isVisible()).toBe(false)
@@ -197,6 +465,22 @@ describe('task Copilot', () => {
     await w.setProps({ readonly: true })
     expect(approvals.exists()).toBe(true)
     expect(approvals.props('readonly')).toBe(true)
+  })
+  it('discovers pending approvals from same-run execution observations when SSE is unavailable', async () => {
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'running', 3, { canResolveToolApproval: true }) })
+    const reads = vi.mocked(agentosRequest.get).mock.calls.length
+    vi.mocked(agentosRequest.get).mockResolvedValue({ data: { items: [{ approvalId: 'pending', operationSummary: 'Inspect workspace' }] } })
+    await w.setProps({ runtimeObservation: { runId: 'run-other', traces: [] } as any }); await flushPromises()
+    expect(agentosRequest.get).toHaveBeenCalledTimes(reads)
+    await w.setProps({ runtimeObservation: { runId: 'run-1', traces: [] } as any }); await flushPromises()
+    expect(agentosRequest.get).toHaveBeenCalledTimes(reads + 1)
+    expect(w.get('.tool-approvals').text()).toContain('等待你确认')
+    expect(w.get('.context-strip').text()).toContain('等待你确认')
+    expect(w.getComponent(FormalToolApprovals).props('readonly')).toBe(false)
+    vi.mocked(agentosRequest.get).mockResolvedValue({ data: { items: [] } })
+    await w.setProps({ runtimeObservation: { runId: 'run-1', traces: [] } as any }); await flushPromises()
+    expect(w.find('.tool-approvals').exists()).toBe(false)
+    expect(agentosRequest.post).not.toHaveBeenCalled()
   })
   it('cannot apply another Run proposal or replace its expected revision with the selected Run capability', async () => {
     vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'failed' })
@@ -391,6 +675,49 @@ describe('task Copilot', () => {
     expect(w.emitted('select-run')).toEqual([['run-2']])
     expect(w.findAll('.message.is-user')).toHaveLength(1)
   })
+  it('previews and confirms formally offered current Run recovery with precise reuse wording', async () => {
+    const snapshot = { ...state(), status: 'failed', steps: [
+      { stepId: 'A', name: '提取资料', status: 'completed' }, { stepId: 'B', name: '生成报告', status: 'failed' },
+    ] }
+    const proposal = { operationId: 'current-proposal', user: '恢复失败任务', assistant: '方案已准备', observedRevision: 3,
+      createdAt: '2026-10-05T12:00:00Z', action: { kind: 'recover' as const, retryMode: 'current_run' as const,
+        stepId: 'B', expectedRevision: 3, executeStepIds: ['B'], reusedStepIds: ['A'], content: '恢复失败任务' } }
+    const receipt = { operationId: 'current-receipt', user: '', assistant: '已继续当前运行', observedRevision: 4,
+      createdAt: '2026-10-05T12:01:00Z', receipt: { proposalId: proposal.operationId, runId: 'run-1',
+        kind: 'recover' as const, status: 'queued', executeStepIds: ['B'], reusedStepIds: ['A'] } }
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue(snapshot)
+    vi.mocked(agentosApi.previewCopilotAction).mockResolvedValue(proposal)
+    vi.mocked(agentosApi.applyCopilotAction).mockResolvedValue(receipt)
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'failed', 3,
+      { canRecoverCurrentRun: true, retryStepId: 'B' }) })
+    expect(w.get('[aria-label="任务操作"]').attributes('disabled')).toBeUndefined()
+    await w.get('[aria-label="任务操作"]').trigger('click')
+    const recover = w.findAll('.operation-menu button').find(button => button.text().includes('恢复失败任务'))!
+    expect(recover.attributes('disabled')).toBeUndefined()
+    expect(recover.text()).toContain('在当前 Run')
+    await recover.trigger('click'); await flushPromises()
+    expect(agentosApi.previewCopilotAction).toHaveBeenCalledWith('run-1', 'recover', '恢复失败任务',
+      expect.any(String), 'task_collaboration', undefined)
+    expect(w.get('.operation-card').text()).toContain('在当前 Run 继续执行')
+    expect(w.get('.operation-card').text()).not.toContain('创建新 Run')
+    expect(w.get('.operation-card button').attributes('disabled')).toBeUndefined()
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...snapshot, exchanges: [proposal, receipt] })
+    await w.get('.operation-card button').trigger('click'); await flushPromises()
+    expect(agentosApi.applyCopilotAction).toHaveBeenCalledWith('run-1', proposal.operationId, 3, 'task_collaboration')
+    expect(w.find('.operation-receipt button').exists()).toBe(false)
+  })
+  it.each([undefined, 'successor_run'])('does not confirm a %s recovery proposal with a current Run offer', async retryMode => {
+    const action = { kind: 'recover' as const, retryMode: retryMode as 'successor_run' | undefined,
+      stepId: 'B', expectedRevision: 3, executeStepIds: ['B'], reusedStepIds: ['A'], content: '恢复' }
+    vi.mocked(agentosApi.getCopilot).mockResolvedValue({ ...state(), status: 'failed', exchanges: [{
+      operationId: 'mismatch', user: '恢复', assistant: '方案', observedRevision: 3, createdAt: '', action,
+    }] })
+    const w = await panel({ actionCapabilities: capabilitiesFixture('run-1', 'mission-1', 'failed', 3,
+      { canRecoverCurrentRun: true, retryStepId: 'B' }) })
+    expect(w.get('.operation-card button').attributes('disabled')).toBeDefined()
+    await (w.vm as any).confirmAction('mismatch', action, 'run-1')
+    expect(agentosApi.applyCopilotAction).not.toHaveBeenCalled()
+  })
   it('does not expose executable operations in read-only permission', async () => {
     const w = await panel()
     await w.get('[aria-label="选择权限"]').trigger('click')
@@ -569,6 +896,34 @@ describe('task Copilot', () => {
     resolve({ ...state(), question: { questionId: 'old', prompt: '旧任务的问题', choices: [] } }); await flushPromises()
     expect(w.text()).not.toContain('旧任务的问题')
     expect(w.text()).toContain('已完成')
+  })
+  it('counts loaded activities by category and merges model projections by trace identity', async () => {
+    const usage = { inputTokens: 2, outputTokens: 1, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+    const first = { callId: 'model-trace', model: 'glm-test', usage, latencyMs: 12, outputPolicy: 'default', outputExhausted: false }
+    vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValueOnce({ runId: 'run-1', items: [first], total: 2, nextCursor: 'next' })
+    const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [
+      { eventId: 'planner', eventType: 'task_status_changed', observation: 'Planner started', payload: { category: 'planner', planningProgress: true } },
+      { eventId: 'model-trace', eventType: 'model_called', observation: 'Model invocation metadata projected', payload: { model: 'glm-test' } },
+      { eventId: 'tool', eventType: 'tool_called', observation: 'read file', payload: { callId: 'model-trace' } },
+      { eventId: 'execution', eventType: 'step_started', observation: 'step started', payload: {} },
+    ] } } as any)
+    await w.findAll('.copilot-tabs button')[1].trigger('click'); await flushPromises()
+    expect(w.findAll('.trace-event')).toHaveLength(4)
+    expect(w.get('.trace-toolbar').text()).toContain('已加载 4 条')
+    expect(w.get('.trace-lanes').text()).toContain('规划 1')
+    expect(w.get('.trace-lanes').text()).toContain('模型 1')
+    expect(w.get('.trace-event.lane-model pre').text()).toContain('Model invocation metadata projected')
+    expect(w.get('.load-more').text()).toContain('加载更多模型调用')
+    await w.get('.trace-toolbar input').setValue('规划')
+    expect(w.get('.trace-toolbar').text()).toContain('匹配 1 / 已加载 4 条')
+    expect(w.findAll('.trace-event')).toHaveLength(1)
+    expect(w.get('.trace-lanes').text()).toContain('模型 0')
+    await w.get('.trace-toolbar input').setValue('')
+    vi.mocked(agentosApi.listRunResourceCalls).mockResolvedValueOnce({ runId: 'run-1', items: [first, { ...first, callId: 'second' }], total: 2 })
+    await w.get('.load-more').trigger('click'); await flushPromises()
+    expect(w.get('.trace-toolbar').text()).toContain('已加载 5 条')
+    expect(w.get('.trace-lanes').text()).toContain('模型 2')
+    expect(w.find('.load-more').exists()).toBe(false)
   })
   it('renders only recorded trace events and opens their details', async () => {
     const w = await panel({ runtimeObservation: { runId: 'run-1', traces: [{ eventId: 'e-1', eventType: 'tool_called', observation: 'read_document', timestamp: '2026-10-05T12:00:00Z', stepId: 'step-2', durationMs: 12, payload: { callId: 'call-1' } }] } as any })

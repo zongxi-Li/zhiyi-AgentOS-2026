@@ -72,7 +72,7 @@ def apply_repair_patch(*, relations: list[dict[str, Any]], control_policies: lis
             next_policies.append({
                 "type": "verification_loop", "bodyEntryKey": operation["bodyEntryKey"],
                 "bodyExitKey": operation["bodyExitKey"],
-                "conditionSourceKey": operation["conditionSourceKey"], "maxRevisions": 2,
+                "conditionSourceKey": operation["conditionSourceKey"], "maxRevisions": None,
             })
         else:
             raise ValueError(f"unsupported topology repair operation: {op}")

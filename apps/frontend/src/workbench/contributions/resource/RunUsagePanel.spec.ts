@@ -67,6 +67,24 @@ describe('RunUsagePanel', () => {
     expect(wrapper.text()).toContain('暂时无法读取模型调用明细')
   })
 
+  it('shows measured cache coverage by phase and keeps unreported tokens out of misses', async () => {
+    const data = usage()
+    Object.assign(data.usage, { cacheHitRatio: 0.5, cacheUsageReportedCalls: 1,
+      cacheMeasuredInputTokens: 50, cacheMeasuredReadTokens: 25 })
+    data.cacheScopes = [
+      { scope: 'node', callCount: 1, cacheUsageReportedCalls: 1, cacheHitRatio: 0.5 },
+      { scope: 'planning', callCount: 1, cacheUsageReportedCalls: 0, cacheHitRatio: null },
+    ]
+    vi.mocked(workflowApi.getRunResourceUsage).mockResolvedValue(data)
+    const wrapper = panel()
+    await flushPromises()
+    expect(wrapper.text()).toContain('已观测 1/2 次调用')
+    const phases = wrapper.get('[aria-label="各阶段缓存命中率"]')
+    expect(phases.text()).toContain('执行 Agent50.0%')
+    expect(phases.text()).toContain('规划器未观测')
+    expect(wrapper.findAll('.usage-chart .token-legend dd').map(node => node.text())).toEqual(['25', '25', '50', '40'])
+  })
+
   it('discards an old run response after switching runs', async () => {
     let resolveOld!: (value: RunResourceUsage) => void
     vi.mocked(workflowApi.getRunResourceUsage).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))

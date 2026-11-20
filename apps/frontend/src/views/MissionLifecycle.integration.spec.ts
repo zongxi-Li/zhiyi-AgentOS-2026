@@ -28,7 +28,7 @@ const detail = (id = 'a'): WorkflowRun => {
       isSuperseded: superseded, canCancel: !superseded && ['pending', 'planning', 'running', 'waiting_review', 'retrying'].includes(run.status),
       canCollaborate: !superseded && ['pending', 'planning', 'running', 'waiting_review', 'retrying'].includes(run.status),
       canReview: !superseded && Boolean(run.review), canRetrySuccessor: !superseded && run.status === 'failed' && run.steps.some(step => step.status === 'failed'),
-      retryStepId: run.steps.find(step => step.status === 'failed')?.stepId || null,
+      retryStepId: !superseded && run.status === 'failed' ? run.steps.find(step => step.status === 'failed')?.stepId || null : null,
       canRerunSuccessor: !superseded && ['completed', 'failed', 'cancelled'].includes(run.status), canDelete: ['completed', 'failed', 'cancelled', 'superseded'].includes(run.status), ...offersByRun[id] }) }
 }
 const workspace = (id = 'a'): MissionWorkspaceProjection => ({
@@ -60,13 +60,18 @@ beforeEach(() => {
   vi.useFakeTimers(); localStorage.clear(); localStorage.setItem('userId', 'test-local-owner'); sessionStorage.clear(); status = 'planning'; entries = []; streams = 0; details = {}; runList = null
   unexpectedReads = []
   offersByRun = {}
-  vi.spyOn(agentosRequest, 'get').mockImplementation(async (path: string) => { unexpectedReads.push(path); throw new Error(`Unmocked fixture GET: ${path}`) })
+  vi.spyOn(agentosRequest, 'get').mockImplementation(async (path: string) => {
+    if (/^\/runs\/[^/]+\/tool-approvals$/.test(path)) return { data: { items: [] } } as any
+    unexpectedReads.push(path); throw new Error(`Unmocked fixture GET: ${path}`)
+  })
   vi.spyOn(agentosRequest, 'post').mockRejectedValue(new Error('Unexpected mutation from a presentation transition'))
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   window.matchMedia = vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) as any
   HTMLElement.prototype.scrollTo = vi.fn()
   vi.spyOn(agentosApi, 'getMissionWorkspace').mockImplementation(async (_id, options) => workspace(options?.runId || 'a'))
   vi.spyOn(agentosApi, 'getWorkflowRun').mockImplementation(async id => detail(id))
+  vi.spyOn(agentosApi, 'getGraphVersions').mockImplementation(async runId => ({ runId, graphId: 'graph',
+    currentBlueprintId: null, currentGraphVersion: 1, items: [], proposals: [] }))
   vi.spyOn(agentosApi, 'getWorkflowTrace').mockImplementation(async id => ({ runId: id, events: [] } as any))
   vi.spyOn(agentosApi, 'getRunProvenance').mockImplementation(async id => ({ runId: id, productions: [], consumptions: [], interactions: [] } as any))
   vi.spyOn(agentosApi, 'getExecutionTree').mockImplementation(async id => ({ runId: id, nodes: [], lineage: detail(id).lineage } as any))
@@ -131,7 +136,7 @@ it('does not turn Cancel permission into Review, tool approval or formal permiss
   await (copilot.vm as any).submitReview('approved')
   expect(copilot.get('.review-actions button').attributes('disabled')).toBeDefined()
   expect(review).not.toHaveBeenCalled()
-  expect(wrapper!.findComponent({ name: 'FormalToolApprovals' }).exists()).toBe(false)
+  expect(wrapper!.findComponent({ name: 'FormalToolApprovals' }).props('readonly')).toBe(true)
 })
 
 it('closes missing capability snapshots and refuses superseded sources without creating a successor', async () => {
@@ -204,6 +209,57 @@ it.each(['failed', 'completed'])('real Registry and EditorGroup follow planning,
   const handled = view().editorIntent.handled
   await view().loadWorkspace(); await settle()
   expect(view().editorIntent.handled).toBe(handled); expect(view().openEditors.filter((id: string) => id === 'final')).toHaveLength(1)
+})
+it('keeps the same Copilot mounted across formal receipts, lagging detail and execution transitions', async () => {
+  details.a = { ...detail(), formalControl: { status: 'PLANNING_ACCEPTED', commitId: 'commit', commitmentRevision: 1 } }
+  offersByRun.a = { canExecuteFormalAction: true, formalActions: ['materialize'] }
+  vi.mocked(agentosApi.getCopilot).mockImplementation(async () => ({ runId: 'a', missionId: 'm', status: detail().status,
+    revision: detail().runtimeRevision!, modelAvailable: true, taskPermission: 'task_collaboration', question: null,
+    humanAnswers: [], exchanges: [], decision: null, steps: [], initialPlan: {
+      planVersion: 1, commitId: 'commit', commitmentRevision: 1, objective: 'Inspect repository', constraints: [], expectedArtifacts: [], tasks: [],
+    } }))
+  const submit = vi.spyOn(agentosApi, 'submitFormalControl').mockImplementation(async (_mission, _run, _action, command) => {
+    details.a = { ...detail(), runtimeRevision: 2, formalControl: { ...detail().formalControl!, status: 'MATERIALIZED_INACTIVE' } }
+    offersByRun.a = { canExecuteFormalAction: true, formalActions: ['activate'] }
+    return { operationId: command.operationId, status: 'MATERIALIZED_INACTIVE' }
+  })
+  await open()
+  expect(view().lifecycle.phase).toBe('AWAITING_CONFIRMATION')
+  const copilot = wrapper!.getComponent({ name: 'AcgCopilotPanel' })
+  const uid = (copilot.vm as any).$.uid
+  const composer = copilot.get('form textarea')
+  await composer.setValue('Keep this unsent draft')
+  const controls = copilot.getComponent({ name: 'FormalExecutionControls' })
+  await controls.get('.formal-control__primary').trigger('click'); await settle()
+  expect(submit).toHaveBeenCalledOnce()
+  const expectPreserved = () => {
+    expect(view().activeAuxiliaryId).toBe('acg-copilot.sidebar')
+    expect((wrapper!.getComponent({ name: 'AcgCopilotPanel' }).vm as any).$.uid).toBe(uid)
+    expect(wrapper!.get('.acg-copilot form textarea').element).toBe(composer.element)
+    expect((composer.element as HTMLTextAreaElement).value).toBe('Keep this unsent draft')
+    expect(wrapper!.findComponent({ name: 'RuntimeInspector' }).exists()).toBe(false)
+    expect(view().editorIntent.mode).toBe('follow')
+  }
+  // The projection is newer than the independently polled detail at this point.
+  expectPreserved()
+  await vi.advanceTimersByTimeAsync(2100); await settle(); expectPreserved()
+  for (const [status, control] of [
+    ['planning', { status: 'ACTIVATED_PAUSED' }],
+    ['planning', { status: 'ACTIVATED', permitStatus: 'ISSUED', dispatchEnabled: true, dispatchEligible: true }],
+    ['pending', { status: 'ACTIVATED', dispatch: { runId: 'a', status: 'ACCEPTED' } }],
+    ['running', { status: 'ACTIVATED' }],
+    ['waiting_review', { status: 'ACTIVATED' }],
+  ] as const) {
+    details.a = { ...detail(), status, runtimeRevision: detail().runtimeRevision! + 1, formalControl: control as WorkflowRun['formalControl'] }
+    offersByRun.a = {}
+    await view().loadWorkspace(); await settle(); expectPreserved()
+    await vi.advanceTimersByTimeAsync(2100); await settle(); expectPreserved()
+  }
+  // Explicit sidebar navigation remains available after automatic handoffs.
+  await wrapper!.get('[aria-label="打开 Inspector"]').trigger('click'); await settle()
+  expect(view().activeAuxiliaryId).toBeNull()
+  expect(wrapper!.findComponent({ name: 'RuntimeInspector' }).exists()).toBe(true)
+  expect(submit).toHaveBeenCalledOnce()
 })
 it('manual reading survives state changes and KeepAlive; explicit Follow hands off to final delivery', async () => {
   const router = await open()
@@ -285,6 +341,107 @@ it.each(['retry', 'rerun'])('persists %s operation after a lost response, dedupl
   expect(view().selectedRunId).toBe('b'); expect(view().runtimeObservation.run.runId).toBe('b')
   expect(JSON.stringify(details.a)).toBe(original)
 })
+it('retries the same current Run recovery identity after a lost response even when the Run is already active', async () => {
+  status = 'failed'
+  details.a = { ...detail(), runtimeRevision: 4, steps: [
+    { stepId: 'done', status: 'completed' }, { stepId: 'node', status: 'failed' },
+  ] } as any
+  offersByRun.a = { canRecoverCurrentRun: true, canRetrySuccessor: false, retryMode: 'current_run', retryStepId: 'node' }
+  const response = defer<WorkflowRun>()
+  const retry = vi.spyOn(agentosApi, 'retryWorkflowStepAsync').mockImplementationOnce(() => {
+    details.a = { ...details.a, status: 'running', runtimeRevision: 5,
+      steps: [{ stepId: 'done', status: 'completed' }, { stepId: 'node', status: 'pending' }] } as any
+    offersByRun.a = {}
+    return response.promise
+  }).mockImplementation(async () => detail())
+  const rerun = vi.spyOn(agentosApi, 'rerunWorkflowAsync')
+  await open()
+  expect(view().rerunLabel).toContain('当前 Run')
+  const pending = view().rerunSelectedRun(); await settle()
+  response.reject(new Error('response lost')); await pending; await settle()
+  const original = JSON.stringify(retry.mock.calls[0][2])
+  expect(retry.mock.calls[0][2]).toMatchObject({ mode: 'current_run', expectedRuntimeRevision: 4 })
+  wrapper!.unmount(); wrapper = undefined; await settle()
+  const router = await open()
+  expect(view().lifecycle.phase).toBe('RUNNING')
+  expect(view().lifecycle.capabilities.canRecoverCurrentRun).toBe(false)
+  expect(view().canRerunSelectedRun).toBe(true)
+  expect(view().rerunLabel).toBe('核对恢复结果')
+  await view().rerunSelectedRun(); await settle()
+  expect(JSON.stringify(retry.mock.calls[1][2])).toBe(original)
+  expect(router.currentRoute.value.query.runId).toBe('a')
+  expect(view().runtimeObservation.run.runtimeRevision).toBe(5)
+  expect(view().runtimeObservation.run.steps[0]).toMatchObject({ stepId: 'done', status: 'completed' })
+  expect(rerun).not.toHaveBeenCalled()
+  expect(sessionStorage.length).toBe(0)
+})
+
+it('retains current Run recovery identity when the response unexpectedly names a successor', async () => {
+  status = 'failed'
+  details.a = { ...detail(), runtimeRevision: 4, steps: [{ stepId: 'node', status: 'failed' }] } as any
+  offersByRun.a = { canRecoverCurrentRun: true, canRetrySuccessor: false, retryMode: 'current_run', retryStepId: 'node' }
+  const retry = vi.spyOn(agentosApi, 'retryWorkflowStepAsync').mockResolvedValue({
+    ...detail('b'), runtimeRevision: 5, status: 'pending', lineage: { sourceRunId: 'a' },
+  })
+  const router = await open()
+  await view().rerunSelectedRun(); await settle()
+  expect(retry).toHaveBeenCalledOnce()
+  expect(router.currentRoute.value.query.runId).toBe('a')
+  expect(view().loadError).toContain('当前 Run 恢复响应身份或版本不匹配')
+  expect(sessionStorage.length).toBe(1)
+})
+
+it.each(['offline', 'wrong_run', 'regressed', 'unrecovered'])(
+  'keeps and reuses the same async recovery command after %s confirmation', async failure => {
+    status = 'failed'
+    details.a = { ...detail(), runtimeRevision: 4, steps: [{ stepId: 'node', status: 'failed' }] } as any
+    offersByRun.a = { canRecoverCurrentRun: true, canRetrySuccessor: false, retryMode: 'current_run', retryStepId: 'node' }
+    const source = detail()
+    let first = true
+    const retry = vi.spyOn(agentosApi, 'retryWorkflowStepAsync').mockImplementation(async () => {
+      details.a = { ...source, status: 'running', runtimeRevision: 5,
+        steps: [{ stepId: 'node', status: 'running' }] } as any
+      if (first) {
+        first = false
+        vi.mocked(agentosApi.getWorkflowRun).mockImplementationOnce(async () => {
+          if (failure === 'offline') throw new Error('connection lost')
+          if (failure === 'wrong_run') return { ...detail(), runId: 'other' }
+          if (failure === 'regressed') return { ...detail(), runtimeRevision: 3 }
+          return source
+        })
+      }
+      return { ...source, status: 'retrying' }
+    })
+    const router = await open()
+    await view().rerunSelectedRun(); await settle()
+    expect(view().loadError).not.toBe('')
+    expect(sessionStorage.length).toBe(1)
+    const original = JSON.stringify(retry.mock.calls[0][2])
+    await view().rerunSelectedRun(); await settle()
+    expect(JSON.stringify(retry.mock.calls[1][2])).toBe(original)
+    expect(sessionStorage.length).toBe(0)
+    expect(router.currentRoute.value.query.runId).toBe('a')
+    expect(view().runtimeObservation.run.runtimeRevision).toBe(5)
+  })
+
+it('confirms async admission even when its new attempt has already failed again', async () => {
+  status = 'failed'
+  details.a = { ...detail(), runtimeRevision: 4, steps: [{ stepId: 'node', status: 'failed' }] } as any
+  offersByRun.a = { canRecoverCurrentRun: true, canRetrySuccessor: false, retryMode: 'current_run', retryStepId: 'node' }
+  const source = detail()
+  vi.spyOn(agentosApi, 'retryWorkflowStepAsync').mockImplementation(async () => {
+    details.a = { ...source, runtimeRevision: 5, status: 'failed', error: { code: 'MODEL_TIMEOUT' } }
+    return { ...source, status: 'retrying' }
+  })
+  await open()
+  await view().rerunSelectedRun(); await settle()
+  expect(sessionStorage.length).toBe(0)
+  expect(view().loadError).toBe('')
+  expect(view().runtimeObservation.run.status).toBe('failed')
+  expect(view().runtimeObservation.run.runtimeRevision).toBe(5)
+  expect(view().rerunLabel).toBe('从失败处继续（当前 Run）')
+})
+
 it('late Projection and Observation cannot replace the URL, graph or evidence of a newer selection; back/forward stays coherent', async () => {
   status = 'running'
   const router = await open()

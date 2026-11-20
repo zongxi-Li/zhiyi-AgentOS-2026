@@ -136,8 +136,8 @@ def test_tool_session_keeps_frozen_budget_after_one_large_tool_result():
         metadata={"modelCapabilities": {"mock": {"features": {"tools": True}}}}), transport=transport))
     ctx = SimpleNamespace(model_runtime=RegisteredModelRuntime(registry=registry, provider="test", model="mock"),
         tool_runtime=tools, step=SimpleNamespace(input={"contextPolicy": {"requestBudget": {
-            "totalTokens": 1000, "outputReserveTokens": 100}}}, step_id="node", name="node"),
-        run=SimpleNamespace(run_id="run"), attempt_id="attempt", commit_id="commit")
+            "totalTokens": 1000, "outputReserveTokens": 100}}}, step_id="node", name="node", capability="analysis"),
+        run=SimpleNamespace(run_id="run", input={}, execution_state={}), attempt_id="attempt", commit_id="commit")
     with pytest.raises(StructuredGenerationError) as failure:
         asyncio.run(AgentToolSession(ctx).generate_json(prompt="read", schema={"type": "object"}))
     assert failure.value.code == "MODEL_INPUT_BUDGET_EXCEEDED"

@@ -41,6 +41,8 @@ C2_INDEXES = {
     "graph_materialization_source_unique", "graph_activation_key_unique",
     "graph_activation_materialization_unique",
 }
+TASK_POLICY_UPDATE_TRIGGER = "workspace_revision_task_copilot_permissions_update"
+TASK_POLICY_TRIGGER_UPGRADE = "task_copilot_permissions:projection-trigger"
 
 
 class SchemaUpgradeError(RuntimeError):
@@ -117,6 +119,15 @@ def _reference():
             pass
         with _connect(legacy_path) as conn:
             result["identity_alter_semantic_tasks"] = _objects(conn)["semantic_tasks"]
+        legacy_policy_path = Path(folder) / "workflow_legacy_policy.sqlite"
+        with closing(sqlite3.connect(legacy_policy_path)) as conn:
+            conn.execute("""CREATE TABLE task_copilot_permissions (
+                mission_id TEXT PRIMARY KEY, permission TEXT NOT NULL
+                CHECK(permission IN ('read_only', 'task_collaboration')))""")
+            install_revision_triggers(conn, {
+                "task_copilot_permissions": RUNTIME_SOURCES["task_copilot_permissions"]})
+            result["workflow_legacy_task_operator_policy"] = _objects(conn)["task_copilot_permissions"]
+            result["workflow_legacy_task_policy_update_trigger"] = _objects(conn)[TASK_POLICY_UPDATE_TRIGGER]
         result["workflow_base"] = base
     return result
 
@@ -175,6 +186,14 @@ def _inspect_one(role, path, reference, initialize_empty):
         required = (_reference()["workflow_base"] if role == "workflow" else
                     {"acg_execution_checkpoints"} if role == "checkpoint" else set(reference))
         missing_required = set(required) - current.keys()
+        legacy_policy = (role == "workflow"
+            and current.get("task_copilot_permissions") == _reference()["workflow_legacy_task_operator_policy"]
+            and "task_operator_policy_receipts" not in current)
+        legacy_policy_trigger = (role == "workflow"
+            and current.get(TASK_POLICY_UPDATE_TRIGGER) == _reference()["workflow_legacy_task_policy_update_trigger"]
+            and (legacy_policy or current.get("task_copilot_permissions") == reference["task_copilot_permissions"]))
+        if legacy_policy:
+            missing_required.discard("task_operator_policy_receipts")
         # Projection bookkeeping is an additive extension to existing volumes.
         # Only its wholly absent legacy form is upgradeable: a partially missing
         # installation may have lost durable watermarks and must not be reset.
@@ -195,6 +214,10 @@ def _inspect_one(role, path, reference, initialize_empty):
             raise SchemaUpgradeError(f"{role}: missing prerequisite objects: {sorted(missing_required)}")
         for name in current.keys() & reference.keys():
             if current[name] != reference[name]:
+                if legacy_policy and name == "task_copilot_permissions":
+                    continue
+                if legacy_policy_trigger and name == TASK_POLICY_UPDATE_TRIGGER:
+                    continue
                 if (role == "identity" and name == "semantic_tasks"
                         and current[name] == _reference()["identity_alter_semantic_tasks"]):
                     continue
@@ -214,6 +237,10 @@ def _inspect_one(role, path, reference, initialize_empty):
         if role == "identity" and conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise SchemaUpgradeError("identity: existing foreign-key violations; no automatic repair")
         missing = sorted(reference.keys() - current.keys())
+        if legacy_policy:
+            missing.append("task_copilot_permissions:operator-policy")
+        if legacy_policy_trigger:
+            missing.append(TASK_POLICY_TRIGGER_UPGRADE)
         if role == "workflow":
             # An interrupted empty marker is supported by the original upgrader.
             missing += [f"{marker}:version=1" for marker in GROUPS if marker in current
@@ -225,6 +252,33 @@ def _inspect_one(role, path, reference, initialize_empty):
                                            if marker in current else None
                                            for marker in ("mission_semantic_schema", *GROUPS)}
         return result
+
+
+def _historical_permit(conn, permit, run, head):
+    """Prove an issued fact belongs to the validated Head's activated ancestry."""
+    if (head is None or permit.run_id != run.run_id or permit.mission_id != run.mission_id
+            or permit.graph_id != head.graph_id or permit.graph_version >= head.active_graph_version):
+        return False
+    version = head.active_graph_version
+    while version >= permit.graph_version:
+        rows = conn.execute("""SELECT * FROM graph_activations WHERE run_id=?
+            AND status='ACTIVATED_PAUSED' AND json_extract(payload,'$.candidateGraphVersion')=?""",
+            (run.run_id, version)).fetchall()
+        if len(rows) != 1:
+            return False
+        activation = SQLiteGraphActivationStore._decode_activation(rows[0])
+        if (activation.run_id != run.run_id or activation.mission_id != run.mission_id
+                or activation.graph_id != permit.graph_id or activation.candidate_graph_version != version
+                or (version == head.active_graph_version and activation.activation_id != head.activation_id)):
+            return False
+        if version == permit.graph_version:
+            return (activation.activation_id == permit.activation_id
+                    and activation.package_checksum == permit.package_checksum
+                    and activation.source_kind == permit.source_kind)
+        if activation.source_graph_version != version - 1:
+            return False
+        version = activation.source_graph_version
+    return False
 
 
 def _inspect_evidence(paths, result):
@@ -261,11 +315,12 @@ def _inspect_evidence(paths, result):
             projections = conn.execute("""SELECT run_id, mission_id, payload, json_extract(payload,
                 '$.executionState.graphActivation.executionPermit.permitId') FROM runs
                 WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,
-                '$.executionState.graphActivation.executionPermit') END IS NOT NULL""").fetchall()
+                '$.executionState.graphActivation') END IS NOT NULL""").fetchall()
             validated_owners = {}
+            validated_runs = {}
             for row in projections:
                 run_id, mission_id, payload, permit_id = row
-                if permit_id not in permit_ids:
+                if permit_id is not None and permit_id not in permit_ids:
                     invalid("workflow", f"Run {run_id} references absent Permit {permit_id}")
                     return
                 run = RuntimeRunRecord.model_validate_json(payload)
@@ -273,16 +328,21 @@ def _inspect_evidence(paths, result):
                     invalid("workflow", f"Run {run_id} payload/index identity mismatch")
                     return
                 try:
-                    if validate_activation_run(conn, run) is None:
+                    head = validate_activation_run(conn, run)
+                    if head is None:
                         raise ValueError("Permit projection has no formal activation Head")
                 except ValueError as exc:
                     invalid("workflow", f"Run {run_id} Permit {permit_id}: {exc}")
                     return
-                validated_owners.setdefault(permit_id, []).append(run_id)
+                validated_runs[run_id] = (run, head)
+                if permit_id is not None:
+                    validated_owners.setdefault(permit_id, []).append(run_id)
             # A missing/null Run projection must not hide an already ISSUED
             # fact. Decode every journal row (including its indexed status) in
             # this same read snapshot, then require exactly one owner whose
             # complete chain passed the existing activation validator above.
+            # A newer activated graph legitimately replaces that projection;
+            # require its complete formal ancestry before retaining history.
             # PREPARING is an incomplete Saga and does not require issuance's
             # Run projection; its existing Handoff checks remain unchanged.
             if "graph_execution_permits" in tables:
@@ -290,8 +350,11 @@ def _inspect_evidence(paths, result):
                     permit = SQLiteExecutionPermitStore._decode(row)
                     owners = validated_owners.get(permit.permit_id, [])
                     if permit.status == "ISSUED" and owners != [permit.run_id]:
+                        source = validated_runs.get(permit.run_id)
+                        if not owners and source is not None and _historical_permit(conn, permit, *source):
+                            continue
                         invalid("workflow", f"ISSUED Permit {permit.permit_id} requires exactly one "
-                                f"validated Run {permit.run_id} projection; found {owners}")
+                                f"validated Run {permit.run_id} projection or activated descendant ancestry; found {owners}")
                         return
         if not handoff_ids and not permit_ids:
             return  # Workflow installation may legitimately precede CP DDL.
@@ -353,6 +416,26 @@ def inspect_databases(workflow, checkpoint, identity, *, initialize_empty=False)
     return result
 
 
+def _upgrade_task_policy_trigger(path):
+    """Replace only the exact pre-policy trigger, in explicit maintenance.
+
+    The original initializer's IF NOT EXISTS deliberately preserves existing
+    triggers. After ADD COLUMN its old UPDATE predicate still sees only the
+    original two columns. A separate transaction is resumable: inspection also
+    recognizes the new table with this exact old trigger after an interruption.
+    """
+    with _connect(path, readonly=False) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = _objects(conn).get(TASK_POLICY_UPDATE_TRIGGER)
+        if current == _reference()["workflow"][TASK_POLICY_UPDATE_TRIGGER]:
+            return
+        if current != _reference()["workflow_legacy_task_policy_update_trigger"]:
+            raise SchemaUpgradeError(f"workflow: incompatible definition: {TASK_POLICY_UPDATE_TRIGGER}; no destructive repair")
+        conn.execute(f'DROP TRIGGER "{TASK_POLICY_UPDATE_TRIGGER}"')
+        install_revision_triggers(conn, {
+            "task_copilot_permissions": RUNTIME_SOURCES["task_copilot_permissions"]})
+
+
 def upgrade_databases(workflow, checkpoint, identity, *, initialize_empty=False):
     """Explicit maintenance operation, with all-file preflight before any write.
 
@@ -375,8 +458,12 @@ def upgrade_databases(workflow, checkpoint, identity, *, initialize_empty=False)
             with _connect(path, readonly=False) as conn, conn:
                 install_revision_triggers(conn, IDENTITY_SOURCES if role == "identity" else RUNTIME_SOURCES)
         if role == "workflow":
-            if "mission_revision_decisions" in state["missing"]:
+            if ("mission_revision_decisions" in state["missing"]
+                    or "task_copilot_permissions:operator-policy" in state["missing"]):
                 _AdministrativeWorkflowStore(path, enable_mission_semantics=True)
+            if ("task_copilot_permissions:operator-policy" in state["missing"]
+                    or TASK_POLICY_TRIGGER_UPGRADE in state["missing"]):
+                _upgrade_task_policy_trigger(path)
             for factory in UPGRADERS:
                 _inspect_one(role, path, _reference()[role], False)
                 factory.upgrade_schema(path)

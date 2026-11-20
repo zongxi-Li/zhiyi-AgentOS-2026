@@ -66,13 +66,13 @@ class ConditionSpec(BaseModel):
 
 
 class LoopSpec(BaseModel):
-    """A bounded loop region with a restricted exit condition."""
+    """An acceptance-driven loop region with a restricted exit condition."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     body_entry_id: str = Field(alias="bodyEntryId", min_length=1)
     body_exit_id: str = Field(alias="bodyExitId", min_length=1)
     condition: ConditionSpec
-    max_iterations: int = Field(alias="maxIterations", ge=1)
+    max_iterations: int | None = Field(default=None, alias="maxIterations", ge=1)
     on_limit: Literal["review", "fail"] = Field(default="review", alias="onLimit")
 
 

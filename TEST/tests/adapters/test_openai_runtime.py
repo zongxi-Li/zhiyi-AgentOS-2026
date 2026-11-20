@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -140,6 +141,120 @@ def test_openai_compatible_runtime_maps_json_request_and_response() -> None:
     assert transport.idempotency_key == "commit:run-1:step-1:0"
 
 
+@pytest.mark.parametrize("provider", ["glm", "zhipu", "deepseek", "openai_compatible"])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_tool_turn_allows_native_actions_before_validating_final_json(provider, streaming):
+    call = {"id": "list-root", "type": "function", "function": {
+        "name": "fs__list", "arguments": '{"path":"."}'}}
+    tools = [{"type": "function", "function": {"name": "fs__list", "parameters": {
+        "type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}}]
+
+    class Transport:
+        def __init__(self):
+            self.payloads = []
+            self.turns = iter([
+                {"finish_reason": "tool_calls", "message": {
+                    "content": "Inspecting the workspace.", "tool_calls": [call]}},
+                {"finish_reason": "stop", "message": {"content": '{"answer":"observed"}'}},
+                {"finish_reason": "stop", "message": {"content": '{"answer":'}},
+            ])
+
+        async def post_json(self, *, payload, **kwargs):
+            self.payloads.append(payload)
+            return {"choices": [next(self.turns)]}
+
+        async def stream_json(self, *, payload, **kwargs):
+            self.payloads.append(payload)
+            turn = next(self.turns)
+            yield {"choices": [{"delta": turn["message"], "finish_reason": turn["finish_reason"]}]}
+
+    transport = Transport()
+    runtime = OpenAICompatibleRuntime(manifest=CapabilityManifest(
+        capabilityId="model.actions", kind=CapabilityKind.MODEL, displayName="Actions",
+        provider=provider, capabilities=["actions-model"]), transport=transport)
+    messages = [{"role": "system", "content": "shared authority"},
+                {"role": "user", "content": "shared mission"},
+                {"role": "system", "content": "current node policy"},
+                {"role": "user", "content": "Inspect the authorized workspace before answering."}]
+    request = ModelInvocationRequest(requestId="action", model="actions-model", messages=messages,
+        responseSchema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        schemaMessageIndex=2, options={"tools": tools, "reasoning_effort": "medium"})
+
+    async def invoke(current):
+        if not streaming:
+            return await runtime.invoke(current)
+        events = [event async for event in runtime.astream(current)]
+        return next(event.response for event in events if event.event_type == "completed")
+
+    async def exercise():
+        action = await invoke(request)
+        continuation = request.model_copy(update={"messages": [*messages, action.assistant_message,
+            {"role": "tool", "tool_call_id": "list-root", "content": '{"entries":[]}'}]})
+        return action, await invoke(continuation), await invoke(continuation)
+
+    action, final, malformed = asyncio.run(exercise())
+    assert action.tool_calls == [call] and action.content == {}
+    assert action.assistant_message["content"] == "Inspecting the workspace."
+    assert final.content == {"answer": "observed"} and not final.tool_calls
+    assert malformed.output_error == "MODEL_OUTPUT_INVALID_JSON"
+    assert malformed.assistant_message["content"] == '{"answer":'
+    for payload in transport.payloads:
+        assert "response_format" not in payload and "tool_choice" not in payload
+        assert payload["tools"] == tools
+        assert payload["messages"][:2] == messages[:2]
+        assert "This schema applies only to the final assistant text" in payload["messages"][2]["content"]
+        assert '"answer":{"type":"string"}' in payload["messages"][2]["content"]
+        if provider in {"glm", "zhipu", "deepseek"}:
+            assert payload["thinking"] == {"type": "enabled"}
+            assert payload["reasoning_effort"] == ("high" if provider == "deepseek" else "medium")
+        else:
+            assert "reasoning_effort" not in payload and "thinking" not in payload
+    assert messages[2]["content"] == "current node policy"
+
+
+@pytest.mark.parametrize("provider", ["glm", "openai_compatible"])
+def test_empty_tool_catalog_keeps_provider_json_output_mode(provider):
+    runtime = OpenAICompatibleRuntime(manifest=CapabilityManifest(
+        capabilityId="model.no-actions", kind=CapabilityKind.MODEL, displayName="No actions",
+        provider=provider, capabilities=["test"]), transport=_JsonTransport())
+    payload = runtime._build_payload(ModelInvocationRequest(requestId="no-actions", model="test",
+        responseSchema={"type": "object"}, options={"tools": []}), "test")
+    assert payload["response_format"]["type"] == ("json_object" if provider == "glm" else "json_schema")
+
+
+@pytest.mark.parametrize("provider", ["glm", "openai_compatible"])
+def test_tool_turn_preserves_prefix_schema_and_bounds_continuation_schema_to_final_text(provider):
+    runtime = OpenAICompatibleRuntime(manifest=CapabilityManifest(
+        capabilityId="model.continuation", kind=CapabilityKind.MODEL, displayName="Continuation",
+        provider=provider, capabilities=["test"]), transport=_JsonTransport())
+    original = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    patch = {"type": "object", "properties": {"patch": {"type": "object"}}}
+    payload = runtime._build_payload(ModelInvocationRequest(requestId="repair", model="test",
+        messages=[{"role": "system", "content": "stable authority"},
+                  {"role": "user", "content": "current operation"}],
+        responseSchema=patch, prefixResponseSchema=original,
+        options=_boundary_request(tools=True).options), "test")
+    assert "response_format" not in payload
+    assert '"answer"' in payload["messages"][0]["content"]
+    assert '"patch"' not in payload["messages"][0]["content"]
+    assert '"patch"' in payload["messages"][-2]["content"]
+    assert "native tool calls remain available before completion" in payload["messages"][-2]["content"]
+
+
+@pytest.mark.parametrize("provider", ["glm", "openai_compatible"])
+@pytest.mark.parametrize("schema_index", [0, 5])
+def test_tool_schema_never_enters_user_message_or_out_of_range_target(provider, schema_index):
+    runtime = OpenAICompatibleRuntime(manifest=CapabilityManifest(
+        capabilityId="model.invalid-schema-target", kind=CapabilityKind.MODEL,
+        displayName="Invalid schema target", provider=provider, capabilities=["test"]),
+        transport=_JsonTransport())
+    with pytest.raises(ModelInvocationError, match="schema target"):
+        runtime._build_payload(ModelInvocationRequest(requestId="bad-target", model="test",
+            messages=[{"role": "user", "content": "untrusted data"}],
+            responseSchema={"type": "object"}, schemaMessageIndex=schema_index,
+            options=_boundary_request(tools=True).options), "test")
+
+
 def test_openai_compatible_runtime_preserves_safe_transport_error_code() -> None:
     """HTTP 限流等传输错误必须保留稳定代码，不能退化为无差别供应商失败。"""
     class _RateLimitedTransport:
@@ -190,6 +305,227 @@ def test_openai_runtime_classifies_length_finish_as_capacity_exhaustion() -> Non
     assert captured.value.code == "MODEL_OUTPUT_EXHAUSTED"
     assert captured.value.usage == {"prompt_tokens": 10, "completion_tokens": 20}
     assert captured.value.metadata["finishReason"] == "length"
+
+
+def _response_boundary_runtime():
+    return OpenAICompatibleRuntime(
+        manifest=CapabilityManifest(
+            capabilityId="model.compat.boundary", kind=CapabilityKind.MODEL,
+            displayName="Boundary model", provider="openai_compatible", capabilities=["local-chat"],
+        ),
+        transport=_JsonTransport(),
+    )
+
+
+def _boundary_request(*, tools=False):
+    return ModelInvocationRequest(
+        requestId="boundary", model="local-chat",
+        options={"tools": [{"type": "function", "function": {"name": "read", "parameters": {}}}]} if tools else {},
+    )
+
+
+def test_final_json_error_has_specific_code_and_safe_diagnostics(caplog):
+    raw = '{"answer":"PRIVATE-MODEL-CONTENT" "other":1}'
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(), model="local-chat", response={
+                "choices": [{"finish_reason": "stop", "message": {"content": raw}}],
+                "usage": {"completion_tokens": 11},
+            },
+        )
+    assert caught.value.code == "MODEL_OUTPUT_INVALID_JSON"
+    assert caught.value.usage == {"completion_tokens": 11}
+    assert caught.value.metadata["finishReason"] == "stop"
+    assert caught.value.metadata["responseDiagnostics"]["reason"] == "Expecting ',' delimiter"
+    assert "PRIVATE-MODEL-CONTENT" not in str(caught.value) + json.dumps(caught.value.metadata) + caplog.text
+
+
+def test_tool_turn_retains_malformed_final_candidate_only_in_private_transcript(caplog):
+    raw = '{"answer":"PRIVATE-MODEL-CONTENT" "other":1}'
+    candidate = _response_boundary_runtime()._parse_response(
+        request=_boundary_request(tools=True), model="local-chat", response={
+            "choices": [{"finish_reason": "stop", "message": {
+                "content": raw, "reasoning_content": "PRIVATE-REASONING",
+            }}],
+            "usage": {"completion_tokens": 11},
+        },
+    )
+    assert candidate.content == {}
+    assert candidate.output_error == "MODEL_OUTPUT_INVALID_JSON"
+    assert candidate.tool_calls == []
+    assert candidate.assistant_message == {
+        "role": "assistant", "content": raw, "reasoning_content": "PRIVATE-REASONING",
+    }
+    assert candidate.usage == {"completion_tokens": 11}
+    assert candidate.metadata["responseDiagnostics"]["length"] == len(raw)
+    safe = json.dumps(candidate.metadata) + caplog.text
+    assert "PRIVATE-MODEL-CONTENT" not in safe
+    assert "PRIVATE-REASONING" not in safe
+
+
+@pytest.mark.parametrize("body", [None, [], {}, {"choices": []}, {"choices": [{"message": None}]}])
+def test_protocol_errors_never_become_repairable_final_candidates(body):
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(tools=True), model="local-chat", response=body,
+        )
+    assert caught.value.code == "MODEL_RESPONSE_INVALID"
+
+
+@pytest.mark.parametrize("finish", ["length", "max_tokens", "max_output_tokens"])
+def test_tool_turn_truncation_never_becomes_json_repair_candidate(finish):
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(tools=True), model="local-chat", response={
+                "choices": [{"finish_reason": finish, "message": {"content": '{"answer":'}}],
+            },
+        )
+    assert caught.value.code == "MODEL_OUTPUT_EXHAUSTED"
+
+
+def test_invalid_tool_call_never_becomes_json_repair_candidate():
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(tools=True), model="local-chat", response={
+                "choices": [{"finish_reason": "tool_calls", "message": {
+                    "content": "", "tool_calls": [{"id": "missing-function"}],
+                }}],
+            },
+        )
+    assert caught.value.code == "MODEL_TOOL_CALL_INVALID"
+
+
+@pytest.mark.parametrize("calls", [{}, "", 0, False])
+def test_falsy_non_list_tool_calls_never_become_json_repair_candidates(calls):
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(tools=True), model="local-chat", response={
+                "choices": [{"finish_reason": "stop", "message": {
+                    "content": '{"answer":', "tool_calls": calls,
+                }}],
+                "usage": {"completion_tokens": 2},
+            },
+        )
+    assert caught.value.code == "MODEL_TOOL_CALL_INVALID"
+    assert caught.value.usage == {"completion_tokens": 2}
+
+
+@pytest.mark.parametrize("message", [{"content": ""}, {"content": "", "tool_calls": None},
+                                     {"content": "", "tool_calls": []}])
+def test_tool_call_finish_without_actual_calls_is_a_protocol_error(message):
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(tools=True), model="local-chat", response={
+                "choices": [{"finish_reason": "tool_calls", "message": message}],
+            },
+        )
+    assert caught.value.code == "MODEL_TOOL_CALL_INVALID"
+
+
+def test_empty_tool_call_list_with_normal_finish_keeps_valid_content():
+    value = _response_boundary_runtime()._parse_response(
+        request=_boundary_request(tools=True), model="local-chat", response={
+            "choices": [{"finish_reason": "stop", "message": {
+                "content": '{"answer":"ok"}', "tool_calls": [],
+            }}],
+        },
+    )
+    assert value.content == {"answer": "ok"}
+    assert value.output_error is None
+    assert value.tool_calls == []
+
+
+@pytest.mark.parametrize("finish,refusal", [("content_filter", None), ("stop", "PRIVATE-REFUSAL")])
+def test_provider_refusal_never_becomes_json_repair_candidate(finish, refusal):
+    with pytest.raises(ModelInvocationError) as caught:
+        _response_boundary_runtime()._parse_response(
+            request=_boundary_request(tools=True), model="local-chat", response={
+                "choices": [{"finish_reason": finish, "message": {"content": None, "refusal": refusal}}],
+                "usage": {"completion_tokens": 2},
+            },
+        )
+    assert caught.value.code == "MODEL_RESPONSE_REFUSED"
+    assert caught.value.usage == {"completion_tokens": 2}
+    assert "PRIVATE-REFUSAL" not in str(caught.value) + json.dumps(caught.value.metadata)
+
+
+def test_streamed_tool_turn_retains_invalid_candidate_usage_and_safe_diagnostics():
+    class _StreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {"choices": [{"delta": {"content": '{"answer":'}, "finish_reason": "stop"}]}
+            yield {"choices": [], "usage": {"completion_tokens": 3}}
+
+    runtime = _response_boundary_runtime()
+    runtime._transport = _StreamTransport()
+
+    async def collect():
+        return [event async for event in runtime.astream(_boundary_request(tools=True))]
+
+    events = asyncio.run(collect())
+    final = events[-1]
+    assert final.event_type == "completed"
+    assert final.response.output_error == "MODEL_OUTPUT_INVALID_JSON"
+    assert final.response.assistant_message["content"] == '{"answer":'
+    assert final.response.usage == {"completion_tokens": 3}
+    assert final.response.metadata["responseDiagnostics"]["length"] == 10
+    assert final.response.metadata["requestDiagnostics"]["messageCount"] >= 0
+
+
+@pytest.mark.parametrize("calls", [{}, "", 0, False, [None], ["invalid"]])
+def test_invalid_streamed_tool_fragments_are_never_silently_discarded(calls):
+    class _StreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {"choices": [{"delta": {"tool_calls": calls}}]}
+            yield {"choices": [{"delta": {"content": '{"answer":'}, "finish_reason": "stop"}]}
+
+    runtime = _response_boundary_runtime()
+    runtime._transport = _StreamTransport()
+
+    async def collect():
+        return [event async for event in runtime.astream(_boundary_request(tools=True))]
+
+    with pytest.raises(ModelInvocationError) as caught:
+        asyncio.run(collect())
+    assert caught.value.code == "MODEL_TOOL_CALL_INVALID"
+
+
+def test_streamed_tool_finish_without_calls_is_not_a_json_repair_candidate():
+    class _StreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {"choices": [{"delta": {"tool_calls": []}, "finish_reason": "tool_calls"}]}
+
+    runtime = _response_boundary_runtime()
+    runtime._transport = _StreamTransport()
+
+    async def collect():
+        return [event async for event in runtime.astream(_boundary_request(tools=True))]
+
+    with pytest.raises(ModelInvocationError) as caught:
+        asyncio.run(collect())
+    assert caught.value.code == "MODEL_TOOL_CALL_INVALID"
+
+
+@pytest.mark.parametrize("tools", [False, True])
+@pytest.mark.parametrize("finish,refusal", [("content_filter", None), ("stop", "PRIVATE-REFUSAL")])
+@pytest.mark.parametrize("usage_with_finish", [False, True])
+def test_streamed_provider_refusal_is_not_a_json_error(tools, finish, refusal, usage_with_finish):
+    class _StreamTransport:
+        async def stream_json(self, **_kwargs):
+            yield {"choices": [{"delta": {"refusal": refusal}, "finish_reason": finish}],
+                **({"usage": {"completion_tokens": 2}} if usage_with_finish else {})}
+            yield {"choices": [], "usage": {"completion_tokens": 2}}
+
+    runtime = _response_boundary_runtime()
+    runtime._transport = _StreamTransport()
+
+    async def collect():
+        return [event async for event in runtime.astream(_boundary_request(tools=tools))]
+
+    with pytest.raises(ModelInvocationError) as caught:
+        asyncio.run(collect())
+    assert caught.value.code == "MODEL_RESPONSE_REFUSED"
+    assert caught.value.usage == ({"completion_tokens": 2} if usage_with_finish else {})
+    assert "PRIVATE-REFUSAL" not in str(caught.value) + json.dumps(caught.value.metadata)
 
 
 def test_openai_runtime_accepts_json_wrapped_in_a_markdown_fence() -> None:

@@ -39,6 +39,7 @@
       </div>
     </header>
 
+    <WorkspaceReviewProgress v-if="!historical" :review="blueprint?.workspaceReview" :graph-version="blueprint?.graphVersion" :nodes="blueprint?.nodes" navigable @select-node="onFlowSelect" />
     <div v-if="!hasData" class="empty">
       <span class="empty__badge" aria-hidden="true"><el-icon><Share /></el-icon></span>
       <p class="empty__title">暂无 ACG 拓扑数据</p>
@@ -48,9 +49,13 @@
       <div class="graph-toolbar" aria-label="拓扑分析视图">
         <div class="view-mode">
           <button type="button" :class="{ active: viewMode === 'main' }" @click="setViewMode('main')">主执行链</button>
-          <button type="button" :class="{ active: viewMode === 'exceptions' }" @click="setViewMode('exceptions')">异常路径</button>
+          <button v-if="!historical" type="button" :class="{ active: viewMode === 'exceptions' }" @click="setViewMode('exceptions')">异常路径</button>
         </div>
-        <div v-if="focusMainPath" class="execution-context__scope" role="group" aria-label="执行链范围切换">
+        <span v-if="historical" class="snapshot-label">历史结构快照</span>
+        <div v-if="difference" class="difference-legend" aria-label="图结构变更图例">
+          <span class="difference-added">新增</span><span class="difference-updated">调整</span><span class="difference-removed">移除</span>
+        </div>
+        <div v-if="focusMainPath && !historical && !difference" class="execution-context__scope" role="group" aria-label="执行链范围切换">
           <button type="button" :class="{ active: localScope }" :aria-pressed="localScope" @click="setExecutionScope(true)">当前步骤及关联</button>
           <button type="button" :class="{ active: !localScope }" :aria-pressed="!localScope" @click="setExecutionScope(false)">全部步骤</button>
           <span v-if="localScope && contextAnchorId" class="execution-context__anchor" :title="`焦点步骤：${contextAnchorName}`">
@@ -62,6 +67,7 @@
         <div v-if="focusMainPath && visibleBlueprint" class="graph-canvas">
           <AcgExecutionFlow ref="executionFlow" :blueprint="visibleBlueprint" :positions="executionPositions"
             :selected-id="detailAsideOpen ? '' : selectedNodeId" :anchor-id="contextAnchorId" :statuses="flowStatuses"
+            :difference="difference" :historical="historical"
             @select="onFlowSelect" @double-click="emit('nodeDoubleClicked', $event)" @zoom="zoomPercent = $event">
             <template #detail>
         <article v-if="umlCardVisible" class="uml-card execution-detail" :data-node-id="selectedNodeId" aria-label="节点详情卡片">
@@ -74,7 +80,7 @@
           </header>
           <div class="uml-card__body">
             <p v-if="cardObjective" class="uml-card__objective">{{ cardObjective }}</p>
-            <section class="uml-card__section">
+            <section v-if="!historical && !selectedRemoved" class="uml-card__section">
               <h6>Token 消耗<em v-if="selectedTokenUsage">{{ selectedTokenUsage.calls }} 次调用</em></h6>
               <p v-if="tokenUsageLoading" class="uml-card__empty">正在读取模型调用记录…</p>
               <p v-else-if="!props.runId" class="uml-card__empty">当前视图未关联 Run，无模型调用记录</p>
@@ -90,7 +96,7 @@
                 <p v-if="selectedTokenUsage.models.length" class="uml-card__models">{{ selectedTokenUsage.models.join(' · ') }}</p>
               </template>
             </section>
-            <section class="uml-card__section">
+            <section v-if="!historical && !selectedRemoved" class="uml-card__section">
               <h6>产物</h6>
               <p v-if="selectedStepState?.outputSummary">{{ selectedStepState.outputSummary }}</p>
               <p v-else class="uml-card__empty">{{ ['completed'].includes(selectedNodeStatus) ? '暂无产物摘要' : '尚未产出' }}</p>
@@ -149,7 +155,7 @@
           <div><dt>节点 ID</dt><dd><code>{{ selectedNode.nodeId }}</code></dd></div>
           <div v-if="selectedStepState?.task"><dt>子任务号</dt><dd><code>{{ selectedStepState.task.taskId }}</code></dd></div>
           <div v-if="selectedStepState?.task"><dt>语义标题</dt><dd>{{ selectedStepState.task.title }}</dd></div>
-          <div v-if="selectedNodeStatus"><dt>运行状态</dt><dd class="node-status" :class="selectedNodeStatus">{{ runtimeStatusLabel(selectedNodeStatus) }}</dd></div>
+          <div v-if="selectedNodeStatus"><dt>{{ historical || selectedRemoved ? '版本记录' : '运行状态' }}</dt><dd class="node-status" :class="selectedNodeStatus">{{ runtimeStatusLabel(selectedNodeStatus) }}</dd></div>
           <div v-if="selectedStepState?.agentName || selectedNode.agentName"><dt>Agent</dt><dd>{{ selectedStepState?.agentName || selectedNode.agentName }}</dd></div>
           <div v-if="selectedNode.capability"><dt>能力</dt><dd>{{ selectedNode.capability }}</dd></div>
           <div v-if="selectedStepState?.resourceUse"><dt>使用资源</dt><dd><code>{{ bindingLabel(selectedStepState.resourceUse) }}</code></dd></div>
@@ -173,7 +179,7 @@
             <span v-if="record.failureCode" class="failure">{{ record.failureCode }}</span>
           </article>
         </div>
-        <p v-else-if="selectedNode.nodeType === 'step'" class="projection-pending">Identity 执行记录尚未投影</p>
+        <p v-else-if="selectedNode.nodeType === 'step' && !historical && !selectedRemoved" class="projection-pending">Identity 执行记录尚未投影</p>
         <div v-if="selectedStepState?.stepExecutions?.length" class="runtime-detail-group">
           <strong>StepExecution · {{ selectedStepState.stepExecutions.length }}</strong>
           <span v-for="execution in selectedStepState.stepExecutions" :key="execution.stepExecutionId">
@@ -212,14 +218,14 @@
                 <span class="legend-item"><i class="dot step"></i>步骤</span>
                 <span class="legend-item"><i class="dot control"></i>控制</span>
               </div>
-              <div class="legend-group">
+              <div v-if="!historical" class="legend-group">
                 <span class="legend-label">运行状态</span>
                 <span class="legend-item"><i class="ring done"></i>已完成</span>
                 <span class="legend-item"><i class="ring running"></i>执行中</span>
                 <span class="legend-item"><i class="ring waiting"></i>待审核/重试</span>
                 <span class="legend-item"><i class="ring failed"></i>失败</span>
               </div>
-              <div class="legend-group legend-group--notes">
+              <div v-if="!historical" class="legend-group legend-group--notes">
                 <span class="legend-label">运行注记</span>
                 <span class="legend-item"><b class="badge runtime">+</b>运行时新增</span>
                 <span class="legend-item"><b class="badge binding">⇄</b>切换 Binding</span>
@@ -229,7 +235,7 @@
             <div class="canvas-controls" aria-label="画布控制">
               <button type="button" class="canvas-controls__text" @click="showOverview">全图总览</button>
               <button type="button" class="canvas-controls__text" @click="actualSize">实际大小</button>
-              <button v-if="focusMainPath" type="button" class="canvas-controls__text" :disabled="!currentTaskId" @click="locateCurrentTask">定位任务</button>
+              <button v-if="focusMainPath && !historical" type="button" class="canvas-controls__text" :disabled="!currentTaskId" @click="locateCurrentTask">定位任务</button>
               <button type="button" title="缩小" aria-label="缩小拓扑" @click="zoomGraph(0.86)"><el-icon><Minus /></el-icon></button>
               <span class="canvas-controls__scale" aria-label="缩放比例">{{ zoomPercent }}%</span>
               <button type="button" title="放大" aria-label="放大拓扑" @click="zoomGraph(1.16)"><el-icon><Plus /></el-icon></button>
@@ -250,13 +256,16 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Aim, ArrowDownBold, Close, FullScreen, Minus, Plus, RefreshRight, Share } from '@element-plus/icons-vue'
 import AcgExecutionFlow from './AcgExecutionFlow.vue'
+import WorkspaceReviewProgress from './WorkspaceReviewProgress.vue'
 import { DataSet } from 'vis-data'
 import { Network } from 'vis-network'
 import type { GraphProjection, AcgNode, AcgEdge, AcgStepState } from '@/services/api/agentos'
 import { workflowApi } from '@/services/api/workflow'
-import { mapEdgeVisualState, mapNodeVisualState } from '@/utils/acgGraphPresentation'
+import { mapEdgeVisualState, mapNodeVisualState, normalizeNodeStatus, resolveNodeStatus } from '@/utils/acgGraphPresentation'
 import { edgeActivationOpacity, graphEdgeWidth, mixGraphColor } from '@/utils/acgGraphVisuals'
 import { executionLayout, executionNodeLabel } from '@/utils/acgExecutionLayout'
+import type { GraphDifference } from '@/utils/acgGraphDifference'
+import { graphChangeLabel, graphDifferenceMaps } from '@/utils/acgGraphDifference'
 
 const props = defineProps<{
   blueprint: GraphProjection | null
@@ -270,6 +279,8 @@ const props = defineProps<{
   runId?: string | null
   /** 容器尺寸变化时保持缩放并重定位视图（仅独立编辑器画布开启；内嵌多列场景会与列宽布局互相干扰） */
   observeResize?: boolean
+  difference?: GraphDifference | null
+  historical?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -285,7 +296,8 @@ const selectedNodeId = ref('')
 type GraphViewMode = 'main' | 'exceptions'
 const viewMode = ref<GraphViewMode>('main')
 const focusMainPath = computed(() => viewMode.value === 'main')
-const localScope = ref(Boolean(props.workbench && props.observeResize))
+const localScope = ref(Boolean(props.workbench && props.observeResize && !props.historical))
+const changes = computed(() => graphDifferenceMaps(props.difference))
 const contextNodeId = ref('')
 const zoomPercent = ref(100)
 const controlsExpanded = ref(false)
@@ -375,6 +387,8 @@ const EDGE_TYPES: Array<{ value: AcgEdge['edgeType']; label: string }> = [
 const hasData = computed(() => {
   return !!props.blueprint && Array.isArray(props.blueprint.nodes) && props.blueprint.nodes.length > 0
 })
+const stateByStep = computed(() => new Map((props.historical ? [] : props.stepStates || []).map(item => [item.stepId, item])))
+const completedNodes = computed(() => new Set(props.completedStepIds || []))
 
 const executionBlueprint = computed<GraphProjection | null>(() => {
   const blueprint = props.blueprint
@@ -390,21 +404,22 @@ const executionBlueprint = computed<GraphProjection | null>(() => {
 })
 
 const nodeStatus = (id: string) => {
-  const status = String(props.runtimePhases?.[id]
-    || props.stepStates?.find(state => state.stepId === id)?.status
-    || (props.completedStepIds?.includes(id) ? 'completed' : 'pending')).toLowerCase()
-  return ['model_starting', 'streaming', 'finalizing'].includes(status) ? 'running'
-    : status === 'waiting' ? 'pending' : status
+  if (props.historical || changes.value.nodes.get(id) === 'removed') return 'snapshot'
+  return resolveNodeStatus(stateByStep.value.get(id), props.runtimePhases?.[id], completedNodes.value.has(id))
 }
 const runtimeStatusLabel = (status: string) => ({
   completed: '已完成', running: '运行中', retrying: '重试中', waiting_review: '待审核',
   failed: '失败', cancelled: '已取消', skipped_by_condition: '已跳过', pending: '待执行',
-  prepared: '已准备', executed: '已执行', audited: '已审计', committed: '已提交'
+  prepared: '已准备', executed: '已执行', audited: '已审计', committed: '已提交', snapshot: '快照'
 } as Record<string, string>)[status || 'pending'] || status
 const currentTaskId = computed(() => {
   const nodes = executionBlueprint.value?.nodes || []
+  if (props.historical) return nodes[0]?.nodeId || ''
   const steps = nodes.filter(node => node.nodeType === 'step')
-  return steps.find(node => ['running', 'retrying', 'waiting_review'].includes(nodeStatus(node.nodeId)))?.nodeId
+  return steps.find(node => nodeStatus(node.nodeId) === 'running'
+      && normalizeNodeStatus(stateByStep.value.get(node.nodeId)?.status) === 'running')?.nodeId
+    || steps.find(node => nodeStatus(node.nodeId) === 'running')?.nodeId
+    || steps.find(node => ['retrying', 'waiting_review'].includes(nodeStatus(node.nodeId)))?.nodeId
     || steps.find(node => nodeStatus(node.nodeId) === 'failed')?.nodeId
     || steps.find(node => !['completed', 'cancelled', 'skipped_by_condition'].includes(nodeStatus(node.nodeId)))?.nodeId
     || steps[steps.length - 1]?.nodeId || nodes[0]?.nodeId || ''
@@ -419,7 +434,7 @@ const contextAnchorName = computed(() =>
 // Use positions from the whole execution graph so stepping through adjacent tasks does not shuffle columns.
 const executionPositions = computed(() => {
   const parents = new Map<string, string>()
-  for (const state of props.stepStates || []) {
+  for (const state of props.historical ? [] : props.stepStates || []) {
     if (state.task?.parentTaskId) parents.set(state.stepId, state.task.parentTaskId)
   }
   return executionLayout(executionBlueprint.value?.nodes || [], executionBlueprint.value?.edges || [], parents)
@@ -430,7 +445,7 @@ const visibleBlueprint = computed<GraphProjection | null>(() => {
   if (!blueprint) return null
   if (viewMode.value === 'main') {
     const execution = executionBlueprint.value!
-    if (!localScope.value || !contextAnchorId.value) return execution
+    if (props.historical || props.difference || !localScope.value || !contextAnchorId.value) return execution
     const ids = new Set([contextAnchorId.value])
     for (const edge of execution.edges) {
       if (edge.sourceId === contextAnchorId.value) ids.add(edge.targetId)
@@ -442,11 +457,8 @@ const visibleBlueprint = computed<GraphProjection | null>(() => {
 
   if (viewMode.value === 'exceptions') {
     const abnormalStatuses = new Set(['failed', 'waiting_review', 'retrying', 'cancelled'])
-    const abnormalIds = new Set(
-      (props.stepStates || [])
-        .filter(state => abnormalStatuses.has(String(state.status || '')) || Boolean(state.errorSummary))
-        .map(state => state.stepId)
-    )
+    const abnormalIds = new Set(blueprint.nodes
+      .filter(node => abnormalStatuses.has(nodeStatus(node.nodeId))).map(node => node.nodeId))
     const edges = blueprint.edges.filter(edge => abnormalIds.has(edge.sourceId) || abnormalIds.has(edge.targetId))
     const nodeIds = new Set([...abnormalIds, ...edges.flatMap(edge => [edge.sourceId, edge.targetId])])
     const nodes = blueprint.nodes.filter(node => nodeIds.has(node.nodeId))
@@ -468,8 +480,8 @@ const selectedAllowedSkills = computed(() => {
   const value = selectedNode.value?.display?.allowedSkills
   return Array.isArray(value) ? value.map(String).filter(Boolean) : []
 })
-const stateByStep = computed(() => new Map((props.stepStates || []).map(item => [item.stepId, item])))
-const selectedStepState = computed(() => selectedNode.value ? stateByStep.value.get(selectedNode.value.nodeId) : undefined)
+const selectedRemoved = computed(() => changes.value.nodes.get(selectedNodeId.value) === 'removed')
+const selectedStepState = computed(() => selectedNode.value && !selectedRemoved.value ? stateByStep.value.get(selectedNode.value.nodeId) : undefined)
 const selectedNodeStatus = computed(() => {
   if (!selectedNode.value) return ''
   return nodeStatus(selectedNode.value.nodeId)
@@ -541,10 +553,12 @@ const loadTokenUsage = async () => {
     if (generation === tokenUsageGeneration) tokenUsageLoading.value = false
   }
 }
-watch(() => props.runId, () => {
+watch([() => props.runId, () => props.historical], () => {
+  tokenUsageGeneration += 1
   tokenUsageRunId.value = ''
   tokenByStep.value = new Map()
-  if (props.runId) void loadTokenUsage()
+  tokenUsageLoading.value = false
+  if (props.runId && !props.historical) void loadTokenUsage()
 }, { immediate: true })
 
 const selectedTokenUsage = computed(() =>
@@ -625,7 +639,7 @@ function applyThemeToGraphStyles() {
   })
 }
 
-const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<string, AcgStepState>) => {
+const buildNodeRows = (nodes: AcgNode[], states: Map<string, AcgStepState>) => {
   applyThemeToGraphStyles()
   const done = cssColor('--sem-success', '#8BCB78')
   const textPrimary = '#26332f'
@@ -644,10 +658,10 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
   }
   return nodes.map((node) => {
     const style = NODE_STYLE[node.nodeType] || NODE_STYLE.step
-    const stepState = states.get(node.nodeId)
+    const change = changes.value.nodes.get(node.nodeId)
+    const stepState = props.historical || change === 'removed' ? undefined : states.get(node.nodeId)
     const visual = mapNodeVisualState(stepState)
-    const status = focusMainPath.value ? nodeStatus(node.nodeId)
-      : (props.runtimePhases?.[node.nodeId] || stepState?.status || (completed.has(node.nodeId) ? 'completed' : '')).toLowerCase()
+    const status = nodeStatus(node.nodeId)
     const isDone = status === 'completed'
     const role = endpointRole(node)
     const isStart = role === 'start'
@@ -667,6 +681,7 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
                 ? textSecondary
                 : ''
     const badges = [
+      change ? graphChangeLabel[change] : '',
       visual.runtimeAdded ? '+' : '',
       visual.bindingSwitched ? '⇄' : '',
       visual.conditionalSkipped ? 'Skipped' : '',
@@ -690,10 +705,11 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
     const isRelated = relatedNodeIds.has(node.nodeId)
 
     // 轻卡片观感：常态弱化描边加中性投影，状态色只留给边框与状态文字
-    const nodeOpacity = selectedId && !isRelated
+    const nodeOpacity = selectedId && !isRelated && !change
       ? 0.22
       : visual.conditionalSkipped ? 0.48 : status === 'cancelled' ? 0.62 : 1
-    const border = statusColor || endpointColor
+    const changeColor = change === 'added' ? done : change === 'updated' ? warning : change === 'removed' ? danger : ''
+    const border = changeColor || statusColor || endpointColor
       || (node.nodeId === contextAnchorId.value ? info : mixGraphColor(style.border, '#ffffff', 0.55))
 
     const nodeShadow = nodeOpacity < 1
@@ -709,7 +725,7 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
       label,
       title: `${node.name || node.nodeId}\n${node.nodeId}\n${node.nodeType}${status ? `\n${status}` : ''}${badges ? `\n${badges}` : ''}`,
       shape: focusMainPath.value ? 'box' : isStart ? 'circle' : isEnd ? 'box' : style.shape,
-      shapeProperties: { borderRadius: focusMainPath.value ? 22 : 10 },
+      shapeProperties: { borderRadius: focusMainPath.value ? 22 : 10, borderDashes: change === 'removed' ? [6, 5] : false },
       color: {
         background: endpointColor || style.background,
         border,
@@ -752,7 +768,11 @@ const buildNodeRows = (nodes: AcgNode[], completed: Set<string>, states: Map<str
 const buildEdgeRows = (edges: AcgEdge[]) => {
   return edges.map((edge, index) => {
     const style = EDGE_STYLE[edge.edgeType] || EDGE_STYLE.dependency
-    const activation = mapEdgeVisualState(edge.activation)
+    const change = changes.value.edges.get(edge.edgeId)
+    const activation = props.historical ? 'active' : mapEdgeVisualState(edge.activation)
+    const color = change === 'added' ? cssColor('--sem-success', '#8bcb78')
+      : change === 'updated' ? cssColor('--sem-waiting', '#d9b86c')
+        : change === 'removed' ? cssColor('--sem-failed', '#e06c75') : style.color
     const relatedToSelection = !selectedNodeId.value
       || edge.sourceId === selectedNodeId.value
       || edge.targetId === selectedNodeId.value
@@ -767,7 +787,7 @@ const buildEdgeRows = (edges: AcgEdge[]) => {
     // Enhanced edge opacity for better visual hierarchy
     const baseOpacity = edgeActivationOpacity(activation)
     const selectionOpacity = relatedToSelection ? 1 : 0.12
-    const finalOpacity = baseOpacity * selectionOpacity
+    const finalOpacity = change ? 0.95 : baseOpacity * selectionOpacity
 
     return {
       id: edge.edgeId || `e-${index}`,
@@ -777,18 +797,18 @@ const buildEdgeRows = (edges: AcgEdge[]) => {
       arrowStrikethrough: false,
       endPointOffset: { from: 2, to: 4 },
       color: {
-        color: style.color,
-        highlight: style.color,
-        hover: style.color,
+        color,
+        highlight: color,
+        hover: color,
         opacity: finalOpacity
       },
-      dashes: activation === 'inactive' ? [6, 5] : activation === 'terminated' ? [2, 6] : style.dashes,
-      label: activation === 'active' ? undefined : activation.toUpperCase(),
+      dashes: change === 'removed' || activation === 'inactive' ? [6, 5] : activation === 'terminated' ? [2, 6] : style.dashes,
+      label: change ? graphChangeLabel[change] : activation === 'active' ? undefined : activation.toUpperCase(),
       smooth: focusMainPath.value
         ? { enabled: true, type: isReturnEdge ? 'curvedCW' : 'cubicBezier', forceDirection: 'horizontal', roundness: isReturnEdge ? 0.4 : 0.35 }
         : { enabled: true, type: 'cubicBezier', roundness: 0.25 },
       // Enhanced edge width for better visibility
-      width: focusMainPath.value
+      width: change ? 2.5 : focusMainPath.value
         ? (selectedNodeId.value && relatedToSelection ? 2.5 : 1.5)
         : graphEdgeWidth(edge.edgeType) * (selectedNodeId.value && relatedToSelection ? 1.6 : 1),
       selectionWidth: 1.6,
@@ -923,9 +943,8 @@ const render = async (preserveCamera = false) => {
     selectedNodeId.value = ''
   }
   if (focusMainPath.value || !graphRef.value) return
-  const completed = new Set(props.completedStepIds || [])
   const states = new Map<string, AcgStepState>((props.stepStates || []).map(item => [item.stepId, item]))
-  const nodeRows = buildNodeRows(blueprint.nodes, completed, states)
+  const nodeRows = buildNodeRows(blueprint.nodes, states)
   const edgeRows = buildEdgeRows(blueprint.edges)
   const nextStructureKey = getStructureKey(blueprint)
   const nextDataKey = JSON.stringify({ nodes: nodeRows, edges: edgeRows })
@@ -1033,11 +1052,13 @@ const showOverview = async () => {
 
 const locateCurrentTask = async () => {
   if (!currentTaskId.value) return
+  setViewMode('main')
   contextNodeId.value = currentTaskId.value
   localScope.value = true
   selectedNodeId.value = ''
+  detailAsideOpen.value = false
   await render()
-  actualSize()
+  await actualSize()
 }
 
 const zoomGraph = (factor: number) => {
@@ -1171,8 +1192,6 @@ const setViewMode = (mode: GraphViewMode) => {
 
 const focusNode = async (nodeId: string) => {
   if (!props.blueprint?.nodes.some(node => node.nodeId === nodeId)) return
-  // Selection is echoed back through the workspace props. It must not start a second camera animation.
-  if (selectedNodeId.value === nodeId) return
   if (focusMainPath.value) {
     contextNodeId.value = nodeId
     selectedNodeId.value = nodeId
@@ -1182,7 +1201,6 @@ const focusNode = async (nodeId: string) => {
     emit('nodeSelected', nodeId)
     return
   }
-  if (focusMainPath.value) contextNodeId.value = nodeId
   await render(true)
   if (!network || !visibleBlueprint.value?.nodes.some(node => node.nodeId === nodeId)) return
   selectedNodeId.value = nodeId
@@ -1217,16 +1235,29 @@ const cancelScheduledRender = () => {
 }
 
 watch(
-  () => [props.blueprint, props.completedStepIds, props.stepStates, props.runtimePhases, viewMode.value, localScope.value, contextAnchorId.value],
+  () => [props.blueprint, props.completedStepIds, props.stepStates, props.runtimePhases, props.difference, props.historical, viewMode.value, localScope.value, contextAnchorId.value],
   () => scheduleRender(),
   { deep: true }
 )
+watch([() => props.blueprint?.graphId, () => props.blueprint?.graphVersion, () => Boolean(props.historical)], () => {
+  selectedNodeId.value = ''
+  contextNodeId.value = ''
+  detailAsideOpen.value = false
+  setViewMode('main')
+  graphStructureKey = ''
+  graphDataKey = ''
+})
 watch(
   () => props.focusNodeId,
   nodeId => {
-    if (nodeId) void nextTick(() => focusNode(nodeId))
+    // Selection is echoed back through the workspace props. Only explicit locate commands
+    // should recenter an already selected node after the user has moved the camera.
+    if (nodeId) void nextTick(() => {
+      if (nodeId === props.focusNodeId && selectedNodeId.value !== nodeId) return focusNode(nodeId)
+    })
   }
 )
+defineExpose({ focusNode, locateCurrentTask })
 onMounted(() => {
   document.addEventListener('fullscreenchange', syncFullscreenState)
   document.addEventListener('keydown', handleFullscreenEscape)
@@ -1257,6 +1288,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.snapshot-label { font-size: 11px; color: var(--wb-text-secondary, #8590a3); }
+.difference-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-left: auto; font-size: 11px; }
+.difference-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.difference-legend span::before { content: ''; width: 12px; border-top: 2px solid currentColor; }
+.difference-legend .difference-added { color: var(--sem-success, #8bcb78); }
+.difference-legend .difference-updated { color: var(--sem-waiting, #d9b86c); }
+.difference-legend .difference-removed { color: var(--sem-failed, #e06c75); }
+.difference-legend .difference-removed::before { border-top-style: dashed; }
 .acg-topology {
   display: flex;
   flex-direction: column;

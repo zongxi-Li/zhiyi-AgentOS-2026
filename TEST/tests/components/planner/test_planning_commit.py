@@ -99,6 +99,19 @@ def test_accept_queries_and_recorded_sources(authority):
         record.status = "REJECTED"
 
 
+def test_commit_scope_can_grow_without_losing_canonical_identity_or_replay():
+    scope = tuple(f"task:{index:04}" for index in range(1025))
+    req = request(requestedScope=scope)
+    provider = TrustedProvider(req)
+    service = PlanningCommitService(current_state_provider=provider)
+    receipt = service.accept(req)
+    assert receipt.status == "ACCEPTED"
+    record = service.store.get(receipt.commit_id)
+    assert record.requested_scope == scope
+    replay = service.accept(request(requestedScope=tuple(reversed(scope))))
+    assert replay.status == "IDEMPOTENT_REPLAY" and replay.commit_id == receipt.commit_id
+
+
 def test_replay_canonical_scope_and_historical_receipt(authority):
     service, provider = authority
     original = service.accept(request())

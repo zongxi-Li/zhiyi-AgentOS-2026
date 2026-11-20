@@ -137,10 +137,39 @@ def test_cycle_illegal_dag_missing_producer_or_nested_method_reject(context, met
         expansion(selector(methods), context, "custom")
 
 
-@pytest.mark.parametrize("field", ["max_depth", "max_nodes", "max_relations", "max_candidates", "max_content_chars"])
-def test_expansion_budgets_fail_closed(context, field):
+@pytest.mark.parametrize("field", ["max_depth", "max_nodes", "max_relations", "max_candidates"])
+def test_legacy_count_budgets_do_not_reject_valid_expansion(context, field):
+    proposal = expansion(selector(budget=replace(HTNBudget(), **{field: 1})), context)
+    assert len(proposal.nodes) == 6 and len(proposal.selections) == 2
+
+
+def test_expansion_content_capacity_remains_bounded(context):
     with pytest.raises(HTNError, match="HTN_BUDGET_EXHAUSTED"):
-        expansion(selector(budget=replace(HTNBudget(), **{field: 1})), context)
+        expansion(selector(budget=replace(HTNBudget(), max_content_chars=1)), context)
+
+
+def test_valid_expansion_can_continue_past_the_former_depth_limit(context):
+    methods = tuple(method(f"level:{index}", "analysis" if index == 0 else f"level:{index}",
+        slots=(slot("next", abstract=f"level:{index + 1}"),) if index < 12 else
+        (slot("understand", "task_understanding"),)) for index in range(13))
+    proposal = expansion(selector(methods), context, "level:0")
+    assert len(proposal.selections) == 13 and len(proposal.nodes) == 14
+    assert len(proposal.atomic_keys) == 1
+
+
+def test_method_registry_count_is_not_a_semantic_growth_limit(context):
+    methods = tuple(method(f"method:{index:03}") for index in range(129))
+    projection = selector(methods).query(**context)
+    assert len(projection.candidates) == 129 and all(candidate.applicable for candidate in projection.candidates)
+
+
+def test_expansion_can_grow_past_former_node_and_relation_counts(context):
+    root = method("root", slots=tuple(slot(f"group:{index}", abstract="group") for index in range(4)),
+        ordering=tuple(edge(f"group:{index}", f"group:{index + 1}") for index in range(3)))
+    group = method("group", abstract="group", slots=tuple(slot(f"read:{index}", "task_understanding") for index in range(16)))
+    proposal = expansion(selector((root, group)), context, "root")
+    assert len(proposal.nodes) == 69 and len(proposal.atomic_keys) == 64
+    assert len(proposal.relations) > 256
 
 
 def test_deadline_and_unknown_catalog_version_reject(context):

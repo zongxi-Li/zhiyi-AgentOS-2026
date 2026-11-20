@@ -1,5 +1,4 @@
 """Read-only graph derivation and safe-cut checks; acceptance stays in one service."""
-from contracts import stable_checksum
 from types import SimpleNamespace
 from contracts.graph_revision import PlanningSourceProvenance, SafeCutProof, GraphRevisionProposal
 from contracts.mission_semantic import run_intent_basis
@@ -142,10 +141,24 @@ def safe_cut(provider, source, next_plan, next_bindings, candidate, patch):
         if n.key in protected_keys and (new_by_key.get(n.key) != n or new_bindings.get(n.key) != next(
                 b["acgNodeId"] for b in run.execution_state["taskBindings"] if b["planNodeKey"] == n.key)):
             raise GraphRevisionError(Code.INVALID_PROPOSAL, "semantic execution prefix changed")
-    semantic_edges = lambda p: {r for r in p.relations if r.target_key in protected_keys}
+    def semantic_edges(plan):
+        return {r for r in plan.relations if r.target_key in protected_keys}
     if semantic_edges(old_plan) != semantic_edges(next_plan):
         raise GraphRevisionError(Code.INVALID_PROPOSAL, "compiled predecessor obligations changed")
     old_nodes, new_nodes = {n.node_id: n for n in old.nodes}, {n.node_id: n for n in candidate.nodes}
+    prior_channels = {(item.producer_step_id, item.consumer_step_id) for item in old.resource_plan.communication}
+    prior_dependencies = {(edge.source_id, edge.target_id) for edge in old.edges
+                          if edge.edge_type.value == "dependency"}
+    for edge in candidate.edges:
+        if edge.edge_type.value != "dependency" or edge.source_id not in protected_nodes:
+            continue
+        target = new_nodes.get(edge.target_id)
+        mode = str(target.metadata.get("communicationMode", "STRICT_CONTRACT")).upper() if target else ""
+        previous_target = old_nodes.get(edge.target_id)
+        prior_mode = (str(previous_target.metadata.get("communicationMode", "STRICT_CONTRACT")).upper()
+                      if previous_target else "")
+        if mode != "STRICT_CONTRACT" and ((edge.source_id, edge.target_id) not in prior_dependencies or mode != prior_mode):
+            raise GraphRevisionError(Code.INVALID_PROPOSAL, "completed producer cannot acquire historical publication obligations")
     for node_id in protected_nodes:
         if old_nodes[node_id] != new_nodes.get(node_id):
             raise GraphRevisionError(Code.INVALID_PROPOSAL, "frozen execution node changed")
@@ -154,13 +167,38 @@ def safe_cut(provider, source, next_plan, next_bindings, candidate, patch):
             # logical decisions for pending work. No resource reservation occurs.
             def addressed(model):
                 raw = model.model_dump(mode="json", by_alias=True)
-                return {k: [i for i in v if isinstance(i, dict) and
-                    (any(i.get(field) == node_id for field in ("stepId", "producerStepId", "consumerStepId"))
-                     or any(node_id in i.get(field, ()) for field in ("stepIds", "consumerStepIds", "participantStepIds"))) ]
-                    for k, v in raw.items() if isinstance(v, list)}
+                result = {}
+                for kind, items in raw.items():
+                    if not isinstance(items, list):
+                        continue
+                    selected = []
+                    for item in items:
+                        if kind == "communication":
+                            consumer = item.get("consumerStepId")
+                            target = new_nodes.get(consumer)
+                            new_pull = (item.get("producerStepId") == node_id
+                                and (node_id, consumer) not in prior_channels
+                                and consumer not in protected_nodes and item.get("mode") == "STRICT_CONTRACT"
+                                and not item.get("participantStepIds") and target is not None
+                                and str(target.metadata.get("communicationMode", "STRICT_CONTRACT")).upper() == "STRICT_CONTRACT")
+                            # Only a new immutable-result pull adds no producer
+                            # execution. Historical publications and existing
+                            # channels retain their original obligations.
+                            if not new_pull and (item.get("producerStepId") == node_id
+                                    or consumer == node_id or node_id in item.get("participantStepIds", ())):
+                                selected.append(item)
+                        elif kind == "evidence":
+                            if item.get("producerStepId") == node_id or node_id in item.get("consumerStepIds", ()):
+                                selected.append(dict(item, consumerStepIds=[node_id]
+                                    if node_id in item.get("consumerStepIds", ()) else []))
+                        elif item.get("stepId") == node_id or node_id in item.get("stepIds", ()):
+                            selected.append(item)
+                    result[kind] = selected
+                return result
             if addressed(old.resource_plan) != addressed(candidate.resource_plan):
                 raise GraphRevisionError(Code.INVALID_PROPOSAL, "protected logical implementation changed")
-    edges = lambda graph: {(e.source_id, e.target_id, e.edge_type.value) for e in graph.edges}
+    def edges(graph):
+        return {(e.source_id, e.target_id, e.edge_type.value) for e in graph.edges}
     before, after = edges(old), edges(candidate)
     if {e for e in before if e[1] in protected_nodes} != {e for e in after if e[1] in protected_nodes}:
         raise GraphRevisionError(Code.INVALID_PROPOSAL, "effective graph predecessors changed")
@@ -187,13 +225,6 @@ class GraphProvider(RuntimePlanningCommitProvider):
 
     def get_current_sources(self, mission_id):
         run = self.run()
-        if (len(run.steps) > 256 or len((run.acg_blueprint or {}).get("edges", ())) > 1024
-                or len(run.model_dump_json()) > 2_000_000
-                or len(self.node_commits(run)) > 1024
-                or len(self.runtime.workflow_store.list_planning_inputs(run.run_id)) > 64
-                or len(self.runtime.agent_registry.all()) > 256
-                or len(self.runtime.capability_catalog.available()) > 512):
-            raise GraphRevisionError(Code.INVALID_PROPOSAL, "graph verification input exceeds bounded policy")
         current = super().get_current_sources(mission_id)
         return current.model_copy(update={"strategy_fingerprint": fingerprint(dict(base=current.strategy_fingerprint,
             provenance=source_provenance(self).model_dump(mode="json"), checkpoint=checkpoint(self, run),
@@ -281,7 +312,8 @@ def accept_graph_revision(authority, run_id, source_commit_id, key):
             semantic.validation_catalog = catalog
             request = authority._request(semantic, source.proposal_payload, "graph-preflight", "graph-preflight")
             problem = semantic.validate_proposal(request)
-            if problem: return problem
+            if problem:
+                return problem
         old = RuntimeBlueprintSpec.model_validate(run.acg_blueprint)
         if any(n.node_type == "control" for n in old.nodes):
             raise GraphRevisionError(Code.CONTROL_BARRIER_BLOCKED, "deterministic lowering cannot prove preservation of historical control regions")
@@ -311,8 +343,6 @@ def accept_graph_revision(authority, run_id, source_commit_id, key):
                 sourceProvenance=source.source_provenance, basePlanVersion=source.sources.plan_version,
                 nextPlan=result.next_plan, nextBindings=result.next_bindings, candidateGraph=result.blueprint, graphPatch=patch, safeCut=proof)
             provider.payload = candidate
-            if len(candidate.model_dump_json()) > 2_000_000:
-                raise GraphRevisionError(Code.INVALID_PROPOSAL, "derived graph candidate exceeds bounded policy")
             provider._derived_fingerprint = content_fingerprint(candidate)
             request = PlanningCommitRequest(proposalId="graph-revision:" + source.commit_id, proposalType="graph_revision",
                 proposalFingerprint=content_fingerprint(candidate), sources=captured,

@@ -77,7 +77,7 @@ export function inspectorValue(value: string | number | null | undefined): strin
 export const capabilityLabels: Record<string, string> = {
   canInspect: '查看记录', canDiscuss: '讨论任务', canCancel: '取消运行', canReview: '处理审核',
   canExecuteFormalAction: '执行控制操作', canResolveToolApproval: '处理工具审批', canAnswerPlanner: '回答规划问题',
-  canCollaborate: '补充执行指令', canRetrySuccessor: '恢复失败步骤', canRerunSuccessor: '重新执行',
+  canCollaborate: '补充执行指令', canRetrySuccessor: '在新 Run 恢复失败步骤', canRecoverCurrentRun: '在当前 Run 恢复失败步骤', canRerunSuccessor: '重新执行',
   canDecideRevision: '决定目标修订', canApplyRevision: '按新目标执行', canDelete: '删除记录',
 }
 

@@ -1,8 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCopilotApi } from './copilot'
+import { agentosRequest } from '../client'
 
 vi.mock('@/platform', () => ({ apiUrl: (path: string) => path, LOCAL_REQUEST_HEADERS: { 'X-Zhiyi-Local-Request': '1' } }))
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); vi.clearAllMocks() })
+
+describe('Copilot task approval transport', () => {
+  it('keeps collaboration permission binary and sends the independent approval change identity', async () => {
+    const receipt = { missionId: 'mission', taskPermission: 'task_collaboration', approvalMode: 'full', policyRevision: 8, autoApprovedCount: 3 }
+    const post = vi.spyOn(agentosRequest, 'post').mockResolvedValue({ data: receipt })
+    try {
+      await expect(createCopilotApi().setCopilotPermission('run/id', 'task_collaboration', {
+        approvalMode: 'full', expectedPolicyRevision: 7, operationId: 'stable-operation',
+      })).resolves.toEqual(receipt)
+      expect(post).toHaveBeenCalledWith('/runs/run%2Fid/copilot/permission', {
+        permission: 'task_collaboration', approvalMode: 'full', expectedPolicyRevision: 7, operationId: 'stable-operation',
+      })
+      await createCopilotApi().setCopilotPermission('run/id', 'read_only')
+      expect(post).toHaveBeenLastCalledWith('/runs/run%2Fid/copilot/permission', { permission: 'read_only' })
+    } finally { post.mockRestore() }
+  })
+})
 
 function response(frames: unknown[]) {
   const bytes = new TextEncoder().encode(frames.map(frame => `data: ${JSON.stringify(frame)}\r\n\r\n`).join(''))

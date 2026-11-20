@@ -11,7 +11,7 @@ from contracts.graph_activation import GraphActivationHead, GraphActivationRecor
 from contracts.graph_activation import activation_projection
 from contracts.graph_materialization import GraphMaterializationRecord
 from contracts.compiled_acg import load_compiled_acg_package
-from contracts.execution_permit import ExecutionPermitRecord, execution_permit_projection
+from contracts.execution_permit import ExecutionPermitRecord, execution_permit_projection, execution_permit_run_projection
 from contracts.graph_handoff import GraphHandoffRecord
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
 from support.stores.planning_commit_store import content_fingerprint
@@ -216,15 +216,7 @@ def validate_activation_run(conn, run):
                         or run.execution_state.get("executionGeneration") != permit.attempt_generation
                         or run.execution_state.get("checkpointId") != permit.promoted_checkpoint_id):
                     invalid()
-                expected = previous.model_copy(deep=True)
-                expected_projection_state = dict(expected.execution_state["graphActivation"])
-                expected_projection_state["executionPermit"] = execution_permit_projection(permit)
-                expected.execution_state.update({
-                    "graphActivation": expected_projection_state,
-                    "executionPermitId": permit.permit_id,
-                    "executionGeneration": permit.attempt_generation,
-                    "checkpointId": permit.promoted_checkpoint_id,
-                })
+                expected = execution_permit_run_projection(previous, permit)
                 expected.runtime_revision = run.runtime_revision
                 expected.updated_at = run.updated_at
                 if expected != run:
@@ -318,6 +310,13 @@ class SQLiteGraphActivationStore(SQLiteGraphMaterializationStore):
 
     def get_activation(self, activation_id):
         return self._activation("activation_id", activation_id)
+
+    def activations_for_run(self, run_id):
+        """Read validated activation facts without promoting a candidate or head."""
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM graph_activations WHERE run_id=?", (run_id,)).fetchall()
+        return sorted((self._decode_activation(row) for row in rows),
+                      key=lambda record: record.candidate_graph_version)
 
     def activation_by_key(self, key):
         return self._activation("idempotency_key", key)

@@ -130,5 +130,6 @@ async def test_unfinished_turns_fail_without_becoming_executable_tool_calls(fini
     async def progress(*_):
         pass
     with pytest.raises(StructuredGenerationError) as failed:
-        await runtime.generate_tool_turn(messages=[], tools=TOOLS, schema={}, progress_callback=progress)
+        # Classify the provider failure before the guard's cancellable retry policy.
+        await runtime.delegate.generate_tool_turn(messages=[], tools=TOOLS, schema={}, progress_callback=progress)
     assert failed.value.code == code

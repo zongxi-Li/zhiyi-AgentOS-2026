@@ -1,4 +1,4 @@
-"""Chat-only permission policy and approval lifecycle.
+"""Shared tool permission policy and approval lifecycle.
 
 This module is deliberately above the AgentOS Resource/Capability boundary.
 It decides whether a Chat invocation may proceed; it never owns a host Grant,
@@ -157,6 +157,8 @@ class _PendingApproval:
     request: ApprovalRequest
     future: asyncio.Future[tuple[ApprovalDecision, str | None]]
     emit: Callable[[str, dict[str, Any]], Awaitable[None]] | None
+    trusted_context: Any = None
+    decision_metadata: dict[str, Any] | None = None
 
 
 CAPABILITY_BY_TOOL: Mapping[str, str] = {
@@ -235,7 +237,9 @@ class ChatPermissionService:
         workspace_id: str,
         emit: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         approval_mode: ChatApprovalMode = "ask",
-    ) -> None:
+        trusted_context: Any = None,
+        automatic_decision: Callable[[], dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any] | None:
         capability_id = CAPABILITY_BY_TOOL.get(tool_name)
         relative_path = normalize_relative_path(
             arguments.get("cwd") if tool_name == "run_command" else arguments.get("path")
@@ -269,6 +273,14 @@ class ChatPermissionService:
         if decision is PermissionDecision.DENY:
             raise PermissionDeniedError(activity=activity)
 
+        # Only trusted application code supplies this callback/context. The
+        # shared policy has already validated capability and relative paths;
+        # task policy may resolve ASK, never DENY.
+        if automatic_decision is not None:
+            automatic = automatic_decision()
+            if automatic is not None:
+                return automatic
+
         now = datetime.now(timezone.utc)
         request = ApprovalRequest(
             approvalId=f"approval_{uuid4().hex}",
@@ -296,10 +308,18 @@ class ChatPermissionService:
         future: asyncio.Future[tuple[ApprovalDecision, str | None]] = (
             asyncio.get_running_loop().create_future()
         )
-        pending = _PendingApproval(request=request, future=future, emit=emit)
+        pending = _PendingApproval(request=request, future=future, emit=emit,
+                                   trusted_context=trusted_context)
         self._pending[request.approval_id] = pending
         try:
-            if emit is not None:
+            # Register before rechecking: enabling a policy concurrently with
+            # waiter creation must either drain it or be seen here.
+            if automatic_decision is not None:
+                automatic = automatic_decision()
+                if automatic is not None:
+                    self.resolve_now(request.approval_id, decision=ApprovalDecision.ALLOW_ONCE,
+                        session_id=session_id, decision_metadata=automatic)
+            if emit is not None and not future.done():
                 await emit("approval_required", {"approval": request.model_dump(by_alias=True, mode="json")})
             try:
                 resolution, resolution_code = await asyncio.wait_for(
@@ -321,6 +341,8 @@ class ChatPermissionService:
                     {
                         "approval": resolved_request.model_dump(by_alias=True, mode="json"),
                         "decision": resolution.value,
+                        **({"approvalDecision": pending.decision_metadata}
+                           if pending.decision_metadata else {}),
                     },
                 )
             if resolution is ApprovalDecision.DENY:
@@ -335,6 +357,7 @@ class ChatPermissionService:
                         sessionId=session_id,
                     )
                 )
+            return pending.decision_metadata
         except asyncio.CancelledError:
             self._pending.pop(request.approval_id, None)
             if not future.done():
@@ -352,7 +375,19 @@ class ChatPermissionService:
         invocation_id: str | None = None,
         capability_id: str | None = None,
         relative_path: str | None = None,
+        decision_metadata: dict[str, Any] | None = None,
     ) -> ApprovalRequest:
+        return self.resolve_now(approval_id, decision=decision, session_id=session_id,
+            invocation_id=invocation_id, capability_id=capability_id,
+            relative_path=relative_path, decision_metadata=decision_metadata)
+
+    def resolve_now(
+        self, approval_id: str, *, decision: ApprovalDecision, session_id: str,
+        invocation_id: str | None = None, capability_id: str | None = None,
+        relative_path: str | None = None,
+        decision_metadata: dict[str, Any] | None = None,
+    ) -> ApprovalRequest:
+        """Resolve once without yielding, including under a task policy lock."""
         pending = self._pending.get(approval_id)
         if pending is None:
             if approval_id in self._completed:
@@ -381,6 +416,12 @@ class ChatPermissionService:
             if not pending.future.done():
                 pending.future.set_result((ApprovalDecision.DENY, "APPROVAL_EXPIRED"))
             raise ApprovalResolutionError("APPROVAL_EXPIRED", "approval has expired")
+        if decision is not ApprovalDecision.DENY and pending.trusted_context is not None:
+            pending.trusted_context.validate()
+        pending.decision_metadata = dict(decision_metadata or {
+            "source": "user", "decidedAt": datetime.now(timezone.utc).isoformat()})
+        self._completed[approval_id] = request.model_copy(update={
+            "status": "denied" if decision is ApprovalDecision.DENY else "approved"})
         self._pending.pop(approval_id, None)
         if not pending.future.done():
             pending.future.set_result((decision, None if decision is not ApprovalDecision.DENY else "PERMISSION_DENIED"))
@@ -403,6 +444,12 @@ class ChatPermissionService:
     def pending(self, approval_id: str) -> ApprovalRequest | None:
         pending = self._pending.get(approval_id)
         return pending.request if pending else None
+
+    def trusted_pending(self) -> tuple[tuple[ApprovalRequest, Any], ...]:
+        """Internal coordinator view; trusted identities never enter model input."""
+        return tuple((pending.request, pending.trusted_context)
+                     for pending in self._pending.values()
+                     if pending.trusted_context is not None)
 
     @staticmethod
     def _activity(tool_name: str, capability_id: str | None, relative_path: str | None) -> dict[str, Any]:

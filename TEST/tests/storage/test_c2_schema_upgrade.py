@@ -194,6 +194,112 @@ def test_check_literal_case_is_not_normalized_into_false_compatibility(paths):
     assert contents(paths) == before
 
 
+def legacy_task_permissions(paths):
+    ops.upgrade_databases(**paths, initialize_empty=True)
+    workflow = paths["workflow"]
+    sql(workflow, "DROP TABLE task_copilot_permissions")
+    sql(workflow, "DROP TABLE task_operator_policy_receipts")
+    sql(workflow, """CREATE TABLE task_copilot_permissions (
+        mission_id TEXT PRIMARY KEY, permission TEXT NOT NULL
+        CHECK(permission IN ('read_only', 'task_collaboration')))""")
+    with closing(sqlite3.connect(workflow)) as conn, conn:
+        ops.install_revision_triggers(conn, {
+            "task_copilot_permissions": ops.RUNTIME_SOURCES["task_copilot_permissions"]})
+    sql(workflow, "INSERT INTO task_copilot_permissions VALUES('mission_keep','read_only')")
+    return workflow
+
+
+@pytest.mark.parametrize("projection_present", [True, False])
+def test_legacy_task_permission_explicit_upgrade_preserves_permission_and_defaults_to_ask(paths, projection_present):
+    workflow = legacy_task_permissions(paths)
+    if not projection_present:
+        for name, (kind, _, _) in ops._reference()["workflow"].items():
+            if name.startswith("workspace_revision_"):
+                sql(workflow, f'DROP {kind} "{name}"')
+        sql(workflow, "DROP TABLE workspace_projection_versions")
+    before = contents(paths)
+    inspection = ops.inspect_databases(**paths)
+    assert inspection["workflow"]["status"] == "UPGRADE_REQUIRED"
+    assert "task_copilot_permissions:operator-policy" in inspection["workflow"]["missing"]
+    if projection_present:
+        assert ops.TASK_POLICY_TRIGGER_UPGRADE in inspection["workflow"]["missing"]
+    assert contents(paths) == before
+    ops.upgrade_databases(**paths)
+    checked(paths)
+    assert sql(workflow, "SELECT permission,approval_mode,policy_revision,workspace_scope FROM task_copilot_permissions") == [
+        ("read_only", "ask", 0, None)]
+    after = contents(paths)
+    ops.upgrade_databases(**paths)
+    assert contents(paths) == after
+    revision = sql(workflow, "SELECT revision FROM workspace_projection_versions WHERE mission_id='mission_keep'")
+    sql(workflow, "UPDATE task_copilot_permissions SET approval_mode='full' WHERE mission_id='mission_keep'")
+    assert sql(workflow, "SELECT revision FROM workspace_projection_versions WHERE mission_id='mission_keep'") == [
+        ((revision[0][0] if revision else 0) + 1,)]
+
+
+def test_policy_trigger_upgrade_after_interruption_is_explicit_atomic_and_resumable(paths, monkeypatch):
+    workflow = legacy_task_permissions(paths)
+    ops._AdministrativeWorkflowStore(workflow, enable_mission_semantics=True)
+    before = contents(paths)
+    inspection = ops.inspect_databases(**paths)
+    assert inspection["workflow"]["status"] == "UPGRADE_REQUIRED"
+    assert inspection["workflow"]["missing"] == [ops.TASK_POLICY_TRIGGER_UPGRADE]
+    assert contents(paths) == before
+    with monkeypatch.context() as patch:
+        def interrupted(*args, **kwargs):
+            raise RuntimeError("trigger replacement interrupted")
+        patch.setattr(ops, "install_revision_triggers", interrupted)
+        with pytest.raises(RuntimeError, match="replacement interrupted"):
+            ops.upgrade_databases(**paths)
+    assert contents(paths) == before  # DROP and CREATE share one transaction.
+    ops.upgrade_databases(**paths)
+    checked(paths)
+    assert sql(workflow, "SELECT revision FROM workspace_projection_versions WHERE mission_id='mission_keep'") == [(1,)]
+
+
+@pytest.mark.parametrize("current_table", [False, True])
+def test_unknown_policy_trigger_is_never_replaced(paths, current_table):
+    workflow = legacy_task_permissions(paths)
+    if current_table:
+        ops._AdministrativeWorkflowStore(workflow, enable_mission_semantics=True)
+    sql(workflow, f'DROP TRIGGER "{ops.TASK_POLICY_UPDATE_TRIGGER}"')
+    sql(workflow, f'CREATE TRIGGER "{ops.TASK_POLICY_UPDATE_TRIGGER}" AFTER UPDATE ON task_copilot_permissions BEGIN SELECT 1; END')
+    before = contents(paths)
+    with pytest.raises(ops.SchemaUpgradeError, match="incompatible definition"):
+        ops.upgrade_databases(**paths)
+    assert contents(paths) == before
+
+
+def test_prepare_runtime_cli_explicitly_upgrades_legacy_policy_trigger(paths):
+    workflow = legacy_task_permissions(paths)
+    flags = [flag for role, path in paths.items() for flag in (f"--{role}-db", str(path))]
+    cli = ROOT / "scripts" / "prepare_agentos_runtime.py"
+    before = contents(paths)
+    def run(*extra):
+        return subprocess.run([sys.executable, str(cli), *flags, *extra], capture_output=True, text=True, encoding="utf-8", timeout=45)
+    inspected = run()
+    assert inspected.returncode == 2, inspected.stdout + inspected.stderr
+    assert json.loads(inspected.stdout)["status"] == "NOT_READY"
+    assert contents(paths) == before
+    applied = run("--apply")
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    assert json.loads(applied.stdout)["status"] == "READY"
+    committed = contents(paths)
+    assert run("--apply").returncode == 0
+    assert run().returncode == 0
+    assert contents(paths) == committed
+    assert sql(workflow, "SELECT revision FROM workspace_projection_versions WHERE mission_id='mission_keep'") == [(1,)]
+
+
+def test_missing_operator_receipts_with_current_policy_schema_is_not_silently_repaired(paths):
+    ops.upgrade_databases(**paths, initialize_empty=True)
+    sql(paths["workflow"], "DROP TABLE task_operator_policy_receipts")
+    before = contents(paths)
+    with pytest.raises(ops.SchemaUpgradeError, match="missing prerequisite"):
+        ops.upgrade_databases(**paths)
+    assert contents(paths) == before
+
+
 def test_missing_unique_index_added_only_without_historical_conflicts(paths):
     ops.upgrade_databases(**paths, initialize_empty=True)
     w = paths["workflow"]

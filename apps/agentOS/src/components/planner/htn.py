@@ -1,4 +1,4 @@
-"""Bounded HTN selection/expansion, with no store or execution authority."""
+"""HTN selection/expansion, with no store or execution authority."""
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +13,6 @@ from contracts.htn import (HTNCondition, HTNExpansionProposal, HTNMethod,
                            HTNSubtask)
 from contracts.mission_semantic import MissionIntentBasis
 from contracts.planning import PlannedTask, TaskPlan, TaskPlanRelation
-from contracts.runtime_planning import RuntimePlanningObservation
 from .topology import EdgeOrigin, validate_task_plan_for_execution
 
 
@@ -30,14 +29,16 @@ class HTNError(ValueError):
 
 @dataclass(frozen=True)
 class HTNBudget:
-    max_depth: int = 8
-    max_nodes: int = 64
-    max_relations: int = 256
-    max_candidates: int = 256
+    # Retained constructor compatibility; semantic growth is checked for cycles,
+    # not stopped by an arbitrary count of already valid nodes or methods.
+    max_depth: int | None = None
+    max_nodes: int | None = None
+    max_relations: int | None = None
+    max_candidates: int | None = None
     max_content_chars: int = 120_000
 
     def __post_init__(self):
-        if any(value < 1 for value in vars(self).values()):
+        if any(value is not None and value < 1 for value in vars(self).values()):
             raise ValueError("HTN budgets must be positive")
 
 
@@ -49,8 +50,8 @@ class HTNMethodCatalog:
 
     def __init__(self, methods):
         definitions = [HTNMethod.model_validate(m.model_dump(by_alias=True)) for m in methods]
-        if len(definitions) > 128 or len({m.method_id for m in definitions}) != len(definitions):
-            raise ValueError("method catalog is bounded and methodIds must be unique")
+        if len({m.method_id for m in definitions}) != len(definitions):
+            raise ValueError("methodIds must be unique")
         serialized = tuple(json.dumps(m.model_dump(by_alias=True, mode="json"),
                                       sort_keys=True, separators=(",", ":"), ensure_ascii=False)
                            for m in sorted(definitions, key=lambda m: m.method_id))
@@ -146,15 +147,12 @@ class HTNMethodSelector:
             fact = matches[0].status if condition.source == "step_status" else matches[0].audit_outcome
         return fact is not None and fact == condition.equals
 
-    def _candidates(self, abstract_task, task, basis, observation, counter, methods=None):
+    def _candidates(self, abstract_task, task, basis, observation, methods=None):
         constraints = self._constraints(basis, task)
         candidates = []
         for method in sorted(methods if methods is not None else self.catalog.methods(), key=lambda m: (m.priority, m.method_id)):
             if method.abstract_task != abstract_task:
                 continue
-            counter[0] += 1
-            if counter[0] > self.budget.max_candidates:
-                raise HTNError("HTN_BUDGET_EXHAUSTED")
             reason = "APPLICABLE"
             if not all(self._matches(c, basis, task, observation, constraints) for c in method.applicability):
                 reason = "CONDITION_NOT_MET"
@@ -170,7 +168,7 @@ class HTNMethodSelector:
     def query(self, *, plan, target_key, basis, observation) -> HTNMethodCatalogProjection:
         catalog = self.catalog
         target, basis = self._context(plan=plan, target_key=target_key, basis=basis, observation=observation)
-        candidates = self._candidates(target.metadata["taskType"], target, basis, observation, [0], catalog.methods())
+        candidates = self._candidates(target.metadata["taskType"], target, basis, observation, catalog.methods())
         if not candidates:
             raise HTNError("HTN_NO_METHOD")
         return HTNMethodCatalogProjection(targetKey=target_key, catalogRevision=catalog.revision,
@@ -193,22 +191,18 @@ class HTNMethodSelector:
         edges: list[TaskPlanRelation] = []
         leaves: list[PlannedTask] = []
         selections = []
-        counter = [0]
         used_keys = {target_key}
         existing_keys = {n.key for n in plan.nodes} - {target_key}
         content_chars = 0
 
         def check_budget():
-            if (len(nodes) > self.budget.max_nodes or len(edges) > self.budget.max_relations
-                    or content_chars > self.budget.max_content_chars
+            if (content_chars > self.budget.max_content_chars
                     or (deadline is not None and monotonic() > deadline)):
                 raise HTNError("HTN_BUDGET_EXHAUSTED")
 
-        def visit(task, abstract_task, stack, depth, requested=None):
+        def visit(task, abstract_task, stack, requested=None):
             nonlocal content_chars
             check_budget()
-            if depth > self.budget.max_depth:
-                raise HTNError("HTN_BUDGET_EXHAUSTED")
             if abstract_task is not None and abstract_task in stack:
                 raise HTNError("HTN_EXPANSION_CYCLE")
             self._constraints(basis, task)
@@ -218,7 +212,7 @@ class HTNMethodSelector:
             if abstract_task is None:
                 leaves.append(task)
                 return (task.key,)
-            candidates = self._candidates(abstract_task, task, basis, observation, counter, methods)
+            candidates = self._candidates(abstract_task, task, basis, observation, methods)
             legal = [m for m, reason in candidates if reason == "APPLICABLE"]
             if requested is not None:
                 method = next((m for m in legal if m.method_id == requested), None)
@@ -251,7 +245,7 @@ class HTNMethodSelector:
                 if not set(slot.task.source_refs) <= set(task.source_refs) | set(method.source_refs):
                     raise HTNError("HTN_UNKNOWN_SOURCE")
                 self._validate_constraint_sources(child, set(child.source_refs))
-                groups[slot.task.key] = visit(child, slot.abstract_task, (*stack, abstract_task), depth + 1)
+                groups[slot.task.key] = visit(child, slot.abstract_task, (*stack, abstract_task))
                 edges.append(TaskPlanRelation(sourceKey=task.key, targetKey=key, relationType="parent"))
                 check_budget()
             for ordering in method.ordering:
@@ -268,7 +262,7 @@ class HTNMethodSelector:
             "producedArtifacts": (), "constraints": deepcopy([*inherited, *target.constraints]),
             "sourceRefs": tuple(dict.fromkeys((*target.source_refs, *basis.source_references,
                 *(ref for c in basis.constraints for ref in c.source_refs))))})
-        visit(root, target.metadata["taskType"], (), 0, method_id)
+        visit(root, target.metadata["taskType"], (), method_id)
         # Shared semantic/topology authority validates *atomic* work. Parents are
         # explanatory nodes, never fake capability producers or executable sinks.
         atomic = [PlannedTask.model_validate({**n.model_dump(by_alias=True), "parentKey": None}) for n in leaves]

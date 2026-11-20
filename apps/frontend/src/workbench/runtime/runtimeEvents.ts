@@ -17,6 +17,10 @@ export interface RuntimeEvent {
 }
 
 export interface NodeRuntimeState {
+  agentName?: string
+  agentRegistration?: { agentId: string; instanceId: string; generation: number }
+  callId?: string
+  reasoningBuffer?: string
   outputId: string | null
   title?: string | null
   status: string
@@ -48,6 +52,8 @@ export interface PlanningRuntimeState {
   receivedChunks: number
   receivedLength: number
   outputBuffer: string
+  reasoningBuffer: string
+  reasoningTruncated: boolean
   chunkCount: number
   draft: {
     stage: string | null
@@ -67,18 +73,36 @@ export interface RuntimeEventStore {
   lastSequence: number
   readonly nodes: Record<string, NodeRuntimeState>
   readonly planning: PlanningRuntimeState
+  readonly workspaceReview?: WorkspaceReviewRuntimeState
   readonly outputHistory?: RuntimePublicOutput[]
   readonly activity?: { events: RuntimeEvent[]; approvalRevision: number }
   apply(event: RuntimeEvent): void
 }
 
+export interface WorkspaceReviewRuntimeState {
+  status: 'IDLE' | 'BLOCKED' | 'RETRYING'
+  errorCode: string | null
+  lastActivityAt: string | null
+}
+
 export interface RuntimePublicOutput {
   id: string
+  nodeId?: string
+  attemptId?: string | null
+  agentName?: string
+  agentRegistration?: NodeRuntimeState['agentRegistration']
+  modelName?: string | null
+  callId?: string
   kind: 'planning' | 'node'
   title: string
   timestamp: string | null
   text: string
   failed: boolean
+  stage?: string | null
+  state?: 'completed' | 'interrupted' | 'retrying'
+  elapsedMs?: number | null
+  reasoning?: string
+  reasoningTruncated?: boolean
 }
 
 const createPlanningState = (): PlanningRuntimeState => ({
@@ -98,6 +122,8 @@ const createPlanningState = (): PlanningRuntimeState => ({
   receivedChunks: 0,
   receivedLength: 0,
   outputBuffer: '',
+  reasoningBuffer: '',
+  reasoningTruncated: false,
   chunkCount: 0,
   draft: { stage: null, nodes: [], edges: [] },
   retryIndex: 0,
@@ -105,6 +131,12 @@ const createPlanningState = (): PlanningRuntimeState => ({
   plan: null,
   graph: null,
   errorCode: null,
+})
+
+const createWorkspaceReviewState = (): WorkspaceReviewRuntimeState => ({
+  status: 'IDLE',
+  errorCode: null,
+  lastActivityAt: null,
 })
 
 const PLANNER_EVENTS = new Set([
@@ -115,6 +147,7 @@ const PLANNER_EVENTS = new Set([
   'planner.model.first_token',
   'planner.model.activity',
   'planner.model.output.delta',
+  'planner.model.reasoning.delta',
   'planner.draft.updated',
   'planner.model.completed',
   'planner.stage.completed',
@@ -137,10 +170,12 @@ export class RunRuntimeStore {
   lastSequence = -1
   readonly nodes = reactive<Record<string, NodeRuntimeState>>({})
   readonly planning = reactive<PlanningRuntimeState>(createPlanningState())
+  readonly workspaceReview = reactive<WorkspaceReviewRuntimeState>(createWorkspaceReviewState())
   readonly outputHistory = reactive<RuntimePublicOutput[]>([])
   readonly activity = reactive({ events: [] as RuntimeEvent[], approvalRevision: 0 })
   private pending = new Map<string, string>()
   private pendingPlanning: string | null = null
+  private pendingReasoning: string | null = null
   private retiredAttempts = new Map<string, Set<string>>()
   private batcher = createStreamBatcher(() => this.flushPending())
 
@@ -170,15 +205,23 @@ export class RunRuntimeStore {
       this.batcher.flush()
       this.pending.clear()
       this.pendingPlanning = null
+      this.pendingReasoning = null
       this.retiredAttempts.clear()
       for (const id of Object.keys(this.nodes)) delete this.nodes[id]
       Object.assign(this.planning, createPlanningState())
+      Object.assign(this.workspaceReview, createWorkspaceReviewState())
       this.outputHistory.splice(0)
       this.activity.events.splice(0)
       this.terminal = false
       this.lastSequence = -1
       for (const item of snapshot.events) {
         if (item?.eventType !== 'runtime.display.snapshot' && item?.sequence <= event.sequence) this.apply(item)
+      }
+      // Replay historical output before retiring Attempts from the formal resume boundary.
+      if (snapshot.retiredAttempts && typeof snapshot.retiredAttempts === 'object') {
+        for (const [id, attempts] of Object.entries(snapshot.retiredAttempts)) {
+          if (Array.isArray(attempts)) this.retiredAttempts.set(id, new Set(attempts.filter((value): value is string => typeof value === 'string')))
+        }
       }
       this.batcher.flush()
       this.lastSequence = event.sequence
@@ -187,7 +230,7 @@ export class RunRuntimeStore {
     if (event.runId !== this.runId || event.sequence <= this.lastSequence) return
     if (this.terminal) return
     this.lastSequence = event.sequence
-    if (!['model.output.delta', 'planner.model.output.delta'].includes(event.eventType)) this.batcher.flush()
+    if (!['model.output.delta', 'planner.model.output.delta', 'planner.model.reasoning.delta'].includes(event.eventType)) this.batcher.flush()
     if (['tool.approval_required', 'tool.approval_resolved', 'tool.execution_started', 'tool.execution_completed',
       'node.started', 'node.completed', 'node.failed'].includes(event.eventType)) {
       if (!this.activity.events.some(item => item.eventId === event.eventId)) {
@@ -195,6 +238,13 @@ export class RunRuntimeStore {
         if (this.activity.events.length > 100) this.activity.events.shift()
       }
       if (event.eventType.startsWith('tool.approval_')) this.activity.approvalRevision++
+    }
+    if (['workspace.review.blocked', 'workspace.review.retry', 'workspace.review.resumed'].includes(event.eventType)) {
+      const resumed = event.eventType === 'workspace.review.resumed'
+      this.workspaceReview.status = resumed ? 'IDLE' : event.eventType === 'workspace.review.blocked' ? 'BLOCKED' : 'RETRYING'
+      this.workspaceReview.errorCode = !resumed && typeof event.payload?.errorCode === 'string' ? event.payload.errorCode : null
+      this.workspaceReview.lastActivityAt = timestampOrNow(event)
+      return
     }
     if (PLANNER_EVENTS.has(event.eventType) || event.eventType.startsWith('planner.')) {
       this.applyPlanner(event)
@@ -209,6 +259,8 @@ export class RunRuntimeStore {
     const n = this.node(id)
     const p = event.payload || {}
     if (typeof p.nodeTitle === 'string') n.title = p.nodeTitle
+    if (typeof p.agentName === 'string') n.agentName = p.agentName
+    if (p.agentRegistration && typeof p.agentRegistration.instanceId === 'string') n.agentRegistration = p.agentRegistration
     const attempt = event.attemptId || n.currentAttemptId
     if (attempt && this.retiredAttempts.get(id)?.has(attempt)) return
     const attemptChanged = Boolean(attempt && n.currentAttemptId !== attempt)
@@ -223,6 +275,7 @@ export class RunRuntimeStore {
       n.status = 'WAITING'
       n.phase = 'WAITING'
       n.outputBuffer = ''
+      n.reasoningBuffer = ''
       n.chunkCount = 0
       n.outputId = null
       n.modelStartedAt = null
@@ -239,11 +292,13 @@ export class RunRuntimeStore {
       n.status = 'RUNNING'
       n.phase = 'MODEL_STARTING'
       n.outputBuffer = ''
+      n.reasoningBuffer = ''
       n.chunkCount = 0
       n.firstTokenAt = null
       n.lastActivityAt = null
       this.pending.delete(id)
       n.modelStartedAt = timestampOrNow(event)
+      n.callId = typeof p.callId === 'string' ? p.callId : undefined
       n.modelName = String(p.model || '') || n.modelName
     } else if (event.eventType === 'model.first_token') {
       n.phase = 'STREAMING'
@@ -251,6 +306,11 @@ export class RunRuntimeStore {
     } else if (event.eventType === 'model.activity') {
       n.phase = 'STREAMING'
       n.lastActivityAt = timestampOrNow(event)
+    } else if (event.eventType === 'model.reasoning.delta') {
+      n.outputId ||= event.eventId
+      n.modelStartedAt ||= timestampOrNow(event)
+      n.lastActivityAt = timestampOrNow(event)
+      n.reasoningBuffer = ((n.reasoningBuffer || '') + String(p.delta || '')).slice(-65536)
     } else if (event.eventType === 'model.output.delta') {
       n.outputId ||= event.eventId
       n.modelStartedAt ||= timestampOrNow(event)
@@ -290,37 +350,46 @@ export class RunRuntimeStore {
       state.completedAt = null
       state.errorCode = null
     } else if (event.eventType === 'planner.stage.started') {
-      state.status = 'RUNNING'
-      state.modelPhase = 'STARTING'
-      state.stage = String(p.stage || '') || state.stage
       const nextCallKey = String(p.callKey || '') || state.callKey
       if (nextCallKey !== state.callKey) {
         this.archivePlanning()
         state.outputBuffer = ''
+        state.reasoningBuffer = ''
+        state.reasoningTruncated = false
         state.chunkCount = 0
         state.outputId = null
         state.modelStartedAt = null
+        state.elapsedMs = null
       }
+      state.status = 'RUNNING'
+      state.modelPhase = 'STARTING'
+      state.stage = String(p.stage || '') || state.stage
       state.callKey = nextCallKey
       state.retryIndex = numberOrNull(p.retryIndex) ?? state.retryIndex
     } else if (event.eventType === 'planner.stage.retry') {
-      this.archivePlanning()
+      this.archivePlanning('retrying')
       state.status = 'RUNNING'
       state.modelPhase = 'STARTING'
       state.stage = String(p.stage || '') || state.stage
       state.callKey = String(p.callKey || '') || state.callKey
       state.retryIndex = numberOrNull(p.retryIndex) ?? state.retryIndex + 1
       state.outputBuffer = ''
+      state.reasoningBuffer = ''
+      state.reasoningTruncated = false
       state.chunkCount = 0
       state.outputId = null
       state.modelStartedAt = null
+      state.elapsedMs = null
     } else if (event.eventType === 'planner.model.started') {
       this.archivePlanning()
       state.outputBuffer = ''
+      state.reasoningBuffer = ''
+      state.reasoningTruncated = false
       state.chunkCount = 0
       state.outputId = event.eventId
       state.modelStartedAt = at
       state.firstTokenAt = null
+      state.elapsedMs = null
       state.status = 'RUNNING'
       state.modelPhase = 'WAITING_FIRST_TOKEN'
       state.stage = String(p.stage || '') || state.stage
@@ -338,6 +407,19 @@ export class RunRuntimeStore {
       state.idleMs = numberOrNull(p.idleMs) ?? state.idleMs
       state.receivedChunks = numberOrNull(p.receivedChunks) ?? state.receivedChunks
       state.receivedLength = numberOrNull(p.receivedLength) ?? state.receivedLength
+    } else if (event.eventType === 'planner.model.reasoning.delta') {
+      state.outputId ||= event.eventId
+      state.modelStartedAt ||= at
+      state.status = 'RUNNING'
+      state.modelPhase = 'ACTIVE'
+      state.lastActivityAt = at
+      state.stage = String(p.stage || '') || state.stage
+      state.callKey = String(p.callKey || '') || state.callKey
+      const delta = typeof p.delta === 'string' ? p.delta : ''
+      const next = (this.pendingReasoning ?? state.reasoningBuffer) + delta
+      state.reasoningTruncated ||= next.length > 65536
+      this.pendingReasoning = next.slice(-65536)
+      this.schedule('planner-reasoning', delta, `${state.callKey}:${state.retryIndex}`)
     } else if (event.eventType === 'planner.model.output.delta') {
       state.outputId ||= event.eventId
       state.modelStartedAt ||= at
@@ -397,24 +479,28 @@ export class RunRuntimeStore {
   }
 
   private retainOutput(output: RuntimePublicOutput) {
-    if (!output.text || this.outputHistory.some(item => item.id === output.id)) return
+    if ((!output.text && !output.reasoning) || this.outputHistory.some(item => item.id === output.id)) return
     this.outputHistory.push(output)
-    let length = this.outputHistory.reduce((sum, item) => sum + item.text.length, 0)
-    while (this.outputHistory.length > 32 || length > 262144) length -= this.outputHistory.shift()!.text.length
+    const size = (item: RuntimePublicOutput) => item.text.length + (item.reasoning?.length || 0)
+    let length = this.outputHistory.reduce((sum, item) => sum + size(item), 0)
+    while (this.outputHistory.length > 32 || length > 262144) length -= size(this.outputHistory.shift()!)
   }
 
   private archiveNode(id: string) {
     const node = this.nodes[id]
     if (!node?.outputId) return
-    this.retainOutput({ id: node.outputId, kind: 'node', title: node.title || '当前步骤', timestamp: node.modelStartedAt,
-      text: streamingContent(this.pending.get(id) ?? node.outputBuffer, true), failed: node.status === 'FAILED' })
+    this.retainOutput({ id: node.outputId, kind: 'node', nodeId: id, attemptId: node.currentAttemptId,
+      agentName: node.agentName, agentRegistration: node.agentRegistration, modelName: node.modelName, callId: node.callId, title: node.title || '当前步骤', timestamp: node.modelStartedAt,
+      text: streamingContent(this.pending.get(id) ?? node.outputBuffer, true), reasoning: node.reasoningBuffer, failed: node.status === 'FAILED' })
   }
 
-  private archivePlanning() {
+  private archivePlanning(outcome?: RuntimePublicOutput['state']) {
     const state = this.planning
     if (!state.outputId) return
-    this.retainOutput({ id: state.outputId, kind: 'planning', title: '规划思路摘要', timestamp: state.modelStartedAt,
-      text: planningContent(state.outputBuffer), failed: state.status === 'FAILED' })
+    this.retainOutput({ id: state.outputId, kind: 'planning', title: '规划过程', timestamp: state.modelStartedAt,
+      text: planningContent(state.outputBuffer), failed: state.status === 'FAILED', stage: state.stage,
+      reasoning: state.reasoningBuffer, reasoningTruncated: state.reasoningTruncated,
+      state: outcome || (state.status === 'FAILED' ? 'interrupted' : state.modelPhase === 'COMPLETED' ? 'completed' : 'interrupted'), elapsedMs: state.elapsedMs })
   }
 
   private flushPending() {
@@ -422,6 +508,8 @@ export class RunRuntimeStore {
     this.pending.clear()
     if (this.pendingPlanning !== null) this.planning.outputBuffer = this.pendingPlanning
     this.pendingPlanning = null
+    if (this.pendingReasoning !== null) this.planning.reasoningBuffer = this.pendingReasoning
+    this.pendingReasoning = null
   }
 
   private schedule(partId: string, delta: string, attemptId?: string) {
@@ -514,13 +602,13 @@ export class RuntimeEventClient {
   }
 }
 
-const shared = new Map<string, { store: RunRuntimeStore; client: RuntimeEventClient; refs: number }>()
+const shared = new Map<string, { store: RunRuntimeStore; client: RuntimeEventClient; refs: number; observedRevision: number }>()
 const ensureShared = (runId: string) => {
   let item = shared.get(runId)
   if (!item) {
     const store = new RunRuntimeStore(runId)
     const client = new RuntimeEventClient(store)
-    item = { store, client, refs: 0 }
+    item = { store, client, refs: 0, observedRevision: -1 }
     shared.set(runId, item)
     client.connect()
   }
@@ -537,6 +625,18 @@ export const acquireRunRuntimeStore = (runId: string | null) => {
   const item = ensureShared(runId)
   item.refs += 1
   return item.store
+}
+
+/** A fresh authenticated Run snapshot may reopen observation after same-Run recovery. */
+export const reconcileRunRuntimeStore = (run: { runId: string; status: string; runtimeRevision?: number }) => {
+  const item = shared.get(run.runId)
+  const revision = run.runtimeRevision
+  if (!item || !Number.isSafeInteger(revision) || revision! <= item.observedRevision) return
+  item.observedRevision = revision!
+  if (item.store.terminal && ['pending', 'planning', 'running', 'retrying', 'waiting_review'].includes(run.status)) {
+    item.store.terminal = false
+    item.client.connect()
+  }
 }
 
 export const releaseRunRuntimeStore = (runId: string | null, store?: RuntimeEventStore | null) => {

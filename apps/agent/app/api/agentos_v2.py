@@ -23,6 +23,7 @@ from components.mission.semantic_resolver import MissionSemanticResolver
 from app.execution.coordinator import RunExecutionCoordinator
 from app.execution.run_capabilities import assert_mutable_run, project_run_capabilities
 from app.api.agentos_c2 import create_c2_router, project_initial_control
+from app.api.agentos_graph_history import graph_history
 from app.security.internal_auth import current_trusted_user, current_semantic_principal
 from contracts.workflow import MissionRecordState, ReviewDecision, ReviewDecisionType, RunRecordState, RuntimeRunRecord, StepStatus, WorkflowStatus
 from contracts.agents import AgentRegistrationRef
@@ -60,6 +61,7 @@ class WorkspaceBinaryFallbackNeeded(Exception):
 from runtime import ExecutionRuntime
 from runtime.orchestration.planning_interaction import RuntimePlanningInteraction, CopilotMessageRequest, PlannerAnswerRequest, CopilotPermissionRequest
 from runtime.orchestration.planning_operations import TaskOperationPreviewRequest, TaskOperationApplyRequest
+from runtime.projections.workspace_review import with_workspace_review
 from runtime.orchestration.review import ReviewConflictError
 from runtime import IdentityQueryService
 from runtime.projections.workspace import (
@@ -549,7 +551,10 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
         payload = dict(event.payload) if isinstance(event.payload, dict) else {}
         usage = dict(payload.get("usage") or {})
         completion_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
-        input_tokens = _usage_number(usage, "input_tokens", "prompt_tokens", "inputTokens")
+        input_keys = ("input_tokens", "prompt_tokens", "inputTokens")
+        measured_input = next((usage[key] for key in input_keys
+                               if type(usage.get(key)) is int and usage[key] >= 0), None)
+        input_tokens = measured_input if measured_input is not None else _usage_number(usage, *input_keys)
         output_tokens = _usage_number(usage, "output_tokens", "completion_tokens", "outputTokens")
         from app.api.model_usage import cache_usage
         cache_read, cache_reported = cache_usage(usage)
@@ -575,6 +580,7 @@ def _model_call_projection(run: RuntimeRunRecord) -> list[dict[str, Any]]:
             "errorCode": payload.get("errorCode"),
             "retryIndex": payload.get("retryIndex"),
             "cacheUsageReported": cache_reported,
+            "inputUsageReported": measured_input is not None,
             "requestDiagnostics": dict(payload.get("requestDiagnostics") or {}),
             "stablePrefixHash": payload.get("stablePrefixHash"),
             "capabilityId": payload.get("capabilityId"),
@@ -686,7 +692,7 @@ def project_run(run: RuntimeRunRecord, *, title: str | None = None) -> dict[str,
 def project_graph(run: RuntimeRunRecord) -> dict[str, Any]:
     blueprint = dict(run.acg_blueprint or {})
     state = _state(run)
-    return {
+    return with_workspace_review({
         "runId": run.run_id,
         "graphId": blueprint.get("graphId") or state.get("graphId"),
         "graphVersion": blueprint.get("version") or state.get("graphVersion"),
@@ -697,7 +703,7 @@ def project_graph(run: RuntimeRunRecord) -> dict[str, Any]:
         "skippedStepIds": list(run.execution_state.get("skippedStepIds") or []),
         "graphPatchRefs": list(state.get("graphPatchRefs") or []),
         "resourceBindings": dict(state.get("resourceBindings") or {}),
-    }
+    }, run)
 
 
 def _idempotency(request: MissionCreateRequest | MissionRunCreateRequest) -> tuple[str | None, str | None]:
@@ -2349,6 +2355,15 @@ def create_router(
             mode="json",
             exclude_none=True,
         )
+        selected = payload.get("activeRun")
+        if selected and payload.get("activeGraph"):
+            try:
+                source = getattr(runtime, "get_status_cached", runtime.get_status)(selected["runId"])
+            except KeyError:
+                source = None
+            if source is not None and source.mission_id == mission_id:
+                _require_access(source)
+                payload["activeGraph"] = with_workspace_review(payload["activeGraph"], source)
         # Runtime facts can lead Identity through its durable outbox. Read each
         # Run independently; selected/isActive and timestamps never grant action.
         capabilities = {}
@@ -3066,12 +3081,16 @@ def create_router(
         if decision.get("decision") not in {"allow_once","deny"}:
             raise HTTPException(400,"one operation decision required")
         try:
+            from app.tools.task_approval import user_approval_decision
             result = await get_chat_permission_service().resolve(approval_id,
                 decision=ApprovalDecision(decision["decision"]),session_id=run_id,
                 invocation_id=pending["invocationId"],capability_id=pending["capabilityId"],
-                relative_path=pending["relativePath"])
+                relative_path=pending["relativePath"],
+                decision_metadata=user_approval_decision(current_trusted_user()))
         except ApprovalResolutionError as exc:
             raise HTTPException(exc.status_code,exc.code) from exc
+        except (PermissionError, RuntimeError) as exc:
+            raise HTTPException(409, "Tool approval execution scope changed") from exc
         runtime.formal_tool_pending.pop(approval_id,None)
         return {"resolved":True}
 
@@ -3087,7 +3106,7 @@ def create_router(
     @router.get("/runs/{run_id}/resource-usage")
     async def get_resource_usage(run_id: str):
         run = load_run(run_id)
-        from app.api.model_usage import cache_groups, cache_summary
+        from app.api.model_usage import cache_groups, cache_scopes, cache_summary
         calls = _model_call_projection(run)
         usage = {
             key: sum(int(call["usage"][key]) for call in calls)
@@ -3140,6 +3159,7 @@ def create_router(
                 **cache_summary(calls),
             },
             "cacheGroups": cache_groups(calls),
+            "cacheScopes": cache_scopes(calls),
             "contextPressure": {
                 "current": latest_context["ratio"] if latest_context else None,
                 "peak": max(pressures) if pressures else None,
@@ -3200,20 +3220,42 @@ def create_router(
         next_cursor = str(start + page_size) if start + page_size < len(calls) else None
         return {"runId": run_id, "items": items, "nextCursor": next_cursor, "total": len(calls)}
 
+    @router.get("/runs/{run_id}/graph/versions")
+    async def get_graph_versions(run_id: str):
+        runtime_run = load_run(run_id, readonly=True)
+        if identity_queries is not None:
+            require_run_access(run_id)
+        try:
+            return graph_history(runtime, runtime_run, identity_repositories).projection
+        except (ValueError, KeyError, SQLiteError) as exc:
+            raise HTTPException(status_code=409, detail="graph history is temporarily inconsistent") from exc
+
     @router.get("/runs/{run_id}/graph")
-    async def get_graph(run_id: str):
-        runtime_run = load_run(run_id)
+    async def get_graph(run_id: str, blueprint_id: str | None = Query(default=None, alias="blueprintId", min_length=1, max_length=256)):
+        runtime_run = load_run(run_id, readonly=blueprint_id is not None)
+        if blueprint_id is not None:
+            if identity_queries is not None:
+                require_run_access(run_id)
+            try:
+                snapshot = graph_history(runtime, runtime_run, identity_repositories).snapshots.get(blueprint_id)
+            except (ValueError, KeyError, SQLiteError) as exc:
+                raise HTTPException(status_code=409, detail="graph history is temporarily inconsistent") from exc
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="graph version not found for Run")
+            return snapshot
         if identity_queries is None:
             return project_graph(runtime_run)
         query, _ = require_run_access(run_id)
         tree = query.run_execution_tree(run_id)
         graph = tree.blueprint.graph
+        if runtime_run.acg_blueprint and runtime_run.acg_blueprint != graph:
+            return {**project_graph(runtime_run), "blueprintId": None, "source": "agentos-v2"}
         state = _state(runtime_run)
         return {
             "runId": run_id,
             "blueprintId": tree.blueprint.blueprint_id,
             "graphId": tree.blueprint.graph_id,
-            "graphVersion": tree.run.graph_version,
+            "graphVersion": graph.get("version") or tree.run.graph_version,
             "nodes": list(graph.get("nodes") or []),
             "edges": list(graph.get("edges") or []),
             "taskBindings": [
@@ -3428,10 +3470,6 @@ def create_router(
         """Reuse committed outputs and continue from the selected failed step."""
 
         source_run = load_run(run_id, write=True)
-        # Internal Planner recovery retains its existing authority. Public
-        # operators create successors and cannot rewrite a terminal source.
-        if request.mode == 'current_run':
-            raise HTTPException(409, 'public retry requires successor_run')
         key, fingerprint = _single_step_retry_idempotency(run_id, step_id, request)
         existing = (
             runtime.workflow_store.find_run_by_idempotency_key(key)
@@ -3451,14 +3489,15 @@ def create_router(
             return project_control_run(existing)
         try:
             assert_mutable_run(source_run)
-            retry_run = runtime.prepare_single_step_retry(
-                source_run_id=source_run.run_id,
+            retry = (interaction.operations.prepare_current_run_recovery if request.mode == "current_run"
+                     else runtime.prepare_single_step_retry)
+            retry_run = retry(
+                source_run.run_id,
                 step_id=step_id,
                 reason=request.reason,
                 expected_runtime_revision=request.expected_runtime_revision,
                 idempotency_key=key,
                 idempotency_fingerprint=fingerprint,
-                reuse_source_run=request.mode == "current_run",
             )
             await coordinator.submit(retry_run.run_id)
             return project_control_run(runtime.get_status(retry_run.run_id))
@@ -3468,6 +3507,8 @@ def create_router(
                 extra={"sourceRunId": run_id, "stepId": step_id, "errorType": type(exc).__name__},
             )
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
         except (RuntimeError, SQLiteError) as exc:
             raise HTTPException(status_code=503, detail="step retry preparation or submission interrupted; retry the same clientRequestId and body") from exc
 
@@ -3742,14 +3783,25 @@ def create_router(
     @router.get("/runs/{run_id}/copilot")
     async def get_copilot(run_id: str):
         run = load_run(run_id, readonly=True)
-        return interaction.view(run_id, run)
+        from app.tools.task_approval import TaskApprovalCoordinator
+        return {**interaction.view(run_id, run),
+                **TaskApprovalCoordinator(runtime, None).policy_projection(run)}
 
     @router.post("/runs/{run_id}/copilot/permission")
     async def copilot_permission(run_id: str, request: CopilotPermissionRequest):
         source = load_run(run_id, mutable=True)
-        if source.status.value not in {'pending', 'planning', 'running', 'retrying', 'waiting_review'}:
-            raise HTTPException(409, 'terminal Run permission is immutable')
-        return interaction.set_permission(run_id, request)
+        from app.tools.permissions import get_chat_permission_service
+        from app.tools.task_approval import TaskApprovalCoordinator
+        from contracts.task_operator_policy import TaskOperatorPolicyConflict
+        try:
+            return TaskApprovalCoordinator(runtime, get_chat_permission_service()).update(
+                source, request, current_trusted_user())
+        except TaskOperatorPolicyConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @router.post("/runs/{run_id}/copilot/messages")
     async def copilot_message(run_id: str, request: CopilotMessageRequest):
@@ -3795,6 +3847,8 @@ def create_router(
             return await interaction.preview_operation(run_id, request)
         except (ValueError, KeyError, ReviewConflictError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
 
     @router.post("/runs/{run_id}/copilot/actions", status_code=202)
     async def copilot_action_apply(run_id: str, request: TaskOperationApplyRequest):
@@ -3803,6 +3857,8 @@ def create_router(
             receipt = await interaction.operations.apply(run_id, request)
         except (ValueError, KeyError, ReviewConflictError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="semantic access denied") from exc
         target_id = receipt["receipt"]["runId"]
         target = load_run(target_id)
         if target.status in {WorkflowStatus.PENDING, WorkflowStatus.RETRYING}:

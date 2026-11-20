@@ -49,7 +49,13 @@ def test_cache_summary_is_weighted_and_missing_is_not_zero():
     items = [call(100, 80), call(900, 20)]
     assert cache_summary(items)["cacheHitRatio"] == .1
     assert cache_summary(items)["cacheMissTokens"] == 900
-    assert cache_summary(items + [call(10, 0, False)])["cacheHitRatio"] is None
+    partial = cache_summary(items + [call(10, 0, False), call(10, 11),
+                                     {**call(10, 0), "inputUsageReported": False}])
+    assert partial["cacheHitRatio"] == .1
+    assert partial["cacheUsageReportedCalls"] == 2
+    assert partial["cacheUsageMissingCalls"] == 3
+    assert partial["cacheMeasuredInputTokens"] == 1000
+    assert partial["cacheMeasuredReadTokens"] == 100
     assert cache_summary([call(10, 0)])["cacheHitRatio"] == 0
 
 
@@ -105,5 +111,14 @@ async def test_resource_usage_routes_project_reported_and_missing_cache(tmp_path
             missing = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage")
             assert missing.json()["usage"]["cacheHitRatio"] is None
             assert missing.json()["usage"]["cacheUsageMissingCalls"] == 1
+            latest.trace.append(TraceEvent(eventType="model_called", payload={
+                "scope": "planning", "usage": {"input_tokens": 40, "cache_read_tokens": 20},
+            }))
+            store.save_run(latest)
+            partial = await client.get(f"/agentos/v2/runs/{run.run_id}/resource-usage")
+            assert partial.json()["usage"]["cacheHitRatio"] == .5
+            assert [(item["scope"], item["cacheHitRatio"]) for item in partial.json()["cacheScopes"]] == [
+                ("node", None), ("planning", .5),
+            ]
     finally:
         content.close()

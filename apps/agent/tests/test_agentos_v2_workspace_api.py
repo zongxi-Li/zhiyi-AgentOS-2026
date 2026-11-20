@@ -119,6 +119,12 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
                 execution_state={
                     "outputRefs": {"api-step-node": "output:api-step"},
                     "outputSummaries": {"api-step-node": "API step completed"},
+                    "workspaceReview": {
+                        "schemaVersion": 1, "round": 2, "graphVersion": 1, "status": "reviewing",
+                        "gaps": {"missingReadCount": 0, "missingListingCount": 0, "unsupportedEntryCount": 0},
+                        "rounds": [{"round": 1, "graphVersion": 1, "action": "review", "traceRefs": ["trace:review"]}],
+                        "private": {"grantId": "must-not-appear"},
+                    },
                 },
             ),
         )
@@ -144,6 +150,10 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
         graph = next(item for item in payload["entries"] if item["kind"] == "graph")
         assert graph["graphId"] == blueprint.graph_id
         assert payload["graphNodes"][0]["semanticTaskKey"] == "api_step"
+        assert payload["activeGraph"]["workspaceReview"]["round"] == 2
+        assert payload["activeGraph"]["workspaceReview"]["rounds"][0]["traceRefs"] == ["trace:review"]
+        assert "private" not in payload["activeGraph"]["workspaceReview"]
+        assert [node["nodeId"] for node in payload["activeGraph"]["nodes"]] == ["api-step-node"]
         task_entry = next(item for item in payload["entries"] if item["kind"] == "task")
         assert task_entry["metadata"]["outputRef"] == "output:api-step"
         assert task_entry["metadata"]["outputSummary"] == "API step completed"

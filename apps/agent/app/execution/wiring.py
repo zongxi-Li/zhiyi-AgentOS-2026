@@ -710,6 +710,7 @@ def _assemble_default_runtime(
     # hands 唯一后端：mission 链工具恒走正式五步（收据闭环）。
     from app.tools.formal_workspace import FormalWorkspaceTools
     runtime.tool_runtime = FormalWorkspaceTools(runtime, runtime.tool_runtime)
+    runtime.tool_non_invocation_prover = runtime.tool_runtime.prove_not_dispatched
     register_native_runtime(agent_registry=runtime.agent_registry, workflow_registry=runtime.workflow_registry)
     runtime.plugin_manifests = register_installed_packs(
         agent_registry=runtime.agent_registry,

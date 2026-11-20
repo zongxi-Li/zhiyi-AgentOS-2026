@@ -6,7 +6,12 @@ from support.cache_usage import cache_usage
 
 
 def cache_summary(calls: list[dict[str, Any]]) -> dict[str, Any]:
-    reported = [call for call in calls if call.get("cacheUsageReported")]
+    reported = [
+        call for call in calls
+        if call.get("cacheUsageReported")
+        and call.get("inputUsageReported", True)
+        and call["usage"]["cacheReadTokens"] <= call["usage"]["inputTokens"]
+    ]
     measured_input = sum(call["usage"]["inputTokens"] for call in reported)
     hits = sum(call["usage"]["cacheReadTokens"] for call in reported)
     all_reported = bool(calls) and len(reported) == len(calls)
@@ -14,9 +19,20 @@ def cache_summary(calls: list[dict[str, Any]]) -> dict[str, Any]:
         "cacheUsageReportedCalls": len(reported),
         "cacheUsageMissingCalls": len(calls) - len(reported),
         "cacheMeasuredInputTokens": measured_input,
+        "cacheMeasuredReadTokens": hits,
         "cacheMissTokens": max(0, measured_input - hits) if all_reported else None,
-        "cacheHitRatio": round(hits / measured_input, 4) if all_reported and measured_input else None,
+        "cacheHitRatio": hits / measured_input if measured_input else None,
     }
+
+
+def cache_scopes(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for call in calls:
+        groups.setdefault(call.get("scope") or "node", []).append(call)
+    return [
+        {"scope": scope, "callCount": len(items), **cache_summary(items)}
+        for scope, items in sorted(groups.items())
+    ]
 
 
 def cache_groups(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

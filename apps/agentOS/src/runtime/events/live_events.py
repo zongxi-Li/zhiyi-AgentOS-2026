@@ -48,6 +48,7 @@ class RuntimeEventBroker:
             if owner is not None and owner is not store and getattr(owner, "db_path", None) != getattr(store, "db_path", None):
                 raise ValueError("runtime event Run store identity mismatch")
             self._stores[run_id] = store
+            self._reconcile_display(run_id)
             # Closed Run projections are reloadable; don't retain every Run for
             # the service lifetime. Never evict an observed or dirty projection.
             for old in list(self._stores):
@@ -67,6 +68,38 @@ class RuntimeEventBroker:
             self._displays[run_id] = RuntimeDisplayProjection(store.get_runtime_display(run_id))
             self._sequences[run_id] = self._displays[run_id].sequence
         return self._displays[run_id]
+
+    def _reconcile_display(self, run_id: str) -> None:
+        display = self._display(run_id)
+        store = self._stores.get(run_id, self._store)
+        if display is None or not display.terminal or not callable(getattr(store, "get_run", None)):
+            return
+        try:
+            run = store.get_run(run_id)
+        except KeyError:
+            return
+        if run.status not in {"pending", "planning", "running", "retrying", "waiting_review"}:
+            return
+        state = run.execution_state
+        bindings = state.get("executionBindings", {})
+        current = {step.step_id: bindings[step.step_id]["attemptId"] for step in run.steps
+            if step.status in {"running", "completed"} and isinstance(bindings.get(step.step_id), dict)
+            and isinstance(bindings[step.step_id].get("attemptId"), str)}
+        known: dict[str, set[str]] = defaultdict(set)
+        for key, identity in state.get("attemptIds", {}).items():
+            if isinstance(key, str) and isinstance(identity, str) and len(parts := key.rsplit(":", 2)) == 3:
+                known[parts[0]].add(identity)
+        for item in display.events:
+            if item.get("nodeId") and item.get("attemptId"):
+                known[item["nodeId"]].add(item["attemptId"])
+        display.reopen(current, known)
+        self._sequences[run_id] = max(self._sequences[run_id], display.sequence)
+        self._dirty.add(run_id)
+        if run_id not in self._flushes:
+            timer = Timer(0.25, self._flush, args=(run_id,))
+            timer.daemon = True
+            self._flushes[run_id] = timer
+            timer.start()
 
     def _flush(self, run_id: str) -> None:
         with self._lock:
@@ -105,6 +138,7 @@ class RuntimeEventBroker:
 
     def snapshot(self, run_id: str) -> RuntimeEvent | None:
         with self._lock:
+            self._reconcile_display(run_id)
             display = self._display(run_id)
             self._drain_pending(run_id)
             return RuntimeEvent(eventType="runtime.display.snapshot", runId=run_id,
@@ -137,6 +171,16 @@ class RuntimeEventBroker:
         with self._lock:
             flush_now = False
             display = self._display(run_id)
+            if display is not None and event.attempt_id in display.retired.get(event.node_id, set()):
+                return False
+            if event.event_type in {"run.completed", "run.failed", "run.cancelled", "run.superseded"}:
+                store = self._stores.get(run_id, self._store)
+                if callable(getattr(store, "get_run", None)):
+                    try:
+                        if store.get_run(run_id).status != event.event_type.removeprefix("run."):
+                            return False  # An old publisher cannot close a formally resumed Run.
+                    except KeyError:
+                        return False
             if event.event_type not in {"model.output.delta", "planner.model.output.delta"}:
                 self._drain_pending(run_id)
             self._sequences[run_id] += 1

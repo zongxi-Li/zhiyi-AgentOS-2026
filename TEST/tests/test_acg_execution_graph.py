@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from components.executor.compiler import ACGGraphCompiler, UnsupportedCommunicationModeError
+from components.executor.compiler import ACGGraphCompiler
 from components.executor.graph import ACGConditionalRoute, ACGExecutionGraph, ACGExecutionState, ACGNodeSpec, ACGSuperstepError
 from components.executor.state_graph import ACGStateGraph
 from components.executor.node_runner import ACGNodeRunner
@@ -149,6 +149,35 @@ def test_output_exhaustion_failure_event_preserves_safe_model_audit() -> None:
     assert failed["modelInvocations"][0]["finishReason"] == "length"
     assert failed["modelInvocations"][0]["outputExhausted"] is True
     assert "prompt" not in failed["modelInvocations"][0]
+
+
+def test_json_repair_failure_preserves_each_paid_turn_without_private_bodies() -> None:
+    graph = ACGExecutionGraph(nodes=("understand",))
+    state = ACGExecutionState(runId="run-json-failure")
+
+    async def execute(_step_id, _state):
+        raise StructuredGenerationError("MODEL_JSON_REPAIR_EXHAUSTED", "invalid final candidates", audit={
+            "modelInvocations": [
+                {"provider": "test", "model": "model", "usage": {"total_tokens": 7},
+                 "effectiveReason": "invalid_json_before_repair", "assistantMessage": "private reply"},
+                {"provider": "test", "model": "model", "usage": {"total_tokens": 9},
+                 "effectiveReason": "invalid_json_before_repair", "prompt": "private input"},
+            ], "toolActionsExecuted": 1,
+        })
+
+    async def collect():
+        events = []
+        with pytest.raises(ACGSuperstepError):
+            async for event in graph.astream(state, execute):
+                events.append(event)
+        return events
+
+    failed = next(item for item in asyncio.run(collect()) if item["type"] == "superstep_failed")
+    assert [record["usage"] for record in failed["modelInvocations"]] == [
+        {"total_tokens": 7}, {"total_tokens": 9}]
+    assert "private" not in str(failed)
+    assert "private" not in str(state.model_dump())
+    assert state.completed_step_ids == []
 
 
 def test_compiler_preserves_blackboard_communication_mode() -> None:

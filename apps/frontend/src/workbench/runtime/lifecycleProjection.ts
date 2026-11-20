@@ -41,7 +41,8 @@ export function projectLifecycle(input: {
     workspace?.mission.missionId || '', selectedRunId)].filter((value): value is RunActionCapabilities => Boolean(value))
   offers.sort((a, b) => b.runtimeRevision - a.runtimeRevision)
   const signature = (value: RunActionCapabilities) => JSON.stringify([value.status, value.isSuperseded,
-    value.lineage.supersededByRunId, value.formalActions, ...runCapabilityActions.map(action => value[action])])
+    value.lineage.supersededByRunId, value.formalActions, value.retryMode, value.retryStepId,
+    ...runCapabilityActions.map(action => value[action])])
   const conflict = offers.some(value => value.runtimeRevision === offers[0].runtimeRevision && signature(value) !== signature(offers[0]))
   const capabilities = conflict ? null : offers[0] || null
   const run = !conflict && detail && (!capabilities || detail.runtimeRevision === capabilities.runtimeRevision) ? detail : null
@@ -93,7 +94,8 @@ export function projectLifecycle(input: {
     isReadOnly: historical || !capabilities || !['canCancel', 'canReview', 'canExecuteFormalAction', 'canAnswerPlanner',
       'canCollaborate', 'canResolveToolApproval', 'canDecideRevision', 'canApplyRevision'].some(key => capabilities[key as keyof RunActionCapabilities] === true),
     recommendedEditor, recommendedEntryId, recommendedInspector: inspector,
-    availableActions: selectedRunId ? ['inspect', 'discuss', ...(capabilities?.canRetrySuccessor || capabilities?.canRerunSuccessor ? ['create_successor'] : [])] : ['inspect'],
+    availableActions: selectedRunId ? ['inspect', 'discuss', ...(capabilities?.canRecoverCurrentRun ? ['recover_current_run'] : []),
+      ...(capabilities?.canRetrySuccessor || capabilities?.canRerunSuccessor ? ['create_successor'] : [])] : ['inspect'],
     unavailableReasons, evidenceReferences: evidence,
     notObserved: [...(!run && selectedRunId ? ['runDetail'] : []), ...(!capabilities ? ['actionCapabilities'] : []), ...(!control ? ['formalControl'] : []), 'checkpointRecoveryAuthorization'],
     deliverable, deliveryStatus: phase !== 'COMPLETED' ? 'NOT_COMPLETE' : deliverable ? 'READY' : 'MISSING',

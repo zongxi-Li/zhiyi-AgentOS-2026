@@ -43,6 +43,59 @@ class EntropyBudgetExceededError(ValueError):
     """跨步骤上下文的估算熵超过运行允许的预算，Adapter 尚未被调用。"""
 
 
+def _safe_request_diagnostics(value: object) -> dict[str, Any]:
+    """Keep bounded transport measurements, never arbitrary nested model data."""
+    labels = {
+        "layoutVersion": {"messages.v1", "shared-execution.v1"},
+        "lengthUnit": {"characters"},
+        "role": {"system", "user", "assistant", "tool", "developer", "other"},
+        "segment": {"sharedPolicy", "sharedTask", "capabilityAndSchema", "nodeInput", "continuation", "message"},
+        "version": {"request-budget.v1"},
+        "estimator": {"json-characters-div-3.2.v1"},
+        "status": {"notConfigured", "withinBudget", "exceeded"},
+        "mode": {"observe", "split"},
+        "workingSetMode": {"observe", "split"},
+        "measurement": {"estimate"},
+        "resolution": {"materialSplit", "protectedInputUnchanged"},
+    }
+
+    def select(source, fields):
+        result = {}
+        if not isinstance(source, dict):
+            return result
+        for key in fields:
+            if key not in source:
+                continue
+            item = source[key]
+            if key in labels:
+                valid = isinstance(item, str) and item in labels[key]
+            elif key in {"hash", "sharedPrefixHash"}:
+                valid = item is None or (isinstance(item, str) and len(item) == 64
+                    and all(char in "0123456789abcdef" for char in item))
+            else:
+                valid = item is None or (type(item) is int and item >= 0)
+            if valid:
+                result[key] = item
+        return result
+
+    if not isinstance(value, dict):
+        return {}
+    result = select(value, ("layoutVersion", "lengthUnit", "messageCount", "totalCharacters",
+                            "omittedSegmentCount", "sharedPrefixHash", "sharedPrefixCharacters"))
+    for name, fields in {
+        "requestBudget": ("version", "estimator", "estimatedInputTokens", "status", "totalTokens",
+            "outputReserveTokens", "workingSetTriggerTokens", "workingSetTargetTokens", "workingSetMode",
+            "estimatedTotalTokens"),
+        "workingSet": ("status", "mode", "triggerTokens", "targetTokens", "measurement", "resolution"),
+    }.items():
+        if isinstance(value.get(name), dict):
+            result[name] = select(value[name], fields)
+    if isinstance(value.get("segments"), list):
+        result["segments"] = [select(item, ("index", "role", "segment", "characters", "hash"))
+                              for item in value["segments"][:32] if isinstance(item, dict)]
+    return result
+
+
 class ACGNodeRunner:
     """执行固定节点管线，并仅返回可安全写入执行 State 的摘要和引用。"""
 
@@ -427,7 +480,10 @@ class ACGNodeRunner:
         await self._publish_runtime_event(
             state.run_id,
             RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
-                         attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0),
+                         attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0,
+                         payload={"nodeTitle": step.name, "agentName": agent.profile.agent_name,
+                                  **({"agentRegistration": agent_context.agent_registration.model_dump(by_alias=True, mode="json")}
+                                     if agent_context.agent_registration else {})}),
         )
         resource_adapter = self.resource_execution_adapters.get(step_id)
         # Provider connection failures are transient and can happen after the
@@ -787,13 +843,15 @@ class ACGNodeRunner:
         session = state.debate_sessions.get(step_id)
         if not isinstance(session, dict):
             return
+        max_rounds = session.get("maxRounds")
+        if type(max_rounds) is not int or max_rounds < 1:
+            raise ValueError("DEBATE session requires explicit positive maxRounds")
         applied = session.setdefault("appliedCommitIds", [])
         if commit_id in applied:
             return
         applied.append(commit_id)
         phase = str(session.get("phase") or "propose")
         current_round = int(session.get("round") or 1)
-        max_rounds = int(session.get("maxRounds") or 1)
         if phase == "propose":
             session["phase"] = "critique"
         elif phase == "critique":
@@ -889,17 +947,22 @@ class ACGNodeRunner:
             "requestedOutputTokens", "effectiveOutputTokens", "effectiveReason",
             "outputExhausted", "partIndex", "callChainId",
         }
-        return [
-            {key: value for key, value in record.items() if key in allowed}
-            for record in records
-            if isinstance(record, dict)
-        ]
+        result = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            safe = {key: value for key, value in record.items() if key in allowed}
+            if isinstance(record.get("requestDiagnostics"), dict):
+                safe["requestDiagnostics"] = _safe_request_diagnostics(record["requestDiagnostics"])
+            result.append(safe)
+        return result
 
     @staticmethod
     def _safe_tool_calls(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """裁剪工具调用审计字段，禁止参数正文进入执行事件。"""
         allowed = {"tool", "name", "status", "latencyMs", "errorCode", "executionId", "receiptChecksum",
-                   "runId", "stepId", "attemptId", "commitId", "resourceId", "bindingId", "receiptRef"}
+                   "runId", "stepId", "attemptId", "commitId", "resourceId", "bindingId", "receiptRef",
+                   "requestRef", "workspaceId", "grantId"}
         result: list[dict[str, Any]] = []
         seen: set[tuple[tuple[str, str], ...]] = set()
         for record in records:

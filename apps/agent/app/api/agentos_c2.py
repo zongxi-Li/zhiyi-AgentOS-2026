@@ -128,6 +128,48 @@ def receipt_response(receipt, operation_id):
     }}}
 
 
+def _current_dispatch(conn, run, head):
+    """Read current admission without treating a verified parent as authorization."""
+    from support.stores.execution_dispatch_store import SQLiteExecutionDispatchStore
+
+    SQLiteExecutionDispatchStore.check_schema(conn)
+    command = SQLiteExecutionDispatchStore._latest(conn, run.run_id)
+    if command is None:
+        return None
+    state = run.execution_state
+    if (command.mission_id != run.mission_id or command.run_id != run.run_id
+            or command.graph_id != state.get("graphId")
+            or command.runtime_revision > run.runtime_revision):
+        raise ValueError("Dispatch source mismatch")
+    if (command.graph_version == state.get("graphVersion")
+            and command.permit_id == state.get("executionPermitId")):
+        return command
+
+    # Activation, Permit and Dispatch are separate durable stages. During a
+    # revision the latest admission can still belong to the previous graph.
+    # Prove that relationship in this snapshot, but never reuse its permission.
+    row = conn.execute("SELECT * FROM graph_activations WHERE activation_id=?",
+                       (head.activation_id,)).fetchone() if head else None
+    activation = SQLiteGraphActivationStore._decode_activation(row) if row else None
+    row = conn.execute("SELECT * FROM graph_execution_permits WHERE permit_id=?",
+                       (command.permit_id,)).fetchone()
+    permit = SQLiteExecutionPermitStore._decode(row) if row else None
+    row = conn.execute("SELECT * FROM graph_activations WHERE activation_id=?",
+                       (permit.activation_id,)).fetchone() if permit else None
+    source = SQLiteGraphActivationStore._decode_activation(row) if row else None
+    if (activation is None or activation.status != "ACTIVATED_PAUSED"
+            or activation.source_graph_version != command.graph_version
+            or activation.candidate_graph_version != state.get("graphVersion")
+            or permit is None or permit.status not in {"ISSUED", "REVOKED"}
+            or source is None or source.status != "ACTIVATED_PAUSED"
+            or source.candidate_graph_version != command.graph_version
+            or any(record.run_id != run.run_id or record.mission_id != run.mission_id
+                   or record.graph_id != command.graph_id for record in (activation, permit, source))
+            or permit.graph_version != command.graph_version):
+        raise ValueError("Dispatch source mismatch")
+    return None
+
+
 def project_initial_control(runtime, run):
     """Read existing facts in one snapshot; preserve the legacy lifecycle status."""
     with control_errors():
@@ -189,19 +231,10 @@ def project_initial_control(runtime, run):
                     "graphVersion": head.active_graph_version if head else mat.candidate_graph_version if mat else None,
                 }
                 # Discover an immutable public receipt; never reconcile/start work in GET.
-                from support.stores.execution_dispatch_store import SQLiteExecutionDispatchStore
                 enabled = bool(getattr(runtime, "execution_dispatch_enabled", False))
                 command = None
                 if enabled or conn.execute("SELECT 1 FROM sqlite_master WHERE name='execution_dispatch_commands'").fetchone():
-                    SQLiteExecutionDispatchStore.check_schema(conn)
-                    command = SQLiteExecutionDispatchStore.decode(conn.execute(
-                        "SELECT * FROM execution_dispatch_commands WHERE run_id=?", (current.run_id,)).fetchone())
-                    if command and (command.mission_id != current.mission_id
-                            or command.permit_id != current.execution_state.get("executionPermitId")
-                            or command.graph_id != current.execution_state.get("graphId")
-                            or command.graph_version != current.execution_state.get("graphVersion")
-                            or command.runtime_revision > current.runtime_revision):
-                        raise ValueError("Dispatch source mismatch")
+                    command = _current_dispatch(conn, current, head)
                 result["dispatchEnabled"] = enabled
                 result["dispatch"] = command.public() if command else None
                 # A separately issued durable Permit must not be shown as paused.

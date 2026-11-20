@@ -8,13 +8,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from components.resource.runtime.embedded_runtime import refresh_embedded_agents_runtime, EMBEDDED_AGENTS_RUNTIME_ID
 from components.resource.application.resource_plane import ResourcePlane
+from components.resource.scheduler.models import RequirementReadiness
 from contracts.authority import RuntimeResourceId
 from contracts.compiled_acg import BindingManifest
-from contracts.resource import ExecutionRequirement, RuntimeKind
+from contracts.resource import ExecutionRequirement, NodeHealthStatus, RuntimeKind, RuntimeProfile
 from contracts.workflow import (
     RunExecutionScope,
     RuntimeRunRecord,
@@ -23,6 +25,7 @@ from contracts.workflow import (
 from adapters.agent import AgentRegistry
 from components.resource.agents.pool import AgentPool
 from contracts.acg.schema import RuntimeBlueprintSpec
+from runtime.composition.ports import CollaboratorAccess
 
 
 def execution_requirements_for(binding_manifest: BindingManifest, step_ids, *, domain: str | None):
@@ -55,8 +58,8 @@ def requirements_match_manifest(actual, expected) -> bool:
     """Compare authority-bearing requirements; role preferences remain hints.
 
     Existing Recovery may update ``agentRole`` after a reviewed rebind. That
-    preference affects ranking only; capabilities, policy metadata and every
-    other execution constraint must still match the compiled manifest.
+    preference affects ranking only. Failure isolation can add excluded resource
+    identities; it can never erase a compiled exclusion or relax another field.
     """
     if not isinstance(actual, dict) or set(actual) != set(expected):
         return False
@@ -68,6 +71,9 @@ def requirements_match_manifest(actual, expected) -> bool:
         expected_contract = dict(expected_payload)
         actual_contract.pop("preferences", None)
         expected_contract.pop("preferences", None)
+        excluded = set(actual_contract.pop("excludedRuntimeIds", ()))
+        if not set(expected_contract.pop("excludedRuntimeIds", ())) <= excluded:
+            return False
         if actual_contract != expected_contract:
             return False
     return True
@@ -124,6 +130,31 @@ class RuntimeBindingService:
         refresh_embedded_agents_runtime(self.resource_plane, self.agent_registry)
         self.agent_pool.synchronize()
         self.resource_plane.heartbeat_runtime(EMBEDDED_AGENTS_RUNTIME_ID, source="local")
+
+    def local_candidates(self, run: RuntimeRunRecord | None = None) -> dict[str, tuple[RuntimeProfile, ...]]:
+        """Publish this process's liveness before planning or READY assessment.
+
+        An existing host's administrative profile is not a heartbeat. Preserve
+        its enabled/capacity/draining facts, and let Binder evaluate them along
+        with the current, scoped implementation registrations. Old process
+        registrations and remote endpoints supply no local liveness evidence.
+        """
+        try:
+            host = self.resource_plane.runtime(EMBEDDED_AGENTS_RUNTIME_ID)
+        except KeyError:
+            host = refresh_embedded_agents_runtime(self.resource_plane, self.agent_registry)
+        if (host.kind is RuntimeKind.EXECUTION_BACKEND and host.endpoint is None
+                and host.metadata.get("managedBy") == "bootstrap"
+                and host.metadata.get("runtime") == "embedded-agents"):
+            self.resource_plane.heartbeat_runtime(host.runtime_id, source="local")
+            if self.resource_plane.node_health(host.node_id).status in {
+                    NodeHealthStatus.UNKNOWN, NodeHealthStatus.STALE, NodeHealthStatus.OFFLINE}:
+                # Fresh node observations already prove this deployment alive.
+                # Do not manufacture a new snapshot version on each read: it
+                # would invalidate persisted Planner rounds without new work.
+                self.resource_plane.heartbeat_node(host.node_id)
+        return self.agent_pool.local_candidates(
+            run.execution_scope.agent_ids if run is not None and run.execution_scope is not None else None)
 
     def validate_blueprint_agents(
         self,
@@ -194,4 +225,16 @@ class RuntimeBindingService:
         )
 
 
-__all__ = ["RuntimeBindingService"]
+def assess_run_requirement(services: CollaboratorAccess, run: RuntimeRunRecord,
+                           requirement: ExecutionRequirement, *, now: datetime | None = None) -> RequirementReadiness:
+    """Assess the same current implementation facts consumed by READY binding."""
+    binding = RuntimeBindingService(
+        agent_registry=services.agent_registry,
+        resource_plane=services.resource_plane,
+        resource_execution_adapters=services.resource_execution_adapters,
+    )
+    return services.resource_binder.assess(
+        requirement, now=now, agent_candidates=binding.local_candidates(run))
+
+
+__all__ = ["RuntimeBindingService", "assess_run_requirement"]

@@ -223,7 +223,7 @@ class ACGLowerer:
                             operator=ConditionOperator.IN,
                             cases=cases,
                         ),
-                        maxIterations=policy.max_revisions + 1,
+                        maxIterations=None,
                         onLimit=(
                             "review"
                             if policy.on_exhausted == "human_review"
@@ -232,7 +232,7 @@ class ACGLowerer:
                     ),
                     metadata={
                         "taskPlanPolicy": "verification_loop",
-                        "maxRevisions": policy.max_revisions,
+                        "maxRevisions": None,
                     },
                 )
             )

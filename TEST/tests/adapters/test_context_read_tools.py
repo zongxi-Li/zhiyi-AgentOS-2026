@@ -35,8 +35,8 @@ def setup_reader(tmp_path, *, data=None, budget=None, usage=None, store=None):
 
 def context(reader, model=None):
     return SimpleNamespace(communication_reader=reader, tool_runtime=None, model_runtime=model,
-        step=SimpleNamespace(input={}, step_id="consumer", name="consumer"),
-        run=SimpleNamespace(run_id="run"), commit_id="commit", attempt_id="attempt")
+        step=SimpleNamespace(input={}, step_id="consumer", name="consumer", capability="analysis"),
+        run=SimpleNamespace(run_id="run", input={}, execution_state={}), commit_id="commit", attempt_id="attempt")
 
 
 def test_directory_is_permission_scoped_and_contains_no_body_or_reference(tmp_path):

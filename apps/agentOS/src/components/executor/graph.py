@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from contracts import stable_checksum
 
 
 class ACGExecutionState(BaseModel):
@@ -70,6 +71,11 @@ class ACGExecutionState(BaseModel):
         default_factory=dict, alias="debateSessions"
     )
     checkpoint_id: str | None = Field(default=None, alias="checkpointId")
+    # Host-owned identity for a durable control transition that can return to
+    # an earlier execution body. Omit absent metadata so existing checkpoint
+    # hashes and promoted Permit bodies remain byte-for-byte compatible.
+    checkpoint_transition_key: str | None = Field(default=None, alias="checkpointTransitionKey",
+        exclude_if=lambda value: value is None, max_length=512)
     review_payload: dict[str, Any] | None = Field(default=None, alias="reviewPayload")
     control_review_decisions: dict[str, str] = Field(
         default_factory=dict, alias="controlReviewDecisions"
@@ -363,25 +369,29 @@ class ACGExecutionGraph:
                 ]
                 continue
             next_iteration = current + 1
-            if next_iteration >= loop.max_iterations:
-                if state.control_review_decisions.pop(rule.control_id, None) == "approved":
-                    state.control_frames = [
-                        item
-                        for item in state.control_frames
-                        if item.get("controlId") != rule.control_id
-                    ]
-                    continue
+            region = self._loop_region(loop.body_entry_id, loop.body_exit_id)
+            previous_frame = next((item for item in state.control_frames
+                                   if item.get("controlId") == rule.control_id), {})
+            observed_states = list(previous_frame.get("observedStates") or ())
+            observation = stable_checksum({
+                "outputs": {node_id: route_values.get(node_id, {}) for node_id in sorted(region)},
+                "externalInputRefs": {source: state.output_refs.get(source)
+                                      for source, target_id in self.edges
+                                      if source not in region and target_id in region},
+            })
+            if observation in observed_states:
                 if loop.on_limit == "review":
                     state.review_payload = {
                         "subjectType": "control",
                         "subjectId": rule.control_id,
                         "controlId": rule.control_id,
-                        "reasonCode": "LOOP_MAX_ITERATIONS",
+                        "reasonCode": "LOOP_NO_PROGRESS",
                         "iteration": next_iteration,
+                        "requiredAction": "Provide new evidence or revise the remaining work; acceptance is still unmet.",
                     }
                     return
-                raise RuntimeError(f"LOOP_MAX_ITERATIONS:{rule.control_id}")
-            region = self._loop_region(loop.body_entry_id, loop.body_exit_id)
+                raise RuntimeError(f"LOOP_NO_PROGRESS:{rule.control_id}")
+            observed_states.append(observation)
             state.completed_step_ids = [node_id for node_id in state.completed_step_ids if node_id not in region]
             state.skipped_step_ids = [node_id for node_id in state.skipped_step_ids if node_id not in region]
             state.loop_iterations[rule.control_id] = next_iteration
@@ -393,6 +403,7 @@ class ACGExecutionGraph:
                 "controlType": "loop",
                 "iteration": next_iteration,
                 "region": sorted(region),
+                "observedStates": observed_states,
             }
             state.control_frames = [
                 item for item in state.control_frames if item.get("controlId") != rule.control_id
@@ -569,11 +580,16 @@ class ACGExecutionGraph:
                             "effectiveReason", "outputExhausted", "partIndex", "callChainId",
                             "streamDiagnostics",
                         }
-                        failure_invocations = (
-                            [{key: value for key, value in raw_audit.items() if key in safe_audit_keys}]
-                            if isinstance(raw_audit, dict) and raw_audit
-                            else []
-                        )
+                        # A local Agent conversation can contain several paid
+                        # turns before failing. Preserve each safe projection,
+                        # rather than losing the rejected JSON candidates.
+                        raw_invocations = raw_audit.get("modelInvocations") if isinstance(raw_audit, dict) else None
+                        if not isinstance(raw_invocations, list) or not raw_invocations:
+                            raw_invocations = [raw_audit] if isinstance(raw_audit, dict) and raw_audit else []
+                        failure_invocations = [
+                            {key: value for key, value in record.items() if key in safe_audit_keys}
+                            for record in raw_invocations if isinstance(record, dict)
+                        ]
                         yield {
                             "type": "superstep_failed",
                             "stepId": failures[0],

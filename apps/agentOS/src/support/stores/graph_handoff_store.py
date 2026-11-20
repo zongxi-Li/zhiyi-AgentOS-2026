@@ -47,6 +47,10 @@ class SQLiteGraphHandoffStore(SQLiteGraphActivationStore):
             row = conn.execute(f"SELECT * FROM graph_handoffs WHERE {column}=?", (value,)).fetchone()
         if row is None:
             return None
+        return self._decode_handoff(row)
+
+    @staticmethod
+    def _decode_handoff(row):
         record = GraphHandoffRecord.model_validate_json(row["payload"])
         if (record.handoff_id != row["handoff_id"] or record.idempotency_key != row["idempotency_key"]
                 or record.activation_id != row["activation_id"] or record.run_id != row["run_id"]
@@ -54,6 +58,12 @@ class SQLiteGraphHandoffStore(SQLiteGraphActivationStore):
                 or stable_checksum(record.candidate) != record.candidate_fingerprint):
             raise ValueError("handoff index or checksum mismatch")
         return record
+
+    def list_for_run(self, run_id):
+        """Read the immutable handoff history for one exact Run, in graph order."""
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM graph_handoffs WHERE run_id=? ORDER BY rowid", (run_id,)).fetchall()
+        return tuple(sorted((self._decode_handoff(row) for row in rows), key=lambda record: record.graph_version))
 
     def get_handoff(self, handoff_id):
         return self._read_handoff("handoff_id", handoff_id)
