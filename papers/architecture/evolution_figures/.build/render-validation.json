@@ -1,0 +1,6990 @@
+[
+  {
+    "figure": "g03_en",
+    "width": 1440,
+    "height": 920,
+    "modelCells": 34,
+    "labels": [
+      {
+        "id": "g03_title",
+        "edge": false,
+        "text": "Three graphs with different edge semantics",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 661.484375,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g03_exec-heading",
+        "edge": false,
+        "text": "Execution DAG",
+        "box": {
+          "x": 58,
+          "y": 140,
+          "w": 189.25,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 132,
+          "w": 384,
+          "h": 40
+        }
+      },
+      {
+        "id": "g03_search-heading",
+        "edge": false,
+        "text": "Candidate lineage",
+        "box": {
+          "x": 528,
+          "y": 140,
+          "w": 222.5,
+          "h": 30
+        },
+        "cell": {
+          "x": 528,
+          "y": 132,
+          "w": 384,
+          "h": 40
+        }
+      },
+      {
+        "id": "g03_skill-heading",
+        "edge": false,
+        "text": "Skill relations",
+        "box": {
+          "x": 998,
+          "y": 140,
+          "w": 169.078125,
+          "h": 30
+        },
+        "cell": {
+          "x": 998,
+          "y": 132,
+          "w": 384,
+          "h": 40
+        }
+      },
+      {
+        "id": "g03_input",
+        "edge": false,
+        "text": "Input",
+        "box": {
+          "x": 122.1953125,
+          "y": 263.5,
+          "w": 56.6572265625,
+          "h": 28
+        },
+        "cell": {
+          "x": 80,
+          "y": 230,
+          "w": 140,
+          "h": 90
+        }
+      },
+      {
+        "id": "g03_tool",
+        "edge": false,
+        "text": "Tool",
+        "box": {
+          "x": 327.0625,
+          "y": 263.5,
+          "w": 45.875,
+          "h": 28
+        },
+        "cell": {
+          "x": 280,
+          "y": 230,
+          "w": 140,
+          "h": 90
+        }
+      },
+      {
+        "id": "g03_gate",
+        "edge": false,
+        "text": "Validate",
+        "box": {
+          "x": 214.75,
+          "y": 458.5,
+          "w": 89.5849609375,
+          "h": 28
+        },
+        "cell": {
+          "x": 180,
+          "y": 430,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_output",
+        "edge": false,
+        "text": "Output",
+        "box": {
+          "x": 222.46875,
+          "y": 638.5,
+          "w": 76.10302734375,
+          "h": 28
+        },
+        "cell": {
+          "x": 180,
+          "y": 610,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v0",
+        "edge": false,
+        "text": "G₀",
+        "box": {
+          "x": 619.3984375,
+          "y": 258,
+          "w": 31.203125,
+          "h": 30
+        },
+        "cell": {
+          "x": 555,
+          "y": 230,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v1",
+        "edge": false,
+        "text": "G₁",
+        "box": {
+          "x": 619.3984375,
+          "y": 458,
+          "w": 31.203125,
+          "h": 30
+        },
+        "cell": {
+          "x": 555,
+          "y": 430,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v2",
+        "edge": false,
+        "text": "G₂",
+        "box": {
+          "x": 804.3984375,
+          "y": 458,
+          "w": 31.203125,
+          "h": 30
+        },
+        "cell": {
+          "x": 755,
+          "y": 430,
+          "w": 130,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v3",
+        "edge": false,
+        "text": "G₃",
+        "box": {
+          "x": 714.3984375,
+          "y": 638,
+          "w": 31.203125,
+          "h": 30
+        },
+        "cell": {
+          "x": 650,
+          "y": 610,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_extract",
+        "edge": false,
+        "text": "Extract@v2",
+        "box": {
+          "x": 1115.2109375,
+          "y": 258.5,
+          "w": 129.578125,
+          "h": 28
+        },
+        "cell": {
+          "x": 1040,
+          "y": 230,
+          "w": 280,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_validate",
+        "edge": false,
+        "text": "Validate@v1",
+        "box": {
+          "x": 1108.859375,
+          "y": 458.5,
+          "w": 141.28125,
+          "h": 28
+        },
+        "cell": {
+          "x": 1040,
+          "y": 430,
+          "w": 280,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_report",
+        "edge": false,
+        "text": "Report@v3",
+        "box": {
+          "x": 1116.5859375,
+          "y": 638.5,
+          "w": 126.9150390625,
+          "h": 28
+        },
+        "cell": {
+          "x": 1040,
+          "y": 610,
+          "w": 280,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_e_compose",
+        "edge": true,
+        "text": "compose_with",
+        "box": {
+          "x": 1195,
+          "y": 359,
+          "w": 150,
+          "h": 26.5
+        },
+        "cell": {
+          "x": 1180,
+          "y": 310,
+          "w": 1,
+          "h": 120
+        }
+      },
+      {
+        "id": "g03_e_depends",
+        "edge": true,
+        "text": "depend_on",
+        "box": {
+          "x": 1208,
+          "y": 549,
+          "w": 118,
+          "h": 26.5
+        },
+        "cell": {
+          "x": 1180,
+          "y": 510,
+          "w": 1,
+          "h": 100
+        }
+      },
+      {
+        "id": "g03_roles",
+        "edge": false,
+        "text": "Step order and data flow",
+        "box": {
+          "x": 70,
+          "y": 800,
+          "w": 262.171875,
+          "h": 27
+        },
+        "cell": {
+          "x": 70,
+          "y": 790,
+          "w": 390,
+          "h": 42
+        }
+      },
+      {
+        "id": "g03_versions",
+        "edge": false,
+        "text": "Each node is a whole graph version",
+        "box": {
+          "x": 530,
+          "y": 800,
+          "w": 380.25,
+          "h": 27
+        },
+        "cell": {
+          "x": 530,
+          "y": 790,
+          "w": 420,
+          "h": 42
+        }
+      },
+      {
+        "id": "g03_relations",
+        "edge": false,
+        "text": "Relations do not schedule a run",
+        "box": {
+          "x": 1000,
+          "y": 800,
+          "w": 337.5625,
+          "h": 27
+        },
+        "cell": {
+          "x": 1000,
+          "y": 790,
+          "w": 390,
+          "h": 42
+        }
+      },
+      {
+        "id": "g03_caveat",
+        "edge": false,
+        "text": "Lineage fusion is an optional research extension; it does not merge live executions.",
+        "box": {
+          "x": 65,
+          "y": 872,
+          "w": 846.421875,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 865,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g03_e_exec1",
+        "source": "g03_input",
+        "target": "g03_tool",
+        "points": [
+          {
+            "x": 220,
+            "y": 275
+          },
+          {
+            "x": 280,
+            "y": 275
+          }
+        ]
+      },
+      {
+        "id": "g03_e_exec2",
+        "source": "g03_tool",
+        "target": "g03_gate",
+        "points": [
+          {
+            "x": 350,
+            "y": 320
+          },
+          {
+            "x": 350,
+            "y": 375
+          },
+          {
+            "x": 260,
+            "y": 375
+          },
+          {
+            "x": 260,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_exec3",
+        "source": "g03_gate",
+        "target": "g03_output",
+        "points": [
+          {
+            "x": 260,
+            "y": 510
+          },
+          {
+            "x": 260,
+            "y": 610
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage1",
+        "source": "g03_v0",
+        "target": "g03_v1",
+        "points": [
+          {
+            "x": 635,
+            "y": 310
+          },
+          {
+            "x": 635,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage2",
+        "source": "g03_v0",
+        "target": "g03_v2",
+        "points": [
+          {
+            "x": 715,
+            "y": 270
+          },
+          {
+            "x": 820,
+            "y": 270
+          },
+          {
+            "x": 820,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage3",
+        "source": "g03_v1",
+        "target": "g03_v3",
+        "points": [
+          {
+            "x": 635,
+            "y": 510
+          },
+          {
+            "x": 635,
+            "y": 560
+          },
+          {
+            "x": 690,
+            "y": 560
+          },
+          {
+            "x": 690,
+            "y": 610
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage4",
+        "source": "g03_v2",
+        "target": "g03_v3",
+        "points": [
+          {
+            "x": 820,
+            "y": 510
+          },
+          {
+            "x": 820,
+            "y": 560
+          },
+          {
+            "x": 770,
+            "y": 560
+          },
+          {
+            "x": 770,
+            "y": 610
+          }
+        ]
+      },
+      {
+        "id": "g03_e_compose",
+        "source": "g03_extract",
+        "target": "g03_validate",
+        "points": [
+          {
+            "x": 1180,
+            "y": 310
+          },
+          {
+            "x": 1180,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_depends",
+        "source": "g03_report",
+        "target": "g03_validate",
+        "points": [
+          {
+            "x": 1180,
+            "y": 610
+          },
+          {
+            "x": 1180,
+            "y": 510
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g04_en",
+    "width": 1440,
+    "height": 1000,
+    "modelCells": 27,
+    "labels": [
+      {
+        "id": "g04_title",
+        "edge": false,
+        "text": "Proposal states and version-preserving rollback",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 732.90625,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g04_draft",
+        "edge": false,
+        "text": "DRAFT",
+        "box": {
+          "x": 138.3359375,
+          "y": 248.5,
+          "w": 84.05419921875,
+          "h": 28
+        },
+        "cell": {
+          "x": 70,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_valid",
+        "edge": false,
+        "text": "VALIDATED",
+        "box": {
+          "x": 381.390625,
+          "y": 248.5,
+          "w": 136.21875,
+          "h": 28
+        },
+        "cell": {
+          "x": 340,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_eval",
+        "edge": false,
+        "text": "EVALUATED",
+        "box": {
+          "x": 647.5234375,
+          "y": 248.5,
+          "w": 144.953125,
+          "h": 28
+        },
+        "cell": {
+          "x": 610,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_confirm",
+        "edge": false,
+        "text": "CONFIRMED",
+        "box": {
+          "x": 914.3046875,
+          "y": 248.5,
+          "w": 151.390625,
+          "h": 28
+        },
+        "cell": {
+          "x": 880,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_publish",
+        "edge": false,
+        "text": "PUBLISHED",
+        "box": {
+          "x": 1189.140625,
+          "y": 248.5,
+          "w": 141.71875,
+          "h": 28
+        },
+        "cell": {
+          "x": 1150,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_reject",
+        "edge": false,
+        "text": "REJECTED\nfailed gate",
+        "box": {
+          "x": 176.375,
+          "y": 523.2999877929688,
+          "w": 137.25,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 70,
+          "y": 500,
+          "w": 350,
+          "h": 105
+        }
+      },
+      {
+        "id": "g04_inconclusive",
+        "edge": false,
+        "text": "INCONCLUSIVE\ninsufficient evidence",
+        "box": {
+          "x": 608.1640625,
+          "y": 523.2999877929688,
+          "w": 233.671875,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 550,
+          "y": 500,
+          "w": 350,
+          "h": 105
+        }
+      },
+      {
+        "id": "g04_stale",
+        "edge": false,
+        "text": "STALE\nbase / dependency drift",
+        "box": {
+          "x": 1069.8515625,
+          "y": 523.2999877929688,
+          "w": 271.072265625,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 1030,
+          "y": 500,
+          "w": 350,
+          "h": 105
+        }
+      },
+      {
+        "id": "g04_gate",
+        "edge": false,
+        "text": "Release rechecks authenticated approval, report binding and base-version CAS.",
+        "box": {
+          "x": 65,
+          "y": 661.5,
+          "w": 853.84375,
+          "h": 27
+        },
+        "cell": {
+          "x": 65,
+          "y": 650,
+          "w": 1310,
+          "h": 45
+        }
+      },
+      {
+        "id": "g04_rollbackheading",
+        "edge": false,
+        "text": "Rollback is a new authorized release",
+        "box": {
+          "x": 65,
+          "y": 738.5,
+          "w": 469.6875,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 730,
+          "w": 1310,
+          "h": 40
+        }
+      },
+      {
+        "id": "g04_old",
+        "edge": false,
+        "text": "Published Gₖ",
+        "box": {
+          "x": 145.28125,
+          "y": 838,
+          "w": 150.6416015625,
+          "h": 30
+        },
+        "cell": {
+          "x": 70,
+          "y": 805,
+          "w": 300,
+          "h": 90
+        }
+      },
+      {
+        "id": "g04_proposal",
+        "edge": false,
+        "text": "New proposal\nknown-good content",
+        "box": {
+          "x": 602.9140625,
+          "y": 820.7999877929688,
+          "w": 234.94140625,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 520,
+          "y": 805,
+          "w": 400,
+          "h": 90
+        }
+      },
+      {
+        "id": "g04_next",
+        "edge": false,
+        "text": "New version Gₖ₊₁",
+        "box": {
+          "x": 1137.5546875,
+          "y": 838,
+          "w": 194.890625,
+          "h": 30
+        },
+        "cell": {
+          "x": 1100,
+          "y": 805,
+          "w": 270,
+          "h": 90
+        }
+      },
+      {
+        "id": "g04_footer",
+        "edge": false,
+        "text": "Revalidate compatibility; retain history and pinned runs; never roll back the privacy ledger.",
+        "box": {
+          "x": 65,
+          "y": 947,
+          "w": 912.8125,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 940,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g04_e_normal0",
+        "source": "g04_draft",
+        "target": "g04_valid",
+        "points": [
+          {
+            "x": 290,
+            "y": 260
+          },
+          {
+            "x": 340,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_normal1",
+        "source": "g04_valid",
+        "target": "g04_eval",
+        "points": [
+          {
+            "x": 560,
+            "y": 260
+          },
+          {
+            "x": 610,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_normal2",
+        "source": "g04_eval",
+        "target": "g04_confirm",
+        "points": [
+          {
+            "x": 830,
+            "y": 260
+          },
+          {
+            "x": 880,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_normal3",
+        "source": "g04_confirm",
+        "target": "g04_publish",
+        "points": [
+          {
+            "x": 1100,
+            "y": 260
+          },
+          {
+            "x": 1150,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_reject",
+        "source": "g04_valid",
+        "target": "g04_reject",
+        "points": [
+          {
+            "x": 450,
+            "y": 310
+          },
+          {
+            "x": 450,
+            "y": 420
+          },
+          {
+            "x": 245,
+            "y": 420
+          },
+          {
+            "x": 245,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "g04_e_inc",
+        "source": "g04_eval",
+        "target": "g04_inconclusive",
+        "points": [
+          {
+            "x": 720,
+            "y": 310
+          },
+          {
+            "x": 720,
+            "y": 450
+          },
+          {
+            "x": 725,
+            "y": 450
+          },
+          {
+            "x": 725,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "g04_e_stale",
+        "source": "g04_confirm",
+        "target": "g04_stale",
+        "points": [
+          {
+            "x": 990,
+            "y": 310
+          },
+          {
+            "x": 990,
+            "y": 420
+          },
+          {
+            "x": 1205,
+            "y": 420
+          },
+          {
+            "x": 1205,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "g04_e_rollback1",
+        "source": "g04_old",
+        "target": "g04_proposal",
+        "points": [
+          {
+            "x": 370,
+            "y": 850
+          },
+          {
+            "x": 520,
+            "y": 850
+          }
+        ]
+      },
+      {
+        "id": "g04_e_rollback2",
+        "source": "g04_proposal",
+        "target": "g04_next",
+        "points": [
+          {
+            "x": 920,
+            "y": 850
+          },
+          {
+            "x": 1100,
+            "y": 850
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s01_en",
+    "width": 1440,
+    "height": 940,
+    "modelCells": 22,
+    "labels": [
+      {
+        "id": "s01_title",
+        "edge": false,
+        "text": "From execution evidence to reusable skills",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 652.6875,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s01_abstract-heading",
+        "edge": false,
+        "text": "Evidence and abstraction",
+        "box": {
+          "x": 58,
+          "y": 140,
+          "w": 314.984375,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 132,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "s01_evidence",
+        "edge": false,
+        "text": "Successes + failures\nverified outcomes",
+        "box": {
+          "x": 115.4140625,
+          "y": 235.8000030517578,
+          "w": 239.171875,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 70,
+          "y": 210,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_abstractor",
+        "edge": false,
+        "text": "Infer stable structure\nslots + applicability",
+        "box": {
+          "x": 601.5,
+          "y": 235.8000030517578,
+          "w": 237,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 555,
+          "y": 210,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_candidate",
+        "edge": false,
+        "text": "ADD / PATCH\nimmutable package digest",
+        "box": {
+          "x": 1053.96875,
+          "y": 235.8000030517578,
+          "w": 302.8359375,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 1040,
+          "y": 210,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_assess-heading",
+        "edge": false,
+        "text": "Validation, evaluation and publication",
+        "box": {
+          "x": 57,
+          "y": 520,
+          "w": 466.171875,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 512,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "s01_validate",
+        "edge": false,
+        "text": "Validate package\nschema + program tests",
+        "box": {
+          "x": 1065.1875,
+          "y": 615.7999877929688,
+          "w": 279.625,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 1040,
+          "y": 590,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_compare",
+        "edge": false,
+        "text": "Compare + confirm\nfixed context / fresh tasks",
+        "box": {
+          "x": 572.3203125,
+          "y": 615.7999877929688,
+          "w": 294.359375,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 555,
+          "y": 590,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_publish",
+        "edge": false,
+        "text": "Registry publication\npermission + CAS",
+        "box": {
+          "x": 121.5546875,
+          "y": 615.7999877929688,
+          "w": 226.890625,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 70,
+          "y": 590,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_future",
+        "edge": false,
+        "text": "Future runs retrieve approved immutable versions; source documents never grant execution authority.",
+        "box": {
+          "x": 179.953125,
+          "y": 836.5,
+          "w": 1080.09375,
+          "h": 27
+        },
+        "cell": {
+          "x": 70,
+          "y": 815,
+          "w": 1300,
+          "h": 65
+        }
+      },
+      {
+        "id": "s01_footer",
+        "edge": false,
+        "text": "External skill evolution first; model-weight training remains a separate, later research path.",
+        "box": {
+          "x": 65,
+          "y": 904.5,
+          "w": 916.609375,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 900,
+          "w": 1310,
+          "h": 30
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s01_e_evab",
+        "source": "s01_evidence",
+        "target": "s01_abstractor",
+        "points": [
+          {
+            "x": 400,
+            "y": 265
+          },
+          {
+            "x": 555,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s01_e_abca",
+        "source": "s01_abstractor",
+        "target": "s01_candidate",
+        "points": [
+          {
+            "x": 885,
+            "y": 265
+          },
+          {
+            "x": 1040,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s01_e_cava",
+        "source": "s01_candidate",
+        "target": "s01_validate",
+        "points": [
+          {
+            "x": 1205,
+            "y": 320
+          },
+          {
+            "x": 1205,
+            "y": 590
+          }
+        ]
+      },
+      {
+        "id": "s01_e_vaco",
+        "source": "s01_validate",
+        "target": "s01_compare",
+        "points": [
+          {
+            "x": 1040,
+            "y": 645
+          },
+          {
+            "x": 885,
+            "y": 645
+          }
+        ]
+      },
+      {
+        "id": "s01_e_copu",
+        "source": "s01_compare",
+        "target": "s01_publish",
+        "points": [
+          {
+            "x": 555,
+            "y": 645
+          },
+          {
+            "x": 400,
+            "y": 645
+          }
+        ]
+      },
+      {
+        "id": "s01_e_use",
+        "source": "s01_publish",
+        "target": "s01_future",
+        "points": [
+          {
+            "x": 235,
+            "y": 700
+          },
+          {
+            "x": 235,
+            "y": 790
+          },
+          {
+            "x": 720,
+            "y": 790
+          },
+          {
+            "x": 720,
+            "y": 815
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s02_en",
+    "width": 1440,
+    "height": 940,
+    "modelCells": 28,
+    "labels": [
+      {
+        "id": "s02_title",
+        "edge": false,
+        "text": "Immutable skill packages and runtime retrieval",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 711.390625,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s02_package-heading",
+        "edge": false,
+        "text": "Immutable skill package",
+        "box": {
+          "x": 58,
+          "y": 130,
+          "w": 299.140625,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 122,
+          "w": 444,
+          "h": 40
+        }
+      },
+      {
+        "id": "s02_runtime-heading",
+        "edge": false,
+        "text": "Version-filtered retrieval and execution",
+        "box": {
+          "x": 597,
+          "y": 130,
+          "w": 480.71875,
+          "h": 30
+        },
+        "cell": {
+          "x": 598,
+          "y": 122,
+          "w": 784,
+          "h": 40
+        }
+      },
+      {
+        "id": "s02_identity",
+        "edge": false,
+        "text": "Identity + provenance\nskillId / version / digest",
+        "box": {
+          "x": 149.21875,
+          "y": 213.3000030517578,
+          "w": 262.3251953125,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 65,
+          "y": 190,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_contract",
+        "edge": false,
+        "text": "Contract + limits\ninputs / slots / failure modes",
+        "box": {
+          "x": 118.8671875,
+          "y": 373.29998779296875,
+          "w": 322.265625,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 65,
+          "y": 350,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_resources",
+        "edge": false,
+        "text": "Procedure + resources\nsteps / scripts / dependencies",
+        "box": {
+          "x": 108.734375,
+          "y": 533.2999877929688,
+          "w": 342.53125,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 65,
+          "y": 510,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_evidence",
+        "edge": false,
+        "text": "Verified evidence\nreports / counterexamples",
+        "box": {
+          "x": 129.703125,
+          "y": 693.2999877929688,
+          "w": 300.59375,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 65,
+          "y": 670,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_request",
+        "edge": false,
+        "text": "Task + run snapshot",
+        "box": {
+          "x": 663.2890625,
+          "y": 225.5,
+          "w": 234.1923828125,
+          "h": 30
+        },
+        "cell": {
+          "x": 620,
+          "y": 190,
+          "w": 320,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_recall",
+        "edge": false,
+        "text": "Hybrid retrieval\nkeywords + embeddings",
+        "box": {
+          "x": 1054.4453125,
+          "y": 208.3000030517578,
+          "w": 281.109375,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 1030,
+          "y": 190,
+          "w": 330,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_filter",
+        "edge": false,
+        "text": "Contract / access filter\ncompatible versions only",
+        "box": {
+          "x": 1058.125,
+          "y": 399.5,
+          "w": 274.24267578125,
+          "h": 58
+        },
+        "cell": {
+          "x": 1030,
+          "y": 380,
+          "w": 330,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_rank",
+        "edge": false,
+        "text": "Rerank + token budget",
+        "box": {
+          "x": 653.171875,
+          "y": 416,
+          "w": 254.7041015625,
+          "h": 28
+        },
+        "cell": {
+          "x": 620,
+          "y": 380,
+          "w": 320,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_bind",
+        "edge": false,
+        "text": "Pin exact skill versions",
+        "box": {
+          "x": 654.2578125,
+          "y": 606,
+          "w": 251.484375,
+          "h": 28
+        },
+        "cell": {
+          "x": 620,
+          "y": 570,
+          "w": 320,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_execute",
+        "edge": false,
+        "text": "Invoke + verify outcome",
+        "box": {
+          "x": 1062.640625,
+          "y": 606,
+          "w": 264.8056640625,
+          "h": 28
+        },
+        "cell": {
+          "x": 1030,
+          "y": 570,
+          "w": 330,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_usage",
+        "edge": false,
+        "text": "retrieved → injected → invoked → verified",
+        "box": {
+          "x": 765.8984375,
+          "y": 754,
+          "w": 448.203125,
+          "h": 27
+        },
+        "cell": {
+          "x": 620,
+          "y": 735,
+          "w": 740,
+          "h": 60
+        }
+      },
+      {
+        "id": "s02_footer1",
+        "edge": false,
+        "text": "Indexes derive from package metadata; the run snapshot limits eligible versions and capabilities.",
+        "box": {
+          "x": 65,
+          "y": 857,
+          "w": 981.875,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 850,
+          "w": 1310,
+          "h": 35
+        }
+      },
+      {
+        "id": "s02_footer2",
+        "edge": false,
+        "text": "Retrieval is not usage, and usage is not proof of contribution.",
+        "box": {
+          "x": 65,
+          "y": 904.5,
+          "w": 618.828125,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 900,
+          "w": 1310,
+          "h": 30
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s02_e_request",
+        "source": "s02_request",
+        "target": "s02_recall",
+        "points": [
+          {
+            "x": 940,
+            "y": 237.5
+          },
+          {
+            "x": 1030,
+            "y": 237.50000000000003
+          }
+        ]
+      },
+      {
+        "id": "s02_e_filter",
+        "source": "s02_recall",
+        "target": "s02_filter",
+        "points": [
+          {
+            "x": 1195,
+            "y": 285
+          },
+          {
+            "x": 1195,
+            "y": 380
+          }
+        ]
+      },
+      {
+        "id": "s02_e_rank",
+        "source": "s02_filter",
+        "target": "s02_rank",
+        "points": [
+          {
+            "x": 1030,
+            "y": 427.5
+          },
+          {
+            "x": 940,
+            "y": 427.5
+          }
+        ]
+      },
+      {
+        "id": "s02_e_bind",
+        "source": "s02_rank",
+        "target": "s02_bind",
+        "points": [
+          {
+            "x": 780,
+            "y": 475
+          },
+          {
+            "x": 780,
+            "y": 570
+          }
+        ]
+      },
+      {
+        "id": "s02_e_execute",
+        "source": "s02_bind",
+        "target": "s02_execute",
+        "points": [
+          {
+            "x": 940,
+            "y": 617.5
+          },
+          {
+            "x": 1030,
+            "y": 617.5
+          }
+        ]
+      },
+      {
+        "id": "s02_e_usage",
+        "source": "s02_execute",
+        "target": "s02_usage",
+        "points": [
+          {
+            "x": 1195,
+            "y": 665
+          },
+          {
+            "x": 1195,
+            "y": 705
+          },
+          {
+            "x": 990,
+            "y": 705
+          },
+          {
+            "x": 990,
+            "y": 735
+          }
+        ]
+      },
+      {
+        "id": "s02_e_index",
+        "source": "s02_identity",
+        "target": "s02_recall",
+        "points": [
+          {
+            "x": 495,
+            "y": 242.5
+          },
+          {
+            "x": 550,
+            "y": 242.5
+          },
+          {
+            "x": 550,
+            "y": 170
+          },
+          {
+            "x": 1195,
+            "y": 170
+          },
+          {
+            "x": 1195,
+            "y": 190
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s03_en",
+    "width": 1440,
+    "height": 940,
+    "modelCells": 22,
+    "labels": [
+      {
+        "id": "s03_title",
+        "edge": false,
+        "text": "Controlled evaluation of a skill update",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 577.859375,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s03_context",
+        "edge": false,
+        "text": "Freeze graph, model, tools, retriever and environment; predeclare sampling and evaluation rules.",
+        "box": {
+          "x": 183.59375,
+          "y": 146,
+          "w": 1072.8125,
+          "h": 28
+        },
+        "cell": {
+          "x": 70,
+          "y": 115,
+          "w": 1300,
+          "h": 85
+        }
+      },
+      {
+        "id": "s03_tasks",
+        "edge": false,
+        "text": "Selection task set\npaired task IDs\nplanned repetitions",
+        "box": {
+          "x": 90.140625,
+          "y": 325.20001220703125,
+          "w": 219.71875,
+          "h": 92.39999389648438
+        },
+        "cell": {
+          "x": 70,
+          "y": 295,
+          "w": 260,
+          "h": 150
+        }
+      },
+      {
+        "id": "s03_none",
+        "edge": false,
+        "text": "No target skill\nmatched context budget",
+        "box": {
+          "x": 524.0703125,
+          "y": 262,
+          "w": 267.89990234375,
+          "h": 58
+        },
+        "cell": {
+          "x": 485,
+          "y": 240,
+          "w": 345,
+          "h": 100
+        }
+      },
+      {
+        "id": "s03_base",
+        "edge": false,
+        "text": "Base skill S₀\nfixed graph G₀",
+        "box": {
+          "x": 576.1796875,
+          "y": 432,
+          "w": 161.640625,
+          "h": 58
+        },
+        "cell": {
+          "x": 485,
+          "y": 410,
+          "w": 345,
+          "h": 100
+        }
+      },
+      {
+        "id": "s03_new",
+        "edge": false,
+        "text": "Candidate skill S₁\nfixed graph G₀",
+        "box": {
+          "x": 559.1171875,
+          "y": 602,
+          "w": 196.765625,
+          "h": 58
+        },
+        "cell": {
+          "x": 485,
+          "y": 580,
+          "w": 345,
+          "h": 100
+        }
+      },
+      {
+        "id": "s03_outcomes",
+        "edge": false,
+        "text": "Paired outcomes\nquality / cost / misuse",
+        "box": {
+          "x": 1115.5078125,
+          "y": 437,
+          "w": 239.0732421875,
+          "h": 58
+        },
+        "cell": {
+          "x": 1100,
+          "y": 410,
+          "w": 270,
+          "h": 110
+        }
+      },
+      {
+        "id": "s03_fresh",
+        "edge": false,
+        "text": "Fresh confirmatory task set\nseparate content lineage and time",
+        "box": {
+          "x": 306.671875,
+          "y": 777,
+          "w": 376.744140625,
+          "h": 58
+        },
+        "cell": {
+          "x": 70,
+          "y": 760,
+          "w": 850,
+          "h": 90
+        }
+      },
+      {
+        "id": "s03_confirm",
+        "edge": false,
+        "text": "Freeze → confirm\nnew task split",
+        "box": {
+          "x": 1135.6640625,
+          "y": 777,
+          "w": 198.671875,
+          "h": 58
+        },
+        "cell": {
+          "x": 1100,
+          "y": 760,
+          "w": 270,
+          "h": 90
+        }
+      },
+      {
+        "id": "s03_footer",
+        "edge": false,
+        "text": "Joint search: compare G₀S₀, G₁S₀, G₀S₁ and G₁S₁; shared reward is not causal attribution.",
+        "box": {
+          "x": 65,
+          "y": 897,
+          "w": 927.75,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 890,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s03_e_input0",
+        "source": "s03_tasks",
+        "target": "s03_none",
+        "points": [
+          {
+            "x": 330,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 290
+          },
+          {
+            "x": 485,
+            "y": 290
+          }
+        ]
+      },
+      {
+        "id": "s03_e_output0",
+        "source": "s03_none",
+        "target": "s03_outcomes",
+        "points": [
+          {
+            "x": 830,
+            "y": 290
+          },
+          {
+            "x": 950,
+            "y": 290
+          },
+          {
+            "x": 950,
+            "y": 432
+          },
+          {
+            "x": 1100,
+            "y": 432
+          }
+        ]
+      },
+      {
+        "id": "s03_e_input1",
+        "source": "s03_tasks",
+        "target": "s03_base",
+        "points": [
+          {
+            "x": 330,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 460
+          },
+          {
+            "x": 485,
+            "y": 460
+          }
+        ]
+      },
+      {
+        "id": "s03_e_output1",
+        "source": "s03_base",
+        "target": "s03_outcomes",
+        "points": [
+          {
+            "x": 830,
+            "y": 460
+          },
+          {
+            "x": 950,
+            "y": 460
+          },
+          {
+            "x": 950,
+            "y": 465
+          },
+          {
+            "x": 1100,
+            "y": 465
+          }
+        ]
+      },
+      {
+        "id": "s03_e_input2",
+        "source": "s03_tasks",
+        "target": "s03_new",
+        "points": [
+          {
+            "x": 330,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 630
+          },
+          {
+            "x": 485,
+            "y": 630
+          }
+        ]
+      },
+      {
+        "id": "s03_e_output2",
+        "source": "s03_new",
+        "target": "s03_outcomes",
+        "points": [
+          {
+            "x": 830,
+            "y": 630
+          },
+          {
+            "x": 950,
+            "y": 630
+          },
+          {
+            "x": 950,
+            "y": 498
+          },
+          {
+            "x": 1100,
+            "y": 498
+          }
+        ]
+      },
+      {
+        "id": "s03_e_context",
+        "source": "s03_context",
+        "target": "s03_tasks",
+        "points": [
+          {
+            "x": 720,
+            "y": 200
+          },
+          {
+            "x": 720,
+            "y": 220
+          },
+          {
+            "x": 200,
+            "y": 220
+          },
+          {
+            "x": 200,
+            "y": 295
+          }
+        ]
+      },
+      {
+        "id": "s03_e_fresh",
+        "source": "s03_fresh",
+        "target": "s03_confirm",
+        "points": [
+          {
+            "x": 920,
+            "y": 805
+          },
+          {
+            "x": 1100,
+            "y": 805
+          }
+        ]
+      },
+      {
+        "id": "s03_e_confirm",
+        "source": "s03_outcomes",
+        "target": "s03_confirm",
+        "points": [
+          {
+            "x": 1235,
+            "y": 520
+          },
+          {
+            "x": 1235,
+            "y": 760
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s04_en",
+    "width": 1440,
+    "height": 950,
+    "modelCells": 20,
+    "labels": [
+      {
+        "id": "s04_title",
+        "edge": false,
+        "text": "Skill lifecycle and orthogonal retrieval policy",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 677.75,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s04_candidate",
+        "edge": false,
+        "text": "candidate",
+        "box": {
+          "x": 163.6171875,
+          "y": 253,
+          "w": 112.765625,
+          "h": 30
+        },
+        "cell": {
+          "x": 100,
+          "y": 210,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_verified",
+        "edge": false,
+        "text": "verified",
+        "box": {
+          "x": 518.0859375,
+          "y": 253,
+          "w": 83.828125,
+          "h": 30
+        },
+        "cell": {
+          "x": 430,
+          "y": 210,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_deprecated",
+        "edge": false,
+        "text": "deprecated",
+        "box": {
+          "x": 844.9453125,
+          "y": 253,
+          "w": 130.109375,
+          "h": 30
+        },
+        "cell": {
+          "x": 790,
+          "y": 210,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_retired",
+        "edge": false,
+        "text": "retired",
+        "box": {
+          "x": 1203.1484375,
+          "y": 253,
+          "w": 73.703125,
+          "h": 30
+        },
+        "cell": {
+          "x": 1120,
+          "y": 210,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_e_newversion",
+        "edge": true,
+        "text": "new candidate version",
+        "box": {
+          "x": 274,
+          "y": 107,
+          "w": 231,
+          "h": 26.5
+        },
+        "cell": {
+          "x": 220,
+          "y": 140,
+          "w": 340,
+          "h": 70
+        }
+      },
+      {
+        "id": "s04_archive",
+        "edge": false,
+        "text": "Exploration archive\nrejected / inconclusive",
+        "box": {
+          "x": 117.09375,
+          "y": 525.7999877929688,
+          "w": 255.8125,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 75,
+          "y": 500,
+          "w": 340,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_retrieval",
+        "edge": false,
+        "text": "Retrieval policy (orthogonal)\nACTIVE ↔ DORMANT\nprotect rare capabilities",
+        "box": {
+          "x": 539.3671875,
+          "y": 527,
+          "w": 311.265625,
+          "h": 88
+        },
+        "cell": {
+          "x": 455,
+          "y": 500,
+          "w": 480,
+          "h": 140
+        }
+      },
+      {
+        "id": "s04_history",
+        "edge": false,
+        "text": "Retain history\npinned references",
+        "box": {
+          "x": 1139.9296875,
+          "y": 527,
+          "w": 200.140625,
+          "h": 58
+        },
+        "cell": {
+          "x": 1120,
+          "y": 500,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_impact",
+        "edge": false,
+        "text": "Dependency change: recheck affected graphs before adopting a new version\nRetirement ends default discovery; historical runs keep their exact references",
+        "box": {
+          "x": 292.7109375,
+          "y": 767,
+          "w": 854.578125,
+          "h": 58
+        },
+        "cell": {
+          "x": 70,
+          "y": 740,
+          "w": 1300,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_footer",
+        "edge": false,
+        "text": "Low usage does not establish low value; dormant is a retrieval mode, not a quality verdict.",
+        "box": {
+          "x": 65,
+          "y": 902,
+          "w": 914.109375,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 895,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s04_e_verify",
+        "source": "s04_candidate",
+        "target": "s04_verified",
+        "points": [
+          {
+            "x": 340,
+            "y": 265
+          },
+          {
+            "x": 430,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s04_e_deprecate",
+        "source": "s04_verified",
+        "target": "s04_deprecated",
+        "points": [
+          {
+            "x": 690,
+            "y": 265
+          },
+          {
+            "x": 790,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s04_e_retire",
+        "source": "s04_deprecated",
+        "target": "s04_retired",
+        "points": [
+          {
+            "x": 1030,
+            "y": 265
+          },
+          {
+            "x": 1120,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s04_e_newversion",
+        "source": "s04_verified",
+        "target": "s04_candidate",
+        "points": [
+          {
+            "x": 560,
+            "y": 210
+          },
+          {
+            "x": 560,
+            "y": 140
+          },
+          {
+            "x": 220,
+            "y": 140
+          },
+          {
+            "x": 220,
+            "y": 210
+          }
+        ]
+      },
+      {
+        "id": "s04_e_archive",
+        "source": "s04_candidate",
+        "target": "s04_archive",
+        "points": [
+          {
+            "x": 220,
+            "y": 320
+          },
+          {
+            "x": 220,
+            "y": 450
+          },
+          {
+            "x": 245,
+            "y": 450
+          },
+          {
+            "x": 245,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "s04_e_index",
+        "source": "s04_verified",
+        "target": "s04_retrieval",
+        "points": [
+          {
+            "x": 560,
+            "y": 320
+          },
+          {
+            "x": 560,
+            "y": 420
+          },
+          {
+            "x": 695,
+            "y": 420
+          },
+          {
+            "x": 695,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "s04_e_history",
+        "source": "s04_retired",
+        "target": "s04_history",
+        "points": [
+          {
+            "x": 1240,
+            "y": 320
+          },
+          {
+            "x": 1240,
+            "y": 500
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "j01_en",
+    "width": 1440,
+    "height": 1060,
+    "modelCells": 24,
+    "labels": [
+      {
+        "id": "j01_title",
+        "edge": false,
+        "text": "Coherent graph–skill release through a manifest",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 734.765625,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "j01_graph",
+        "edge": false,
+        "text": "Graph proposal\nbase graph + candidate digest",
+        "box": {
+          "x": 165.4453125,
+          "y": 165.8000030517578,
+          "w": 349.8720703125,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 70,
+          "y": 135,
+          "w": 540,
+          "h": 120
+        }
+      },
+      {
+        "id": "j01_skill",
+        "edge": false,
+        "text": "Skill proposal\nbase skill + candidate digest",
+        "box": {
+          "x": 937.03125,
+          "y": 165.8000030517578,
+          "w": 326.703125,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 830,
+          "y": 135,
+          "w": 540,
+          "h": 120
+        }
+      },
+      {
+        "id": "j01_report",
+        "edge": false,
+        "text": "Independent evaluation\ncandidate / data / dependency digests",
+        "box": {
+          "x": 509.421875,
+          "y": 377,
+          "w": 421.15625,
+          "h": 58
+        },
+        "cell": {
+          "x": 450,
+          "y": 350,
+          "w": 540,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_stage",
+        "edge": false,
+        "text": "Stage immutable artifacts\ncompiled graph + skills",
+        "box": {
+          "x": 93.9609375,
+          "y": 597,
+          "w": 282.078125,
+          "h": 58
+        },
+        "cell": {
+          "x": 70,
+          "y": 570,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_cas",
+        "edge": false,
+        "text": "Verify bindings + auth\nCAS release manifest",
+        "box": {
+          "x": 599.109375,
+          "y": 597,
+          "w": 242.82666015625,
+          "h": 58
+        },
+        "cell": {
+          "x": 550,
+          "y": 570,
+          "w": 340,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_manifest",
+        "edge": false,
+        "text": "Active manifest Mₖ₊₁\nall pinned versions",
+        "box": {
+          "x": 1093.6328125,
+          "y": 597,
+          "w": 221.734375,
+          "h": 58
+        },
+        "cell": {
+          "x": 1040,
+          "y": 570,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_snapshots-heading",
+        "edge": false,
+        "text": "Execution snapshots",
+        "box": {
+          "x": 518,
+          "y": 780,
+          "w": 261.5,
+          "h": 30
+        },
+        "cell": {
+          "x": 518,
+          "y": 772,
+          "w": 864,
+          "h": 40
+        }
+      },
+      {
+        "id": "j01_old",
+        "edge": false,
+        "text": "Existing run snapshot\nkeeps Mₖ",
+        "box": {
+          "x": 600.484375,
+          "y": 852,
+          "w": 240.080078125,
+          "h": 58
+        },
+        "cell": {
+          "x": 550,
+          "y": 825,
+          "w": 340,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_new",
+        "edge": false,
+        "text": "New run snapshot\nresolve exact versions",
+        "box": {
+          "x": 1081.3359375,
+          "y": 852,
+          "w": 247.328125,
+          "h": 58
+        },
+        "cell": {
+          "x": 1040,
+          "y": 825,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_rollback",
+        "edge": false,
+        "text": "Rollback as Mₖ₊₂\nknown-good references",
+        "box": {
+          "x": 104.359375,
+          "y": 852,
+          "w": 261.28125,
+          "h": 58
+        },
+        "cell": {
+          "x": 70,
+          "y": 825,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_footer",
+        "edge": false,
+        "text": "One atomic manifest pointer; stores may be separate. Privacy consumption remains independent.",
+        "box": {
+          "x": 65,
+          "y": 1012,
+          "w": 993.34375,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 1005,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "j01_e_graphreport",
+        "source": "j01_graph",
+        "target": "j01_report",
+        "points": [
+          {
+            "x": 340,
+            "y": 255
+          },
+          {
+            "x": 340,
+            "y": 300
+          },
+          {
+            "x": 585,
+            "y": 300
+          },
+          {
+            "x": 585.0000000000001,
+            "y": 350
+          }
+        ]
+      },
+      {
+        "id": "j01_e_skillreport",
+        "source": "j01_skill",
+        "target": "j01_report",
+        "points": [
+          {
+            "x": 1100,
+            "y": 255
+          },
+          {
+            "x": 1100,
+            "y": 300
+          },
+          {
+            "x": 855,
+            "y": 300
+          },
+          {
+            "x": 855,
+            "y": 350
+          }
+        ]
+      },
+      {
+        "id": "j01_e_stage",
+        "source": "j01_report",
+        "target": "j01_stage",
+        "points": [
+          {
+            "x": 450,
+            "y": 405.00000000000006
+          },
+          {
+            "x": 235,
+            "y": 405
+          },
+          {
+            "x": 235,
+            "y": 570
+          }
+        ]
+      },
+      {
+        "id": "j01_e_reportcas",
+        "source": "j01_report",
+        "target": "j01_cas",
+        "points": [
+          {
+            "x": 720,
+            "y": 460
+          },
+          {
+            "x": 720,
+            "y": 570
+          }
+        ]
+      },
+      {
+        "id": "j01_e_stagecas",
+        "source": "j01_stage",
+        "target": "j01_cas",
+        "points": [
+          {
+            "x": 400,
+            "y": 625
+          },
+          {
+            "x": 550,
+            "y": 625
+          }
+        ]
+      },
+      {
+        "id": "j01_e_casmanifest",
+        "source": "j01_cas",
+        "target": "j01_manifest",
+        "points": [
+          {
+            "x": 890,
+            "y": 625
+          },
+          {
+            "x": 1040,
+            "y": 625
+          }
+        ]
+      },
+      {
+        "id": "j01_e_newrun",
+        "source": "j01_manifest",
+        "target": "j01_new",
+        "points": [
+          {
+            "x": 1205,
+            "y": 680
+          },
+          {
+            "x": 1205,
+            "y": 825
+          }
+        ]
+      },
+      {
+        "id": "j01_e_rollback",
+        "source": "j01_rollback",
+        "target": "j01_cas",
+        "points": [
+          {
+            "x": 400,
+            "y": 880
+          },
+          {
+            "x": 460,
+            "y": 880
+          },
+          {
+            "x": 460,
+            "y": 735
+          },
+          {
+            "x": 720,
+            "y": 735
+          },
+          {
+            "x": 720,
+            "y": 680
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g03_zh",
+    "width": 1440,
+    "height": 920,
+    "modelCells": 34,
+    "labels": [
+      {
+        "id": "g03_title",
+        "edge": false,
+        "text": "三类图的对象与边语义",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 320,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g03_exec-heading",
+        "edge": false,
+        "text": "执行依赖图",
+        "box": {
+          "x": 58,
+          "y": 136,
+          "w": 130,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 132,
+          "w": 384,
+          "h": 40
+        }
+      },
+      {
+        "id": "g03_search-heading",
+        "edge": false,
+        "text": "候选版本血缘图",
+        "box": {
+          "x": 528,
+          "y": 136,
+          "w": 182,
+          "h": 35
+        },
+        "cell": {
+          "x": 528,
+          "y": 132,
+          "w": 384,
+          "h": 40
+        }
+      },
+      {
+        "id": "g03_skill-heading",
+        "edge": false,
+        "text": "技能关系图",
+        "box": {
+          "x": 998,
+          "y": 136,
+          "w": 130,
+          "h": 35
+        },
+        "cell": {
+          "x": 998,
+          "y": 132,
+          "w": 384,
+          "h": 40
+        }
+      },
+      {
+        "id": "g03_input",
+        "edge": false,
+        "text": "输入",
+        "box": {
+          "x": 125,
+          "y": 260.5,
+          "w": 50,
+          "h": 33
+        },
+        "cell": {
+          "x": 80,
+          "y": 230,
+          "w": 140,
+          "h": 90
+        }
+      },
+      {
+        "id": "g03_tool",
+        "edge": false,
+        "text": "工具",
+        "box": {
+          "x": 325,
+          "y": 260.5,
+          "w": 50,
+          "h": 33
+        },
+        "cell": {
+          "x": 280,
+          "y": 230,
+          "w": 140,
+          "h": 90
+        }
+      },
+      {
+        "id": "g03_gate",
+        "edge": false,
+        "text": "验证",
+        "box": {
+          "x": 234,
+          "y": 455.5,
+          "w": 51,
+          "h": 33
+        },
+        "cell": {
+          "x": 180,
+          "y": 430,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_output",
+        "edge": false,
+        "text": "输出",
+        "box": {
+          "x": 235,
+          "y": 635.5,
+          "w": 50,
+          "h": 33
+        },
+        "cell": {
+          "x": 180,
+          "y": 610,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v0",
+        "edge": false,
+        "text": "G₀",
+        "box": {
+          "x": 619.84375,
+          "y": 254,
+          "w": 30.3125,
+          "h": 35
+        },
+        "cell": {
+          "x": 555,
+          "y": 230,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v1",
+        "edge": false,
+        "text": "G₁",
+        "box": {
+          "x": 619.84375,
+          "y": 454,
+          "w": 30.3125,
+          "h": 35
+        },
+        "cell": {
+          "x": 555,
+          "y": 430,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v2",
+        "edge": false,
+        "text": "G₂",
+        "box": {
+          "x": 804.84375,
+          "y": 454,
+          "w": 30.3125,
+          "h": 35
+        },
+        "cell": {
+          "x": 755,
+          "y": 430,
+          "w": 130,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_v3",
+        "edge": false,
+        "text": "G₃",
+        "box": {
+          "x": 714.84375,
+          "y": 634,
+          "w": 30.3125,
+          "h": 35
+        },
+        "cell": {
+          "x": 650,
+          "y": 610,
+          "w": 160,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_extract",
+        "edge": false,
+        "text": "抽取技能@v2",
+        "box": {
+          "x": 1103.2109375,
+          "y": 255.5,
+          "w": 153.578125,
+          "h": 33
+        },
+        "cell": {
+          "x": 1040,
+          "y": 230,
+          "w": 280,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_validate",
+        "edge": false,
+        "text": "核验技能@v1",
+        "box": {
+          "x": 1103.2109375,
+          "y": 455.5,
+          "w": 153.578125,
+          "h": 33
+        },
+        "cell": {
+          "x": 1040,
+          "y": 430,
+          "w": 280,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_report",
+        "edge": false,
+        "text": "报告技能@v3",
+        "box": {
+          "x": 1103.2109375,
+          "y": 635.5,
+          "w": 153.578125,
+          "h": 33
+        },
+        "cell": {
+          "x": 1040,
+          "y": 610,
+          "w": 280,
+          "h": 80
+        }
+      },
+      {
+        "id": "g03_e_compose",
+        "edge": true,
+        "text": "可组合",
+        "box": {
+          "x": 1234,
+          "y": 356,
+          "w": 71,
+          "h": 30.5
+        },
+        "cell": {
+          "x": 1180,
+          "y": 310,
+          "w": 1,
+          "h": 120
+        }
+      },
+      {
+        "id": "g03_e_depends",
+        "edge": true,
+        "text": "依赖",
+        "box": {
+          "x": 1242,
+          "y": 546,
+          "w": 49,
+          "h": 30.5
+        },
+        "cell": {
+          "x": 1180,
+          "y": 510,
+          "w": 1,
+          "h": 100
+        }
+      },
+      {
+        "id": "g03_roles",
+        "edge": false,
+        "text": "步骤顺序与数据流",
+        "box": {
+          "x": 70,
+          "y": 797,
+          "w": 193,
+          "h": 31
+        },
+        "cell": {
+          "x": 70,
+          "y": 790,
+          "w": 390,
+          "h": 42
+        }
+      },
+      {
+        "id": "g03_versions",
+        "edge": false,
+        "text": "每个节点是完整图版本",
+        "box": {
+          "x": 530,
+          "y": 797,
+          "w": 240,
+          "h": 31
+        },
+        "cell": {
+          "x": 530,
+          "y": 790,
+          "w": 420,
+          "h": 42
+        }
+      },
+      {
+        "id": "g03_relations",
+        "edge": false,
+        "text": "关系本身不调度运行",
+        "box": {
+          "x": 1000,
+          "y": 797,
+          "w": 216,
+          "h": 31
+        },
+        "cell": {
+          "x": 1000,
+          "y": 790,
+          "w": 390,
+          "h": 42
+        }
+      },
+      {
+        "id": "g03_caveat",
+        "edge": false,
+        "text": "血缘融合属于后续研究扩展，不等于合并正在执行的任务图",
+        "box": {
+          "x": 65,
+          "y": 869,
+          "w": 598,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 865,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g03_e_exec1",
+        "source": "g03_input",
+        "target": "g03_tool",
+        "points": [
+          {
+            "x": 220,
+            "y": 275
+          },
+          {
+            "x": 280,
+            "y": 275
+          }
+        ]
+      },
+      {
+        "id": "g03_e_exec2",
+        "source": "g03_tool",
+        "target": "g03_gate",
+        "points": [
+          {
+            "x": 350,
+            "y": 320
+          },
+          {
+            "x": 350,
+            "y": 375
+          },
+          {
+            "x": 260,
+            "y": 375
+          },
+          {
+            "x": 260,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_exec3",
+        "source": "g03_gate",
+        "target": "g03_output",
+        "points": [
+          {
+            "x": 260,
+            "y": 510
+          },
+          {
+            "x": 260,
+            "y": 610
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage1",
+        "source": "g03_v0",
+        "target": "g03_v1",
+        "points": [
+          {
+            "x": 635,
+            "y": 310
+          },
+          {
+            "x": 635,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage2",
+        "source": "g03_v0",
+        "target": "g03_v2",
+        "points": [
+          {
+            "x": 715,
+            "y": 270
+          },
+          {
+            "x": 820,
+            "y": 270
+          },
+          {
+            "x": 820,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage3",
+        "source": "g03_v1",
+        "target": "g03_v3",
+        "points": [
+          {
+            "x": 635,
+            "y": 510
+          },
+          {
+            "x": 635,
+            "y": 560
+          },
+          {
+            "x": 690,
+            "y": 560
+          },
+          {
+            "x": 690,
+            "y": 610
+          }
+        ]
+      },
+      {
+        "id": "g03_e_lineage4",
+        "source": "g03_v2",
+        "target": "g03_v3",
+        "points": [
+          {
+            "x": 820,
+            "y": 510
+          },
+          {
+            "x": 820,
+            "y": 560
+          },
+          {
+            "x": 770,
+            "y": 560
+          },
+          {
+            "x": 770,
+            "y": 610
+          }
+        ]
+      },
+      {
+        "id": "g03_e_compose",
+        "source": "g03_extract",
+        "target": "g03_validate",
+        "points": [
+          {
+            "x": 1180,
+            "y": 310
+          },
+          {
+            "x": 1180,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g03_e_depends",
+        "source": "g03_report",
+        "target": "g03_validate",
+        "points": [
+          {
+            "x": 1180,
+            "y": 610
+          },
+          {
+            "x": 1180,
+            "y": 510
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g04_zh",
+    "width": 1440,
+    "height": 1000,
+    "modelCells": 27,
+    "labels": [
+      {
+        "id": "g04_title",
+        "edge": false,
+        "text": "图提案状态与保留历史的回滚",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 416,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g04_draft",
+        "edge": false,
+        "text": "DRAFT\n草案",
+        "box": {
+          "x": 139.625,
+          "y": 229,
+          "w": 81.41845703125,
+          "h": 63
+        },
+        "cell": {
+          "x": 70,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_valid",
+        "edge": false,
+        "text": "VALIDATED\n静态验证通过",
+        "box": {
+          "x": 375,
+          "y": 229,
+          "w": 150,
+          "h": 63
+        },
+        "cell": {
+          "x": 340,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_eval",
+        "edge": false,
+        "text": "EVALUATED\n已完成选择评测",
+        "box": {
+          "x": 632.5,
+          "y": 229,
+          "w": 175,
+          "h": 63
+        },
+        "cell": {
+          "x": 610,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_confirm",
+        "edge": false,
+        "text": "CONFIRMED\n独立确认通过",
+        "box": {
+          "x": 914.3828125,
+          "y": 229,
+          "w": 151.234375,
+          "h": 63
+        },
+        "cell": {
+          "x": 880,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_publish",
+        "edge": false,
+        "text": "PUBLISHED\n正式发布",
+        "box": {
+          "x": 1191.8046875,
+          "y": 229,
+          "w": 136.390625,
+          "h": 63
+        },
+        "cell": {
+          "x": 1150,
+          "y": 210,
+          "w": 220,
+          "h": 100
+        }
+      },
+      {
+        "id": "g04_reject",
+        "edge": false,
+        "text": "REJECTED\n明确未通过门槛",
+        "box": {
+          "x": 154,
+          "y": 519.2999877929688,
+          "w": 182,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 70,
+          "y": 500,
+          "w": 350,
+          "h": 105
+        }
+      },
+      {
+        "id": "g04_inconclusive",
+        "edge": false,
+        "text": "INCONCLUSIVE\n证据不足",
+        "box": {
+          "x": 628.7890625,
+          "y": 519.2999877929688,
+          "w": 192.421875,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 550,
+          "y": 500,
+          "w": 350,
+          "h": 105
+        }
+      },
+      {
+        "id": "g04_stale",
+        "edge": false,
+        "text": "STALE\n基版本或依赖已变化",
+        "box": {
+          "x": 1088,
+          "y": 519.2999877929688,
+          "w": 234,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 1030,
+          "y": 500,
+          "w": 350,
+          "h": 105
+        }
+      },
+      {
+        "id": "g04_gate",
+        "edge": false,
+        "text": "发布时重验真实审批、报告绑定与基版本 CAS；不是仅凭 CONFIRMED 字段放行",
+        "box": {
+          "x": 65,
+          "y": 658.5,
+          "w": 861.28125,
+          "h": 31
+        },
+        "cell": {
+          "x": 65,
+          "y": 650,
+          "w": 1310,
+          "h": 45
+        }
+      },
+      {
+        "id": "g04_rollbackheading",
+        "edge": false,
+        "text": "回滚也是一次新的授权发布",
+        "box": {
+          "x": 65,
+          "y": 733.5,
+          "w": 324,
+          "h": 36
+        },
+        "cell": {
+          "x": 65,
+          "y": 730,
+          "w": 1310,
+          "h": 40
+        }
+      },
+      {
+        "id": "g04_old",
+        "edge": false,
+        "text": "已发布 Gₖ",
+        "box": {
+          "x": 163.5859375,
+          "y": 834,
+          "w": 114.0283203125,
+          "h": 35
+        },
+        "cell": {
+          "x": 70,
+          "y": 805,
+          "w": 300,
+          "h": 90
+        }
+      },
+      {
+        "id": "g04_proposal",
+        "edge": false,
+        "text": "新回滚提案\n引用已知良好内容",
+        "box": {
+          "x": 616,
+          "y": 816.7999877929688,
+          "w": 208,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 520,
+          "y": 805,
+          "w": 400,
+          "h": 90
+        }
+      },
+      {
+        "id": "g04_next",
+        "edge": false,
+        "text": "生成新版本 Gₖ₊₁",
+        "box": {
+          "x": 1144.2890625,
+          "y": 834,
+          "w": 181.421875,
+          "h": 35
+        },
+        "cell": {
+          "x": 1100,
+          "y": 805,
+          "w": 270,
+          "h": 90
+        }
+      },
+      {
+        "id": "g04_footer",
+        "edge": false,
+        "text": "重新验证兼容性；保留历史及运行快照；隐私消费账本永不随之回滚",
+        "box": {
+          "x": 65,
+          "y": 944,
+          "w": 690,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 940,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g04_e_normal0",
+        "source": "g04_draft",
+        "target": "g04_valid",
+        "points": [
+          {
+            "x": 290,
+            "y": 260
+          },
+          {
+            "x": 340,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_normal1",
+        "source": "g04_valid",
+        "target": "g04_eval",
+        "points": [
+          {
+            "x": 560,
+            "y": 260
+          },
+          {
+            "x": 610,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_normal2",
+        "source": "g04_eval",
+        "target": "g04_confirm",
+        "points": [
+          {
+            "x": 830,
+            "y": 260
+          },
+          {
+            "x": 880,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_normal3",
+        "source": "g04_confirm",
+        "target": "g04_publish",
+        "points": [
+          {
+            "x": 1100,
+            "y": 260
+          },
+          {
+            "x": 1150,
+            "y": 260
+          }
+        ]
+      },
+      {
+        "id": "g04_e_reject",
+        "source": "g04_valid",
+        "target": "g04_reject",
+        "points": [
+          {
+            "x": 450,
+            "y": 310
+          },
+          {
+            "x": 450,
+            "y": 420
+          },
+          {
+            "x": 245,
+            "y": 420
+          },
+          {
+            "x": 245,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "g04_e_inc",
+        "source": "g04_eval",
+        "target": "g04_inconclusive",
+        "points": [
+          {
+            "x": 720,
+            "y": 310
+          },
+          {
+            "x": 720,
+            "y": 450
+          },
+          {
+            "x": 725,
+            "y": 450
+          },
+          {
+            "x": 725,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "g04_e_stale",
+        "source": "g04_confirm",
+        "target": "g04_stale",
+        "points": [
+          {
+            "x": 990,
+            "y": 310
+          },
+          {
+            "x": 990,
+            "y": 420
+          },
+          {
+            "x": 1205,
+            "y": 420
+          },
+          {
+            "x": 1205,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "g04_e_rollback1",
+        "source": "g04_old",
+        "target": "g04_proposal",
+        "points": [
+          {
+            "x": 370,
+            "y": 850
+          },
+          {
+            "x": 520,
+            "y": 850
+          }
+        ]
+      },
+      {
+        "id": "g04_e_rollback2",
+        "source": "g04_proposal",
+        "target": "g04_next",
+        "points": [
+          {
+            "x": 920,
+            "y": 850
+          },
+          {
+            "x": 1100,
+            "y": 850
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s01_zh",
+    "width": 1440,
+    "height": 940,
+    "modelCells": 22,
+    "labels": [
+      {
+        "id": "s01_title",
+        "edge": false,
+        "text": "从执行证据到可复用 Skills",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 380.265625,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s01_abstract-heading",
+        "edge": false,
+        "text": "证据与技能抽象",
+        "box": {
+          "x": 58,
+          "y": 136,
+          "w": 182,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 132,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "s01_evidence",
+        "edge": false,
+        "text": "成功与失败轨迹\n可核验的任务结果",
+        "box": {
+          "x": 131,
+          "y": 231.8000030517578,
+          "w": 209,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 70,
+          "y": 210,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_abstractor",
+        "edge": false,
+        "text": "归纳稳定可复用结构\n变量槽位与适用边界",
+        "box": {
+          "x": 603,
+          "y": 231.8000030517578,
+          "w": 234,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 555,
+          "y": 210,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_candidate",
+        "edge": false,
+        "text": "ADD / PATCH 候选\n绑定不可变技能包摘要",
+        "box": {
+          "x": 1075,
+          "y": 231.8000030517578,
+          "w": 260,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 1040,
+          "y": 210,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_assess-heading",
+        "edge": false,
+        "text": "校验、评测与正式发布",
+        "box": {
+          "x": 58,
+          "y": 516,
+          "w": 260,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 512,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "s01_validate",
+        "edge": false,
+        "text": "技能包校验\n合同、程序与依赖测试",
+        "box": {
+          "x": 1075,
+          "y": 611.7999877929688,
+          "w": 260,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 1040,
+          "y": 590,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_compare",
+        "edge": false,
+        "text": "对照评测与独立确认\n固定上下文、新确认任务",
+        "box": {
+          "x": 577,
+          "y": 611.7999877929688,
+          "w": 287,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 555,
+          "y": 590,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_publish",
+        "edge": false,
+        "text": "发布至正式注册表\n权限核验与 CAS",
+        "box": {
+          "x": 131,
+          "y": 611.7999877929688,
+          "w": 208,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 70,
+          "y": 590,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "s01_future",
+        "edge": false,
+        "text": "后续运行检索已批准的不可变版本；来源文档本身不授予执行权限",
+        "box": {
+          "x": 371,
+          "y": 833.5,
+          "w": 697,
+          "h": 31
+        },
+        "cell": {
+          "x": 70,
+          "y": 815,
+          "w": 1300,
+          "h": 65
+        }
+      },
+      {
+        "id": "s01_footer",
+        "edge": false,
+        "text": "优先研究外部技能演化；模型权重训练是独立且后置的研究路径",
+        "box": {
+          "x": 65,
+          "y": 901.5,
+          "w": 645,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 900,
+          "w": 1310,
+          "h": 30
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s01_e_evab",
+        "source": "s01_evidence",
+        "target": "s01_abstractor",
+        "points": [
+          {
+            "x": 400,
+            "y": 265
+          },
+          {
+            "x": 555,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s01_e_abca",
+        "source": "s01_abstractor",
+        "target": "s01_candidate",
+        "points": [
+          {
+            "x": 885,
+            "y": 265
+          },
+          {
+            "x": 1040,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s01_e_cava",
+        "source": "s01_candidate",
+        "target": "s01_validate",
+        "points": [
+          {
+            "x": 1205,
+            "y": 320
+          },
+          {
+            "x": 1205,
+            "y": 590
+          }
+        ]
+      },
+      {
+        "id": "s01_e_vaco",
+        "source": "s01_validate",
+        "target": "s01_compare",
+        "points": [
+          {
+            "x": 1040,
+            "y": 645
+          },
+          {
+            "x": 885,
+            "y": 645
+          }
+        ]
+      },
+      {
+        "id": "s01_e_copu",
+        "source": "s01_compare",
+        "target": "s01_publish",
+        "points": [
+          {
+            "x": 555,
+            "y": 645
+          },
+          {
+            "x": 400,
+            "y": 645
+          }
+        ]
+      },
+      {
+        "id": "s01_e_use",
+        "source": "s01_publish",
+        "target": "s01_future",
+        "points": [
+          {
+            "x": 235,
+            "y": 700
+          },
+          {
+            "x": 235,
+            "y": 790
+          },
+          {
+            "x": 720,
+            "y": 790
+          },
+          {
+            "x": 720,
+            "y": 815
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s02_zh",
+    "width": 1440,
+    "height": 940,
+    "modelCells": 28,
+    "labels": [
+      {
+        "id": "s02_title",
+        "edge": false,
+        "text": "不可变技能包与运行时检索数据流",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 480,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s02_package-heading",
+        "edge": false,
+        "text": "不可变技能包",
+        "box": {
+          "x": 58,
+          "y": 126,
+          "w": 156,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 122,
+          "w": 444,
+          "h": 40
+        }
+      },
+      {
+        "id": "s02_runtime-heading",
+        "edge": false,
+        "text": "按版本过滤的检索与执行",
+        "box": {
+          "x": 598,
+          "y": 126,
+          "w": 286,
+          "h": 35
+        },
+        "cell": {
+          "x": 598,
+          "y": 122,
+          "w": 784,
+          "h": 40
+        }
+      },
+      {
+        "id": "s02_identity",
+        "edge": false,
+        "text": "身份、版本与来源\nskillId / version / digest",
+        "box": {
+          "x": 134.6328125,
+          "y": 209.3000030517578,
+          "w": 291.0361328125,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 65,
+          "y": 190,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_contract",
+        "edge": false,
+        "text": "合同与边界\n输入、槽位及失效条件",
+        "box": {
+          "x": 150,
+          "y": 369.29998779296875,
+          "w": 260,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 65,
+          "y": 350,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_resources",
+        "edge": false,
+        "text": "步骤、程序与资源\n脚本、依赖和资源摘要",
+        "box": {
+          "x": 150,
+          "y": 529.2999877929688,
+          "w": 260,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 65,
+          "y": 510,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_evidence",
+        "edge": false,
+        "text": "核验证据\n评测报告与已知反例",
+        "box": {
+          "x": 163,
+          "y": 689.2999877929688,
+          "w": 234,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 65,
+          "y": 670,
+          "w": 430,
+          "h": 105
+        }
+      },
+      {
+        "id": "s02_request",
+        "edge": false,
+        "text": "任务及运行版本快照",
+        "box": {
+          "x": 663,
+          "y": 221.5,
+          "w": 234,
+          "h": 35
+        },
+        "cell": {
+          "x": 620,
+          "y": 190,
+          "w": 320,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_recall",
+        "edge": false,
+        "text": "混合召回\n关键词与语义向量",
+        "box": {
+          "x": 1091,
+          "y": 204.3000030517578,
+          "w": 208,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 1030,
+          "y": 190,
+          "w": 330,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_filter",
+        "edge": false,
+        "text": "合同、权限与依赖过滤\n仅保留兼容版本",
+        "box": {
+          "x": 1070,
+          "y": 396.5,
+          "w": 250,
+          "h": 63
+        },
+        "cell": {
+          "x": 1030,
+          "y": 380,
+          "w": 330,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_rank",
+        "edge": false,
+        "text": "重排及上下文预算",
+        "box": {
+          "x": 680,
+          "y": 413,
+          "w": 200,
+          "h": 33
+        },
+        "cell": {
+          "x": 620,
+          "y": 380,
+          "w": 320,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_bind",
+        "edge": false,
+        "text": "绑定精确技能版本",
+        "box": {
+          "x": 680,
+          "y": 603,
+          "w": 200,
+          "h": 33
+        },
+        "cell": {
+          "x": 620,
+          "y": 570,
+          "w": 320,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_execute",
+        "edge": false,
+        "text": "调用并核验任务结果",
+        "box": {
+          "x": 1082.5,
+          "y": 603,
+          "w": 226,
+          "h": 33
+        },
+        "cell": {
+          "x": 1030,
+          "y": 570,
+          "w": 330,
+          "h": 95
+        }
+      },
+      {
+        "id": "s02_usage",
+        "edge": false,
+        "text": "召回 → 注入 → 调用 → 结果核验",
+        "box": {
+          "x": 812.6953125,
+          "y": 751,
+          "w": 355.609375,
+          "h": 31
+        },
+        "cell": {
+          "x": 620,
+          "y": 735,
+          "w": 740,
+          "h": 60
+        }
+      },
+      {
+        "id": "s02_footer1",
+        "edge": false,
+        "text": "索引由技能元数据构建；运行快照约束可用版本及能力权限",
+        "box": {
+          "x": 65,
+          "y": 854,
+          "w": 598,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 850,
+          "w": 1310,
+          "h": 35
+        }
+      },
+      {
+        "id": "s02_footer2",
+        "edge": false,
+        "text": "被召回不等于被使用，被使用不等于已证明贡献",
+        "box": {
+          "x": 65,
+          "y": 901.5,
+          "w": 483,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 900,
+          "w": 1310,
+          "h": 30
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s02_e_request",
+        "source": "s02_request",
+        "target": "s02_recall",
+        "points": [
+          {
+            "x": 940,
+            "y": 237.5
+          },
+          {
+            "x": 1030,
+            "y": 237.50000000000003
+          }
+        ]
+      },
+      {
+        "id": "s02_e_filter",
+        "source": "s02_recall",
+        "target": "s02_filter",
+        "points": [
+          {
+            "x": 1195,
+            "y": 285
+          },
+          {
+            "x": 1195,
+            "y": 380
+          }
+        ]
+      },
+      {
+        "id": "s02_e_rank",
+        "source": "s02_filter",
+        "target": "s02_rank",
+        "points": [
+          {
+            "x": 1030,
+            "y": 427.5
+          },
+          {
+            "x": 940,
+            "y": 427.5
+          }
+        ]
+      },
+      {
+        "id": "s02_e_bind",
+        "source": "s02_rank",
+        "target": "s02_bind",
+        "points": [
+          {
+            "x": 780,
+            "y": 475
+          },
+          {
+            "x": 780,
+            "y": 570
+          }
+        ]
+      },
+      {
+        "id": "s02_e_execute",
+        "source": "s02_bind",
+        "target": "s02_execute",
+        "points": [
+          {
+            "x": 940,
+            "y": 617.5
+          },
+          {
+            "x": 1030,
+            "y": 617.5
+          }
+        ]
+      },
+      {
+        "id": "s02_e_usage",
+        "source": "s02_execute",
+        "target": "s02_usage",
+        "points": [
+          {
+            "x": 1195,
+            "y": 665
+          },
+          {
+            "x": 1195,
+            "y": 705
+          },
+          {
+            "x": 990,
+            "y": 705
+          },
+          {
+            "x": 990,
+            "y": 735
+          }
+        ]
+      },
+      {
+        "id": "s02_e_index",
+        "source": "s02_identity",
+        "target": "s02_recall",
+        "points": [
+          {
+            "x": 495,
+            "y": 242.5
+          },
+          {
+            "x": 550,
+            "y": 242.5
+          },
+          {
+            "x": 550,
+            "y": 170
+          },
+          {
+            "x": 1195,
+            "y": 170
+          },
+          {
+            "x": 1195,
+            "y": 190
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s03_zh",
+    "width": 1440,
+    "height": 940,
+    "modelCells": 22,
+    "labels": [
+      {
+        "id": "s03_title",
+        "edge": false,
+        "text": "技能更新的受控贡献评估",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 352,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s03_context",
+        "edge": false,
+        "text": "固定图、模型、工具、检索器及环境；预先约定采样与评测规则",
+        "box": {
+          "x": 370,
+          "y": 143,
+          "w": 700,
+          "h": 33
+        },
+        "cell": {
+          "x": 70,
+          "y": 115,
+          "w": 1300,
+          "h": 85
+        }
+      },
+      {
+        "id": "s03_tasks",
+        "edge": false,
+        "text": "选择任务集\n同任务成对比较\n预定重复次数",
+        "box": {
+          "x": 109,
+          "y": 321.20001220703125,
+          "w": 182,
+          "h": 97.39999389648438
+        },
+        "cell": {
+          "x": 70,
+          "y": 295,
+          "w": 260,
+          "h": 150
+        }
+      },
+      {
+        "id": "s03_none",
+        "edge": false,
+        "text": "不注入目标技能\n对齐上下文预算",
+        "box": {
+          "x": 569,
+          "y": 259,
+          "w": 176,
+          "h": 63
+        },
+        "cell": {
+          "x": 485,
+          "y": 240,
+          "w": 345,
+          "h": 100
+        }
+      },
+      {
+        "id": "s03_base",
+        "edge": false,
+        "text": "原技能 S₀\n固定图 G₀",
+        "box": {
+          "x": 601.7265625,
+          "y": 429,
+          "w": 111.546875,
+          "h": 63
+        },
+        "cell": {
+          "x": 485,
+          "y": 410,
+          "w": 345,
+          "h": 100
+        }
+      },
+      {
+        "id": "s03_new",
+        "edge": false,
+        "text": "候选技能 S₁\n固定图 G₀",
+        "box": {
+          "x": 590.3125,
+          "y": 599,
+          "w": 133.375,
+          "h": 63
+        },
+        "cell": {
+          "x": 485,
+          "y": 580,
+          "w": 345,
+          "h": 100
+        }
+      },
+      {
+        "id": "s03_outcomes",
+        "edge": false,
+        "text": "成对评测结果\n质量、成本与误用",
+        "box": {
+          "x": 1134,
+          "y": 434,
+          "w": 201,
+          "h": 63
+        },
+        "cell": {
+          "x": 1100,
+          "y": 410,
+          "w": 270,
+          "h": 110
+        }
+      },
+      {
+        "id": "s03_fresh",
+        "edge": false,
+        "text": "新鲜的独立确认任务\n按内容血缘及时间隔离",
+        "box": {
+          "x": 370,
+          "y": 774,
+          "w": 250,
+          "h": 63
+        },
+        "cell": {
+          "x": 70,
+          "y": 760,
+          "w": 850,
+          "h": 90
+        }
+      },
+      {
+        "id": "s03_confirm",
+        "edge": false,
+        "text": "冻结候选后确认\n使用独立任务",
+        "box": {
+          "x": 1147.5,
+          "y": 774,
+          "w": 175,
+          "h": 63
+        },
+        "cell": {
+          "x": 1100,
+          "y": 760,
+          "w": 270,
+          "h": 90
+        }
+      },
+      {
+        "id": "s03_footer",
+        "edge": false,
+        "text": "联合搜索比较 G₀S₀、G₁S₀、G₀S₁、G₁S₁；共同成功奖励不等于因果归因",
+        "box": {
+          "x": 65,
+          "y": 894,
+          "w": 734.953125,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 890,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s03_e_input0",
+        "source": "s03_tasks",
+        "target": "s03_none",
+        "points": [
+          {
+            "x": 330,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 290
+          },
+          {
+            "x": 485,
+            "y": 290
+          }
+        ]
+      },
+      {
+        "id": "s03_e_output0",
+        "source": "s03_none",
+        "target": "s03_outcomes",
+        "points": [
+          {
+            "x": 830,
+            "y": 290
+          },
+          {
+            "x": 950,
+            "y": 290
+          },
+          {
+            "x": 950,
+            "y": 432
+          },
+          {
+            "x": 1100,
+            "y": 432
+          }
+        ]
+      },
+      {
+        "id": "s03_e_input1",
+        "source": "s03_tasks",
+        "target": "s03_base",
+        "points": [
+          {
+            "x": 330,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 460
+          },
+          {
+            "x": 485,
+            "y": 460
+          }
+        ]
+      },
+      {
+        "id": "s03_e_output1",
+        "source": "s03_base",
+        "target": "s03_outcomes",
+        "points": [
+          {
+            "x": 830,
+            "y": 460
+          },
+          {
+            "x": 950,
+            "y": 460
+          },
+          {
+            "x": 950,
+            "y": 465
+          },
+          {
+            "x": 1100,
+            "y": 465
+          }
+        ]
+      },
+      {
+        "id": "s03_e_input2",
+        "source": "s03_tasks",
+        "target": "s03_new",
+        "points": [
+          {
+            "x": 330,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 370
+          },
+          {
+            "x": 410,
+            "y": 630
+          },
+          {
+            "x": 485,
+            "y": 630
+          }
+        ]
+      },
+      {
+        "id": "s03_e_output2",
+        "source": "s03_new",
+        "target": "s03_outcomes",
+        "points": [
+          {
+            "x": 830,
+            "y": 630
+          },
+          {
+            "x": 950,
+            "y": 630
+          },
+          {
+            "x": 950,
+            "y": 498
+          },
+          {
+            "x": 1100,
+            "y": 498
+          }
+        ]
+      },
+      {
+        "id": "s03_e_context",
+        "source": "s03_context",
+        "target": "s03_tasks",
+        "points": [
+          {
+            "x": 720,
+            "y": 200
+          },
+          {
+            "x": 720,
+            "y": 220
+          },
+          {
+            "x": 200,
+            "y": 220
+          },
+          {
+            "x": 200,
+            "y": 295
+          }
+        ]
+      },
+      {
+        "id": "s03_e_fresh",
+        "source": "s03_fresh",
+        "target": "s03_confirm",
+        "points": [
+          {
+            "x": 920,
+            "y": 805
+          },
+          {
+            "x": 1100,
+            "y": 805
+          }
+        ]
+      },
+      {
+        "id": "s03_e_confirm",
+        "source": "s03_outcomes",
+        "target": "s03_confirm",
+        "points": [
+          {
+            "x": 1235,
+            "y": 520
+          },
+          {
+            "x": 1235,
+            "y": 760
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "s04_zh",
+    "width": 1440,
+    "height": 950,
+    "modelCells": 20,
+    "labels": [
+      {
+        "id": "s04_title",
+        "edge": false,
+        "text": "Skills 生命周期与独立的召回策略",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 476.0625,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "s04_candidate",
+        "edge": false,
+        "text": "candidate\n候选版本",
+        "box": {
+          "x": 158.890625,
+          "y": 231.8000030517578,
+          "w": 122.21875,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 100,
+          "y": 210,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_verified",
+        "edge": false,
+        "text": "verified\n已验证版本",
+        "box": {
+          "x": 495,
+          "y": 231.8000030517578,
+          "w": 130,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 430,
+          "y": 210,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_deprecated",
+        "edge": false,
+        "text": "deprecated\n停止默认推荐",
+        "box": {
+          "x": 832,
+          "y": 231.8000030517578,
+          "w": 156,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 790,
+          "y": 210,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_retired",
+        "edge": false,
+        "text": "retired\n退役并保留历史",
+        "box": {
+          "x": 1149,
+          "y": 231.8000030517578,
+          "w": 182,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 1120,
+          "y": 210,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_e_newversion",
+        "edge": true,
+        "text": "新建候选版本",
+        "box": {
+          "x": 320,
+          "y": 104,
+          "w": 140,
+          "h": 30.5
+        },
+        "cell": {
+          "x": 220,
+          "y": 140,
+          "w": 340,
+          "h": 70
+        }
+      },
+      {
+        "id": "s04_archive",
+        "edge": false,
+        "text": "探索档案\n拒绝或证据不足",
+        "box": {
+          "x": 154,
+          "y": 521.7999877929688,
+          "w": 182,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 75,
+          "y": 500,
+          "w": 340,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_retrieval",
+        "edge": false,
+        "text": "独立于质量状态的召回策略\nACTIVE ↔ DORMANT\n保护稀有能力",
+        "box": {
+          "x": 545,
+          "y": 524,
+          "w": 300,
+          "h": 93
+        },
+        "cell": {
+          "x": 455,
+          "y": 500,
+          "w": 480,
+          "h": 140
+        }
+      },
+      {
+        "id": "s04_history",
+        "edge": false,
+        "text": "保留历史版本\n保留运行绑定引用",
+        "box": {
+          "x": 1140,
+          "y": 524,
+          "w": 200,
+          "h": 63
+        },
+        "cell": {
+          "x": 1120,
+          "y": 500,
+          "w": 240,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_impact",
+        "edge": false,
+        "text": "依赖或合同变化：采用新版本前重新检查受影响的图\n退役停止默认发现；历史运行保留精确引用",
+        "box": {
+          "x": 432.5,
+          "y": 764,
+          "w": 575,
+          "h": 63
+        },
+        "cell": {
+          "x": 70,
+          "y": 740,
+          "w": 1300,
+          "h": 110
+        }
+      },
+      {
+        "id": "s04_footer",
+        "edge": false,
+        "text": "低频不等于低价值；dormant 是召回模式，不是质量判决",
+        "box": {
+          "x": 64,
+          "y": 899,
+          "w": 585.890625,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 895,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s04_e_verify",
+        "source": "s04_candidate",
+        "target": "s04_verified",
+        "points": [
+          {
+            "x": 340,
+            "y": 265
+          },
+          {
+            "x": 430,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s04_e_deprecate",
+        "source": "s04_verified",
+        "target": "s04_deprecated",
+        "points": [
+          {
+            "x": 690,
+            "y": 265
+          },
+          {
+            "x": 790,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s04_e_retire",
+        "source": "s04_deprecated",
+        "target": "s04_retired",
+        "points": [
+          {
+            "x": 1030,
+            "y": 265
+          },
+          {
+            "x": 1120,
+            "y": 265
+          }
+        ]
+      },
+      {
+        "id": "s04_e_newversion",
+        "source": "s04_verified",
+        "target": "s04_candidate",
+        "points": [
+          {
+            "x": 560,
+            "y": 210
+          },
+          {
+            "x": 560,
+            "y": 140
+          },
+          {
+            "x": 220,
+            "y": 140
+          },
+          {
+            "x": 220,
+            "y": 210
+          }
+        ]
+      },
+      {
+        "id": "s04_e_archive",
+        "source": "s04_candidate",
+        "target": "s04_archive",
+        "points": [
+          {
+            "x": 220,
+            "y": 320
+          },
+          {
+            "x": 220,
+            "y": 450
+          },
+          {
+            "x": 245,
+            "y": 450
+          },
+          {
+            "x": 245,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "s04_e_index",
+        "source": "s04_verified",
+        "target": "s04_retrieval",
+        "points": [
+          {
+            "x": 560,
+            "y": 320
+          },
+          {
+            "x": 560,
+            "y": 420
+          },
+          {
+            "x": 695,
+            "y": 420
+          },
+          {
+            "x": 695,
+            "y": 500
+          }
+        ]
+      },
+      {
+        "id": "s04_e_history",
+        "source": "s04_retired",
+        "target": "s04_history",
+        "points": [
+          {
+            "x": 1240,
+            "y": 320
+          },
+          {
+            "x": 1240,
+            "y": 500
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "j01_zh",
+    "width": 1440,
+    "height": 1060,
+    "modelCells": 24,
+    "labels": [
+      {
+        "id": "j01_title",
+        "edge": false,
+        "text": "通过版本清单一致发布图与 Skills",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 476.265625,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "j01_graph",
+        "edge": false,
+        "text": "图更新提案\n基图与候选内容摘要",
+        "box": {
+          "x": 223,
+          "y": 161.8000030517578,
+          "w": 234,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 70,
+          "y": 135,
+          "w": 540,
+          "h": 120
+        }
+      },
+      {
+        "id": "j01_skill",
+        "edge": false,
+        "text": "技能更新提案\n基技能与候选内容摘要",
+        "box": {
+          "x": 970,
+          "y": 161.8000030517578,
+          "w": 260,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 830,
+          "y": 135,
+          "w": 540,
+          "h": 120
+        }
+      },
+      {
+        "id": "j01_report",
+        "edge": false,
+        "text": "独立评测与确认材料\n候选、数据及依赖摘要",
+        "box": {
+          "x": 594,
+          "y": 374,
+          "w": 251,
+          "h": 63
+        },
+        "cell": {
+          "x": 450,
+          "y": 350,
+          "w": 540,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_stage",
+        "edge": false,
+        "text": "暂存不可变制品\n已编译图与技能包",
+        "box": {
+          "x": 135,
+          "y": 594,
+          "w": 200,
+          "h": 63
+        },
+        "cell": {
+          "x": 70,
+          "y": 570,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_cas",
+        "edge": false,
+        "text": "核验内容绑定及权限\nCAS 发布版本清单",
+        "box": {
+          "x": 607.5,
+          "y": 594,
+          "w": 225,
+          "h": 63
+        },
+        "cell": {
+          "x": 550,
+          "y": 570,
+          "w": 340,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_manifest",
+        "edge": false,
+        "text": "活跃清单 Mₖ₊₁\n精确绑定全部版本",
+        "box": {
+          "x": 1104,
+          "y": 594,
+          "w": 201,
+          "h": 63
+        },
+        "cell": {
+          "x": 1040,
+          "y": 570,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_snapshots-heading",
+        "edge": false,
+        "text": "执行快照",
+        "box": {
+          "x": 518,
+          "y": 776,
+          "w": 104,
+          "h": 35
+        },
+        "cell": {
+          "x": 518,
+          "y": 772,
+          "w": 864,
+          "h": 40
+        }
+      },
+      {
+        "id": "j01_old",
+        "edge": false,
+        "text": "已有运行快照\n继续绑定 Mₖ",
+        "box": {
+          "x": 645,
+          "y": 849,
+          "w": 150,
+          "h": 63
+        },
+        "cell": {
+          "x": 550,
+          "y": 825,
+          "w": 340,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_new",
+        "edge": false,
+        "text": "新运行快照\n解析并固定精确版本",
+        "box": {
+          "x": 1092.5,
+          "y": 849,
+          "w": 225,
+          "h": 63
+        },
+        "cell": {
+          "x": 1040,
+          "y": 825,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_rollback",
+        "edge": false,
+        "text": "回滚生成 Mₖ₊₂\n引用已知良好制品",
+        "box": {
+          "x": 135,
+          "y": 849,
+          "w": 200,
+          "h": 63
+        },
+        "cell": {
+          "x": 70,
+          "y": 825,
+          "w": 330,
+          "h": 110
+        }
+      },
+      {
+        "id": "j01_footer",
+        "edge": false,
+        "text": "仅版本清单指针原子切换；制品存储可分离；隐私消费账本独立且不回滚",
+        "box": {
+          "x": 64,
+          "y": 1009,
+          "w": 737,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 1005,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "j01_e_graphreport",
+        "source": "j01_graph",
+        "target": "j01_report",
+        "points": [
+          {
+            "x": 340,
+            "y": 255
+          },
+          {
+            "x": 340,
+            "y": 300
+          },
+          {
+            "x": 585,
+            "y": 300
+          },
+          {
+            "x": 585.0000000000001,
+            "y": 350
+          }
+        ]
+      },
+      {
+        "id": "j01_e_skillreport",
+        "source": "j01_skill",
+        "target": "j01_report",
+        "points": [
+          {
+            "x": 1100,
+            "y": 255
+          },
+          {
+            "x": 1100,
+            "y": 300
+          },
+          {
+            "x": 855,
+            "y": 300
+          },
+          {
+            "x": 855,
+            "y": 350
+          }
+        ]
+      },
+      {
+        "id": "j01_e_stage",
+        "source": "j01_report",
+        "target": "j01_stage",
+        "points": [
+          {
+            "x": 450,
+            "y": 405.00000000000006
+          },
+          {
+            "x": 235,
+            "y": 405
+          },
+          {
+            "x": 235,
+            "y": 570
+          }
+        ]
+      },
+      {
+        "id": "j01_e_reportcas",
+        "source": "j01_report",
+        "target": "j01_cas",
+        "points": [
+          {
+            "x": 720,
+            "y": 460
+          },
+          {
+            "x": 720,
+            "y": 570
+          }
+        ]
+      },
+      {
+        "id": "j01_e_stagecas",
+        "source": "j01_stage",
+        "target": "j01_cas",
+        "points": [
+          {
+            "x": 400,
+            "y": 625
+          },
+          {
+            "x": 550,
+            "y": 625
+          }
+        ]
+      },
+      {
+        "id": "j01_e_casmanifest",
+        "source": "j01_cas",
+        "target": "j01_manifest",
+        "points": [
+          {
+            "x": 890,
+            "y": 625
+          },
+          {
+            "x": 1040,
+            "y": 625
+          }
+        ]
+      },
+      {
+        "id": "j01_e_newrun",
+        "source": "j01_manifest",
+        "target": "j01_new",
+        "points": [
+          {
+            "x": 1205,
+            "y": 680
+          },
+          {
+            "x": 1205,
+            "y": 825
+          }
+        ]
+      },
+      {
+        "id": "j01_e_rollback",
+        "source": "j01_rollback",
+        "target": "j01_cas",
+        "points": [
+          {
+            "x": 400,
+            "y": 880
+          },
+          {
+            "x": 460,
+            "y": 880
+          },
+          {
+            "x": 460,
+            "y": 735
+          },
+          {
+            "x": 720,
+            "y": 735
+          },
+          {
+            "x": 720,
+            "y": 680
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g01_en",
+    "width": 1440,
+    "height": 920,
+    "modelCells": 28,
+    "labels": [
+      {
+        "id": "g01_title",
+        "edge": false,
+        "text": "Evidence-governed graph evolution",
+        "box": {
+          "x": 40,
+          "y": 32,
+          "w": 544.09375,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g01_offline-heading",
+        "edge": false,
+        "text": "Offline graph evolution",
+        "box": {
+          "x": 58,
+          "y": 130,
+          "w": 284.5625,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 122,
+          "w": 994,
+          "h": 40
+        }
+      },
+      {
+        "id": "g01_authority-heading",
+        "edge": false,
+        "text": "Release authority",
+        "box": {
+          "x": 1128,
+          "y": 130,
+          "w": 217.287109375,
+          "h": 30
+        },
+        "cell": {
+          "x": 1128,
+          "y": 122,
+          "w": 254,
+          "h": 40
+        }
+      },
+      {
+        "id": "g01_evidence",
+        "edge": false,
+        "text": "Deduplicated runs\nversions + outcomes",
+        "box": {
+          "x": 95.2109375,
+          "y": 200.1999969482422,
+          "w": 209.578125,
+          "h": 92.40000915527344
+        },
+        "cell": {
+          "x": 70,
+          "y": 190,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_diagnosis",
+        "edge": false,
+        "text": "Failure diagnosis\nsupport + counterevidence",
+        "box": {
+          "x": 451.71875,
+          "y": 200.1999969482422,
+          "w": 196.5625,
+          "h": 92.40000915527344
+        },
+        "cell": {
+          "x": 420,
+          "y": 190,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_patch",
+        "edge": false,
+        "text": "Bounded patch\nbase + digest",
+        "box": {
+          "x": 812.53125,
+          "y": 215.8000030517578,
+          "w": 174.9375,
+          "h": 61.19999694824219
+        },
+        "cell": {
+          "x": 770,
+          "y": 190,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_static",
+        "edge": false,
+        "text": "Snapshot validation\ntypes / topology / access",
+        "box": {
+          "x": 786.5234375,
+          "y": 440.20001220703125,
+          "w": 226.953125,
+          "h": 92.4000244140625
+        },
+        "cell": {
+          "x": 770,
+          "y": 430,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_replay",
+        "edge": false,
+        "text": "Paired replay\nquality + total cost",
+        "box": {
+          "x": 445.578125,
+          "y": 455.79998779296875,
+          "w": 209.6142578125,
+          "h": 61.20001220703125
+        },
+        "cell": {
+          "x": 420,
+          "y": 430,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_confirm",
+        "edge": false,
+        "text": "Freeze + confirm\nfresh tasks / old abilities",
+        "box": {
+          "x": 102.1015625,
+          "y": 440.20001220703125,
+          "w": 195.796875,
+          "h": 92.4000244140625
+        },
+        "cell": {
+          "x": 70,
+          "y": 430,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_policy",
+        "edge": false,
+        "text": "Approved policy\ncurrent base version",
+        "box": {
+          "x": 1161.5,
+          "y": 200.1999969482422,
+          "w": 186.99609375,
+          "h": 92.40000915527344
+        },
+        "cell": {
+          "x": 1140,
+          "y": 190,
+          "w": 230,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_publisher",
+        "edge": false,
+        "text": "Verify + CAS\ncompile + receipt",
+        "box": {
+          "x": 1160.15625,
+          "y": 457,
+          "w": 190.72705078125,
+          "h": 58
+        },
+        "cell": {
+          "x": 1140,
+          "y": 430,
+          "w": 230,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_run",
+        "edge": false,
+        "text": "Future runs\npinned graph version",
+        "box": {
+          "x": 1179.09375,
+          "y": 715.2000122070312,
+          "w": 151.8125,
+          "h": 92.4000244140625
+        },
+        "cell": {
+          "x": 1140,
+          "y": 710,
+          "w": 230,
+          "h": 100
+        }
+      },
+      {
+        "id": "g01_return",
+        "edge": false,
+        "text": "New verified outcomes become evidence for the next proposal",
+        "box": {
+          "x": 340,
+          "y": 796.5,
+          "w": 663.03125,
+          "h": 27
+        },
+        "cell": {
+          "x": 340,
+          "y": 785,
+          "w": 710,
+          "h": 45
+        }
+      },
+      {
+        "id": "g01_boundary",
+        "edge": false,
+        "text": "Candidates never edit an active run; failed or inconclusive proposals remain outside production.",
+        "box": {
+          "x": 65,
+          "y": 877,
+          "w": 971.671875,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 870,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g01_e_evdg",
+        "source": "g01_evidence",
+        "target": "g01_diagnosis",
+        "points": [
+          {
+            "x": 330,
+            "y": 245
+          },
+          {
+            "x": 420,
+            "y": 245.00000000000003
+          }
+        ]
+      },
+      {
+        "id": "g01_e_dgpt",
+        "source": "g01_diagnosis",
+        "target": "g01_patch",
+        "points": [
+          {
+            "x": 680,
+            "y": 245
+          },
+          {
+            "x": 770,
+            "y": 245.00000000000003
+          }
+        ]
+      },
+      {
+        "id": "g01_e_ptva",
+        "source": "g01_patch",
+        "target": "g01_static",
+        "points": [
+          {
+            "x": 900,
+            "y": 300
+          },
+          {
+            "x": 900,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g01_e_varp",
+        "source": "g01_static",
+        "target": "g01_replay",
+        "points": [
+          {
+            "x": 770,
+            "y": 485
+          },
+          {
+            "x": 680,
+            "y": 485
+          }
+        ]
+      },
+      {
+        "id": "g01_e_rpcf",
+        "source": "g01_replay",
+        "target": "g01_confirm",
+        "points": [
+          {
+            "x": 420,
+            "y": 485
+          },
+          {
+            "x": 330,
+            "y": 485
+          }
+        ]
+      },
+      {
+        "id": "g01_e_cfpu",
+        "source": "g01_confirm",
+        "target": "g01_publisher",
+        "points": [
+          {
+            "x": 200,
+            "y": 540
+          },
+          {
+            "x": 200,
+            "y": 610
+          },
+          {
+            "x": 1090,
+            "y": 610
+          },
+          {
+            "x": 1090,
+            "y": 485
+          },
+          {
+            "x": 1140,
+            "y": 485
+          }
+        ]
+      },
+      {
+        "id": "g01_e_policy",
+        "source": "g01_policy",
+        "target": "g01_publisher",
+        "points": [
+          {
+            "x": 1255,
+            "y": 300
+          },
+          {
+            "x": 1255,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g01_e_run",
+        "source": "g01_publisher",
+        "target": "g01_run",
+        "points": [
+          {
+            "x": 1255,
+            "y": 540
+          },
+          {
+            "x": 1255,
+            "y": 710
+          }
+        ]
+      },
+      {
+        "id": "g01_e_feedback",
+        "source": "g01_run",
+        "target": "g01_evidence",
+        "points": [
+          {
+            "x": 1140,
+            "y": 760
+          },
+          {
+            "x": 55,
+            "y": 760
+          },
+          {
+            "x": 55,
+            "y": 245
+          },
+          {
+            "x": 70,
+            "y": 245.00000000000003
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g01_zh",
+    "width": 1440,
+    "height": 920,
+    "modelCells": 28,
+    "labels": [
+      {
+        "id": "g01_title",
+        "edge": false,
+        "text": "证据驱动的图自进化架构",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 352,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g01_offline-heading",
+        "edge": false,
+        "text": "离线图演化",
+        "box": {
+          "x": 58,
+          "y": 126,
+          "w": 130,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 122,
+          "w": 994,
+          "h": 40
+        }
+      },
+      {
+        "id": "g01_authority-heading",
+        "edge": false,
+        "text": "正式发布权威",
+        "box": {
+          "x": 1128,
+          "y": 126,
+          "w": 157,
+          "h": 35
+        },
+        "cell": {
+          "x": 1128,
+          "y": 122,
+          "w": 254,
+          "h": 40
+        }
+      },
+      {
+        "id": "g01_evidence",
+        "edge": false,
+        "text": "去重后的运行证据\n版本与真实验收",
+        "box": {
+          "x": 96,
+          "y": 211.8000030517578,
+          "w": 208,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 70,
+          "y": 190,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_diagnosis",
+        "edge": false,
+        "text": "重复失败诊断\n支持证据与反例",
+        "box": {
+          "x": 459,
+          "y": 211.8000030517578,
+          "w": 182,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 420,
+          "y": 190,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_patch",
+        "edge": false,
+        "text": "受限图补丁\n绑定基版本与摘要",
+        "box": {
+          "x": 796,
+          "y": 211.8000030517578,
+          "w": 208,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 770,
+          "y": 190,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_static",
+        "edge": false,
+        "text": "图快照静态校验\n类型、拓扑与权限",
+        "box": {
+          "x": 796,
+          "y": 451.79998779296875,
+          "w": 208,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 770,
+          "y": 430,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_replay",
+        "edge": false,
+        "text": "同任务成对回放\n质量与完整成本",
+        "box": {
+          "x": 458,
+          "y": 451.79998779296875,
+          "w": 184,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 420,
+          "y": 430,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_confirm",
+        "edge": false,
+        "text": "冻结候选并独立确认\n新任务与历史能力",
+        "box": {
+          "x": 83,
+          "y": 451.79998779296875,
+          "w": 234,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 70,
+          "y": 430,
+          "w": 260,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_policy",
+        "edge": false,
+        "text": "已批准采纳策略\n当前基版本",
+        "box": {
+          "x": 1164,
+          "y": 211.8000030517578,
+          "w": 182,
+          "h": 66.19999694824219
+        },
+        "cell": {
+          "x": 1140,
+          "y": 190,
+          "w": 230,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_publisher",
+        "edge": false,
+        "text": "鉴权及基版本 CAS\n编译、提交与回执",
+        "box": {
+          "x": 1151.9296875,
+          "y": 454,
+          "w": 206.140625,
+          "h": 63
+        },
+        "cell": {
+          "x": 1140,
+          "y": 430,
+          "w": 230,
+          "h": 110
+        }
+      },
+      {
+        "id": "g01_run",
+        "edge": false,
+        "text": "后续新运行\n固定图版本",
+        "box": {
+          "x": 1189,
+          "y": 726.7999877929688,
+          "w": 131,
+          "h": 66.20001220703125
+        },
+        "cell": {
+          "x": 1140,
+          "y": 710,
+          "w": 230,
+          "h": 100
+        }
+      },
+      {
+        "id": "g01_return",
+        "edge": false,
+        "text": "新运行的已核验结果，形成下一轮候选的证据",
+        "box": {
+          "x": 340,
+          "y": 793.5,
+          "w": 480,
+          "h": 31
+        },
+        "cell": {
+          "x": 340,
+          "y": 785,
+          "w": 710,
+          "h": 45
+        }
+      },
+      {
+        "id": "g01_boundary",
+        "edge": false,
+        "text": "候选不直接修改活跃运行；失败或证据不足的提案不进入生产版本",
+        "box": {
+          "x": 64,
+          "y": 874,
+          "w": 668,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 870,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g01_e_evdg",
+        "source": "g01_evidence",
+        "target": "g01_diagnosis",
+        "points": [
+          {
+            "x": 330,
+            "y": 245
+          },
+          {
+            "x": 420,
+            "y": 245.00000000000003
+          }
+        ]
+      },
+      {
+        "id": "g01_e_dgpt",
+        "source": "g01_diagnosis",
+        "target": "g01_patch",
+        "points": [
+          {
+            "x": 680,
+            "y": 245
+          },
+          {
+            "x": 770,
+            "y": 245.00000000000003
+          }
+        ]
+      },
+      {
+        "id": "g01_e_ptva",
+        "source": "g01_patch",
+        "target": "g01_static",
+        "points": [
+          {
+            "x": 900,
+            "y": 300
+          },
+          {
+            "x": 900,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g01_e_varp",
+        "source": "g01_static",
+        "target": "g01_replay",
+        "points": [
+          {
+            "x": 770,
+            "y": 485
+          },
+          {
+            "x": 680,
+            "y": 485
+          }
+        ]
+      },
+      {
+        "id": "g01_e_rpcf",
+        "source": "g01_replay",
+        "target": "g01_confirm",
+        "points": [
+          {
+            "x": 420,
+            "y": 485
+          },
+          {
+            "x": 330,
+            "y": 485
+          }
+        ]
+      },
+      {
+        "id": "g01_e_cfpu",
+        "source": "g01_confirm",
+        "target": "g01_publisher",
+        "points": [
+          {
+            "x": 200,
+            "y": 540
+          },
+          {
+            "x": 200,
+            "y": 610
+          },
+          {
+            "x": 1090,
+            "y": 610
+          },
+          {
+            "x": 1090,
+            "y": 485
+          },
+          {
+            "x": 1140,
+            "y": 485
+          }
+        ]
+      },
+      {
+        "id": "g01_e_policy",
+        "source": "g01_policy",
+        "target": "g01_publisher",
+        "points": [
+          {
+            "x": 1255,
+            "y": 300
+          },
+          {
+            "x": 1255,
+            "y": 430
+          }
+        ]
+      },
+      {
+        "id": "g01_e_run",
+        "source": "g01_publisher",
+        "target": "g01_run",
+        "points": [
+          {
+            "x": 1255,
+            "y": 540
+          },
+          {
+            "x": 1255,
+            "y": 710
+          }
+        ]
+      },
+      {
+        "id": "g01_e_feedback",
+        "source": "g01_run",
+        "target": "g01_evidence",
+        "points": [
+          {
+            "x": 1140,
+            "y": 760
+          },
+          {
+            "x": 55,
+            "y": 760
+          },
+          {
+            "x": 55,
+            "y": 245
+          },
+          {
+            "x": 70,
+            "y": 245.00000000000003
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g02_en",
+    "width": 1440,
+    "height": 900,
+    "modelCells": 24,
+    "labels": [
+      {
+        "id": "g02_title",
+        "edge": false,
+        "text": "A typed validator insertion patch",
+        "box": {
+          "x": 39,
+          "y": 32,
+          "w": 497.671875,
+          "h": 36
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g02_before-heading",
+        "edge": false,
+        "text": "(a) G0: current execution DAG",
+        "box": {
+          "x": 58,
+          "y": 130,
+          "w": 372.734375,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 122,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "g02_a0",
+        "edge": false,
+        "text": "Input",
+        "box": {
+          "x": 166.0859375,
+          "y": 228,
+          "w": 58.603515625,
+          "h": 30
+        },
+        "cell": {
+          "x": 80,
+          "y": 200,
+          "w": 230,
+          "h": 80
+        }
+      },
+      {
+        "id": "g02_b0",
+        "edge": false,
+        "text": "Produce artifact",
+        "box": {
+          "x": 568.953125,
+          "y": 228,
+          "w": 182.865234375,
+          "h": 30
+        },
+        "cell": {
+          "x": 530,
+          "y": 200,
+          "w": 260,
+          "h": 80
+        }
+      },
+      {
+        "id": "g02_c0",
+        "edge": false,
+        "text": "Continue",
+        "box": {
+          "x": 1192.9609375,
+          "y": 228,
+          "w": 104.078125,
+          "h": 30
+        },
+        "cell": {
+          "x": 1130,
+          "y": 200,
+          "w": 230,
+          "h": 80
+        }
+      },
+      {
+        "id": "g02_e_bc0",
+        "edge": true,
+        "text": "artifact",
+        "box": {
+          "x": 924,
+          "y": 207,
+          "w": 72,
+          "h": 26.5
+        },
+        "cell": {
+          "x": 790,
+          "y": 240,
+          "w": 340,
+          "h": 1
+        }
+      },
+      {
+        "id": "g02_after-heading",
+        "edge": false,
+        "text": "(b) G1: candidate with an explicit validation gate",
+        "box": {
+          "x": 58,
+          "y": 415,
+          "w": 595.21875,
+          "h": 30
+        },
+        "cell": {
+          "x": 58,
+          "y": 407,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "g02_a1",
+        "edge": false,
+        "text": "Input",
+        "box": {
+          "x": 166.0859375,
+          "y": 513,
+          "w": 58.603515625,
+          "h": 30
+        },
+        "cell": {
+          "x": 80,
+          "y": 480,
+          "w": 230,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_b1",
+        "edge": false,
+        "text": "Produce artifact",
+        "box": {
+          "x": 448.953125,
+          "y": 513,
+          "w": 182.865234375,
+          "h": 30
+        },
+        "cell": {
+          "x": 420,
+          "y": 480,
+          "w": 240,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_v1",
+        "edge": false,
+        "text": "Registered validator\nvalidated artifact ref",
+        "box": {
+          "x": 778.828125,
+          "y": 497,
+          "w": 223.013671875,
+          "h": 58
+        },
+        "cell": {
+          "x": 760,
+          "y": 480,
+          "w": 260,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_c1",
+        "edge": false,
+        "text": "Continue",
+        "box": {
+          "x": 1182.9609375,
+          "y": 513,
+          "w": 104.078125,
+          "h": 30
+        },
+        "cell": {
+          "x": 1110,
+          "y": 480,
+          "w": 250,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_fail",
+        "edge": false,
+        "text": "Stop / explicit recovery",
+        "box": {
+          "x": 815.65625,
+          "y": 652,
+          "w": 149.73583984375,
+          "h": 58
+        },
+        "cell": {
+          "x": 760,
+          "y": 645,
+          "w": 260,
+          "h": 70
+        }
+      },
+      {
+        "id": "g02_e_vc1",
+        "edge": true,
+        "text": "pass",
+        "box": {
+          "x": 1039,
+          "y": 491,
+          "w": 51,
+          "h": 26.5
+        },
+        "cell": {
+          "x": 1020,
+          "y": 525,
+          "w": 90,
+          "h": 1
+        }
+      },
+      {
+        "id": "g02_e_vfail",
+        "edge": true,
+        "text": "fail",
+        "box": {
+          "x": 935,
+          "y": 597,
+          "w": 33,
+          "h": 26.5
+        },
+        "cell": {
+          "x": 890,
+          "y": 570,
+          "w": 1,
+          "h": 75
+        }
+      },
+      {
+        "id": "g02_contract",
+        "edge": false,
+        "text": "Patch binds base graph + step IDs + operator digest; recheck topology, I/O and side effects.",
+        "box": {
+          "x": 65,
+          "y": 799,
+          "w": 974.359375,
+          "h": 27
+        },
+        "cell": {
+          "x": 65,
+          "y": 785,
+          "w": 1310,
+          "h": 50
+        }
+      },
+      {
+        "id": "g02_claim",
+        "edge": false,
+        "text": "Illustrative candidate; additional validation must earn its cost in independent task evaluation.",
+        "box": {
+          "x": 65,
+          "y": 857,
+          "w": 934.625,
+          "h": 26
+        },
+        "cell": {
+          "x": 65,
+          "y": 850,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g02_e_ab0",
+        "source": "g02_a0",
+        "target": "g02_b0",
+        "points": [
+          {
+            "x": 310,
+            "y": 240
+          },
+          {
+            "x": 530,
+            "y": 240.00000000000003
+          }
+        ]
+      },
+      {
+        "id": "g02_e_bc0",
+        "source": "g02_b0",
+        "target": "g02_c0",
+        "points": [
+          {
+            "x": 790,
+            "y": 240
+          },
+          {
+            "x": 1130,
+            "y": 240
+          }
+        ]
+      },
+      {
+        "id": "g02_e_ab1",
+        "source": "g02_a1",
+        "target": "g02_b1",
+        "points": [
+          {
+            "x": 310,
+            "y": 525
+          },
+          {
+            "x": 420,
+            "y": 525
+          }
+        ]
+      },
+      {
+        "id": "g02_e_bv1",
+        "source": "g02_b1",
+        "target": "g02_v1",
+        "points": [
+          {
+            "x": 660,
+            "y": 525
+          },
+          {
+            "x": 760,
+            "y": 525
+          }
+        ]
+      },
+      {
+        "id": "g02_e_vc1",
+        "source": "g02_v1",
+        "target": "g02_c1",
+        "points": [
+          {
+            "x": 1020,
+            "y": 525
+          },
+          {
+            "x": 1110,
+            "y": 525
+          }
+        ]
+      },
+      {
+        "id": "g02_e_vfail",
+        "source": "g02_v1",
+        "target": "g02_fail",
+        "points": [
+          {
+            "x": 890,
+            "y": 570
+          },
+          {
+            "x": 890,
+            "y": 645
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "figure": "g02_zh",
+    "width": 1440,
+    "height": 900,
+    "modelCells": 24,
+    "labels": [
+      {
+        "id": "g02_title",
+        "edge": false,
+        "text": "带类型约束的验证器插入补丁",
+        "box": {
+          "x": 40,
+          "y": 27,
+          "w": 416,
+          "h": 42
+        },
+        "cell": {
+          "x": 40,
+          "y": 24,
+          "w": 1360,
+          "h": 44
+        }
+      },
+      {
+        "id": "g02_before-heading",
+        "edge": false,
+        "text": "(a) G0：当前执行依赖图",
+        "box": {
+          "x": 58,
+          "y": 126,
+          "w": 286.953125,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 122,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "g02_a0",
+        "edge": false,
+        "text": "输入",
+        "box": {
+          "x": 169,
+          "y": 224,
+          "w": 52,
+          "h": 35
+        },
+        "cell": {
+          "x": 80,
+          "y": 200,
+          "w": 230,
+          "h": 80
+        }
+      },
+      {
+        "id": "g02_b0",
+        "edge": false,
+        "text": "生成任务产物",
+        "box": {
+          "x": 582,
+          "y": 224,
+          "w": 156,
+          "h": 35
+        },
+        "cell": {
+          "x": 530,
+          "y": 200,
+          "w": 260,
+          "h": 80
+        }
+      },
+      {
+        "id": "g02_c0",
+        "edge": false,
+        "text": "继续后续步骤",
+        "box": {
+          "x": 1167,
+          "y": 224,
+          "w": 156,
+          "h": 35
+        },
+        "cell": {
+          "x": 1130,
+          "y": 200,
+          "w": 230,
+          "h": 80
+        }
+      },
+      {
+        "id": "g02_e_bc0",
+        "edge": true,
+        "text": "任务产物",
+        "box": {
+          "x": 913,
+          "y": 204,
+          "w": 94,
+          "h": 30.5
+        },
+        "cell": {
+          "x": 790,
+          "y": 240,
+          "w": 340,
+          "h": 1
+        }
+      },
+      {
+        "id": "g02_after-heading",
+        "edge": false,
+        "text": "(b) G1：加入显式验证门的候选图",
+        "box": {
+          "x": 58,
+          "y": 411,
+          "w": 393.25,
+          "h": 35
+        },
+        "cell": {
+          "x": 58,
+          "y": 407,
+          "w": 1324,
+          "h": 40
+        }
+      },
+      {
+        "id": "g02_a1",
+        "edge": false,
+        "text": "输入",
+        "box": {
+          "x": 169,
+          "y": 509,
+          "w": 52,
+          "h": 35
+        },
+        "cell": {
+          "x": 80,
+          "y": 480,
+          "w": 230,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_b1",
+        "edge": false,
+        "text": "生成任务产物",
+        "box": {
+          "x": 462,
+          "y": 509,
+          "w": 156,
+          "h": 35
+        },
+        "cell": {
+          "x": 420,
+          "y": 480,
+          "w": 240,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_v1",
+        "edge": false,
+        "text": "已注册验证器\n产物通过验证的引用",
+        "box": {
+          "x": 777.5,
+          "y": 494,
+          "w": 225,
+          "h": 63
+        },
+        "cell": {
+          "x": 760,
+          "y": 480,
+          "w": 260,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_c1",
+        "edge": false,
+        "text": "继续后续步骤",
+        "box": {
+          "x": 1157,
+          "y": 509,
+          "w": 156,
+          "h": 35
+        },
+        "cell": {
+          "x": 1110,
+          "y": 480,
+          "w": 250,
+          "h": 90
+        }
+      },
+      {
+        "id": "g02_fail",
+        "edge": false,
+        "text": "终止或显式恢复",
+        "box": {
+          "x": 802.5,
+          "y": 665.5,
+          "w": 175,
+          "h": 33
+        },
+        "cell": {
+          "x": 760,
+          "y": 645,
+          "w": 260,
+          "h": 70
+        }
+      },
+      {
+        "id": "g02_e_vc1",
+        "edge": true,
+        "text": "通过",
+        "box": {
+          "x": 1041,
+          "y": 488,
+          "w": 48,
+          "h": 30.5
+        },
+        "cell": {
+          "x": 1020,
+          "y": 525,
+          "w": 90,
+          "h": 1
+        }
+      },
+      {
+        "id": "g02_e_vfail",
+        "edge": true,
+        "text": "不通过",
+        "box": {
+          "x": 915,
+          "y": 594,
+          "w": 72,
+          "h": 30.5
+        },
+        "cell": {
+          "x": 890,
+          "y": 570,
+          "w": 1,
+          "h": 75
+        }
+      },
+      {
+        "id": "g02_contract",
+        "edge": false,
+        "text": "补丁绑定基图、步骤标识与算子摘要；重新校验拓扑、输入输出及副作用",
+        "box": {
+          "x": 65,
+          "y": 796,
+          "w": 768,
+          "h": 31
+        },
+        "cell": {
+          "x": 65,
+          "y": 785,
+          "w": 1310,
+          "h": 50
+        }
+      },
+      {
+        "id": "g02_claim",
+        "edge": false,
+        "text": "这是候选变更示例；新增验证的收益与成本仍需独立任务评测",
+        "box": {
+          "x": 65,
+          "y": 854,
+          "w": 621,
+          "h": 30
+        },
+        "cell": {
+          "x": 65,
+          "y": 850,
+          "w": 1310,
+          "h": 35
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "g02_e_ab0",
+        "source": "g02_a0",
+        "target": "g02_b0",
+        "points": [
+          {
+            "x": 310,
+            "y": 240
+          },
+          {
+            "x": 530,
+            "y": 240.00000000000003
+          }
+        ]
+      },
+      {
+        "id": "g02_e_bc0",
+        "source": "g02_b0",
+        "target": "g02_c0",
+        "points": [
+          {
+            "x": 790,
+            "y": 240
+          },
+          {
+            "x": 1130,
+            "y": 240
+          }
+        ]
+      },
+      {
+        "id": "g02_e_ab1",
+        "source": "g02_a1",
+        "target": "g02_b1",
+        "points": [
+          {
+            "x": 310,
+            "y": 525
+          },
+          {
+            "x": 420,
+            "y": 525
+          }
+        ]
+      },
+      {
+        "id": "g02_e_bv1",
+        "source": "g02_b1",
+        "target": "g02_v1",
+        "points": [
+          {
+            "x": 660,
+            "y": 525
+          },
+          {
+            "x": 760,
+            "y": 525
+          }
+        ]
+      },
+      {
+        "id": "g02_e_vc1",
+        "source": "g02_v1",
+        "target": "g02_c1",
+        "points": [
+          {
+            "x": 1020,
+            "y": 525
+          },
+          {
+            "x": 1110,
+            "y": 525
+          }
+        ]
+      },
+      {
+        "id": "g02_e_vfail",
+        "source": "g02_v1",
+        "target": "g02_fail",
+        "points": [
+          {
+            "x": 890,
+            "y": 570
+          },
+          {
+            "x": 890,
+            "y": 645
+          }
+        ]
+      }
+    ]
+  }
+]
