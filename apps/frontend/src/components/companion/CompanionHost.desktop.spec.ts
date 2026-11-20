@@ -1,6 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CompanionHost from './CompanionHost.vue'
+import { companionRuntimeBridge } from '@/features/companion/runtimeBridge'
+import type { MissionWorkspaceProjection } from '@/services/api/agentos'
+
+const owner = Symbol('desktop-host-spec')
+const selectRun = (runId: string) => {
+  companionRuntimeBridge.activate(owner)
+  companionRuntimeBridge.selectVerified(owner, { mission: { missionId: 'm' }, activeRun: { runId, status: 'running' }, runs: [{ runId, status: 'running' }] } as MissionWorkspaceProjection, 'm')
+}
 
 vi.mock('@/services/api/workflow', () => ({
   workflowApi: {
@@ -41,6 +49,7 @@ describe('CompanionHost desktop integration', () => {
   })
 
   afterEach(() => {
+    companionRuntimeBridge.release(owner)
     document.body.innerHTML = ''
     localStorage.clear()
     delete (window as unknown as { kinlinDesktop?: unknown }).kinlinDesktop
@@ -58,7 +67,7 @@ describe('CompanionHost desktop integration', () => {
   })
 
   it('handles a tray progress action by expanding and answering with the read-only projection', async () => {
-    localStorage.setItem('companion.active_run_id.v1', 'run_42')
+    selectRun('run_42')
     const wrapper = mount(CompanionHost)
     await flushPromises()
     trayListener?.('progress')
@@ -69,11 +78,10 @@ describe('CompanionHost desktop integration', () => {
   })
 
   it('sends high-priority events to native notifications, and quiet mode suppresses them', async () => {
+    selectRun('run_9')
     const wrapper = mount(CompanionHost)
     await flushPromises()
-    window.dispatchEvent(new CustomEvent('companion:run-event', {
-      detail: { eventType: 'run.failed', runId: 'run_9' }
-    }))
+    companionRuntimeBridge.publishAccepted({ eventId: 'e1', sequence: 1, eventType: 'run.failed', runId: 'run_9' })
     await flushPromises()
     expect(bridge.notifyIfBackground).toHaveBeenCalledWith(
       '知宝 · 出错了', expect.stringContaining('Trace')
@@ -85,9 +93,7 @@ describe('CompanionHost desktop integration', () => {
     expect(bridge.publishState).toHaveBeenCalledWith(expect.objectContaining({ quiet: true }))
 
     bridge.notifyIfBackground.mockClear()
-    window.dispatchEvent(new CustomEvent('companion:run-event', {
-      detail: { eventType: 'node.failed', runId: 'run_10' }
-    }))
+    companionRuntimeBridge.publishAccepted({ eventId: 'e2', sequence: 2, eventType: 'node.failed', runId: 'run_9' })
     await flushPromises()
     expect(bridge.notifyIfBackground).not.toHaveBeenCalled()
     wrapper.unmount()

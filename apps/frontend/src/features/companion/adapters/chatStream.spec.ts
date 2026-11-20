@@ -28,6 +28,7 @@ describe('Companion server conversation continuity', () => {
     const body = JSON.parse(fetcher.mock.calls[0][1].body)
     // 模型回复是默认档，但走轻量档位：不指定模型、思考关闭。
     expect(body.thinking_mode).toBe('disabled')
+    expect(body.tool_mode).toBe('disabled')
     expect(body).not.toHaveProperty('model')
     expect(body).not.toHaveProperty('context_id')
     expect(localStorage.getItem(storageKey)).toBe('ctx_server-owned')
@@ -79,5 +80,37 @@ describe('Companion server conversation continuity', () => {
     vi.stubGlobal('fetch', fetcher)
     await expect(new StreamChatPort().reply('你好', context, controller.signal)).rejects.toThrow('AI_UPSTREAM_TIMEOUT')
     expect(fetcher.mock.calls[0][1].signal).toBe(controller.signal)
+  })
+
+  it('sends a bounded persona projection separately from the current user message', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response(frame('done', {})))
+    vi.stubGlobal('fetch', fetcher)
+    await new StreamChatPort().reply('现在的话', {
+      ...context, personaName: '团子', personaLines: ['慢一点也没关系'],
+      messages: [
+        { id: '1', role: 'user', content: '之前的话', createdAt: 1 },
+        { id: '2', role: 'companion', content: '我记得', createdAt: 2 },
+        { id: '3', role: 'user', content: '现在的话', createdAt: 3 }
+      ]
+    })
+    const body = JSON.parse(fetcher.mock.calls[0][1].body)
+    expect(body.text).toBe('现在的话')
+    expect(body.context[0].role).toBe('system')
+    expect(body.context[0].content).toContain('团子')
+    expect(body.context[0].content).toContain('慢一点也没关系')
+    expect(body.context.slice(1)).toEqual([
+      { role: 'user', content: '之前的话' }, { role: 'assistant', content: '我记得' }
+    ])
+  })
+
+  it('stops reading at done and releases a stream that stays open', async () => {
+    const cancel = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode(frame('content_delta', { delta: '完成' }) + frame('done', {}))) },
+      cancel
+    }))))
+    const result = new StreamChatPort().reply('你好', context)
+    await expect(Promise.race([result, new Promise(resolve => setTimeout(() => resolve('hung'), 100))])).resolves.toBe('完成')
+    expect(cancel).toHaveBeenCalledOnce()
   })
 })

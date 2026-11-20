@@ -35,4 +35,11 @@ describe('companion skin registry', () => {
     }
     expect(() => registry.register(broken)).toThrow(/stateMap/)
   })
+
+  it('rejects eight wrong keys or blank state mappings', () => {
+    const registry = new SkinRegistry()
+    const { idle: _idle, ...rest } = BUILTIN_SKINS[0].stateMap
+    expect(() => registry.register({ ...BUILTIN_SKINS[0], id: 'wrong', stateMap: { ...rest, unknown: 'idle' } as SkinManifest['stateMap'] })).toThrow(/stateMap/)
+    expect(() => registry.register({ ...BUILTIN_SKINS[0], id: 'blank', stateMap: { ...BUILTIN_SKINS[0].stateMap, idle: ' ' } })).toThrow(/stateMap/)
+  })
 })

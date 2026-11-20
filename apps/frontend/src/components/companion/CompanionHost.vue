@@ -7,6 +7,7 @@
       :data-state="state"
       :data-speaking="speaking ? '1' : '0'"
       :data-listening="listening ? '1' : '0'"
+      :data-motion="customization.motion ? '1' : '0'"
       data-testid="companion-root"
     >
       <section v-if="expanded" class="companion-panel" aria-label="虚拟伙伴面板">
@@ -58,6 +59,7 @@
             @dismiss-card="card = null"
             @toggle-voice="toggleVoice"
             @toggle-mute="toggleMute"
+            @submit="handleUtterance"
           />
         </template>
         <CompanionCustomizer
@@ -124,31 +126,25 @@ import CompanionDialogue from './CompanionDialogue.vue'
 import CompanionPetBar from './CompanionPetBar.vue'
 import CompanionSettings from './CompanionSettings.vue'
 import { createDesktopPort, type TrayAction } from '@/features/companion/adapters/desktop'
-import {
-  buildDiySkin, DIY_SKIN_ID, loadCustomization, saveCustomization
-} from '@/features/companion/customization'
+import { saveCustomization } from '@/features/companion/customization'
+import { useCompanionAppearance } from '@/features/companion/useCompanionAppearance'
 import { IdleChoreographer } from '@/features/companion/idleBehavior'
 import {
-  IdleFallback, ProactivityQueue, STATE_LABEL, resolveState, stateFromRuntimeEvent
+  IdleFallback, ProactivityQueue, STATE_LABEL, resolveState
 } from '@/features/companion/companionState'
-import { CompanionService, createDefaultPorts } from '@/features/companion/companionService'
+import { useCompanionConversation } from '@/features/companion/useCompanionConversation'
+import { useCompanionRuntime } from '@/features/companion/useCompanionRuntime'
+import { useCompanionPosition } from '@/features/companion/useCompanionPosition'
+import type { RuntimeEvent } from '@/workbench/runtime/runtimeEvents'
 import {
   ACHIEVEMENTS, MOOD_LABEL, levelOf, levelProgress, loadPetProfile, moodOf,
   savePetProfile, titleOf, applyPetAction, type PetAction, type PetProfile, type PetStorage
 } from '@/features/companion/pet'
-import {
-  COMPANION_POSITION_KEY, clampCompanionPosition, clampExpandedPosition,
-  companionPositionFromDrag, loadCompanionPosition, type CompanionPosition
-} from '@/features/companion/position'
-import { createRenderer } from '@/features/companion/renderers'
-import { COMPANION_SKIN_STORAGE_KEY, defaultSkinRegistry } from '@/features/companion/skins'
-import { createSwitchGuard } from '@/features/companion/switchGuard'
 import { matchCompanionCommand, type CommandMatch } from '@/features/companion/speechCommands'
 import { VoiceEngine, voiceHint, type VoiceOption, type VoicePhase } from '@/features/companion/voice'
 import { buildWakeWords, WakeWordListener } from '@/features/companion/wakeWord'
 import type {
-  AvatarRenderer, ChatPort, CompanionCustomization, CompanionMessage, CompanionState, SkinManifest,
-  TaskIntentCard
+  CompanionCustomization, CompanionState
 } from '@/features/companion/types'
 
 const EXPANDED_KEY = 'companion.expanded.v1'
@@ -157,7 +153,6 @@ const QUIET_KEY = 'companion.quiet.v1'
 const WAKE_KEY = 'companion.wake.v1'
 const IDLE_TICK_MS = 15_000
 const BUBBLE_TTL_MS = 3600
-const PREVIEW_DEBOUNCE_MS = 180
 
 const storage = ((): PetStorage | null => {
   try { return typeof localStorage === 'undefined' ? null : localStorage } catch { return null }
@@ -168,19 +163,12 @@ const readFlag = (key: string): boolean => {
 const writeFlag = (key: string, value: boolean): void => {
   try { localStorage.setItem(key, value ? '1' : '0') } catch { /* storage is optional */ }
 }
-const readSkinId = (): string => {
-  try { return localStorage.getItem(COMPANION_SKIN_STORAGE_KEY) || 'companion-static' } catch { return 'companion-static' }
-}
 const readWakeFlag = (): boolean => {
   try {
     const raw = localStorage.getItem(WAKE_KEY)
     return raw === null ? true : raw === '1'
   } catch { return true }
 }
-const viewport = (): { width: number; height: number } => ({
-  width: typeof window === 'undefined' ? 1280 : window.innerWidth,
-  height: typeof window === 'undefined' ? 800 : window.innerHeight
-})
 const reduceMotion = (): boolean => {
   try {
     return typeof window.matchMedia === 'function'
@@ -191,22 +179,12 @@ const reduceMotion = (): boolean => {
 const stageRef = ref<HTMLElement | null>(null)
 const expanded = ref(readFlag(EXPANDED_KEY))
 const quiet = ref(readFlag(QUIET_KEY))
-const skinId = ref(readSkinId())
 const state = ref<CompanionState>('idle')
-const messages = ref<CompanionMessage[]>([])
-const pending = ref(false)
-const card = ref<TaskIntentCard | null>(null)
 const pet = ref<PetProfile>(loadPetProfile(storage, Date.now()))
-const position = ref<CompanionPosition | null>(null)
-const dragging = ref(false)
 const restingBecauseIdle = ref(false)
 const bubble = ref<{ text: string; tone: 'chat' | 'effect' | 'achievement' } | null>(null)
 
-const customization = ref<CompanionCustomization>(loadCustomization(storage))
-const customizerOpen = ref(false)
 const settingsOpen = ref(false)
-const skins = ref(defaultSkinRegistry.list())
-const muted = ref(customization.value.voice.muted)
 const voicePhase = ref<VoicePhase>('idle')
 const interim = ref('')
 const voiceError = ref('')
@@ -217,11 +195,20 @@ const wakeEnabled = ref(readWakeFlag())
 const wakeError = ref('')
 const wakeArmed = ref(false)
 
-const savedPosition = loadCompanionPosition(storage)
-if (savedPosition) position.value = clampCompanionPosition(savedPosition, viewport())
+const placement = useCompanionPosition({
+  stage: stageRef, expanded, storage,
+  onAdjusted: () => showBubble('这边有点挤，我挪回来一点～')
+})
+const { position, dragging, rootStyle, ensurePanelVisible, onPointerDown } = placement
 
-defaultSkinRegistry.upsert(buildDiySkin(customization.value))
-skins.value = defaultSkinRegistry.list()
+const appearance = useCompanionAppearance({
+  stage: stageRef, storage,
+  state: () => state.value, speaking: () => speaking.value, listening: () => listening.value
+})
+const { customization, skinId, skins, editing: customizerOpen, applySkin } = appearance
+const muted = computed(() => customization.value.voice.muted)
+watch(() => customization.value.voice.voiceURI, () => stopSpeaking())
+watch(muted, value => { if (value) stopSpeaking() })
 
 const voice = new VoiceEngine()
 const voiceCaps = ref(voice.capabilities)
@@ -243,19 +230,6 @@ const achievementLabels = computed(() =>
 )
 const hint = computed(() => voiceHint(voiceCaps.value, voicePhase.value, voiceError.value))
 const voiceLevel = computed(() => 0.36 + Math.min(0.5, interim.value.length / 48))
-
-// 面板在角色上方：按 right/bottom 锚定，展开时向上生长。
-// 同时把 bottom 传给 CSS，让面板的最大高度按「角色离屏幕底部的距离」收缩，
-// 否则窗口变矮或角色被拖到上方时，展开的面板会从视口顶部溢出。
-const rootStyle = computed<Record<string, string>>(() => position.value
-  ? {
-      right: `${position.value.right}px`,
-      bottom: `${position.value.bottom}px`,
-      left: 'auto',
-      top: 'auto',
-      '--companion-bottom': `${position.value.bottom}px`
-    }
-  : {})
 
 const idleFallback = new IdleFallback(5000)
 const queue = new ProactivityQueue(4000)
@@ -279,47 +253,21 @@ const wake = new WakeWordListener({
   }
 })
 
-let renderer: AvatarRenderer | null = null
-/**
- * 模型回复是默认档而不是开关：本地话术只做冷启动兜底。
- * 工坊改台词时用 rebuildService() 重建，别把模型通道弄丢。
- */
-let modelChat: ChatPort | null = null
-const rebuildService = (): void => {
-  const ports = createDefaultPorts(customization.value.lines)
-  if (modelChat) ports.chat = modelChat
-  service = new CompanionService(ports)
-}
-let service = new CompanionService(createDefaultPorts(customization.value.lines))
-let abort: AbortController | null = null
+const conversation = useCompanionConversation({
+  persona: () => ({ name: customization.value.name, lines: customization.value.lines }),
+  onReply: text => { showBubble(text); speakReply(text) },
+  onState: next => applyState(next, true),
+  onTurn: turn => trackAction(turn.intent === 'progress_query' ? 'progress' : turn.intent === 'task_dispatch' ? 'task' : 'chat')
+})
+const { messages, pending, card, pushMessage, send, enableModelReplies } = conversation
 let disposed = false
-let messageSeq = 0
 let fxSeq = 0
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null
-let clickSuppressTimer: ReturnType<typeof setTimeout> | null = null
 let idleTimer: ReturnType<typeof setInterval> | null = null
-let previewTimer: ReturnType<typeof setTimeout> | null = null
 let hiddenAt = 0
 let unsubscribeTray: (() => void) | null = null
 let unsubscribeVoices: (() => void) | null = null
-let skinBeforeDiy: string | null = null
-let diyCommitted = false
 const effectTimers = new Set<ReturnType<typeof setTimeout>>()
-
-const drag = {
-  active: false, moved: false, startX: 0, startY: 0,
-  offsetX: 0, offsetY: 0, avatarWidth: 0, avatarHeight: 0
-}
-let suppressClick = false
-
-const pushMessage = (role: CompanionMessage['role'], content: string): void => {
-  messages.value = [...messages.value, {
-    id: `companion-${++messageSeq}`,
-    role,
-    content,
-    createdAt: Date.now()
-  }]
-}
 
 const showBubble = (text: string, tone: 'chat' | 'effect' | 'achievement' = 'chat'): void => {
   bubble.value = { text, tone }
@@ -344,11 +292,11 @@ const spawnEffects = (glyph: string, count = 3): void => {
 
 const setSpeaking = (on: boolean): void => {
   speaking.value = on
-  renderer?.setSpeaking?.(on)
+  appearance.setSpeaking(on)
 }
 const setListening = (on: boolean): void => {
   listening.value = on
-  renderer?.setListening?.(on)
+  appearance.setListening(on)
 }
 
 /**
@@ -408,33 +356,38 @@ watch(personaName, () => publishDesktopState())
 const scheduleFallback = (): void => {
   idleFallback.schedule(() => {
     if (disposed) return
-    state.value = restingBecauseIdle.value ? 'sleeping' : 'idle'
-    renderer?.setState(state.value)
+    transientState = null
+    refreshState()
   })
 }
 
-/**
- * 主干把 happy 提权为完成态（run.completed 需要压过 thinking/working）。
- * 但本地点头像/摸头等互动也借用 happy 做表情，若不显式接管，用户新一轮的
- * 「聆听 / 思考中」会被上一次互动的开心表情挡住。运行时事件仍走优先级仲裁。
- */
-const applyState = (next: CompanionState, overrideInteractiveHappy = false): void => {
-  state.value = overrideInteractiveHappy && state.value === 'happy'
-    ? next
-    : resolveState(state.value, next)
-  renderer?.setState(state.value)
-  scheduleFallback()
+let transientState: CompanionState | null = null
+const runtime = useCompanionRuntime({ onChange: () => refreshState(), onNotice: (event, mapped) => notifyRuntime(event, mapped) })
+
+/** Runtime facts, current input and brief expressions have independent lifetimes. */
+const refreshState = (): void => {
+  if (disposed) return
+  const fact = runtime.state.value
+  const interaction = pending.value ? 'thinking' : listening.value ? 'listening'
+    : transientState ?? (restingBecauseIdle.value ? 'sleeping' : 'idle')
+  state.value = fact === 'error' || fact === 'alert' ? fact
+    : pending.value || listening.value ? interaction : fact ? resolveState(fact, interaction) : interaction
+  appearance.setState(state.value)
   publishDesktopState()
+}
+watch([pending, listening, speaking], refreshState)
+
+const applyState = (next: CompanionState, replace = false): void => {
+  transientState = replace ? next : resolveState(transientState ?? 'idle', next)
+  refreshState()
+  scheduleFallback()
 }
 
 /** 互动的开心表情不覆盖告警/思考/跟进中：宠物再活泼也不打断正事。 */
 const NO_INTERRUPT: CompanionState[] = ['error', 'alert', 'working', 'thinking']
 const flashPetState = (next: CompanionState): void => {
   if (NO_INTERRUPT.includes(state.value)) return
-  state.value = next
-  renderer?.setState(next)
-  scheduleFallback()
-  publishDesktopState()
+  applyState(next, true)
 }
 
 const recordAchievements = (names: string): void => {
@@ -472,18 +425,15 @@ const trackAction = (action: PetAction): void => {
 }
 
 /** 只消费上游已订阅的运行时事件，不新建长连接；无 webhook 也不新建推送协议。 */
-const handleRuntimeEvent = (event: Event): void => {
-  const detail = (event as CustomEvent<{ eventType?: string; runId?: string }>).detail || {}
-  const mapped = stateFromRuntimeEvent(detail.eventType || '')
-  if (!mapped) return
-  applyState(mapped)
-  if (mapped !== 'error' && mapped !== 'alert') return
+const notifyRuntime = (event: RuntimeEvent, mapped: 'error' | 'alert'): void => {
+  const cancelled = event.eventType === 'run.cancelled' || event.eventType === 'run.superseded'
   const notice = queue.enqueue({
-    id: `${detail.eventType || 'event'}:${detail.runId || ''}`,
+    id: `${event.runId}:${event.eventId}`,
     priority: mapped === 'error' ? 5 : 4,
     text: mapped === 'error'
       ? '有个运行出问题了，去工作台看看 Trace 吧。'
-      : '有个运行等待人工复核，抽空看一眼？',
+      : cancelled ? '当前运行已取消或被新运行替代，可以去工作台查看详情。'
+        : '有个运行等待人工复核，抽空看一眼？',
     state: mapped,
     at: Date.now()
   })
@@ -492,76 +442,7 @@ const handleRuntimeEvent = (event: Event): void => {
   if (!quiet.value) desktop.notifyIfBackground(`${personaName.value} · ${STATE_LABEL[mapped]}`, notice.text)
 }
 
-/**
- * 切换形象是一次事务，而不是两步赋值。
- *
- * 1. 先挂载新渲染器，成功之后才销毁旧的：grok 皮肤要等动态 import，
- *    期间旧形象仍在屏幕上，不会闪白，也不会出现 renderer 为 null 的空窗。
- * 2. 用 SwitchGuard 丢弃过期结果：连续切换（下拉连点、语音命令、工坊预览）
- *    时只认最后一次，避免慢的旧挂载覆盖快的新挂载。
- * 3. 新渲染器就位后重放当前 8 态与口型/收音状态，说话中换皮不会「僵脸」。
- * 4. 失败走同一套流程降级到 companion-static，并把降级结果写回持久化，
- *    否则刷新后会再次尝试那个注定失败的形象。
- */
-const skinSwitch = createSwitchGuard()
-
-const applySkin = async (id: string): Promise<void> => {
-  const stage = stageRef.value
-  if (!stage || disposed) return
-  const isLatest = skinSwitch.begin()
-
-  const commit = (candidate: AvatarRenderer, manifest: SkinManifest): void => {
-    const previous = renderer
-    renderer = candidate
-    renderer.setState(state.value)
-    renderer.setSpeaking?.(speaking.value)
-    renderer.setListening?.(listening.value)
-    previous?.destroy()
-    if (manifest.id !== skinId.value) skinId.value = manifest.id
-    try { localStorage.setItem(COMPANION_SKIN_STORAGE_KEY, manifest.id) } catch { /* optional */ }
-  }
-
-  const skin = defaultSkinRegistry.resolve(id)
-  const next = createRenderer(skin)
-  try {
-    await next.mount(stage, skin)
-    if (disposed || !isLatest()) { next.destroy(); return }
-    commit(next, skin)
-  } catch {
-    next.destroy()
-    if (disposed || !isLatest()) return
-    const fallback = defaultSkinRegistry.resolve(null)
-    const plain = createRenderer(fallback)
-    try {
-      await plain.mount(stage, fallback)
-      if (disposed || !isLatest()) { plain.destroy(); return }
-      commit(plain, fallback)
-    } catch {
-      plain.destroy()
-    }
-  }
-}
-
-const writePosition = (): void => {
-  if (!position.value) return
-  try { localStorage.setItem(COMPANION_POSITION_KEY, JSON.stringify(position.value)) } catch { /* optional */ }
-}
-
-/**
- * 面板在角色上方、向左生长，展开后根节点比角色宽得多。
- * 若角色被拖到屏幕左侧，展开前把它平移回仍有完整面板空间的位置；
- * 收起态不做限制，拖拽依旧自由。
- */
-const ensurePanelVisible = (): boolean => {
-  if (!position.value) return false
-  const adjusted = clampExpandedPosition(position.value, viewport())
-  if (adjusted.right === position.value.right && adjusted.bottom === position.value.bottom) return false
-  position.value = adjusted
-  writePosition()
-  return true
-}
-
-watch(expanded, (isOpen) => { if (isOpen) ensurePanelVisible() })
+watch(expanded, isOpen => { if (!isOpen) appearance.cancelEdit() })
 
 const toggleExpanded = (): boolean => {
   expanded.value = !expanded.value
@@ -577,7 +458,7 @@ const toggleExpanded = (): boolean => {
  * 这里也是唤醒监听的布防点：浏览器要求麦克风会话由用户手势发起。
  */
 const onAvatarClick = (): void => {
-  if (suppressClick) return
+  if (placement.isClickSuppressed()) return
   const moved = toggleExpanded()
   if (expanded.value) {
     armWake()
@@ -605,49 +486,16 @@ const cycleSkin = (): void => {
 /** 打开工坊先看 DIY 皮肤；未保存就收起时还原到原来的形象。 */
 const openCustomizer = (): void => {
   settingsOpen.value = false
-  if (!customizerOpen.value) {
-    skinBeforeDiy = skinId.value
-    diyCommitted = false
-  }
-  customizerOpen.value = true
+  appearance.beginEdit()
   expanded.value = true
   writeFlag(EXPANDED_KEY, true)
   ensurePanelVisible()
-  if (skinId.value !== DIY_SKIN_ID) void applySkin(DIY_SKIN_ID)
 }
 
-const closeCustomizer = (): void => {
-  customizerOpen.value = false
-  if (!diyCommitted && skinBeforeDiy && skinBeforeDiy !== DIY_SKIN_ID) {
-    skinId.value = skinBeforeDiy
-    void applySkin(skinBeforeDiy)
-  }
-  skinBeforeDiy = null
-}
-
-const onCustomizationPreview = (value: CompanionCustomization): void => {
-  const voiceChanged = value.voice.voiceURI !== customization.value.voice.voiceURI
-  customization.value = value
-  // 声线一换，正在念的那句会变成前后两种嗓子：立刻打断，下一次开口直接用新声线。
-  if (voiceChanged) stopSpeaking()
-  defaultSkinRegistry.upsert(buildDiySkin(value))
-  skins.value = defaultSkinRegistry.list()
-  rebuildService()
-  if (previewTimer !== null) clearTimeout(previewTimer)
-  previewTimer = setTimeout(() => {
-    if (!disposed && skinId.value === DIY_SKIN_ID) void applySkin(DIY_SKIN_ID)
-  }, PREVIEW_DEBOUNCE_MS)
-}
-
+const closeCustomizer = (): void => { appearance.cancelEdit() }
+const onCustomizationPreview = (value: CompanionCustomization): void => { appearance.preview(value) }
 const onCustomizationApply = (value: CompanionCustomization): void => {
-  customization.value = value
-  saveCustomization(storage, value)
-  defaultSkinRegistry.upsert(buildDiySkin(value))
-  skins.value = defaultSkinRegistry.list()
-  rebuildService()
-  diyCommitted = true
-  if (skinId.value !== DIY_SKIN_ID) skinId.value = DIY_SKIN_ID
-  void applySkin(DIY_SKIN_ID)
+  appearance.save(value)
   spawnEffects('★', 4)
   showBubble(`好，以后我就是${value.name}啦。`, 'effect')
   speakReply(`好，以后我就是${value.name}啦。`)
@@ -680,10 +528,11 @@ const onQuietChange = (): void => {
 }
 
 const toggleMute = (): void => {
-  muted.value = !muted.value
+  closeCustomizerRestores()
+  const nextMuted = !muted.value
   customization.value = {
     ...customization.value,
-    voice: { ...customization.value.voice, muted: muted.value }
+    voice: { ...customization.value.voice, muted: nextMuted }
   }
   saveCustomization(storage, customization.value)
   if (muted.value) stopSpeaking()
@@ -691,23 +540,8 @@ const toggleMute = (): void => {
 }
 
 const resetPosition = (): void => {
-  position.value = null
-  try { localStorage.removeItem(COMPANION_POSITION_KEY) } catch { /* optional */ }
+  placement.reset()
   showBubble('回到老位置啦。')
-}
-
-/**
- * 模型回复是默认档：加载即接入，失败静默退回本地话术。
- * 请求层已固定「思考关闭 + 服务端轻量档」，见 chatStream.ts。
- */
-const enableModelReplies = async (): Promise<void> => {
-  if (modelChat || disposed) return
-  try {
-    const { StreamChatPort } = await import('@/features/companion/adapters/chatStream')
-    if (disposed) return
-    modelChat = new StreamChatPort()
-    rebuildService()
-  } catch { /* 模型通道暂时不可用就先陪聊，不打扰用户 */ }
 }
 
 /**
@@ -716,12 +550,12 @@ const enableModelReplies = async (): Promise<void> => {
  */
 const syncWake = (): void => {
   if (!wakeArmed.value) return
-  const idle = !quiet.value && voicePhase.value === 'idle' && !speaking.value
+  const idle = !quiet.value && !pending.value && voicePhase.value === 'idle' && !speaking.value
   if (idle) wake.resume()
   else wake.pause()
 }
 
-watch([voicePhase, speaking, quiet], syncWake)
+watch([voicePhase, speaking, quiet, pending], syncWake)
 
 /** 浏览器要求麦克风会话由用户手势发起：点头像/开设置时才布防。 */
 const armWake = (): void => {
@@ -771,6 +605,8 @@ const closeCustomizerRestores = (): void => {
 }
 
 const startListening = (): void => {
+  closeCustomizerRestores()
+  settingsOpen.value = false
   // 手动聆听与常驻唤醒共用麦克风：先让唤醒闭麦，结束后由 syncWake 拉回。
   wake.pause()
   voiceError.value = ''
@@ -792,7 +628,7 @@ const startListening = (): void => {
   })
   if (!voiceCaps.value.recognition) {
     voicePhase.value = 'unsupported'
-    voiceError.value = '这个环境暂时不能语音输入，可以用系统语音输入（Win+H）。'
+    voiceError.value = '这个环境暂时不能语音输入，可以点「改用文字」继续对话。'
   }
 }
 
@@ -854,42 +690,9 @@ const runCommand = (match: CommandMatch): void => {
 const handleUtterance = (text: string): void => {
   const value = text.trim()
   if (!value) return
-  pushMessage('user', value)
   const command = matchCompanionCommand(value)
-  if (command) { runCommand(command); return }
+  if (command) { pushMessage('user', value); runCommand(command); return }
   void send(value)
-}
-
-const send = async (text: string): Promise<void> => {
-  const value = text.trim()
-  if (!value || pending.value) return
-  if (!messages.value.length || messages.value[messages.value.length - 1]?.content !== value) {
-    pushMessage('user', value)
-  }
-  pending.value = true
-  applyState('thinking', true)
-  abort?.abort()
-  const controller = new AbortController()
-  abort = controller
-  try {
-    const turn = await service.handle(
-      value,
-      { messages: messages.value, progress: null, personaName: personaName.value },
-      controller.signal
-    )
-    if (disposed) return
-    pushMessage('companion', turn.reply)
-    card.value = turn.card
-    applyState(turn.state)
-    speakReply(turn.reply)
-    trackAction(turn.intent === 'progress_query' ? 'progress' : turn.intent === 'task_dispatch' ? 'task' : 'chat')
-  } catch {
-    if (disposed) return
-    pushMessage('companion', '刚才没能拿到回复，稍后再问我一次吧。')
-    applyState('error')
-  } finally {
-    pending.value = false
-  }
 }
 
 const handleTrayAction = (action: TrayAction): void => {
@@ -948,7 +751,7 @@ const handleKeydown = (event: KeyboardEvent): void => {
 }
 
 const tickIdle = (): void => {
-  if (disposed) return
+  if (disposed || pending.value || listening.value || speaking.value || runtime.state.value) return
   const now = Date.now()
   const decision = choreographer.observe({
     now,
@@ -961,7 +764,7 @@ const tickIdle = (): void => {
   restingBecauseIdle.value = decision.sleep
   if (decision.sleep && state.value !== 'sleeping' && !NO_INTERRUPT.includes(state.value)) {
     state.value = 'sleeping'
-    renderer?.setState('sleeping')
+    appearance.setState('sleeping')
     publishDesktopState()
   }
   if (decision.line) showBubble(decision.line)
@@ -979,65 +782,10 @@ const handleVisibility = (): void => {
   hiddenAt = 0
 }
 
-const onPointerDown = (event: PointerEvent): void => {
-  if (event.button !== 0) return
-  // 以「角色」而不是根节点为拖拽参照：根节点的高度会随面板展开变化。
-  const rect = stageRef.value?.getBoundingClientRect()
-  if (!rect) return
-  drag.active = true
-  drag.moved = false
-  drag.startX = event.clientX
-  drag.startY = event.clientY
-  drag.offsetX = event.clientX - rect.left
-  drag.offsetY = event.clientY - rect.top
-  drag.avatarWidth = rect.width
-  drag.avatarHeight = rect.height
-  window.addEventListener('pointermove', onPointerMove)
-  window.addEventListener('pointerup', onPointerUp)
-}
-
-const onPointerMove = (event: PointerEvent): void => {
-  if (!drag.active) return
-  if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return
-  drag.moved = true
-  dragging.value = true
-  position.value = companionPositionFromDrag(
-    { width: drag.avatarWidth, height: drag.avatarHeight },
-    { x: event.clientX, y: event.clientY },
-    { x: drag.offsetX, y: drag.offsetY },
-    viewport()
-  )
-}
-
-const onPointerUp = (): void => {
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
-  if (!drag.active) return
-  drag.active = false
-  dragging.value = false
-  if (!drag.moved) return
-  suppressClick = true
-  if (clickSuppressTimer !== null) clearTimeout(clickSuppressTimer)
-  clickSuppressTimer = setTimeout(() => { suppressClick = false }, 0)
-  writePosition()
-  // 展开态下拖到屏幕左侧也会把面板挤出视口，松手时同样避让一次。
-  if (expanded.value && ensurePanelVisible()) showBubble('这边有点挤，我挪回来一点～')
-}
-
-const handleResize = (): void => {
-  if (!position.value) return
-  const next = expanded.value
-    ? clampExpandedPosition(position.value, viewport())
-    : clampCompanionPosition(position.value, viewport())
-  if (next.right === position.value.right && next.bottom === position.value.bottom) return
-  position.value = next
-  writePosition()
-}
-
 onMounted(() => {
-  window.addEventListener('companion:run-event', handleRuntimeEvent)
+  runtime.start()
   window.addEventListener('keydown', handleKeydown)
-  window.addEventListener('resize', handleResize)
+  placement.mount()
   document.addEventListener('visibilitychange', handleVisibility)
   unsubscribeTray = desktop.onTrayAction(handleTrayAction)
   // 声线列表是异步就绪的（Chrome 首次返回空数组），补齐后工坊才有得选。
@@ -1058,11 +806,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true
   wake.dispose()
-  window.removeEventListener('companion:run-event', handleRuntimeEvent)
+  runtime.dispose()
   window.removeEventListener('keydown', handleKeydown)
-  window.removeEventListener('resize', handleResize)
-  window.removeEventListener('pointermove', onPointerMove)
-  window.removeEventListener('pointerup', onPointerUp)
+  placement.dispose()
   document.removeEventListener('visibilitychange', handleVisibility)
   unsubscribeTray?.()
   unsubscribeTray = null
@@ -1072,16 +818,12 @@ onBeforeUnmount(() => {
   choreographer.reset()
   queue.reset()
   if (bubbleTimer !== null) clearTimeout(bubbleTimer)
-  if (clickSuppressTimer !== null) clearTimeout(clickSuppressTimer)
   if (idleTimer !== null) clearInterval(idleTimer)
-  if (previewTimer !== null) clearTimeout(previewTimer)
   effectTimers.forEach(timer => clearTimeout(timer))
   effectTimers.clear()
   voice.dispose()
-  abort?.abort()
-  abort = null
-  renderer?.destroy()
-  renderer = null
+  conversation.dispose()
+  appearance.dispose()
 })
 </script>
 
@@ -1141,6 +883,10 @@ onBeforeUnmount(() => {
   color: var(--text-regular, var(--text-primary)); background: var(--bg-panel, var(--bg-card));
   border: 1px solid var(--border-color-base, rgba(128, 128, 128, 0.3)); border-radius: 6px;
 }
+.companion-root[data-motion="0"] .companion-avatar,
+.companion-root[data-motion="0"] .companion-panel,
+.companion-root[data-motion="0"] .companion-fx,
+.companion-root[data-motion="0"] :deep(.companion-face-ring) { animation: none !important; transition: none; }
 .companion-footer { display: flex; align-items: center; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
 .companion-reset {
   align-self: flex-start; font: inherit; font-size: 11px; padding: 2px 0; cursor: pointer;

@@ -1,5 +1,7 @@
 import { buildDiySkin, DEFAULT_CUSTOMIZATION } from './customization'
-import type { SkinManifest } from './types'
+import type { CompanionState, SkinManifest } from './types'
+
+const REQUIRED_STATES: CompanionState[] = ['idle', 'listening', 'thinking', 'working', 'happy', 'alert', 'sleeping', 'error']
 
 /**
  * 内置皮肤清单。资源与逻辑分离：
@@ -64,7 +66,8 @@ export class SkinRegistry {
   }
 
   private validate(skin: SkinManifest): void {
-    if (!skin.stateMap || Object.keys(skin.stateMap).length !== 8) {
+    if (!skin.stateMap || Object.keys(skin.stateMap).length !== REQUIRED_STATES.length
+      || !REQUIRED_STATES.every(state => typeof skin.stateMap[state] === 'string' && skin.stateMap[state].trim())) {
       throw new Error(`Incomplete companion stateMap: ${skin.id}`)
     }
   }

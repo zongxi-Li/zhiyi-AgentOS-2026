@@ -103,7 +103,7 @@ describe('voice helpers', () => {
   it('explains permission denial in plain Chinese', () => {
     expect(describeVoiceError('not-allowed')).toContain('麦克风权限')
     expect(describeVoiceError('no-speech')).toContain('没听见')
-    expect(describeVoiceError(undefined)).toContain('指令按钮')
+    expect(describeVoiceError(undefined)).toContain('改用文字')
   })
 
   it('never claims to be listening when recognition is unavailable', () => {
@@ -159,7 +159,7 @@ describe('VoiceEngine', () => {
       onError: message => errors.push(message)
     })).toBe(false)
     expect(phases).toContain('unsupported')
-    expect(errors[0]).toContain('指令按钮')
+    expect(errors[0]).toContain('改用文字')
     engine.dispose()
   })
 

@@ -18,6 +18,14 @@ describe('companion state machine', () => {
     expect(stateFromRuntimeEvent('model.output.delta')).toBeNull()
   })
 
+  it.each([
+    ['node.started', 'working'], ['planner.model.started', 'thinking'], ['planner.stage.started', 'thinking'],
+    ['planner.failed', 'error'], ['tool.execution_started', 'working'], ['tool.approval_required', 'alert'],
+    ['tool.approval_resolved', 'working'], ['run.superseded', 'alert']
+  ])('maps live %s to %s', (event, state) => {
+    expect(stateFromRuntimeEvent(event)).toBe(state)
+  })
+
   it('keeps errors above routine progress', () => {
     expect(STATE_PRIORITY.error).toBeGreaterThan(STATE_PRIORITY.working)
     expect(Object.keys(RUNTIME_EVENT_STATE)).toContain('run.waiting_review')
