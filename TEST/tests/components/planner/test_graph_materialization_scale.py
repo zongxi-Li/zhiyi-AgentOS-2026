@@ -11,7 +11,7 @@ from TEST.tests.components.planner.test_planning_commit_runtime import attach as
 
 @pytest.fixture(autouse=True)
 def documented_contract(monkeypatch):
-    import test_htn
+    from TEST.tests.components.planner import test_htn
     create = test_htn.runtime_at
 
     def runtime_at(path):

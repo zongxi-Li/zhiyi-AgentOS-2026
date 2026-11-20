@@ -79,7 +79,7 @@ const previewText = computed(() => {
 })
 const narrativeSource = computed(() => {
   if (!isLongText.value || primitiveText.value.includes('\n')) return primitiveText.value
-  return primitiveText.value.replace(/([。！？；;])\s*/g, '$1\n')
+  return primitiveText.value.replace(/([。！？；;])\s*/g, '$1\n\n')
 })
 const renderedMarkdown = computed(() => renderMarkdown(narrativeSource.value))
 const objectEntries = computed(() => isRecord(props.value) ? documentEntries(props.value) : [])
