@@ -47,16 +47,24 @@ def _complete_root(candidate):
     return parsed if parsed else None
 
 
-def decode_json_object_value(content, *, finish_reason=None):
-    """Return (object or None, root_completed), preserving wrapper tolerance.
+def _remove_duplicate_root_close(candidate):
+    """Remove exactly one surplus root close, never values or arbitrary tails."""
+    if not candidate.endswith("}"):
+        return None
+    return _object(candidate[:-1])
 
-    Root completion is available only after the provider explicitly reports a
-    normal stop. EOF, length exhaustion and unknown termination never qualify.
+
+def decode_json_object_result(content, *, finish_reason=None):
+    """Return (object or None, normalization type), preserving wrapper tolerance.
+
+    Only a single root delimiter may be added or removed, and only after the
+    provider explicitly reports a normal stop. Every field value must already
+    be complete. EOF, length exhaustion and unknown termination never qualify.
     """
     if isinstance(content, Mapping):
-        return dict(content), False
+        return dict(content), None
     if not isinstance(content, str):
-        return None, False
+        return None, None
     stripped = content.strip().lstrip("\ufeff")
     candidates = [stripped]
     recovery_candidates = [stripped]
@@ -65,20 +73,28 @@ def decode_json_object_value(content, *, finish_reason=None):
         candidates.append(fenced.group(1).strip())
         recovery_candidates.append(fenced.group(1).strip())
     first, last = stripped.find("{"), stripped.rfind("}")
-    if first >= 0 and last > first:
+    if first >= 0 and last > first and last == len(stripped) - 1:
         candidates.append(stripped[first:last + 1])
         # Leading explanation is an existing tolerated wrapper. A recovery may
         # never discard a later unfinished field or arbitrary trailing text.
-        if last == len(stripped) - 1:
-            recovery_candidates.append(stripped[first:last + 1])
+        recovery_candidates.append(stripped[first:last + 1])
     candidates = list(dict.fromkeys(candidates))
     for candidate in candidates:
         parsed = _object(candidate)
         if parsed is not None:
-            return parsed, False
+            return parsed, None
     if finish_reason == "stop":
         for candidate in dict.fromkeys(recovery_candidates):
             parsed = _complete_root(candidate)
             if parsed is not None:
-                return parsed, True
-    return None, False
+                return parsed, "root_close_added"
+            parsed = _remove_duplicate_root_close(candidate)
+            if parsed is not None:
+                return parsed, "duplicate_root_close_removed"
+    return None, None
+
+
+def decode_json_object_value(content, *, finish_reason=None):
+    """Keep the historical (object or None, root_completed) decoder contract."""
+    parsed, normalization = decode_json_object_result(content, finish_reason=finish_reason)
+    return parsed, normalization == "root_close_added"

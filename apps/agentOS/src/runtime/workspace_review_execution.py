@@ -14,6 +14,7 @@ from contracts.execution import WorkflowProgressPhase
 from contracts.planning import TaskPlanPatch
 from contracts.workflow import WorkflowStatus, utc_now
 from runtime.workspace_review_display import workspace_review_status
+from runtime.semantic_patch import SEMANTIC_GRAPH_DERIVATION_VERSION
 from support.run_execution_fence import acquire_run_fence, RunFenceBusy
 from support.stores.execution_dispatch_store import DispatchCommand
 
@@ -169,8 +170,8 @@ class WorkspaceReviewContinuation:
         activation = run.execution_state.get("graphActivation") or {}
         return head.commit_id == activation.get("sourceCommitId")
 
-    def can_replan(self, run):
-        """A proposal denial is feedback, rather than an operator approval."""
+    def _owns_rejected_proposal(self, run):
+        """Only the settled planner barrier owns this rejected continuation."""
         from runtime.planning_loop import REPAIRABLE_PLANNING_REJECTIONS
         pending = run.execution_state.get("workspaceReviewContinuation")
         activation = run.execution_state.get("graphActivation") or {}
@@ -183,8 +184,80 @@ class WorkspaceReviewContinuation:
             and review.get("subjectType") == "planner" and review.get("subjectId") == run.execution_state.get("graphId")
             and pending.get("sourceGraphVersion") == run.execution_state.get("graphVersion")
             and not (activation and activation.get("executionPermit") is None)
-            and run.status == WorkflowStatus.WAITING_REVIEW
-            and self._replan_head_is_current(run))
+            and run.status == WorkflowStatus.WAITING_REVIEW)
+
+    def can_replan(self, run):
+        """A proposal denial is feedback while the active commitment is current."""
+        return self._owns_rejected_proposal(run) and self._replan_head_is_current(run)
+
+    def _can_replay_accepted_continuation(self, run):
+        """Replay only this accepted lineage after its implementation changes.
+
+        This never sends the old graph back to ordinary execution, replaces an
+        accepted graph, or retries an unchanged invalid derivation on each wake.
+        Once the graph is accepted, _advance resumes its downstream journals;
+        a crash must not turn the old rejection marker into a permanent barrier.
+        """
+        from runtime.planning_loop import REPAIRABLE_PLANNING_REJECTIONS
+        pending = run.execution_state.get("workspaceReviewContinuation")
+        observation = ((run.execution_state.get("planningLoop") or {}).get("current") or {}).get("observationId")
+        if (not automatic_workspace_review(run) or not isinstance(pending, dict)
+                or not pending.get("blocked") or pending.get("errorType") != "_TransitionRejected"
+                or self._rejection_code(pending) not in REPAIRABLE_PLANNING_REJECTIONS
+                or not observation or observation != pending.get("observationId")
+                or run.status in _TERMINAL_STATUSES):
+            return False
+        if pending.get("derivationVersion") == SEMANTIC_GRAPH_DERIVATION_VERSION:
+            return False
+        authority = getattr(self.runtime, "planning_commit_authority", None)
+        ledger = getattr(authority, "store", None)
+        lookup = getattr(ledger, "get_by_idempotency_key", None)
+        if not callable(lookup):
+            return False
+        try:
+            patch = TaskPlanPatch.model_validate(pending.get("patch"))
+        except (ValueError, TypeError):
+            return False
+        key = f"workspace-review:{run.run_id}:{pending['observationId']}"
+        source = lookup(key + ":semantic")
+        if (source is None or source.proposal_type != "plan_revision"
+                or source.mission_id != run.mission_id
+                or source.sources.graph_version != pending["sourceGraphVersion"]
+                or source.sources.observation_id != pending["observationId"]
+                or source.proposal_payload != patch):
+            return False
+        head = ledger.latest(run.mission_id)
+        graph = lookup(key + ":graph")
+        if graph is None:
+            return bool(self._owns_rejected_proposal(run)
+                and head is not None and head.commit_id == source.commit_id)
+        if (getattr(graph, "proposal_type", None) != "graph_revision"
+                or graph.mission_id != run.mission_id
+                or graph.proposal_payload.source_commit_id != source.commit_id
+                or graph.sources.graph_version != pending["sourceGraphVersion"]
+                or graph.sources.observation_id != pending["observationId"]
+                or head is None or head.commit_id != graph.commit_id):
+            return False
+        candidate = graph.proposal_payload.candidate_graph
+        if (candidate.graph_id != run.execution_state.get("graphId")
+                or candidate.version != pending["sourceGraphVersion"] + 1):
+            return False
+        if run.execution_state.get("graphVersion") == pending["sourceGraphVersion"]:
+            return self._owns_rejected_proposal(run)
+        activation = run.execution_state.get("graphActivation") or {}
+        review = run.execution_state.get("reviewPayload") or {}
+        return bool(run.status == WorkflowStatus.RETRYING
+            and run.execution_state.get("graphVersion") == candidate.version
+            and activation.get("sourceCommitId") == graph.commit_id
+            and activation.get("sourceGraphVersion") == pending["sourceGraphVersion"]
+            and activation.get("activeGraphVersion") == candidate.version
+            and (not review or (review.get("subjectType") == "planner"
+                and review.get("subjectId") == candidate.graph_id
+                and review.get("observationId") == pending["observationId"])))
+
+    def can_resume(self, run):
+        """Observe either planner feedback or an owned derivation replay lane."""
+        return self.can_replan(run) or self._can_replay_accepted_continuation(run)
 
     def _prepare_replan(self, run, pending, *, code, reason):
         """Return the same Run to its existing Planner, without executing work."""
@@ -268,7 +341,8 @@ class WorkspaceReviewContinuation:
         if (not automatic_workspace_review(run) or not isinstance(pending, dict)
                 or run.status in _TERMINAL_STATUSES):
             return None
-        if pending.get("blocked") and not self.can_replan(run):
+        replay_accepted = bool(pending.get("blocked") and self._can_replay_accepted_continuation(run))
+        if pending.get("blocked") and not (replay_accepted or self.can_replan(run)):
             return None
         # A queued proposal is not a settled execution boundary. In particular,
         # restart may observe the decided round before its checkpoint was saved.
@@ -286,7 +360,7 @@ class WorkspaceReviewContinuation:
                 "graph_handoff_authority", "execution_permit_authority")):
             return None
         try:
-            if pending.get("blocked"):
+            if pending.get("blocked") and not replay_accepted:
                 return self._prepare_replan(run, pending, code=self._rejection_code(pending), reason=pending["reason"])
             result = self._advance(run, pending)
             if result is not None:
@@ -364,6 +438,7 @@ class WorkspaceReviewContinuation:
                             "errorType": type(exc).__name__,
                             "errorCode": getattr(exc, "code", None) or type(exc).__name__,
                             "reason": str(exc)[:500],
+                            "derivationVersion": SEMANTIC_GRAPH_DERIVATION_VERSION,
                         }
                         current.updated_at = utc_now()
                         rt.workflow_store.save_run(current, expected_snapshot=expected)

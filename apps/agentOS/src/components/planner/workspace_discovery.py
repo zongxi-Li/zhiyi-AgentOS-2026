@@ -68,6 +68,9 @@ def build_workspace_discovery_plan(
 
     origin = "explicit" if "workspaceObservations" in payload else profile.workspace_scope_origin or "inferred"
     stage = {"version": 1, "phase": "discovery", "scopeOrigin": origin}
+    if profile.fixed_workspace_observations is not None:
+        stage["fixedObservations"] = [item.model_dump(by_alias=True, mode="json")
+                                     for item in profile.fixed_workspace_observations]
     requested = [item.model_dump(by_alias=True, mode="json") for item in profile.workspace_observations]
     metadata = {"source": WORKSPACE_DISCOVERY_SOURCE, "workspaceDiscovery": stage}
     understanding = PlannedTask(

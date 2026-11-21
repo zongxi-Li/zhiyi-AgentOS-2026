@@ -45,7 +45,7 @@ from .complexity import (
 from .intent_analyzer import IntentLLM
 
 
-TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v11"
+TASK_DECOMPOSITION_PROMPT_VERSION = "task-decomposition.v13"
 TASK_PLAN_MAX_REPAIRS = None  # Legacy import; validation corrections have no count ceiling.
 INITIAL_DAG_CONTRACT = (
     "INITIAL DAG CONTRACT: this Run's formal initial graph materializer accepts a DAG only. "
@@ -58,6 +58,11 @@ INITIAL_DAG_CONTRACT = (
     "Never silently remove a user requirement or invent successful verification."
 )
 _DAG_ONLY_STRATEGIES = frozenset({"initial_commit_candidate", "workspace_evidence_planning"})
+_WORKSPACE_CAPABILITIES = {
+    "information_retrieval": "information_extraction",
+    "evidence_analysis": "analysis",
+    "comparative_analysis": "analysis",
+}
 
 
 def _dag_contract(strategy: str) -> str:
@@ -69,7 +74,11 @@ def _dag_contract(strategy: str) -> str:
             "Declare only the remaining tasks. Every relation endpoint and parentKey must use an exact key "
             "declared in this candidate's tasks. Completed discovery tasks are evidence context. "
             "Cite their committed evidence where relevant. Runtime connects the completed discovery prefix "
-            "to the candidate's entry tasks.")
+            "to the candidate's entry tasks. Use information_extraction with logicalRole workspace_acquisition "
+            "for reading workspace files and directories. Cite the observed relative paths in the findings; "
+            "the runtime attaches the corresponding tool records. For reasoning over those files use analysis. "
+            "The evidence source defaults to workspace. Set evidenceSource to external only on separate knowledge-base "
+            "or web research and analysis that the caller requests from those sources.")
     return INITIAL_DAG_CONTRACT
 
 _SCHEMA = {
@@ -90,6 +99,7 @@ _SCHEMA = {
                     "sourceRefs": {"type": "array", "items": {"type": "string"}},
                     "decompositionRationale": {"type": "string"},
                     "logicalRole": {"type": "string"},
+                    "evidenceSource": {"type": "string", "enum": ["workspace", "external"]},
                     "workset": {
                         "type": ["object", "null"],
                         "properties": {
@@ -161,9 +171,11 @@ _VALIDATION_CODES = frozenset(get_args(ErrorType)) | frozenset(code.value for co
     "topology_patch_invalid", "relation_object_required",
     "task_key_required", "frozen_task_count", "constraint_array_required", "constraint_item_invalid",
     "MODEL_OUTPUT_INVALID_JSON", "MODEL_OUTPUT_SCHEMA_INVALID", "unclassified_validation_error",
+    "input_source_missing", "input_source_not_step", "input_dependency_missing",
 })
 _VALIDATION_FIELDS = frozenset("tasks nodes relations controlPolicies key parentKey title objective capabilityId capabilityRequirements acceptanceCriteria sourceRefs decompositionRationale logicalRole workset sourceManifestRefs unitKind cursorStrategy packingPolicy parallelismPolicy estimatedUnitCount constraints type sourceKey targetKey relationType bodyEntryKey bodyExitKey conditionSourceKey statusPointer repeatValues maxRevisions onExhausted expectedArtifacts metadata missionId planVersion assignments sourceRef taskKey rationale operations relationIndex observationId action reason taskPlanPatch basePlanVersion addNodes retireKeys replaceKeys removeRelations waitFor question kind nodeId stepId requirementId notBefore expiresAt prompt choices".split())
 _VALIDATION_FIELDS |= frozenset("primaryGoal requiredCapabilities estimatedComplexity evidenceScope webExtraction workspaceObservations workspaceScopeOrigin workspaceScope requirements path operation recursive excludePaths".split())
+_VALIDATION_FIELDS |= frozenset(("inputSpec", "from"))
 _VALIDATION_FIELDS |= frozenset(re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower() for key in _VALIDATION_FIELDS)
 _VALIDATION_STAGE = re.compile(r"(?:validation|sources|intent_profile|formal_intent|formal_decomposition|decompose|repair|repair_coverage|runtime_decision(?:\.repair)?|outline(?:\.repair)?|detail(?::[1-9][0-9]{0,5})?(?:\.repair)?|relations(?:\.(?:repair|cycle-repair|initial-dag-repair))?)(?::[1-9][0-9]{0,5})?\Z")
 
@@ -584,7 +596,7 @@ class TaskDecomposer:
         outline_schema = {"type": "object", "properties": {"tasks": {
             "type": "array", "items": {"type": "object", "properties": {
                 name: deepcopy(task_item_schema["properties"][name])
-                for name in ("key", "title", "capabilityId", "logicalRole", "sourceRefs")
+                for name in ("key", "title", "capabilityId", "logicalRole", "sourceRefs", "evidenceSource")
             }, "required": ["key", "title", "capabilityId", "logicalRole", "sourceRefs"]},
         }}, "required": ["tasks"]}
         common = dict(reasoning_effort=reasoning_effort, planning_deadline=planning_deadline, run_id=run_id)
@@ -592,7 +604,7 @@ class TaskDecomposer:
         try:
             _, (outline, keys) = self._generate_validated(
                 stage="outline", prompt=prompt + "\nSTAGE OUTLINE: return only stable task identities, titles, "
-                "primary capabilities, roles and sourceRefs. Do not return relations or verbose objectives.",
+                "primary capabilities, roles, evidenceSource and sourceRefs. Do not return relations or verbose objectives.",
                 schema=outline_schema, validate=self._validated_outline_tasks, **common,
             )
             self.last_audit["stages"].append({"stage": "outline", "taskCount": len(keys)})
@@ -963,6 +975,10 @@ class TaskDecomposer:
             if not isinstance(item, dict):
                 raise TaskDecompositionError("task must be an object", validation_code="task_object_required", field_path=("tasks", task_index))
             capability = str(item.get("capabilityId") or "").strip().lower()
+            role = str(item.get("logicalRole") or "task").strip() or "task"
+            evidence_source = item.get("evidenceSource")
+            if strategy == "workspace_evidence_planning":
+                capability, role = self._workspace_execution(capability, role, evidence_source)
             try:
                 self.capability_catalog.get(capability)
             except (KeyError, ValueError) as exc:
@@ -978,7 +994,7 @@ class TaskDecomposer:
                 key = self._resolve_semantic_task_key(
                     raw_key=raw_key,
                     capability=capability,
-                    logical_role=str(item.get("logicalRole") or "task").strip(),
+                    logical_role=role,
                     existing_semantic_tasks=existing_semantic_tasks,
                     used_keys=used_keys,
                 )
@@ -1001,14 +1017,16 @@ class TaskDecomposer:
                     acceptanceCriteria=criteria,
                     sourceRefs=tuple(str(value) for value in item.get("sourceRefs", []) if str(value)),
                     decompositionRationale=str(item.get("decompositionRationale") or ""),
-                    logicalRole=str(item.get("logicalRole") or "task"),
+                    logicalRole=role,
                     producedArtifacts=tuple(
                         str(value).strip()
                         for value in item.get("producedArtifacts", [])
                         if str(value).strip()
                     ),
                     workset=self._normalize_workset_spec(item.get("workset")),
-                    metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
+                    metadata={"plannerStrategy": strategy, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION,
+                              **({"evidenceSource": "external"} if evidence_source == "external"
+                                 and strategy == "workspace_evidence_planning" else {})},
                 ))
             except TaskDecompositionError as exc:
                 exc.field_path = ("tasks", task_index, *exc.field_path)
@@ -1129,6 +1147,16 @@ class TaskDecomposer:
         return plan
 
     @staticmethod
+    def _workspace_execution(capability, role, evidence_source=None):
+        """Choose the native contract before expanding capability dependencies."""
+        if evidence_source == "external":
+            return capability, role
+        capability = _WORKSPACE_CAPABILITIES.get(capability, capability)
+        if capability == "information_extraction" and role in {"task", "acquisition", "decompose"}:
+            role = "workspace_acquisition"
+        return capability, role
+
+    @staticmethod
     def _validate_formal_parents(tasks: list[dict[str, Any]], keys: set[str]) -> None:
         for index, task in enumerate(tasks):
             parent = task.get("parentKey")
@@ -1217,6 +1245,10 @@ class TaskDecomposer:
             normalized["key"] = frozen_key
             normalized["capabilityId"] = frozen.get("capabilityId")
             normalized["logicalRole"] = frozen.get("logicalRole") or "task"
+            if "evidenceSource" in frozen:
+                normalized["evidenceSource"] = frozen["evidenceSource"]
+            else:
+                normalized.pop("evidenceSource", None)
             if not isinstance(normalized.get("sourceRefs"), list):
                 normalized["sourceRefs"] = list(frozen.get("sourceRefs") or [])
             if not str(normalized.get("capabilityId") or "").strip():
@@ -1534,6 +1566,8 @@ class TaskDecomposer:
         task_input: Mapping[str, Any] | None = None,
     ) -> TaskPlan:
         capabilities = list(dict.fromkeys(profile.required_capabilities))
+        if strategy == "workspace_evidence_planning":
+            capabilities = list(dict.fromkeys(_WORKSPACE_CAPABILITIES.get(cap, cap) for cap in capabilities))
         if profile.expected_artifacts and "artifact_generation" not in capabilities:
             capabilities.append("artifact_generation")
         nodes: list[PlannedTask] = []
@@ -1541,10 +1575,13 @@ class TaskDecomposer:
         used_keys: set[str] = set()
         for index, capability in enumerate(capabilities, start=1):
             descriptor = self.capability_catalog.get(capability)
+            role = descriptor.planning_stage
+            if strategy == "workspace_evidence_planning":
+                _, role = self._workspace_execution(capability, role)
             key = self._resolve_semantic_task_key(
                 raw_key=f"task-{index}",
                 capability=capability,
-                logical_role=descriptor.planning_stage,
+                logical_role=role,
                 existing_semantic_tasks=existing_semantic_tasks,
                 used_keys=used_keys,
             )
@@ -1570,7 +1607,7 @@ class TaskDecomposer:
                 logicalRole=(
                     FINAL_SYNTHESIS_LOGICAL_ROLE
                     if capability == "artifact_generation"
-                    else descriptor.planning_stage
+                    else role
                 ),
                 metadata={"plannerStrategy": strategy, "degraded": True, "promptVersion": TASK_DECOMPOSITION_PROMPT_VERSION},
             ))

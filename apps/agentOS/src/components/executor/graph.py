@@ -99,11 +99,13 @@ class ACGSuperstepError(RuntimeError):
         cancelled_step_ids: tuple[str, ...],
         cause: BaseException,
         causes: tuple[BaseException, ...] = (),
+        step_causes: dict[str, BaseException] | None = None,
     ) -> None:
         self.failed_step_ids = failed_step_ids
         self.cancelled_step_ids = cancelled_step_ids
         self.cause = cause
         self.causes = causes or (cause,)
+        self.step_causes = dict(step_causes or {})
         pending = list(self.causes)
         visited: set[int] = set()
         self.outcome_unknown = False
@@ -638,6 +640,15 @@ class ACGExecutionGraph:
                         # Preserve every settled failure, not just the first one.
                         causes = tuple(dict.fromkeys([cause, *(task.exception() for task in tasks.values()
                                        if not task.cancelled() and task.exception() is not None)]))
+                        step_causes = {step_id: task.exception() for step_id, task in tasks.items()
+                            if not task.cancelled() and task.exception() is not None
+                            and step_id not in state.completed_step_ids}
+                        for step_id in failures:
+                            step_causes.setdefault(step_id, signalled.get(step_id) or cause)
+                        # Cancellation may settle as a real failure (including
+                        # unknown external effects). Project that terminal fact.
+                        failures = list(dict.fromkeys([*failures, *step_causes]))
+                        cancelled = [step_id for step_id in cancelled if step_id not in step_causes]
                         # 进程终止、测试模拟断电等 ``BaseException`` 不能被误标为业务节点
                         # 失败或触发 failed run 投影；让调用栈直接中断，下一进程从持久化边界
                         # 继续。普通 ``Exception`` 仍保留完整的超步失败语义。
@@ -673,6 +684,7 @@ class ACGExecutionGraph:
                             cancelled_step_ids=tuple(cancelled),
                             cause=cause,
                             causes=causes,
+                            step_causes=step_causes,
                         ) from cause
 
                     if any(task.cancelled() for task in pending_tasks.values()):

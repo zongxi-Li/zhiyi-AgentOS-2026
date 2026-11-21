@@ -361,11 +361,14 @@ def test_registered_model_runtime_projects_stream_usage_finish_reason_and_latenc
 
 @pytest.mark.parametrize(("delta", "finish_reason", "error_code"), [
     ('{"answer":{"value":"ok"}', "stop", None),
+    ('{"answer":{"value":"ok"}}}', "stop", None),
+    ('{"answer":{"value":"ok"}}}', None, "MODEL_OUTPUT_INVALID_JSON"),
+    ('{"answer":{"value":"ok"}}}', "length", "MODEL_OUTPUT_EXHAUSTED"),
     ('{"answer":{"value":"ok"}', None, "MODEL_OUTPUT_INVALID_JSON"),
     ('{"answer":{"value":"ok"}', "length", "MODEL_OUTPUT_EXHAUSTED"),
     ('{"answer":{"value":"unfinished', "stop", "MODEL_OUTPUT_INVALID_JSON"),
 ])
-def test_stream_recovers_only_a_missing_root_close_after_normal_stop(delta, finish_reason, error_code) -> None:
+def test_stream_recovers_only_a_single_root_delimiter_after_normal_stop(delta, finish_reason, error_code) -> None:
     class _PartialJsonAdapter(_ClosingStreamingAdapter):
         async def astream(self, request: ModelInvocationRequest):
             yield ModelStreamEvent(

@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import httpx
 from urllib.parse import quote
 from uuid import uuid5, NAMESPACE_URL
 
@@ -24,6 +25,11 @@ class HandsOutcomeUnknown(RuntimeError):
     code = 'HANDS_OUTCOME_UNKNOWN'
     retryable = False
 
+    def __init__(self, message, *, reconciliation_reason='execution_unknown', quarantine_scope='runtime'):
+        super().__init__(message)
+        self.reconciliation_reason = reconciliation_reason
+        self.quarantine_scope = quarantine_scope
+
 
 class HandsExecutionCancelled(asyncio.CancelledError):
     """Cancellation settled with a verified terminal receipt, not an admission ACK."""
@@ -40,6 +46,10 @@ class HandsAdmissionRejected(RuntimeError):
     def __init__(self, status, code):
         self.status, self.code = status, code
         super().__init__('Hands operation rejected: '+code)
+
+
+class _HandsQueryUnavailable(RuntimeError):
+    """A temporary read-side HTTP failure; the admitted operation is unchanged."""
 
 
 def receipt_checksum(receipt):
@@ -74,12 +84,62 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
         headers = self._signed_headers(method=method,path=path,body=body,idempotency_key=key)
         response = await self._client.request(method,self.address+suffix,headers=headers,content=body,timeout=15)
         if response.status_code not in (200,202):
+            if method == 'GET' and (response.status_code in (408, 429) or response.status_code >= 500):
+                raise _HandsQueryUnavailable('Hands query returned HTTP ' + str(response.status_code))
             if response.status_code in (400,401,403,404,409,422):
                 try: code = response.json()['error']['code']
                 except (ValueError,KeyError,TypeError): code = 'HANDS_HTTP_'+str(response.status_code)
                 raise HandsAdmissionRejected(response.status_code, str(code))
             raise HandsOutcomeUnknown('Hands rejected a signed operation: '+str(response.status_code))
         return response.json()
+
+    async def _query(self, suffix, *, deadline=None):
+        """Reconcile one admitted execution using only its read endpoints.
+
+        Transport failures do not change the operation's identity or outcome.
+        Re-query the same status/event URL under the execution's existing
+        deadline; independent queries use the transport's configured timeout.
+        Definite protocol/authority rejections and malformed responses still
+        propagate immediately. No execution POST is replayed here.
+        """
+        loop = asyncio.get_running_loop()
+        if deadline is None:
+            deadline = loop.time() + getattr(self, 'timeout_seconds', 120.0)
+        delay = .15
+        last_error = None
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise HandsOutcomeUnknown('Hands result query reached its reconciliation deadline',
+                    reconciliation_reason='transport_unavailable', quarantine_scope='operation') from last_error
+            try:
+                async with asyncio.timeout(remaining):
+                    return await self._call('GET', suffix)
+            except (httpx.TransportError, _HandsQueryUnavailable, TimeoutError) as exc:
+                last_error = exc
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise HandsOutcomeUnknown('Hands result query reached its reconciliation deadline',
+                        reconciliation_reason='transport_unavailable', quarantine_scope='operation') from exc
+                await asyncio.sleep(min(delay, remaining))
+                delay = min(1.0, delay * 2)
+
+    async def _emit_execution_events(self, execution_id, cursor, event_sink):
+        """Progress delivery cannot override the execution's authoritative status.
+
+        Keep the cursor on a transport outage so the next status-poll iteration
+        can fetch the same events. Payload or consumer errors still propagate.
+        """
+        try:
+            events = await self._call('GET', '/' + execution_id + '/events?afterSequence=' + str(cursor))
+        except (httpx.TransportError, _HandsQueryUnavailable, TimeoutError):
+            logging.getLogger(__name__).warning(
+                'Hands progress query unavailable for %s; retaining execution reconciliation', execution_id)
+            return cursor
+        for event in events['events']:
+            await event_sink(event)
+            cursor = max(cursor, int(event['seq']))
+        return cursor
 
     async def execute(self, request):
         if request.capability_id.value == 'shell.exec':
@@ -136,7 +196,11 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
             if 'cwd' in data: data.setdefault('workdir', data.pop('cwd'))
         execution_id = None
         try:
-            record = await self._call('POST',payload=wire,key=request.idempotency_key)
+            try:
+                record = await self._call('POST',payload=wire,key=request.idempotency_key)
+            except (httpx.TransportError, TimeoutError) as exc:
+                raise HandsOutcomeUnknown('Hands transport outcome requires reconciliation; no automatic replay',
+                    reconciliation_reason='transport_unavailable', quarantine_scope='operation') from exc
             execution_id = record['executionId']
             admission['executionId'] = execution_id
             admission['ready'].set()
@@ -158,27 +222,24 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
                     await self._call('POST','/'+execution_id+'/cancel',{'executionId':execution_id})
                     raise HandsOutcomeUnknown('Hands deadline reached; cancellation requested, reconciliation required')
                 if event_sink:
-                    events = await self._call('GET','/'+execution_id+'/events?afterSequence='+str(cursor))
-                    for event in events['events']:
-                        cursor = max(cursor,int(event['seq']))
-                        await event_sink(event)
+                    cursor = await self._emit_execution_events(execution_id, cursor, event_sink)
                 await asyncio.sleep(.15)
-                record = await self._call('GET','/'+execution_id)
-            if event_sink:
-                events = await self._call('GET','/'+execution_id+'/events?afterSequence='+str(cursor))
-                for event in events['events']:
-                    await event_sink(event)
+                record = await self._query('/'+execution_id, deadline=deadline)
             if record['state'] == 'UNKNOWN':
                 raise HandsOutcomeUnknown('Hands execution '+execution_id+' is UNKNOWN; automatic replay forbidden')
             receipt = record.get('receipt')
-            if not receipt or receipt_checksum(receipt) != receipt['checksum']:
-                raise HandsOutcomeUnknown('Hands terminal receipt is missing or invalid')
+            if not isinstance(receipt, dict) or receipt_checksum(receipt) != receipt.get('checksum'):
+                raise HandsOutcomeUnknown('Hands terminal receipt is missing or invalid',
+                    reconciliation_reason='protocol_integrity')
             if any(receipt.get(key) != wire.get(key) for key in ['requestId','invocationId','capabilityId','idempotencyKey']):
-                raise HandsOutcomeUnknown('Hands receipt correlation mismatch')
+                raise HandsOutcomeUnknown('Hands receipt correlation mismatch', reconciliation_reason='protocol_integrity')
             if receipt.get('identity',{}) != identity or receipt['grantId'] != request.authorization.grant_id:
-                raise HandsOutcomeUnknown('Hands receipt authority/identity mismatch')
+                raise HandsOutcomeUnknown('Hands receipt authority/identity mismatch', reconciliation_reason='protocol_integrity')
             expected = {'COMPLETED':'completed','FAILED':'failed','CANCELLED':'cancelled'}[record['state']]
-            if receipt['status'] != expected: raise HandsOutcomeUnknown('Hands state and receipt disagree')
+            if receipt['status'] != expected:
+                raise HandsOutcomeUnknown('Hands state and receipt disagree', reconciliation_reason='protocol_integrity')
+            if event_sink:
+                await self._emit_execution_events(execution_id, cursor, event_sink)
             output = dict(receipt.get('output') or {})
             if request.capability_id.value == 'fs.read' and 'text' in output:
                 output['content'] = output['text']  # Hands wire -> AgentOS file-tool observation.
@@ -251,7 +312,7 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
         })
 
     async def query_execution(self, execution_id):
-        return await self._call('GET','/'+execution_id)
+        return await self._query('/'+quote(execution_id, safe=''))
 
     async def events(self, *, execution_id, after_sequence=-1, wait_seconds=0.0,
                      request_id=None, invocation_id=None):
@@ -263,7 +324,7 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
             raise ValueError('after_sequence must not be below -1')
         if not request_id or not invocation_id:
             raise ValueError('hands events require request_id and invocation_id for correlation stamping')
-        record = await self._call('GET', '/'+quote(execution_id, safe='')+'/events?afterSequence='+str(after_sequence))
+        record = await self._query('/'+quote(execution_id, safe='')+'/events?afterSequence='+str(after_sequence))
         translated = []
         for raw in record.get('events') or []:
             event_type = self._EVENT_TYPES.get(str(raw.get('type')))
@@ -287,12 +348,15 @@ class HandsHttpTransport(HttpLocalRuntimeTransport):
         merged = dict(data)
         try:
             record = await self.query_execution(execution_id)
+        except HandsOutcomeUnknown:
+            raise
         except Exception:
             logging.getLogger(__name__).warning('Hands terminal enrichment failed for %s', execution_id)
             raise HandsOutcomeUnknown('Hands terminal settlement could not be reconciled for ' + execution_id)
         receipt = record.get('receipt') or {}
         if receipt.get('checksum') and receipt_checksum(receipt) != receipt['checksum']:
-            raise HandsOutcomeUnknown('Hands receipt checksum mismatch for ' + execution_id)
+            raise HandsOutcomeUnknown('Hands receipt checksum mismatch for ' + execution_id,
+                reconciliation_reason='protocol_integrity')
         output = receipt.get('output') or {}
         if isinstance(output.get('exitCode'), int):
             merged['exitCode'] = output['exitCode']

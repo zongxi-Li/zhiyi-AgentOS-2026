@@ -114,6 +114,21 @@ def _workspace_read_intent(intent: str) -> tuple[bool, bool]:
     return repository_review or reading, repository_review
 
 
+def _fixed_workspace_observations(intent, profile):
+    """Ground model-suggested obligations in the caller's actual wording."""
+    if profile.workspace_scope_origin != "explicit":
+        return ()
+    text = intent.replace("\\", "/").casefold()
+    exhaustive = bool(re.search(
+        r"(?:读取|读完|扫描|遍历|审查)\s*(?:所有|全部|每个|每一个)文件|(?:全量扫描|逐文件读取)"
+        r"|\b(?:read|scan|inspect|review)\s+(?:all|every)\s+files?\b", text))
+    return tuple(item for item in profile.workspace_observations if (
+        exhaustive and item.kind == "directory" and item.recursive
+        or item.path != "." and re.search(
+            r"(?<![\w./-])" + re.escape(item.path.casefold()) + r"(?![\w./-])", text)
+    ))
+
+
 class IntentParser:
     """使用模型或确定性别名解析意图，且只选择已注册能力。"""
 
@@ -369,6 +384,7 @@ class IntentParser:
         if "workspaceObservations" in contract:
             profile.workspace_observations = list(workspace_observation_requirements(contract["workspaceObservations"]))
             profile.workspace_scope_origin = "explicit"
+            profile.fixed_workspace_observations = tuple(profile.workspace_observations)
         else:
             requires_read, repository_review = _workspace_read_intent(intent)
             if requires_read:
@@ -383,6 +399,11 @@ class IntentParser:
                     recursive=item.recursive or (repository_review and item.kind == "directory"),
                     excludePaths=item.exclude_paths)
                     for item in inferred]
+            fixed = _fixed_workspace_observations(intent, profile)
+            profile.fixed_workspace_observations = fixed
+            profile.workspace_scope_origin = (
+                "explicit" if fixed and len(fixed) == len(profile.workspace_observations) else "inferred"
+            )
         if profile.workspace_observations:
             if profile.evidence_scope == "task_input_only":
                 raise ValueError("workspace inspection conflicts with task_input_only evidence scope")

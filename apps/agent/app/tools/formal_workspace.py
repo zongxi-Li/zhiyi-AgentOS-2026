@@ -8,11 +8,10 @@ import re
 from uuid import uuid4
 
 from adapters.audited_tool_runtime import AuditedToolRuntime
-from adapters.guarded_tool import ToolInvocationError
 from adapters.hands_http import HandsExecutionCancelled, HandsOutcomeUnknown
 from support.async_tasks import await_settled
 from components.resource.scheduler.binder import LeaseKeepAlive
-from components.resource.scheduler.models import ReadyNodeSchedulingResult
+from components.resource.scheduler.models import CandidateDecision, FilterReason, ReadyNodeSchedulingResult
 from components.executor.value_store import SQLiteExecutionValueStore
 from contracts import stable_checksum
 from contracts.execution import NodeExecutionRecord
@@ -21,8 +20,9 @@ from contracts.local_runtime import LocalRuntimeExecutionRequest, LocalRuntimeEx
 from contracts.native_retrieval import (
     RETRIEVAL_COMMIT_SUFFIXES, RETRIEVAL_LEDGER_VERSION, retrieval_operation_key,
 )
+from contracts.planning_context import PLANNING_CONTEXT_OWNER, is_planning_context_snapshot
 from contracts.runtime_events import RuntimeEvent
-from contracts.tools import hands_tools, ToolExecutionAuthorizationLost, ToolExecutionResult
+from contracts.tools import hands_tools, HOST_TOOL_FAILURE_CODES, HostToolExecutionError, ToolExecutionAuthorizationLost, ToolExecutionResult
 from contracts.communication import validate_contract_payload
 from runtime.live_events import runtime_event_broker
 from app.tools.permissions import get_chat_permission_service, normalize_relative_path
@@ -86,9 +86,11 @@ class FormalWorkspaceTools:
             raise ValueError('tool recovery lacks the exact durable node identity')
         if empty_session:
             from components.executor.memory_input import read_frozen_memory_retrieval
+            from runtime.execution_guidance import read_undispatched_guidance_inputs
 
             memory_input = read_frozen_memory_retrieval(connection, run=run, execution=node, policy=memory_policy)
             internal_refs = {memory_input[0]} if memory_input is not None else set()
+            internal_refs.update(read_undispatched_guidance_inputs(connection, run=run, node=node))
             # Core recovery has already verified these read-only prologue slots.
             if retrieval_session:
                 internal_refs.update('tool:' + hashlib.sha256((run.run_id + ':' +
@@ -97,15 +99,24 @@ class FormalWorkspaceTools:
             prefix = node.operation_id + ':'
             model_ref = 'tool:' + hashlib.sha256((run.run_id + ':' + node.operation_id + ':tools:0:model-turn').encode()).hexdigest()
             activity = connection.execute(
-                    "SELECT reference FROM execution_values WHERE run_id=? AND reference LIKE 'tool:%' AND ("
+                    "SELECT reference,step_id,kind,operation_id,CASE WHEN step_id=? THEN payload_json END "
+                    "FROM execution_values WHERE run_id=? AND reference LIKE 'tool:%' AND ("
                     "reference=? OR substr(json_extract(payload_json,'$.request.invocationId'),1,?)=? "
                     "OR substr(json_extract(payload_json,'$.response.requestId'),1,?)=? "
                     "OR json_extract(payload_json,'$.identity.commitId')=? "
                     "OR json_extract(payload_json,'$.record.commitId')=? "
                     "OR json_extract(payload_json,'$.commitId')=?)",
-                    (run.run_id, model_ref, len(prefix), prefix, len(prefix), prefix,
+                    (PLANNING_CONTEXT_OWNER, run.run_id, model_ref, len(prefix), prefix, len(prefix), prefix,
                      node.operation_id, node.operation_id, node.operation_id))
-            if any(reference not in internal_refs for (reference,) in activity):
+            for reference, owner, kind, operation_id, snapshot_body in activity:
+                if reference in internal_refs:
+                    continue
+                if is_planning_context_snapshot(run_id=run.run_id, reference=reference,
+                        step_id=owner, kind=kind, operation_id=operation_id,
+                        payload=json.loads(snapshot_body) if snapshot_body is not None else None):
+                    # A sealed diagnostic copy of an internal input is not a
+                    # second model/tool admission. Original WALs remain visible.
+                    continue
                 raise ValueError('native session has admitted model or tool work')
             return {'source': 'formal-workspace-write-ahead.v1',
                     'identity': dict(runId=run.run_id, stepId=node.step_id, attemptId=node.attempt_id,
@@ -302,6 +313,8 @@ class FormalWorkspaceTools:
         coordinator = TaskApprovalCoordinator(rt, self.permissions)
         approval_context = coordinator.bind_context(context, self.guard, authorization)
         outcome_unknown = False
+        tool_failure = dict(identity, tool=TOOLS.get(name, name), operationKey=operation_key,
+                            resourceId=rt.local_runtime_resource.profile.runtime_id)
         async def cleanup():
             try:
                 await keepalive.stop()
@@ -332,23 +345,41 @@ class FormalWorkspaceTools:
                 self.guard()
                 if not healthy:
                     profile = rt.resource_plane.runtime(rt.local_runtime_resource.profile.runtime_id)
+                    reasons = [FilterReason.UNHEALTHY]
+                    if not profile.enabled: reasons.append(FilterReason.DISABLED)
+                    if profile.draining: reasons.append(FilterReason.DRAINING)
                     return ReadyNodeSchedulingResult(
                         status='queued' if profile.enabled and not profile.draining else 'rejected',
-                        reason='EXECUTION_RESOURCE_UNAVAILABLE')
+                        reason='EXECUTION_RESOURCE_UNAVAILABLE', candidates=[CandidateDecision(
+                            resourceId=profile.runtime_id, accepted=False, reasons=reasons)])
 
             # Every tool operation receives its own terminal capacity lease.
             # Contention belongs to the scheduler, not the Agent's reasoning or
             # failure path. Admission still revalidates approval after waiting.
-            scheduled = await rt.resource_binder.wait_ready(run_id=run_id,step_id=step_id,
-                attempt_id=f'{context.attempt_id}:tool:{operation_key}:lease:{uuid4().hex}',
-                requirement=ExecutionRequirement(requiredCapabilities=[TOOLS.get(name,name)],runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
-                    allowedRuntimeIds=[rt.local_runtime_resource.profile.runtime_id]),
-                before_attempt=prepare_allocation,
-                on_queued=lambda decision: emit('capacity_waiting', {'tool': requested_name, 'reason': decision.reason}))
+            try:
+                scheduled = await rt.resource_binder.wait_ready(run_id=run_id,step_id=step_id,
+                    attempt_id=f'{context.attempt_id}:tool:{operation_key}:lease:{uuid4().hex}',
+                    requirement=ExecutionRequirement(requiredCapabilities=[TOOLS.get(name,name)],runtimeKinds=[RuntimeKind.EXECUTION_BACKEND],
+                        allowedRuntimeIds=[rt.local_runtime_resource.profile.runtime_id]),
+                    before_attempt=prepare_allocation,
+                    on_queued=lambda decision: emit('capacity_waiting', {'tool': requested_name, 'reason': decision.reason}))
+            except Exception as exc:
+                code = getattr(exc, 'code', None)
+                if code not in HOST_TOOL_FAILURE_CODES:
+                    raise
+                if isinstance(exc, ToolExecutionAuthorizationLost):
+                    exc.details = {**tool_failure, 'phase':'tool_scheduling'}
+                    raise
+                raise HostToolExecutionError(code, 'Hands tool admission failed',
+                    retryable=code == 'SCHEDULER_UNAVAILABLE',
+                    details={**tool_failure, 'phase':'tool_scheduling'}) from exc
             if scheduled.binding is None or scheduled.lease is None:
-                if scheduled.reason == 'EXECUTION_RESOURCE_UNAVAILABLE':
-                    raise ToolInvocationError('EXECUTION_RESOURCE_UNAVAILABLE', 'Execution resource is not healthy', retryable=True)
-                raise ToolInvocationError('EXECUTION_CAPACITY_UNAVAILABLE', 'Execution capacity is unavailable', retryable=True)
+                code = ('EXECUTION_CAPACITY_UNAVAILABLE' if scheduled.reason == 'NO_CAPACITY'
+                        else scheduled.reason or 'NO_ELIGIBLE_RESOURCE')
+                raise HostToolExecutionError(code, 'Hands tool resource is unavailable',
+                    details={**tool_failure, 'phase': 'tool_scheduling', 'schedulingReason': scheduled.reason,
+                        'candidateReasons': [{'resourceId': c.resource_id, 'reasons': [r.value for r in c.reasons]}
+                                             for c in scheduled.candidates]})
             keepalive = LeaseKeepAlive(rt.resource_binder.coordinator,scheduled.lease)
             try:
                 keepalive.start()
@@ -413,15 +444,20 @@ class FormalWorkspaceTools:
             rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,
                 key=operation_key+':result',payload={'data':data,'record':record})
             return ToolExecutionResult(data=data,record=record)
-        except HandsOutcomeUnknown:
-            outcome_unknown = True
-            # Retain the request/admission WAL and quarantine this execution
-            # resource. An unknown external operation is never a release receipt.
-            rt.resource_plane.set_runtime_health(scheduled.binding.resource_id, healthy=False)
-            rt.resource_plane.set_runtime_enabled(scheduled.binding.resource_id, enabled=False)
+        except HandsOutcomeUnknown as exc:
+            # Transport uncertainty for trusted read-only tools affects this
+            # operation. Integrity faults and unknown side effects affect the
+            # runtime. Neither case fabricates a terminal receipt or result.
+            outcome_unknown = not (TOOLS.get(name, name) in {'fs.read', 'fs.list'}
+                and exc.reconciliation_reason == 'transport_unavailable' and exc.quarantine_scope == 'operation')
+            exc.details = {**tool_failure, 'phase': 'tool_settlement'}
+            if outcome_unknown:
+                rt.resource_plane.set_runtime_health(scheduled.binding.resource_id, healthy=False)
+                rt.resource_plane.set_runtime_enabled(scheduled.binding.resource_id, enabled=False)
             rt.execution_value_store.put_tool_value(run_id=run_id,step_id=step_id,key=operation_key+':unsettled',
                 payload={'leaseId':scheduled.lease.lease_id,'resourceId':scheduled.binding.resource_id,
-                         'reason':'external_outcome_unknown', **identity})
+                         'reason':'external_outcome_unknown', 'reconciliationReason':exc.reconciliation_reason,
+                         'quarantineScope':'runtime' if outcome_unknown else 'operation', **identity})
             raise
         finally:
             await await_settled(asyncio.create_task(cleanup(), name=f"hands-lease-cleanup:{operation_key}"))

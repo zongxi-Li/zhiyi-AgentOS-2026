@@ -1,3 +1,5 @@
+import pytest
+
 from components.recovery import (
     RecoveryRecipeRegistry,
     RecoveryService,
@@ -5,6 +7,7 @@ from components.recovery import (
 )
 from components.communicator.reliable import CommunicationBackpressureError
 from adapters.model_adapter import StructuredGenerationError
+from contracts.tools import HostToolExecutionError
 from contracts.recovery import (
     FailureEvent,
     FailureSource,
@@ -83,3 +86,37 @@ def test_failure_boundary_preserves_structured_output_contract_reason() -> None:
     assert failure.failure_type is FailureType.CONTRACT
     assert failure.reason_code == "OUTPUT_CONTRACT_VIOLATION"
     assert failure.retryable is False
+
+
+@pytest.mark.parametrize("code,source,kind,action,retryable", [
+    ("NO_ELIGIBLE_RESOURCE", FailureSource.SCHEDULER, FailureType.CAPACITY, RecoveryAction.REBIND, False),
+    ("EXECUTION_CAPACITY_UNAVAILABLE", FailureSource.SCHEDULER, FailureType.CAPACITY, RecoveryAction.REBIND, False),
+    ("EXECUTION_RESOURCE_UNAVAILABLE", FailureSource.SCHEDULER, FailureType.CAPACITY, RecoveryAction.REBIND, False),
+    ("SCHEDULER_UNAVAILABLE", FailureSource.SCHEDULER, FailureType.TRANSIENT, RecoveryAction.RETRY, True),
+    ("EXECUTION_LEASE_LOST", FailureSource.SCHEDULER, FailureType.LEASE_EXPIRED, RecoveryAction.REBIND, False),
+    ("EXECUTION_AUTHORIZATION_LOST", FailureSource.AUDIT, FailureType.POLICY, RecoveryAction.REVIEW, False),
+    ("HANDS_OUTCOME_UNKNOWN", FailureSource.EXECUTOR, FailureType.PERMANENT, RecoveryAction.ABORT, False),
+])
+def test_host_tool_failure_preserves_diagnostic_identity_and_recovery_semantics(code, source, kind, action, retryable):
+    details = {"stepId": "reader", "attemptId": "attempt:1", "commitId": "commit:1", "tool": "fs.read",
+        "resourceId": "hands", "operationKey": "read:1", "phase": "tool_scheduling",
+        "schedulingReason": "NO_ELIGIBLE_RESOURCE",
+        "candidateReasons": [{"resourceId": "hands", "reasons": ["DISABLED"], "raw": "private provider body"}],
+        "arguments": {"path": "private-path"}, "command": "private-command"}
+    error = StructuredGenerationError(code, "Host tool failure", retryable=True)
+    error.metadata = {"toolFailure": details, "raw": "private provider body"}
+    event = failure_event_from_exception(error, subject_ref="run:run-1")
+    assert event.source is source and event.failure_type is kind and event.retryable is retryable
+    assert RecoveryService().propose(event).strategy is action
+    assert event.details["stepId"] == "reader" and event.details["tool"] == "fs.read"
+    assert event.details["candidateReasons"] == [{"resourceId": "hands", "reasons": ["DISABLED"]}]
+    assert "private" not in event.model_dump_json()
+
+
+def test_distinct_failed_tool_operations_have_distinct_stable_failure_identities():
+    def failure(operation):
+        return failure_event_from_exception(HostToolExecutionError("NO_ELIGIBLE_RESOURCE", "No eligible tool resource",
+            details={"stepId": "reader", "operationKey": operation}), subject_ref="run:run-1")
+
+    assert failure("read:1").failure_id == failure("read:1").failure_id
+    assert failure("read:1").failure_id != failure("read:2").failure_id

@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Protocol
 
 from adapters.http_transport import HttpTransportError
 from adapters.model_diagnostics import safe_transport_diagnostics
-from adapters.json_output import decode_json_object_value
+from adapters.json_output import decode_json_object_result, decode_json_object_value
 from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
@@ -688,7 +688,9 @@ class OpenAICompatibleRuntime:
                     key: message[key] for key in ("tool_calls", "reasoning_content") if key in message}},
                 provider=self._manifest.provider, model=model, usage=safe_usage, metadata=safe_metadata)
         try:
-            content = self._content_object(message.get("content"), finish_reason=finish_reason)
+            content, normalization = decode_json_object_result(message.get("content"), finish_reason=finish_reason)
+            if content is None:
+                raise ModelInvocationError("MODEL_RESPONSE_INVALID", "provider content is not valid JSON")
         except ModelInvocationError as exc:
             # Keep model source/prompt text out of logs while retaining enough
             # syntax evidence to diagnose code-bearing structured responses.
@@ -720,6 +722,9 @@ class OpenAICompatibleRuntime:
                 "MODEL_OUTPUT_INVALID_JSON", "model output is not a valid JSON object",
                 usage=safe_usage, metadata=safe_metadata,
             ) from exc
+        if normalization is not None:
+            safe_metadata["jsonRecovery"] = {"type": normalization,
+                "rootCompleted": normalization == "root_close_added"}
         return ModelInvocationResponse(
             requestId=request.request_id,
             content=content,

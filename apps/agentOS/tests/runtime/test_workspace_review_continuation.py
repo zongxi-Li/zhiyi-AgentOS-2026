@@ -6,6 +6,7 @@ import pytest
 
 from contracts.workflow import RuntimeRunRecord, WorkflowStatus
 from runtime.workspace_review_execution import WorkspaceReviewContinuation
+from runtime.semantic_patch import SEMANTIC_GRAPH_DERIVATION_VERSION
 from support.run_execution_fence import RunFenceBusy, acquire_run_fence
 
 
@@ -49,6 +50,261 @@ def test_only_the_active_commitment_can_reenter_the_ordinary_planner(head):
     continuation = WorkspaceReviewContinuation(SimpleNamespace(
         planning_commit_authority=SimpleNamespace(store=ledger)))
     assert continuation.can_replan(run) is (head in {None, "graph:active"})
+
+
+def _accepted_semantic_derivation(tmp_path):
+    from contracts.planning import TaskPlanPatch
+
+    mission_id = "mission_123456789abc"
+    projection = _blocked_workspace_run(mission_id=mission_id)
+    projection.execution_state["graphActivation"]["sourceCommitId"] = "graph:active"
+    pending = projection.execution_state["workspaceReviewContinuation"]
+    patch = TaskPlanPatch(missionId=mission_id, basePlanVersion=1, planVersion=2,
+        metadata={"rationale": "use the already committed evidence"})
+    pending["patch"] = patch.model_dump(by_alias=True, mode="json")
+    run = RuntimeRunRecord(missionId=mission_id, workflowId="flow", domain="general", runtimeEngine="acg",
+        status=projection.status, reviewMode=projection.review_mode,
+        input=projection.input, executionState=projection.execution_state)
+    source = SimpleNamespace(commit_id="semantic:next", mission_id=run.mission_id,
+        proposal_type="plan_revision", proposal_payload=patch,
+        sources=SimpleNamespace(graph_version=1, observation_id=pending["observationId"]))
+    key = f"workspace-review:{run.run_id}:{pending['observationId']}"
+    durable = {"run": run.model_copy(deep=True), "head": source, "graph": None, "writes": 0}
+
+    def lookup(operation):
+        return source if operation == key + ":semantic" else durable["graph"] if operation == key + ":graph" else None
+
+    def save(current, *, expected_snapshot):
+        assert expected_snapshot == durable["run"]
+        durable.update(run=current.model_copy(deep=True), writes=durable["writes"] + 1)
+
+    runtime = SimpleNamespace(
+        workflow_store=SimpleNamespace(db_path=tmp_path / "workflow.sqlite3",
+            get_run=lambda _: durable["run"].model_copy(deep=True), save_run=save,
+            list_planning_inputs=lambda _: []),
+        run_lock_manager=SimpleNamespace(lock_for=lambda _: RLock()),
+        _run_cancellation_requested=lambda _: False,
+        planning_commit_authority=SimpleNamespace(store=SimpleNamespace(
+            latest=lambda _: durable["head"], get_by_idempotency_key=lookup)),
+        graph_materialization_authority=object(), graph_activation_authority=object(),
+        graph_handoff_authority=object(), execution_permit_authority=object(),
+    )
+    return WorkspaceReviewContinuation(runtime), run, source, durable
+
+
+@pytest.mark.parametrize("defect", [None, "same_version", "other_head", "graph_accepted",
+    "other_mission", "other_observation", "other_graph", "other_patch", "invalid_patch", "node_review"])
+def test_repaired_derivation_replays_only_its_exact_accepted_semantic_head(tmp_path, defect):
+    continuation, run, source, durable = _accepted_semantic_derivation(tmp_path)
+    pending = run.execution_state["workspaceReviewContinuation"]
+    if defect == "same_version":
+        pending["derivationVersion"] = SEMANTIC_GRAPH_DERIVATION_VERSION
+    elif defect == "other_head":
+        durable["head"] = SimpleNamespace(commit_id="semantic:other")
+    elif defect == "graph_accepted":
+        durable["graph"] = SimpleNamespace(commit_id="graph:accepted")
+    elif defect == "other_mission":
+        source.mission_id = "mission:other"
+    elif defect == "other_observation":
+        source.sources.observation_id = "observation:other"
+    elif defect == "other_graph":
+        source.sources.graph_version = 2
+    elif defect == "other_patch":
+        pending["patch"]["metadata"]["rationale"] = "different proposal"
+    elif defect == "invalid_patch":
+        pending["patch"] = None
+    elif defect == "node_review":
+        run.execution_state["reviewPayload"]["subjectType"] = "node"
+    assert continuation.can_replan(run) is False
+    assert continuation.can_resume(run) is (defect is None)
+    assert durable["writes"] == 0
+
+
+def test_repaired_derivation_uses_accepted_pipeline_without_retrying_old_graph(tmp_path, monkeypatch):
+    continuation, run, source, durable = _accepted_semantic_derivation(tmp_path)
+    before = run.model_copy(deep=True)
+    seen = []
+
+    def replay(current, pending):
+        assert current == before
+        assert pending == before.execution_state["workspaceReviewContinuation"]
+        seen.append(source.commit_id)
+        return "continued through accepted graph authorities"
+
+    monkeypatch.setattr(continuation, "_advance", replay)
+    monkeypatch.setattr(continuation, "_prepare_replan", lambda *_, **__: pytest.fail("must not dispatch the old graph"))
+    monkeypatch.setattr(continuation, "_publish_status", lambda *_, **__: None)
+    assert continuation.resume(run) == "continued through accepted graph authorities"
+    assert seen == [source.commit_id] and durable["writes"] == 0
+    assert run == before
+
+
+def _accepted_continuation_graph(run, source, durable):
+    graph = SimpleNamespace(commit_id="graph:next", mission_id=run.mission_id,
+        proposal_type="graph_revision", sources=source.sources,
+        proposal_payload=SimpleNamespace(source_commit_id=source.commit_id,
+            candidate_graph=SimpleNamespace(graph_id="graph", version=2),
+            graph_patch=SimpleNamespace(added_nodes=())))
+    durable.update(graph=graph, head=graph)
+    return graph
+
+
+@pytest.mark.parametrize("defect", [None, "same_version", "other_head", "other_source", "other_graph",
+    "other_version", "other_activation", "node_review", "terminal"])
+def test_accepted_graph_replay_requires_exact_continuation_and_activation(tmp_path, defect):
+    continuation, run, source, durable = _accepted_semantic_derivation(tmp_path)
+    graph = _accepted_continuation_graph(run, source, durable)
+    run.status = WorkflowStatus.RETRYING
+    run.execution_state.update(graphVersion=2, graphActivation={"sourceCommitId": graph.commit_id,
+        "sourceGraphVersion": 1, "activeGraphVersion": 2, "executionPermit": None})
+    if defect == "same_version":
+        run.execution_state["workspaceReviewContinuation"]["derivationVersion"] = SEMANTIC_GRAPH_DERIVATION_VERSION
+    elif defect == "other_head":
+        durable["head"] = SimpleNamespace(commit_id="graph:other")
+    elif defect == "other_source":
+        graph.proposal_payload.source_commit_id = "semantic:other"
+    elif defect == "other_graph":
+        graph.proposal_payload.candidate_graph.graph_id = "graph:other"
+    elif defect == "other_version":
+        run.execution_state["graphVersion"] = 3
+    elif defect == "other_activation":
+        run.execution_state["graphActivation"]["sourceCommitId"] = "graph:other"
+    elif defect == "node_review":
+        run.execution_state["reviewPayload"]["subjectType"] = "node"
+    elif defect == "terminal":
+        run.status = WorkflowStatus.CANCELLED
+    assert continuation.can_replan(run) is False
+    assert continuation.can_resume(run) is (defect is None)
+    assert durable["writes"] == 0
+
+
+@pytest.mark.parametrize("lost_ack", ["materialize", "activate", "handoff", "permit"])
+def test_accepted_continuation_resumes_journals_after_transient_failure_and_restart(tmp_path, monkeypatch, lost_ack):
+    import sqlite3
+
+    continuation, run, source, durable = _accepted_semantic_derivation(tmp_path)
+    graph = _accepted_continuation_graph(run, source, durable)
+    runtime = continuation.runtime
+    journals = {"materialization": None, "activation": None, "handoff": None}
+    calls = []
+    interrupted = []
+
+    def receipt(**fields):
+        return SimpleNamespace(status="ACCEPTED", **fields)
+
+    def interrupt(stage):
+        calls.append(stage)
+        if stage == lost_ack and not interrupted:
+            interrupted.append(stage)
+            raise sqlite3.OperationalError("lost authority acknowledgement")
+
+    def materialize(*_, **__):
+        journals["materialization"] = SimpleNamespace(materialization_id="materialization:2")
+        interrupt("materialize")
+        return receipt(materialization_id="materialization:2")
+
+    def activate(*_, **__):
+        journals["activation"] = SimpleNamespace(activation_id="activation:2", status="ACTIVATED_PAUSED")
+        updated = durable["run"].model_copy(deep=True)
+        updated.status = WorkflowStatus.RETRYING
+        updated.execution_state.update(graphVersion=2, graphActivation={"sourceCommitId": graph.commit_id,
+            "sourceGraphVersion": 1, "activeGraphVersion": 2, "executionPermit": None})
+        durable["run"] = updated
+        interrupt("activate")
+        return receipt(activation_id="activation:2")
+
+    def handoff(*_, **__):
+        journals["handoff"] = SimpleNamespace(handoff_id="handoff:2", status="STATE_PREPARED")
+        interrupt("handoff")
+        return receipt(handoff_id="handoff:2")
+
+    def permit(*_, **__):
+        if durable["run"].execution_state.get("executionPermitId") != "permit:2":
+            durable["run"].execution_state["executionPermitId"] = "permit:2"
+            durable["run"].execution_state["graphActivation"]["executionPermit"] = {"permitId": "permit:2"}
+            interrupt("permit")
+        return receipt(permit_id="permit:2")
+
+    runtime.semantic_principal_provider = lambda: object()
+    runtime.mission_semantic_service = SimpleNamespace(require_write_access=lambda *_: None)
+    runtime.accept_graph_revision = lambda *_, **__: pytest.fail("accepted graph must never be rederived")
+    runtime.materialize_graph_revision = materialize
+    runtime.prepare_graph_activation = lambda *_, **__: receipt()
+    runtime.commit_graph_activation = activate
+    runtime.prepare_graph_handoff = handoff
+    runtime.issue_execution_permit = permit
+    runtime.graph_materialization_authority = SimpleNamespace(store=SimpleNamespace(
+        materialization_for=lambda _: journals["materialization"], get_materialization=lambda _: journals["materialization"]))
+    runtime.graph_activation_authority = SimpleNamespace(store=SimpleNamespace(
+        activation_for=lambda _: journals["activation"], get_activation=lambda _: journals["activation"]))
+    runtime.graph_handoff_authority = SimpleNamespace(store=SimpleNamespace(
+        handoff_for=lambda _: journals["handoff"], get_handoff=lambda _: journals["handoff"]))
+    runtime.execution_permit_authority = SimpleNamespace(assert_dispatchable=lambda _: None)
+    monkeypatch.setattr(continuation, "_publish_status", lambda *_, **__: None)
+    assert continuation.resume(run) is None
+    assert interrupted == [lost_ack]
+    assert durable["run"].execution_state["workspaceReviewContinuation"]["blocked"] is True
+
+    recovered = WorkspaceReviewContinuation(runtime)
+    monkeypatch.setattr(recovered, "_publish_status", lambda *_, **__: None)
+    assert recovered.can_resume(durable["run"]) is True
+    result = recovered.resume(durable["run"])
+    assert result is not None and result.execution_state["graphVersion"] == 2
+    assert "workspaceReviewContinuation" not in result.execution_state
+    assert result.execution_state["executionPermitId"] == "permit:2"
+    assert durable["graph"] is graph and durable["head"] is graph
+    assert calls == ["materialize", "activate", "handoff", "permit"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_implementation", [False, True])
+async def test_wake_monitor_schedules_only_the_owned_changed_derivation(tmp_path, new_implementation):
+    from contextlib import asynccontextmanager
+    from runtime.workflow_runtime import ExecutionRuntime
+
+    continuation, run, _, durable = _accepted_semantic_derivation(tmp_path)
+    if not new_implementation:
+        durable["run"].execution_state["workspaceReviewContinuation"]["derivationVersion"] = SEMANTIC_GRAPH_DERIVATION_VERSION
+
+    @asynccontextmanager
+    async def lock():
+        yield
+
+    runtime = continuation.runtime
+    runtime.workflow_store.list_planning_wakeup_candidates = lambda **_: SimpleNamespace(items=(durable["run"],), total=1)
+    runtime.runtime_planning_wait_service = SimpleNamespace(is_resource_wait=lambda _: False, prepare=lambda *_, **__: False)
+    runtime.workspace_review_continuation = continuation
+    runtime.run_lock_manager = SimpleNamespace(lock_for=lambda _: lock())
+    runtime._execution_slot_guard = RLock()
+    runtime._active_execution_slots = set()
+    runtime.execution_dispatch_enabled = True
+    assert await ExecutionRuntime.prepare_planning_wakeups(runtime) == ([run.run_id] if new_implementation else [])
+    assert durable["writes"] == 0
+
+
+def test_unchanged_rejected_derivation_does_not_repeat_on_background_wakes(tmp_path, monkeypatch):
+    from runtime.workspace_review_execution import _TransitionRejected
+
+    continuation, run, _, durable = _accepted_semantic_derivation(tmp_path)
+    attempts = []
+
+    def reject(*_):
+        attempts.append("derive")
+        raise _TransitionRejected(SimpleNamespace(code="INVALID_PROPOSAL",
+            reason="input binding cannot be derived from the accepted sources"))
+
+    monkeypatch.setattr(continuation, "_advance", reject)
+    monkeypatch.setattr(continuation, "_publish_status", lambda *_, **__: None)
+    assert continuation.resume(run) is None
+    held = durable["run"]
+    pending = held.execution_state["workspaceReviewContinuation"]
+    assert pending["derivationVersion"] == SEMANTIC_GRAPH_DERIVATION_VERSION
+    assert "input binding cannot be derived" in pending["reason"]
+    assert held.status == WorkflowStatus.WAITING_REVIEW
+    assert held.execution_state["graphActivation"] == run.execution_state["graphActivation"]
+    assert not continuation.can_resume(held)
+    assert continuation.resume(held) is None
+    assert attempts == ["derive"] and durable["writes"] == 1
 
 
 @pytest.mark.parametrize("head", ["semantic:next", "graph:next"])

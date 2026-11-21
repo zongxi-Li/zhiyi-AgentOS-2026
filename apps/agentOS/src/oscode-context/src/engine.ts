@@ -79,8 +79,9 @@ export class ContextCompactionEngine {
     const threshold = working.trigger
     if (!request.force && before < threshold) return finish(original, 'unchanged')
     const started = performance.now()
-    const summarizer = new LLMSummarizer(this.invoke, this.meter, request.budget,
-      Math.min(this.config.maxSummaryCalls, request.summaryCallsRemaining ?? this.config.maxSummaryCalls))
+    const callLimits = [this.config.maxSummaryCalls, request.summaryCallsRemaining].filter((value): value is number => typeof value === 'number')
+    const maxCalls = callLimits.length ? Math.min(...callLimits) : null
+    const summarizer = new LLMSummarizer(this.invoke, this.meter, request.budget, maxCalls)
     let summaryStarted = 0
     try {
       const cuts = balancedCuts(original)
@@ -132,7 +133,7 @@ export class ContextCompactionEngine {
         metrics.reasonCode = request.force ? 'INSUFFICIENT_SAVINGS' : 'PROTECTED_HISTORY'
         return finish(pruned.messages, pruned.removedChars > 0 ? 'pruned' : request.force ? 'unchanged' : 'no_safe_range')
       }
-      if ((request.summaryCallsRemaining ?? this.config.maxSummaryCalls) <= 0) {
+      if (maxCalls !== null && maxCalls <= 0) {
         metrics.reasonCode = 'SUMMARY_CALL_BUDGET_EXHAUSTED'
         return finish(pruned.messages, pruned.removedChars > 0 ? 'pruned' : 'no_safe_range')
       }

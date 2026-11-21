@@ -52,6 +52,7 @@ class ContextPack(BaseModel):
     step_goal: str = Field(default="", alias="stepGoal")
     data: dict[str, Any] = Field(default_factory=dict)
     source_data: dict[str, dict[str, Any]] = Field(default_factory=dict, alias="sourceData")
+    value_path: tuple[str | int, ...] = Field(default=(), alias="path", exclude_if=lambda value: not value)
     evidence_refs: list[str] = Field(default_factory=list, alias="evidenceRefs")
     missing_fields: list[str] = Field(default_factory=list, alias="missingFields")
     contract_status: str = Field(default="valid", alias="contractStatus")

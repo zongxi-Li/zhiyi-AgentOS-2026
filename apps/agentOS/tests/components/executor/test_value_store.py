@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+
 from components.executor.value_store import (
     ExecutionValueAccessError,
     InMemoryExecutionValueStore,
@@ -79,6 +81,86 @@ def test_context_pack_reference_is_isolated_by_run() -> None:
     assert store.get_context_pack(run_id="run-a", context_ref=context_ref) == {"title": "safe"}
     with pytest.raises(ExecutionValueAccessError, match="run-a"):
         store.get_context_pack(run_id="run-b", context_ref=context_ref)
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_tool_reference_inventory_is_run_scoped_and_bodies_use_existing_reader(tmp_path, backend):
+    store = (InMemoryExecutionValueStore() if backend == "memory" else
+             SQLiteExecutionValueStore(db_path=tmp_path / "tool-index.sqlite3"))
+    try:
+        references = {store.put_tool_value(run_id="run-a", step_id="review", key="operation:" + suffix,
+            payload={"type": suffix, "body": "WAL-BODY"}) for suffix in ("request", "result", "model-turn", "memory-retrieval")}
+        store.put_tool_value(run_id="run-b", step_id="private", key="operation:request", payload={"private": True})
+        store.put_output(run_id="run-a", step_id="review", payload={"published": True})
+        store.put_context_pack(run_id="run-a", step_id="review", payload={"input": True})
+        if backend == "sqlite":
+            store.close()
+            store = SQLiteExecutionValueStore(db_path=tmp_path / "tool-index.sqlite3")
+        listed = store.list_tool_references(run_id="run-a")
+        assert {item.reference for item in listed} == references
+        assert [item.reference for item in listed] == sorted(references)
+        assert all(item.run_id == "run-a" and item.step_id == "review" and item.kind == "output" for item in listed)
+        assert "WAL-BODY" not in repr(listed)
+        assert store.list_tool_references(run_id="run-missing") == ()
+        for item in listed:
+            assert store.get_output(run_id="run-a", output_ref=item.reference)["body"] == "WAL-BODY"
+            with pytest.raises(ExecutionValueAccessError, match="run-a"):
+                store.get_output(run_id="run-b", output_ref=item.reference)
+    finally:
+        if backend == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_prepared_input_inspection_keeps_uncommitted_outputs_private(tmp_path, backend):
+    store = (InMemoryExecutionValueStore() if backend == "memory" else
+             SQLiteExecutionValueStore(db_path=tmp_path / "inputs.sqlite3"))
+    try:
+        operation = "commit:run-a:review:0"
+        store.prepare_node_commit(run_id="run-a", commit_id=operation)
+        context_ref = store.put_context_pack(run_id="run-a", step_id="review", operation_id=operation,
+            payload={"runId": "run-a", "stepId": "review", "data": {"finding": "admitted"}})
+        output_ref = store.put_output(run_id="run-a", step_id="review", operation_id=operation,
+                                      payload={"answer": "unvalidated"})
+        store.transition_node_execution(NodeExecutionRecord(operationId=operation, executionInstanceId="instance",
+            runId="run-a", stepId="review", attemptId="attempt", phase=NodeExecutionPhase.PREPARED,
+            artifactRefs={"context": context_ref}))
+        assert store.list_node_executions(run_id="run-b") == ()
+        listed = store.list_node_executions(run_id="run-a")
+        listed[0].artifact_refs["context"] = "untrusted-mutation"
+        inspected = store.get_node_input_context(run_id="run-a", operation_id=operation)
+        inspected["data"]["finding"] = "mutated"
+        assert store.get_node_input_context(run_id="run-a", operation_id=operation)["data"] == {"finding": "admitted"}
+        with pytest.raises(ExecutionValueAccessError, match="run-a"):
+            store.get_node_input_context(run_id="run-b", operation_id=operation)
+        with pytest.raises(ExecutionValueAccessError, match="not committed"):
+            store.get_output(run_id="run-a", output_ref=output_ref)
+        with pytest.raises(ExecutionValueAccessError, match="not committed"):
+            store.get_context_pack(run_id="run-a", context_ref=context_ref)
+    finally:
+        if backend == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+@pytest.mark.parametrize("changed_owner", ["step", "operation", "payload", "kind"])
+def test_node_input_inspection_rejects_a_reference_from_a_different_identity(tmp_path, backend, changed_owner):
+    store = (InMemoryExecutionValueStore() if backend == "memory" else
+             SQLiteExecutionValueStore(db_path=tmp_path / "inputs.sqlite3"))
+    try:
+        operation = "commit:run-a:review:0"
+        put = store.put_output if changed_owner == "kind" else store.put_context_pack
+        reference = put(run_id="run-a", step_id="other" if changed_owner == "step" else "review",
+            operation_id="other-operation" if changed_owner == "operation" else operation,
+            payload={"runId": "run-a", "stepId": "other" if changed_owner == "payload" else "review"})
+        store.transition_node_execution(NodeExecutionRecord(operationId=operation, executionInstanceId="instance",
+            runId="run-a", stepId="review", attemptId="attempt", phase=NodeExecutionPhase.PREPARED,
+            artifactRefs={"context": reference}))
+        with pytest.raises(ExecutionValueAccessError):
+            store.get_node_input_context(run_id="run-a", operation_id=operation)
+    finally:
+        if backend == "sqlite":
+            store.close()
 
 
 def test_sqlite_value_store_survives_reopen_and_keeps_run_isolation(tmp_path) -> None:

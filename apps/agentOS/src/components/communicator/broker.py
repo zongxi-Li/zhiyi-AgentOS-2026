@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import json
 from typing import Any, Mapping, Protocol
 
 from .contracts import ContextPack, estimate_tokens, input_revision
@@ -135,6 +136,7 @@ class CommunicationBroker:
         operation_id: str = "",
         supplemental_limit: int | None = None,
         producer_step_id: str | None = None,
+        supplemental_read: bool = False,
     ) -> ContextPack:
         """读取一个经拓扑与预算许可的输出引用，并返回字段裁剪后的 ContextPack。
 
@@ -178,6 +180,7 @@ class CommunicationBroker:
             raise EntropyBudgetExceededError("communication read exceeds request or rule token limit")
         self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens,
                       operation_id=operation_id, supplemental_limit=supplemental_limit,
+                      supplemental_read=supplemental_read,
                       fingerprint=input_revision([output_ref, list(fields), data, max_tokens, supplemental_limit]))
         pack = ContextPack(
             runId=run_id,
@@ -201,7 +204,7 @@ class CommunicationBroker:
                 "fields": list(data),
                 "tokens": tokens,
                 "channel": rule.channel,
-                **({"operationId": operation_id, "readKind": "fields", "readPhase": "supplemental" if supplemental_limit is not None else "prefetch"}
+                **({"operationId": operation_id, "readKind": "fields", "readPhase": "supplemental" if supplemental_read or supplemental_limit is not None else "prefetch"}
                    if operation_id else {}),
             }, operation_id=operation_id,
         )
@@ -213,6 +216,8 @@ class CommunicationBroker:
         page_tokens: int, reason: str,
         operation_id: str = "", supplemental_limit: int | None = None,
         producer_step_id: str | None = None,
+        supplemental_read: bool = False,
+        value_path: tuple[str | int, ...] = (),
     ) -> tuple[ContextPack, str | None]:
         """Page one authorized large field without deleting any remaining content.
 
@@ -232,8 +237,18 @@ class CommunicationBroker:
         fields = requested or rule.allowed_fields
         if set(fields) - set(rule.allowed_fields):
             raise CommunicationAccessError("FIELD_DENIED", "requested fields are not permitted by communication rule")
+        path = self._normalize_value_path(value_path)
+        if path and len(fields) != 1:
+            raise CommunicationAccessError("PATH_INVALID", "a nested read must select one authorized top-level field")
+        path_prefix = ("path.v1:" + input_revision([output_ref, list(fields), list(path)]) + ":") if path else ""
+        if path and cursor is not None:
+            if not isinstance(cursor, str) or not cursor.startswith(path_prefix):
+                raise CommunicationAccessError("CURSOR_INVALID", "communication cursor belongs to a different source or path")
+            position = cursor[len(path_prefix):]
+        else:
+            position = cursor
         try:
-            field_index, offset = (int(item) for item in (cursor or "0:0").split(":", 1))
+            field_index, offset = (int(item) for item in (position or "0:0").split(":", 1))
         except (TypeError, ValueError) as exc:
             raise CommunicationAccessError("CURSOR_INVALID", "communication cursor is invalid") from exc
         if field_index < 0 or field_index >= len(fields) or offset < 0:
@@ -243,6 +258,10 @@ class CommunicationBroker:
         field = fields[field_index]
         present = field in output
         value = output.get(field)
+        if path:
+            if not present:
+                raise CommunicationAccessError("PATH_NOT_FOUND", "nested field is absent from the authorized output")
+            value = self._value_at_path(value, path)
         # Account for the field envelope too. Never return a first oversized
         # item merely to make progress: it would silently bypass the page cap.
         overhead = estimate_tokens({field: None}) + 2
@@ -258,6 +277,8 @@ class CommunicationBroker:
             if field_index + 1 < len(fields)
             else None
         )
+        if next_cursor is not None and path:
+            next_cursor = path_prefix + next_cursor
         # Missing is distinct from an explicitly produced null. A missing field
         # advances to the next field without manufacturing content for it.
         data = {field: page_value} if present else {}
@@ -266,10 +287,14 @@ class CommunicationBroker:
             raise EntropyBudgetExceededError("page item exceeds budget; increase page size within the read limit")
         if rule.max_tokens is not None and tokens > rule.max_tokens:
             raise EntropyBudgetExceededError("communication page exceeds rule token limit")
+        fingerprint_data = [output_ref, list(fields), cursor, page_tokens, data, supplemental_limit]
+        if path:
+            fingerprint_data.append({"pathVersion": 1, "path": list(path)})
         self._reserve(consumer_step_id=consumer_step_id, channel=rule.channel, tokens=tokens,
                       operation_id=operation_id, supplemental_limit=supplemental_limit,
-                      fingerprint=input_revision([output_ref, list(fields), cursor, page_tokens, data, supplemental_limit]))
-        raw_evidence = page_value if field in {"evidence_refs", "evidenceRefs"} else []
+                      supplemental_read=supplemental_read,
+                      fingerprint=input_revision(fingerprint_data))
+        raw_evidence = page_value if not path and field in {"evidence_refs", "evidenceRefs"} else []
         evidence_refs: list[str] = []
         for item in raw_evidence if isinstance(raw_evidence, list) else []:
             reference = item if isinstance(item, str) else item.get("id") if isinstance(item, Mapping) else None
@@ -278,21 +303,81 @@ class CommunicationBroker:
         pack = ContextPack(
             runId=run_id, stepId=consumer_step_id, data=data,
             sourceData={rule.producer_step_id: dict(data)}, evidenceRefs=evidence_refs,
+            path=path,
             # Paging defers content; it does not remove it. Comparing every page
             # with the entire field would manufacture savings on every page.
             tokensDelivered=tokens, tokensAvailable=tokens, savingRatio=0.0,
-            sourceStepIds=[rule.producer_step_id], inputRevision=input_revision(data),
+            sourceStepIds=[rule.producer_step_id],
+            inputRevision=input_revision({"data": data, "path": list(path)}) if path else input_revision(data),
         )
         self._append_event({
             "type": "communication_page_read", "runId": run_id,
             "consumerStepId": consumer_step_id, "producerStepId": rule.producer_step_id,
             "outputRef": output_ref, "fields": list(data), "tokens": tokens,
             "channel": rule.channel, "cursor": cursor, "nextCursor": next_cursor,
+            **({"path": list(path), "scope": "subtree_page"} if path else {}),
             **({"operationId": operation_id, "readKind": "page", "sourceTokensAvailable": estimate_tokens({field: value}),
-                "readPhase": "supplemental" if supplemental_limit is not None else "prefetch"}
+                "readPhase": "supplemental" if supplemental_read or supplemental_limit is not None else "prefetch"}
                if operation_id else {}),
         }, operation_id=operation_id)
         return pack, next_cursor
+
+    @staticmethod
+    def _normalize_value_path(value_path) -> tuple[str | int, ...]:
+        if not isinstance(value_path, (tuple, list)) or any(
+            type(part) not in (str, int) or type(part) is int and part < 0 for part in value_path
+        ):
+            raise CommunicationAccessError("PATH_INVALID", "path must contain JSON object keys or nonnegative array indices")
+        return tuple(value_path)
+
+    @staticmethod
+    def _value_at_path(value, path):
+        for part in path:
+            if isinstance(value, Mapping) and type(part) is str and part in value:
+                value = value[part]
+            elif isinstance(value, list) and type(part) is int and part < len(value):
+                value = value[part]
+            else:
+                raise CommunicationAccessError("PATH_NOT_FOUND", "path does not identify a value in the authorized field")
+        return value
+
+    def describe_reference_path(
+        self, *, run_id: str, consumer_step_id: str, output_ref: str,
+        requested_fields: Iterable[str], value_path: tuple[str | int, ...] = (),
+        producer_step_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Expose a permitted subtree's shape and sizes, without its leaf values."""
+        if run_id != self.manifest.run_id:
+            raise CommunicationAccessError("RUN_DENIED", "communication run does not match manifest")
+        rule = self._resolve_rule(run_id=run_id, consumer_step_id=consumer_step_id,
+            output_ref=output_ref, producer_step_id=producer_step_id)
+        fields = tuple(dict.fromkeys(requested_fields)) or rule.allowed_fields
+        if set(fields) - set(rule.allowed_fields):
+            raise CommunicationAccessError("FIELD_DENIED", "requested fields are not permitted by communication rule")
+        if len(fields) != 1:
+            raise CommunicationAccessError("PATH_INVALID", "describe must select one authorized top-level field")
+        path = self._normalize_value_path(value_path)
+        output = self.value_store.get_output(run_id=run_id, output_ref=output_ref)
+        field = fields[0]
+        present = field in output
+        if not present and path:
+            raise CommunicationAccessError("PATH_NOT_FOUND", "nested field is absent from the authorized output")
+        value = self._value_at_path(output[field], path) if present else None
+
+        def shape(item):
+            result = {"valueType": type(item).__name__, "estimatedTokens": estimate_tokens(item),
+                "byteLength": len(json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))}
+            if isinstance(item, (str, list, Mapping)):
+                result["itemCount"] = len(item)
+            return result
+
+        result = {"producerStepId": rule.producer_step_id, "field": field, "path": list(path),
+            "scope": "structure", "present": present, **(shape(value) if present else {"valueType": "missing"})}
+        if present and isinstance(value, Mapping):
+            result["children"] = [{"key": key, "path": [*path, key], **shape(item)} for key, item in value.items()]
+        elif present and isinstance(value, list):
+            result["indices"] = {"start": 0, "stop": len(value)}
+        return result
 
     @staticmethod
     def _slice_value(value: Any, *, offset: int, page_tokens: int) -> tuple[Any, int | None]:
@@ -447,7 +532,8 @@ class CommunicationBroker:
         raise CommunicationAccessError("TOPOLOGY_DENIED", "output reference has no permitted topology edge")
 
     def _reserve(self, *, consumer_step_id: str, channel: str, tokens: int,
-                 operation_id: str = "", fingerprint: str = "", supplemental_limit: int | None = None) -> None:
+                 operation_id: str = "", fingerprint: str = "", supplemental_limit: int | None = None,
+                 supplemental_read: bool = False) -> None:
         """先检查三级剩余额度，再一次性扣减，失败请求不会部分计费。"""
         if operation_id and operation_id in self._operations:
             if self._operations[operation_id]["fingerprint"] != fingerprint:
@@ -470,7 +556,7 @@ class CommunicationBroker:
         self._run_used = run_next
         self._step_used[consumer_step_id] = step_next
         self._channel_used[channel] = channel_next
-        if supplemental_limit is not None:
+        if supplemental_read or supplemental_limit is not None:
             self._supplemental_used[consumer_step_id] = supplemental_next
         if operation_id:
             self._operations[operation_id] = {"fingerprint": fingerprint}

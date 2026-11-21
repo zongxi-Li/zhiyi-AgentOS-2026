@@ -152,6 +152,77 @@ def test_readonly_proof_rejects_a_hidden_write_request_or_unknown_activity(store
             {"workspaceId": "workspace", "grantId": "grant"}, store._connection)
 
 
+def _planning_snapshot(store, run, node, *, owner="__planner_context__"):
+    from contracts.planning_context import planning_context_key
+
+    operation = node.operation_id + ":tools:0:call:0"
+    original = store.get_tool_value(run_id=run.run_id, key=operation + ":request")
+    payload = {**original, "__planning_context__": {"version": 1, "runId": run.run_id,
+        "contextKind": "tool_request", "sourceRunId": run.run_id, "stepId": node.step_id,
+        "attemptId": node.attempt_id, "operationId": node.operation_id,
+        "originalRef": "tool:" + hashlib.sha256((run.run_id + ":" + operation + ":request").encode()).hexdigest(),
+        "status": "admitted", "trust": "host_recorded"}}
+    key = planning_context_key(payload)
+    reference = store.put_tool_value(run_id=run.run_id, step_id=owner, key=key, payload=payload)
+    return key, reference, payload
+
+
+def test_reading_request_diagnostics_cannot_change_retry_safety_or_fingerprint(store):
+    from runtime.planning_context_catalog import build_planning_context_catalog
+
+    services, run, node, *_ = _native_attempt(store)
+    services.workflow_store = SimpleNamespace(get_mission=lambda _: SimpleNamespace(
+        title="Inspect source", domain="general", intent=None))
+    before = run_step_readonly_retry_proof(services, run, node.step_id)
+    entries = build_planning_context_catalog(services, run, workspace_snapshot={})
+    requests = [entry for entry in entries if entry.context_kind == "tool_request"]
+    assert len(requests) == 1
+    assert requests[0].step_id == node.step_id
+    assert requests[0].operation_id == node.operation_id
+    after = run_step_readonly_retry_proof(services, run, node.step_id)
+    proofs = []
+    assert_replay_safe_operations(services, run, readonly_proofs=proofs)
+    assert before == after == proofs[0]
+    assert before["readRequestCount"] == 1 and before["unconfirmedReadCount"] == 1
+    assert store.get_node_commit(run_id=run.run_id, commit_id=node.operation_id)["stage"] == "prepared"
+    assert run.completed_step_ids == []
+
+
+@pytest.mark.parametrize("defect", ["wrong_owner", "wrong_kind", "operation_bound", "changed_body", "wrong_run"])
+def test_diagnostic_exemption_requires_the_reserved_ledger_owner_and_exact_sealed_reference(store, defect):
+    run, node = _seed(store)
+    key, reference, payload = _planning_snapshot(store, run, node)
+    if defect in {"changed_body", "wrong_run"}:
+        if defect == "changed_body":
+            payload["request"]["capabilityId"] = "shell.exec"
+        else:
+            payload["__planning_context__"]["runId"] = "another-run"
+        _replace_payload(store, run.run_id, key, payload)
+    else:
+        column, value = {"wrong_owner": ("step_id", node.step_id), "wrong_kind": ("kind", "context"),
+            "operation_bound": ("operation_id", node.operation_id)}[defect]
+        with store._connection:
+            store._connection.execute(f"UPDATE execution_values SET {column}=? WHERE reference=?", (value, reference))
+    with pytest.raises(ValueError, match="undeclared request|another node or kind"):
+        _readonly_session_proof(run, node,
+            {"workspaceId": "workspace", "grantId": "grant"}, store._connection)
+
+
+def test_diagnostic_snapshot_marker_does_not_hide_a_new_undeclared_shell_request(store):
+    run, node = _seed(store)
+    _planning_snapshot(store, run, node)
+    operation = node.operation_id + ":tools:0:call:1"
+    request = _request(operation, "shell.exec", ".")
+    store.put_tool_value(run_id=run.run_id, step_id=node.step_id, key=operation + ":request", payload={
+        "request": request.model_dump(by_alias=True, mode="json"),
+        "identity": {"runId": run.run_id, "stepId": node.step_id,
+            "attemptId": node.attempt_id, "commitId": node.operation_id},
+        "__planning_context__": {"version": 1, "runId": run.run_id}})
+    with pytest.raises(ValueError, match="undeclared request"):
+        _readonly_session_proof(run, node,
+            {"workspaceId": "workspace", "grantId": "grant"}, store._connection)
+
+
 @pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
 def test_terminal_read_receipt_without_cached_result_can_be_retry_safe(store, status):
     run, node = _seed(store)

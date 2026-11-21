@@ -10,7 +10,7 @@ import pytest
 from components.executor.compiler import ACGGraphCompiler
 from components.executor.graph import ACGConditionalRoute, ACGExecutionGraph, ACGExecutionState, ACGNodeSpec, ACGSuperstepError
 from components.executor.state_graph import ACGStateGraph
-from components.executor.node_runner import ACGNodeRunner
+from components.executor.node_runner import ACGNodeRunner, NodeEvidenceReferenceError
 from components.executor.value_store import InMemoryExecutionValueStore
 from adapters.model_adapter import StructuredGenerationError
 from components.recovery.checkpoint import ExecutionInterrupt, ExecutionResumeCommand
@@ -18,6 +18,7 @@ from components.auditor import InMemoryDecisionStore
 from components.auditor.governance.trace import TraceStore
 from contracts.memory import MemoryQuery, MemoryRecord, MemoryType
 from contracts.compiled_acg import EvidenceManifest, EvidenceRule
+from contracts.execution import NodeExecutionPhase
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from components.communicator import CommunicatorService
 from components.memory import MemoryService
@@ -757,10 +758,16 @@ def test_node_runner_accepts_only_manifest_authorized_runtime_evidence() -> None
     ))
     assert accepted["evidenceRefs"] == ["citation-1"]
 
-    with pytest.raises(ValueError, match="unauthorized evidence references"):
-        asyncio.run(runner_for("fabricated-citation")(
-            "retrieve", ACGExecutionState(runId="run-1")
-        ))
+    rejected = runner_for("fabricated-citation")
+    with pytest.raises(NodeEvidenceReferenceError, match="unauthorized evidence references") as error:
+        asyncio.run(rejected("retrieve", ACGExecutionState(runId="run-1")))
+
+    assert error.value.code == "OUTPUT_CONTRACT_VIOLATION"
+    assert "fabricated-citation" not in str(error.value)
+    (commit,) = rejected.value_store.list_node_commits(run_id="run-1")
+    _, execution = rejected.value_store._node_executions[commit["commitId"]]
+    assert commit["stage"] == "prepared"
+    assert execution.phase is NodeExecutionPhase.PREPARED and execution.audit_ref is None
 
 
 def test_node_runner_reuses_completed_commit_without_reinvoking_agent() -> None:
@@ -1450,8 +1457,10 @@ def test_all_skipped_branches_skip_join_even_with_completed_shared_predecessor()
     assert set(state.completed_step_ids) | set(state.skipped_step_ids) == set(graph.nodes)
 
 
-def test_unknown_cancelled_sibling_is_preserved_in_superstep_failure():
+@pytest.mark.parametrize('coded_unknown', [False, True])
+def test_unknown_cancelled_sibling_is_preserved_in_superstep_failure(coded_unknown):
     from adapters.resource_execution import ResourceExecutionError
+    from adapters.model_adapter import StructuredGenerationError
     graph = ACGExecutionGraph(nodes=("known", "unknown"))
     async def scenario():
         started = asyncio.Event()
@@ -1463,12 +1472,19 @@ def test_unknown_cancelled_sibling_is_preserved_in_superstep_failure():
             try:
                 await asyncio.Future()
             except asyncio.CancelledError:
+                if coded_unknown:
+                    raise StructuredGenerationError('HANDS_OUTCOME_UNKNOWN', 'reply lost')
                 raise ResourceExecutionError("reply lost", outcome_unknown=True)
         with pytest.raises(ACGSuperstepError) as caught:
             await graph.run(ACGExecutionState(runId="parallel"), execute)
         assert caught.value.cause.outcome_unknown is False
-        assert caught.value.outcome_unknown is True
+        # Hands tool uncertainty is recovered through its own evidence/lease
+        # path; the remote execution flag must not block that planning boundary.
+        assert caught.value.outcome_unknown is (not coded_unknown)
         assert len(caught.value.causes) == 2
+        assert caught.value.step_causes['unknown'] in caught.value.causes
+        assert caught.value.failed_step_ids == ('known', 'unknown')
+        assert caught.value.cancelled_step_ids == ()
     asyncio.run(scenario())
 
 

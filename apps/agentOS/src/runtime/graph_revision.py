@@ -8,11 +8,13 @@ from contracts.recovery import SemanticPatchRequest
 from components.planner.planning_commit import PlanningCommitService
 from components.planner.topology import TOPOLOGY_COMPILER_VERSION
 from components.executor import ACGExecutionState
-from runtime.planning_commit import RuntimePlanningCommitProvider, fingerprint, with_semantic_ancestors, freeze_capability_catalog
+from runtime.planning_commit import (RuntimePlanningCommitProvider, fingerprint, freeze_capability_catalog,
+    protected_execution_nodes, semantic_validation_rejection, with_semantic_ancestors)
 from service.agents import AgentRegistry
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.semantic_patch import SemanticGraphPatchService, derive_graph_patch
 from support.acg.schema import RuntimeBlueprintSpec
+from support.acg.graph import _has_dependency_path
 from support.stores.planning_commit_store import content_fingerprint
 
 
@@ -119,19 +121,7 @@ def safe_cut(provider, source, next_plan, next_bindings, candidate, patch):
     old_plan = TaskPlan.model_validate(run.execution_state["taskPlan"])
     bindings = {b["acgNodeId"]: b["planNodeKey"] for b in run.execution_state["taskBindings"]}
     receipts = provider.node_commits(run)
-    protected_nodes = set(state.completed_step_ids) | set(state.skipped_step_ids) | set(run.completed_step_ids)
-    if checkpoint_state is not None:
-        protected_nodes.update((*checkpoint_state.completed_step_ids, *checkpoint_state.skipped_step_ids))
-    protected_nodes.update(s.step_id for s in run.steps if s.status.value != "pending" or s.attempt or s.retry_count
-        or s.output or s.resolved_input or s.started_at or s.completed_at)
-    node_evidence = (state.output_refs, state.output_summaries, state.context_refs, state.memory_refs,
-        state.trace_refs, state.provenance_refs, state.blackboard_snapshots, state.debate_sessions)
-    protected_nodes.update(node_id for channel in node_evidence for node_id in channel)
-    for b in run.execution_state["taskBindings"]:
-        step_id = b["acgNodeId"]
-        if (any(str(r.get("commitId", "")).startswith(f"commit:{run.run_id}:{step_id}:")
-                or r.get("commitId") == f"single-step-retry:{run.run_id}:{step_id}" for r in receipts)):
-            protected_nodes.add(step_id)
+    protected_nodes = protected_execution_nodes(run, state, receipts)
     if not protected_nodes <= bindings.keys():
         raise GraphRevisionError(Code.INVALID_PROPOSAL, "execution prefix has unknown node identities")
     protected_keys = with_semantic_ancestors(old_plan, {bindings[i] for i in protected_nodes})
@@ -147,6 +137,7 @@ def safe_cut(provider, source, next_plan, next_bindings, candidate, patch):
         raise GraphRevisionError(Code.INVALID_PROPOSAL, "compiled predecessor obligations changed")
     old_nodes, new_nodes = {n.node_id: n for n in old.nodes}, {n.node_id: n for n in candidate.nodes}
     prior_channels = {(item.producer_step_id, item.consumer_step_id) for item in old.resource_plan.communication}
+    next_channels = {(item.producer_step_id, item.consumer_step_id) for item in candidate.resource_plan.communication}
     prior_dependencies = {(edge.source_id, edge.target_id) for edge in old.edges
                           if edge.edge_type.value == "dependency"}
     for edge in candidate.edges:
@@ -181,10 +172,18 @@ def safe_cut(provider, source, next_plan, next_bindings, candidate, patch):
                                 and consumer not in protected_nodes and item.get("mode") == "STRICT_CONTRACT"
                                 and not item.get("participantStepIds") and target is not None
                                 and str(target.metadata.get("communicationMode", "STRICT_CONTRACT")).upper() == "STRICT_CONTRACT")
-                            # Only a new immutable-result pull adds no producer
-                            # execution. Historical publications and existing
-                            # channels retain their original obligations.
-                            if not new_pull and (item.get("producerStepId") == node_id
+                            previous_target = old_nodes.get(consumer)
+                            detached_pull = (item.get("producerStepId") == node_id
+                                and consumer not in protected_nodes and (node_id, consumer) not in next_channels
+                                and item.get("mode") == "STRICT_CONTRACT" and not item.get("participantStepIds")
+                                and previous_target is not None
+                                and str(previous_target.metadata.get("communicationMode", "STRICT_CONTRACT")).upper() == "STRICT_CONTRACT"
+                                and (target is None or not _has_dependency_path(candidate, node_id, consumer)))
+                            # Immutable-result pulls belong to pending readers.
+                            # Adding one or removing its entire execution path
+                            # adds no producer work. Existing live channels and
+                            # advanced publications retain their obligations.
+                            if not (new_pull or detached_pull) and (item.get("producerStepId") == node_id
                                     or consumer == node_id or node_id in item.get("participantStepIds", ())):
                                 selected.append(item)
                         elif kind == "evidence":
@@ -264,8 +263,8 @@ class GraphProvider(RuntimePlanningCommitProvider):
             return None
         except GraphRevisionError as exc:
             return PlanningCommitRejection(code=exc.code, reason=exc.reason)
-        except (ValueError, KeyError, TypeError):
-            return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="invalid graph commitment evidence")
+        except (ValueError, KeyError, TypeError) as exc:
+            return semantic_validation_rejection(exc)
 
 
 def accept_graph_revision(authority, run_id, source_commit_id, key):
@@ -351,5 +350,5 @@ def accept_graph_revision(authority, run_id, source_commit_id, key):
             return PlanningCommitService(current_state_provider=provider, store=store).accept(request)
     except GraphRevisionError as exc:
         return PlanningCommitRejection(code=exc.code, reason=exc.reason)
-    except (ValueError, KeyError, TypeError):
-        return PlanningCommitRejection(code=Code.INVALID_PROPOSAL, reason="graph candidate derivation failed")
+    except (ValueError, KeyError, TypeError) as exc:
+        return semantic_validation_rejection(exc)

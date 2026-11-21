@@ -111,6 +111,62 @@ class RuntimeToolOutcome(PlanningContract):
     receipt_ref: str | None = Field(default=None, alias="receiptRef", max_length=256)
 
 
+class PlanningResultField(PlanningContract):
+    """A complete field address and size, without its generated contents."""
+
+    name: str
+    present: bool
+    value_type: str = Field(alias="valueType")
+    byte_length: int = Field(alias="byteLength", ge=0)
+    estimated_tokens: int = Field(alias="estimatedTokens", ge=0)
+    item_count: int | None = Field(default=None, alias="itemCount", ge=0)
+    purpose: Literal["result", "evidence", "unresolved"] = "result"
+
+
+class PlanningResultIndexEntry(PlanningContract):
+    """An observation's frozen, audited address for one completed Step output."""
+
+    step_id: str = Field(alias="stepId")
+    task_key: str = Field(alias="taskKey")
+    title: str
+    objective: str
+    logical_role: str | None = Field(default=None, alias="logicalRole")
+    output_ref: str = Field(alias="outputRef")
+    commit_id: str = Field(alias="commitId")
+    audit_ref: str = Field(alias="auditRef")
+    audit_outcome: str = Field(alias="auditOutcome")
+    source_run_id: str = Field(alias="sourceRunId")
+    source_output_ref: str = Field(alias="sourceOutputRef")
+    output_checksum: str = Field(alias="outputChecksum")
+    byte_length: int = Field(alias="byteLength", ge=0)
+    estimated_tokens: int = Field(alias="estimatedTokens", ge=0)
+    fields: tuple[PlanningResultField, ...]
+    evidence_refs: tuple[str, ...] = Field(default=(), alias="evidenceRefs")
+    unresolved_fields: tuple[str, ...] = Field(default=(), alias="unresolvedFields")
+    artifact_refs: tuple[str, ...] = Field(default=(), alias="artifactRefs")
+    readable: bool = True
+    unavailable_reason: str | None = Field(default=None, alias="unavailableReason")
+
+
+class PlanningContextIndexEntry(PlanningContract):
+    """A frozen address for diagnostic context; status never grants completion."""
+
+    context_ref: str = Field(alias="contextRef")
+    context_kind: str = Field(alias="contextKind")
+    title: str
+    source_run_id: str = Field(alias="sourceRunId")
+    step_id: str | None = Field(default=None, alias="stepId")
+    attempt_id: str | None = Field(default=None, alias="attemptId")
+    operation_id: str | None = Field(default=None, alias="operationId")
+    original_ref: str | None = Field(default=None, alias="originalRef")
+    status: str
+    trust: str
+    checksum: str
+    byte_length: int = Field(alias="byteLength", ge=0)
+    estimated_tokens: int = Field(alias="estimatedTokens", ge=0)
+    fields: tuple[PlanningResultField, ...]
+
+
 class StepObservation(PlanningContract):
     step_id: str = Field(alias="stepId")
     task_key: str = Field(alias="taskKey")
@@ -180,7 +236,13 @@ class RuntimePlanningObservation(PlanningContract):
     wake_reason: Literal["verification", "exhausted", "failure", "resume", "restart", "condition", "user_input"] = Field(alias="wakeReason")
     goal: str
     steps: tuple[StepObservation, ...]
+    committed_results: tuple[PlanningResultIndexEntry, ...] = Field(default=(), alias="committedResults",
+        exclude_if=lambda value: not value)
+    context_catalog: tuple[PlanningContextIndexEntry, ...] = Field(default=(), alias="contextCatalog",
+        exclude_if=lambda value: not value)
     remaining_step_ids: tuple[str, ...] = Field(alias="remainingStepIds")
+    protected_task_keys: tuple[str, ...] = Field(default=(), alias="protectedTaskKeys",
+        exclude_if=lambda value: not value)
     failure_id: str | None = Field(default=None, alias="failureId")
     failure_type: str | None = Field(default=None, alias="failureType")
     failure_reason: str | None = Field(default=None, alias="failureReason")
@@ -210,6 +272,46 @@ class RuntimePlanningObservation(PlanningContract):
     human_answers: tuple[RuntimeHumanAnswer, ...] = Field(default=(), alias="humanAnswers")
     user_inputs: tuple[RuntimeUserInput, ...] = Field(default=(), alias="userInputs")
 
+    def decision_error(self, decision: RuntimePlanningDecision) -> tuple[str, str] | None:
+        """Share pure decision rules with model correction and final authority.
+
+        Passing this check never applies a decision or accepts an artifact.
+        The Runtime still rechecks resource eligibility and current state.
+        """
+        if decision.observation_id != self.fingerprint():
+            return "observationId", "Planner decision observation does not match the current snapshot"
+        if decision.action == "complete" and (self.remaining_step_ids or self.completion_blockers):
+            return "action", "Planner cannot complete unresolved work"
+        if decision.action == "complete" and self.task_acceptance is not None:
+            results = {result.criterion_id: result for result in self.task_acceptance_results}
+            if any(criterion.criterion_id not in results or results[criterion.criterion_id].outcome != "passed"
+                   for criterion in self.task_acceptance.criteria):
+                return "action", "Planner cannot complete unverified task acceptance requirements"
+        if decision.action == "continue":
+            if error := self.continuation_error():
+                return "action", error
+        if decision.wait_for is not None and decision.wait_for.kind == "node_available":
+            if decision.wait_for.node_id not in {node_id for node_id, _ in self.resources}:
+                return "waitFor", "Planner wait targets an unobserved node"
+        if decision.wait_for is not None and decision.wait_for.kind == "requirement_available":
+            condition = decision.wait_for
+            fact = next((item for item in self.resource_requirements if item.step_id == condition.step_id), None)
+            if (condition.step_id not in self.remaining_step_ids or fact is None
+                    or fact.requirement_id != condition.requirement_id or fact.ready):
+                return "waitFor", "Planner wait must target a current observed blocked requirement"
+        if decision.action == "recover":
+            if self.recovery_action not in {"retry", "rebind"} or len(self.failed_step_ids) != 1:
+                return "action", "Recovery authority has no supported retry for this failure"
+        if decision.action == "revise":
+            if self.failure_type in {"policy", "storage"}:
+                return "taskPlanPatch", "Semantic revision cannot bypass integrity or policy failures"
+            patch = decision.task_plan_patch
+            if patch.mission_id != self.mission_id or patch.base_plan_version != self.plan_version:
+                return "taskPlanPatch", "Planner revision targets a stale or different TaskPlan"
+            if reason := self.revision_error(patch):
+                return "taskPlanPatch", reason
+        return None
+
     def continuation_error(self) -> str | None:
         """Keep scheduled corrective work separate from terminal acceptance.
 
@@ -234,6 +336,14 @@ class RuntimePlanningObservation(PlanningContract):
             "workspace_observation_incomplete:")
         if any(not blocker.startswith(repairable) for blocker in self.completion_blockers):
             return "Planner cannot continue unresolved execution evidence"
+        return None
+
+    def revision_error(self, patch: TaskPlanPatch) -> str | None:
+        if patch.changed_task_keys().intersection(self.protected_task_keys):
+            return "started or settled work cannot be changed"
+        if self.protected_task_keys and self.failed_step_ids:
+            return ("Resolve the failed execution before graph activation. Choose recover when supported, "
+                    "otherwise report the blocking failure.")
         return None
 
     def fingerprint(self) -> str:

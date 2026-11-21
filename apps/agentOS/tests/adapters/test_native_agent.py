@@ -363,7 +363,10 @@ def test_native_agent_preserves_stream_usage_and_latency_in_model_invocation_aud
     assert result.model_invocations[0]["finishReason"] == "stop"
 
 
-def test_native_retry_consumes_verified_previous_attempt_observations():
+@pytest.mark.parametrize("proof_field,context_version", [
+    ("settledSessionRetryProofs", None), ("readOnlyRetryProofs", 1),
+])
+def test_native_retry_consumes_verified_previous_attempt_observations(proof_field, context_version):
     observations = [{"kind": "previous_attempt_tool_observation", "record": {
         "runId": "retry", "stepId": "understand", "attemptId": "previous", "status": "completed"},
         "operationKey": "old:tool:0", "receiptRef": "receipt", "requestRef": "request",
@@ -375,7 +378,8 @@ def test_native_retry_consumes_verified_previous_attempt_observations():
     model = _StreamingUsageModel()
     task = RuntimeMissionRecord(missionId="retry-task", title="Review")
     run = RuntimeRunRecord(runId="retry", missionId=task.mission_id, workflowId="native", domain="general",
-        runtimeEngine="acg", executionState={"settledSessionRetryProofs": {"old": {"stepId": "understand"}}})
+        runtimeEngine="acg", executionState={proof_field: {"old": {"stepId": "understand"}},
+            **({"retryEvidenceContextVersion": context_version} if context_version is not None else {})})
     context = AgentRunContext(task=task, run=run,
         workflow=WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg"),
         step=WorkflowStep(stepId="understand", name="Review", agentName="native_general_agent", capability="task_understanding"),
@@ -390,11 +394,15 @@ def test_native_retry_consumes_verified_previous_attempt_observations():
 
 
 @pytest.mark.parametrize("proof_step", ["understand", "other-node"])
-def test_native_requires_retry_collector_only_for_the_current_node(proof_step):
+@pytest.mark.parametrize("proof_field,context_version", [
+    ("settledSessionRetryProofs", None), ("readOnlyRetryProofs", 1),
+])
+def test_native_requires_retry_collector_only_for_the_current_node(proof_step, proof_field, context_version):
     model = _StreamingUsageModel()
     task = RuntimeMissionRecord(missionId="retry-task", title="Review")
     run = RuntimeRunRecord(missionId=task.mission_id, workflowId="native", domain="general",
-        runtimeEngine="acg", executionState={"settledSessionRetryProofs": {"old": {"stepId": proof_step}}})
+        runtimeEngine="acg", executionState={proof_field: {"old": {"stepId": proof_step}},
+            **({"retryEvidenceContextVersion": context_version} if context_version is not None else {})})
     context = AgentRunContext(task=task, run=run,
         workflow=WorkflowDefinition(workflowId="native", name="native", domain="general", runtimeEngine="acg"),
         step=WorkflowStep(stepId="understand", name="Review", agentName="native_general_agent", capability="task_understanding"),

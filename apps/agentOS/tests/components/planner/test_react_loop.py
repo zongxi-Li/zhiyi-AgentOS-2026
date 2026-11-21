@@ -480,14 +480,65 @@ def test_invalid_turn_and_observation_mismatch_converge(waiting_boundary):
     _, store, _, run_id = waiting_boundary
     observation, task_plan = persisted_facts(store, run_id)
 
-    garbage = ReActFakeLLM([lambda p: {"hello": "world"}])
+    garbage = ReActFakeLLM([lambda p: {"hello": "world"}, lambda p: {"hello": "world"}])
     decision = make_loop(store, garbage, []).decide(observation=observation, task_plan=task_plan)
-    assert decision.action == "wait" and "invalid turn" in decision.reason
+    assert decision.action == "wait" and "no progress: repeated an invalid turn" in decision.reason
+    assert len(garbage.prompts) == 2
 
     forged = ReActFakeLLM([lambda p: decide_payload("forged" + "0" * 64, action="complete",
                                                     reason="forged binding")])
     decision = make_loop(store, forged, []).decide(observation=observation, task_plan=task_plan)
     assert decision.action == "wait" and "does not bind the current observation" in decision.reason
+
+
+def test_react_repairs_misnested_controls_before_registered_revision_handoff(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = persisted_facts(store, run_id)
+    patch = patch_payload(observation.mission_id, "Review remaining evidence")
+
+    def register(payload):
+        return {"turnKind": "use_tool", "actionRequest": {"requestRef": "structure-repair",
+            "proposal": {"kind": "plan_revision", "patch": patch}}}
+
+    def wrong_level(payload):
+        assert payload["toolFeedback"][0]["outcome"] == "registered"
+        return {"turnKind": "decide", "finalDecision": {"observationId": payload["observationId"],
+            "action": "revise", "reason": "Use the registered revision",
+            "taskPlanPatch": {**patch, "waitFor": None, "question": None, "unknownControl": None}}}
+
+    def repair(payload):
+        feedback = payload["validationCorrection"]
+        fields = {tuple(item["fieldPath"]): item for item in feedback["fieldOwnership"]}
+        for field in ("waitFor", "question"):
+            assert fields[("finalDecision", "taskPlanPatch", field)]["declaredAtAncestorPaths"] == [
+                ["finalDecision", field]]
+        assert feedback["outputContract"]["decisionPath"] == ["finalDecision"]
+        assert payload["toolFeedback"][0]["outcome"] == "registered"
+        return {"turnKind": "decide", "finalDecision": {"observationId": payload["observationId"],
+            "action": "revise", "reason": "Use the registered revision", "taskPlanPatch": patch}}
+
+    llm = ReActFakeLLM([register, wrong_level, repair])
+    events = []
+    decision = make_loop(store, llm, events).decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "revise" and decision.task_plan_patch.add_nodes[0].objective == "Review remaining evidence"
+    assert len(llm.prompts) == 3
+    assert len([event for event in events if event.get("runtimeEvent") == "planner.react.decided"]) == 1
+    assert all("unknownControl" not in json.dumps(event) for event in events)
+
+
+def test_react_repeated_structural_failure_ignores_changed_explanation(waiting_boundary):
+    _, store, _, run_id = waiting_boundary
+    observation, task_plan = persisted_facts(store, run_id)
+    patch = {**patch_payload(observation.mission_id, "Inspect remaining evidence"), "waitFor": None}
+
+    def invalid(reason):
+        return lambda payload: {"turnKind": "decide", "finalDecision": {
+            "observationId": payload["observationId"], "action": "revise", "reason": reason, "taskPlanPatch": patch}}
+
+    llm = ReActFakeLLM([invalid("First explanation"), invalid("Changed explanation")])
+    decision = make_loop(store, llm, []).decide(observation=observation, task_plan=task_plan)
+    assert decision.action == "wait" and "no progress: repeated an invalid turn" in decision.reason
+    assert len(llm.prompts) == 2
 
 
 def test_tool_failure_is_feedback_and_loop_continues(waiting_boundary):

@@ -104,6 +104,26 @@ def test_semantic_model_validator_feedback_corrects_revision_instead_of_strippin
     assert "revise requires a TaskPlanPatch" in feedback["validationErrors"][0]["msg"]
 
 
+def test_formal_planner_repairs_invalid_revision_before_handoff_to_recovery(context):
+    observation, plan = context
+    observation = observation.model_copy(update={
+        "wake_reason": "failure", "failed_step_ids": ("a",), "recovery_action": "retry",
+        "protected_task_keys": ("task:a",),
+    })
+    revision = {"missionId": plan.mission_id, "basePlanVersion": 1, "planVersion": 2}
+    retires_failed = candidate(observation, action="revise", taskPlanPatch={**revision, "retireKeys": ["task:a"]})
+    bypasses_failed = candidate(observation, action="revise", taskPlanPatch={**revision, "addNodes": [
+        {"key": "task:b", "title": "Inspect", "objective": "Inspect the remaining workspace evidence"},
+    ]})
+    result, llm = decide((observation, plan), [retires_failed, bypasses_failed, candidate(observation, action="recover")])
+    assert result.action == "recover" and result.task_plan_patch is None
+    assert llm.requests[0]["observation"]["protectedTaskKeys"] == ["task:a"]
+    errors = [request["validationCorrection"]["validationErrors"][0] for request in llm.requests[1:]]
+    assert [error["loc"] for error in errors] == [["taskPlanPatch"], ["taskPlanPatch"]]
+    assert "started or settled work" in errors[0]["msg"]
+    assert "Resolve the failed execution" in errors[1]["msg"]
+
+
 def test_changed_correction_candidates_have_no_attempt_count_ceiling(context):
     observation, _ = context
     candidates = [candidate(observation, action="revise", taskPlanPatch={

@@ -2,20 +2,24 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import asynccontextmanager
+from copy import deepcopy
 import json
+from typing import Any
 
 from adapters.execution_prefix import execution_messages
-from adapters.json_output import decode_json_object_value
+from adapters.json_output import decode_json_object_result
 from adapters.model_adapter import StructuredGenerationError, StructuredGenerationResult
 from adapters.model_diagnostics import safe_stream_diagnostics, safe_transport_diagnostics
 from adapters.sdk_agent_loop import run_agent_loop
+from adapters.execution_guidance import SessionExecutionGuidance
 from contracts.communication import ContextContractError, apply_contract_defaults, validate_contract_payload
 from contracts.execution_evidence import (
     node_workspace_acquisition_progress, node_workspace_observation_feedback, node_workspace_page_progress,
     workspace_execution_context, workspace_observation_progress,
 )
-from contracts.tools import HOST_TOOL_FAILURE_CODES, ToolResult, model_tool_result
+from contracts.tools import HOST_TOOL_FAILURE_CODES, ToolResult, model_tool_result, safe_tool_failure_details
 from contracts.capability import ModelInvocationResponse
 from adapters.prompt_runtime import TrustClass, canonical_hash, trust_envelope
 from support.work_timeouts import work_timeout
@@ -49,6 +53,7 @@ class AgentToolSession:
         self.context = context
         self.actions = 0
         self.records = []
+        self.historical_records = []
         self.observations = []
         self.invocations = []
         self.context_tools = ContextReadTools(context)
@@ -62,6 +67,38 @@ class AgentToolSession:
             delegate = getattr(delegate, 'delegate', None)
         if self._store is None and self.context_tools.reader is not None:
             self._store = self.context_tools.reader.operation_store
+
+    async def _load_historical_records(self, observations):
+        """Reuse bound retry evidence without counting it as this Attempt's work."""
+        if not observations:
+            return []
+        collect = getattr(self.context.tool_runtime, 'previous_attempt_observations', None)
+        verified = await collect(self.context) if callable(collect) else None
+        if verified is None:
+            raise StructuredGenerationError('RETRY_EVIDENCE_UNAVAILABLE',
+                'Historical observations require the bound retry evidence collector')
+        verified_hashes = {canonical_hash(item) for item in verified}
+        records, seen = [], set()
+        for item in observations:
+            if canonical_hash(item) not in verified_hashes:
+                raise StructuredGenerationError('RETRY_EVIDENCE_UNAVAILABLE',
+                    'Historical observations differ from the admitted retry evidence')
+            record = item.get('record') or {}
+            if (item.get('kind') != 'previous_attempt_tool_observation'
+                    or record.get('tool') not in {'fs.read', 'fs.list'}
+                    or record.get('status') != 'completed'
+                    or record.get('runId') != self.context.run.run_id
+                    or record.get('stepId') != self.context.step.step_id
+                    or record.get('commitId') == self.context.commit_id
+                    or self.context.attempt_id and record.get('attemptId') == self.context.attempt_id):
+                continue
+            if record.get('receiptRef') not in seen:
+                seen.add(record.get('receiptRef'))
+                records.append(deepcopy(record))
+        return records
+
+    def _workspace_evidence_records(self):
+        return [*self.historical_records, *self.records]
 
     def _attach_failure_audit(self, error):
         error.audit = {**(error.audit or {}), 'toolActionsExecuted': self.actions}
@@ -99,8 +136,11 @@ class AgentToolSession:
             raise error from exc
 
     async def generate_json(self, *, prompt, schema, system_prompt=None, timeout_seconds=300.0,
-                            commit_id=None, prompt_version='agent-tool-loop.v1', prompt_metadata=None, **kwargs):
+                            commit_id=None, prompt_version='agent-tool-loop.v1', prompt_metadata=None,
+                            historical_observations=None,
+                            validate_output: Callable[[dict[str, Any]], str | None] | None = None, **kwargs):
         context = self.context
+        self.historical_records = await self._load_historical_records(historical_observations)
         frozen_policy = context.step.input.get('contextPolicy') or {}
         request_budget = frozen_policy.get('requestBudget')
         definitions = agent_tool_definitions(context)
@@ -142,7 +182,8 @@ class AgentToolSession:
             elif first_turn is None or first_turn.get('workspaceContextVersion') == 2:
                 page_role = ('workspace_review' if getattr(context.step, 'capability', None) == 'verification'
                     else 'workspace_acquisition')
-                assigned = node_workspace_page_progress(context, self._store, self.records, role=page_role)
+                assigned = node_workspace_page_progress(context, self._store,
+                    self._workspace_evidence_records(), role=page_role)
                 if assigned is not None:
                     acquisition_context_version = 2
                     page_key = 'assignedReview' if page_role == 'workspace_review' else 'assignedAcquisition'
@@ -255,7 +296,7 @@ class AgentToolSession:
             def acquisition_feedback(current_messages, turn):
                 if acquisition_context_version == 3:
                     return None
-                progress = node_workspace_acquisition_progress(context, self._store, self.records)
+                progress = node_workspace_acquisition_progress(context, self._store, self._workspace_evidence_records())
                 if progress is None:
                     return None
                 cached = cached_turn(turn)
@@ -301,7 +342,7 @@ class AgentToolSession:
                     response = ModelInvocationResponse.model_validate(cached['response'])
                     if (response.output_error == 'MODEL_OUTPUT_INVALID_JSON' and not response.tool_calls
                             and response.metadata.get('finishReason') == 'stop'):
-                        recovered, root_completed = decode_json_object_value(
+                        recovered, normalization = decode_json_object_result(
                             (response.assistant_message or {}).get('content'), finish_reason='stop')
                         if recovered is not None:
                             # A decoder improvement can reinterpret a completed
@@ -309,7 +350,8 @@ class AgentToolSession:
                             # request identity, tool decisions and receipts intact.
                             derived = response.model_copy(update={'content': recovered, 'output_error': None,
                                 'metadata': {**response.metadata, 'jsonRecovery': {
-                                    'source': 'cached_model_turn', 'rootCompleted': root_completed}}})
+                                    'source': 'cached_model_turn', 'type': normalization,
+                                    'rootCompleted': normalization == 'root_close_added'}}})
                             # A still-rejected candidate must keep its historical
                             # feedback and next-turn request hash for exact replay.
                             if validate_completion(derived) is None:
@@ -333,6 +375,7 @@ class AgentToolSession:
                                 'workspaceContextVersion': acquisition_context_version,
                                 'workspaceFeedbackVersion': 2,
                                 'response':response.model_dump(by_alias=True, mode='json')})
+                await guidance.model_observed(turn)
                 self.actions += len(response.tool_calls)
                 diagnostics = dict(response.metadata.get('requestDiagnostics') or {})
                 generated = StructuredGenerationResult(data=response.content, provider=response.provider,
@@ -404,12 +447,19 @@ class AgentToolSession:
                         code = getattr(exc, 'code', 'TOOL_EXECUTION_FAILED')
                         if code == 'EXECUTION_CANCELLED':
                             raise
-                        if code in HOST_TOOL_FAILURE_CODES:
-                            raise StructuredGenerationError(code,
-                                'Tool execution authority or resource is unavailable; return control to ACG',
-                                retryable=True) from exc
-                        if code in {'HANDS_OUTCOME_UNKNOWN', 'TOOL_TIMEOUT'}:
-                            raise StructuredGenerationError(code, 'tool execution requires settlement') from exc
+                        if code in HOST_TOOL_FAILURE_CODES or code in {'HANDS_OUTCOME_UNKNOWN', 'TOOL_TIMEOUT'}:
+                            error = StructuredGenerationError(code,
+                                'Tool execution requires host recovery (' + code + ')',
+                                retryable=bool(getattr(exc, 'retryable', False))
+                                    if code in HOST_TOOL_FAILURE_CODES else False)
+                            details = safe_tool_failure_details(getattr(exc, 'details', None))
+                            # This identity is owned by the running Session;
+                            # no tool/model argument can select another node.
+                            details.update(stepId=context.step.step_id, attemptId=context.attempt_id,
+                                commitId=context.commit_id, tool=definition.name,
+                                operationKey=f'{key}:call:{index}')
+                            error.metadata = {'toolFailure': safe_tool_failure_details(details)}
+                            raise error from exc
                         result = ToolResult(name=definition.name, source=definition.source,
                             status='failed', error={'code': code})
                 if not recorded:
@@ -418,22 +468,28 @@ class AgentToolSession:
                                   sort_keys=True, separators=(',', ':'))
 
             def validate_completion(response):
-                feedback = node_workspace_observation_feedback(context, self._store, self.records)
+                feedback = node_workspace_observation_feedback(context, self._store, self._workspace_evidence_records())
                 if feedback is not None:
                     return feedback
+                candidate = apply_contract_defaults(dict(response.content), schema)
                 try:
-                    validate_contract_payload(apply_contract_defaults(dict(response.content), schema), schema,
+                    validate_contract_payload(candidate, schema,
                         step_id=context.step.step_id, direction='output')
                 except ContextContractError as exc:
                     return ('The final JSON does not satisfy the existing output contract. '
                             'Correct the reported fields in this same conversation; preserve verified tool observations '
                             'and do not repeat completed actions merely to fix the answer. Validation: ' + str(exc))
-                return None
+                return validate_output(candidate) if validate_output is not None else None
 
             try:
+                guidance = SessionExecutionGuidance(context, self._store, commit_id)
+                async def validate_current_completion(response):
+                    pending_guidance = await guidance.completion_feedback(response)
+                    return pending_guidance or validate_completion(response)
                 await run_agent_loop(messages=messages, tools=tools, invoke_model=invoke_model,
-                    execute_tool=execute_tool, validate_completion=validate_completion,
-                    progress_feedback=acquisition_feedback, feedback_allowed=feedback_allowed)
+                    execute_tool=execute_tool, validate_completion=validate_current_completion,
+                    progress_feedback=acquisition_feedback, feedback_allowed=feedback_allowed,
+                    model_input_feedback=guidance.before_model)
             except StructuredGenerationError as exc:
                 self._attach_failure_audit(exc)
                 raise

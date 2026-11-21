@@ -101,4 +101,34 @@ def planning_task_plan_context(
     }
 
 
-__all__ = ["planning_task_plan_context"]
+def planning_workspace_material_context(material, observation, *, readable=False):
+    """Deliver the sealed material address when the same reader can expand it.
+
+    The immutable source snapshot, its verification and its full contents remain
+    unchanged. Legacy/injected planners without that read capability keep the
+    complete supplied material rather than receiving an unusable reference.
+    """
+    if not readable:
+        return material
+    discovery = observation.workspace_discovery or {}
+    entry = next((item for item in observation.context_catalog
+                  if item.context_kind == "workspace_material" and item.status == "available"
+                  and item.original_ref == discovery.get("contextRef")), None)
+    if entry is None:
+        return material
+    return {
+        "delivery": "reference",
+        "contextRef": entry.context_ref,
+        "contextKind": entry.context_kind,
+        "checksum": entry.checksum,
+        "fields": [field.name for field in entry.fields],
+        "sourceRefs": list(discovery.get("sourceRefs") or ()),
+        "verifiedObservationCount": discovery.get("verifiedObservationCount"),
+        "meaning": "Sealed workspace findings and authenticated observations are readable in full via "
+            "contextRef. Read the relevant fields or nested paths before deciding when their contents "
+            "matter. Agent findings remain claims to verify; authenticated observations prove only their "
+            "named operations. An omitted body is not missing work or permission to rescan files.",
+    }
+
+
+__all__ = ["planning_task_plan_context", "planning_workspace_material_context"]

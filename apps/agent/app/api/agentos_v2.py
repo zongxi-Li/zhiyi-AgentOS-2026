@@ -3362,6 +3362,28 @@ def create_router(
                 payload = None
             items.append(_context_pack_summary(str(step_id), context_ref, payload))
 
+        # Failed attempts own an input snapshot before they can publish any
+        # graph output. Read that explicit WAL address through its dedicated
+        # validator; ordinary output access still requires a committed result.
+        seen = {item["contextRef"] for item in items}
+        store = runtime.execution_value_store
+        executions = getattr(store, "list_node_executions", lambda **_: ())
+        for execution in executions(run_id=run_id):
+            if execution.phase.value == "committed":
+                continue
+            context_ref = execution.artifact_refs.get("context")
+            if not context_ref or context_ref in seen:
+                continue
+            try:
+                payload = store.get_node_input_context(run_id=run_id, operation_id=execution.operation_id)
+            except (KeyError, ValueError):
+                payload = None
+            summary = _context_pack_summary(execution.step_id, context_ref, payload)
+            summary.update(operationId=execution.operation_id, attemptId=execution.attempt_id,
+                executionPhase=execution.phase.value, snapshotKind="execution_input")
+            items.append(summary)
+            seen.add(context_ref)
+
         return {"runId": run_id, "items": items, "total": len(items)}
 
     @router.get("/runs/{run_id}/artifacts")

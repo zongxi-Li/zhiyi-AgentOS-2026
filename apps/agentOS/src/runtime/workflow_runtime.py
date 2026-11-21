@@ -686,8 +686,8 @@ class ExecutionRuntime(CollaboratorAccess):
         if workspace_authority is not None:
             if parent_run_id:
                 parent_workspace_run = self.workflow_store.get_run(parent_run_id)
-                workspace_authority.resolve(parent_workspace_run)
                 if 'workspaceBinding' in parent_workspace_run.input:
+                    workspace_authority.resolve(parent_workspace_run)
                     run_input['workspaceBinding'] = deepcopy(parent_workspace_run.input['workspaceBinding'])
                 else:
                     # Legacy Python Runs have no directory snapshot; a new Run
@@ -2230,7 +2230,7 @@ class ExecutionRuntime(CollaboratorAccess):
                 or (r.execution_state.get("planningLoop") or {}).get("userInputPending")
                 or (r.execution_state.get("workspaceReviewContinuation") and (not
                     r.execution_state["workspaceReviewContinuation"].get("blocked")
-                    or self.workspace_review_continuation.can_replan(r)))
+                    or self.workspace_review_continuation.can_resume(r)))
                 or ((r.execution_state.get("planningLoop") or {}).get("restartPending")
                     and r.execution_state.get("planningCommitRejection"))
                 or self.workflow_store.list_planning_inputs(r.run_id))
@@ -2248,7 +2248,7 @@ class ExecutionRuntime(CollaboratorAccess):
                 try:
                     run = self.workflow_store.get_run(run_id)
                     pending = run.execution_state.get("workspaceReviewContinuation")
-                    if (pending and (not pending.get("blocked") or self.workspace_review_continuation.can_replan(run))
+                    if (pending and (not pending.get("blocked") or self.workspace_review_continuation.can_resume(run))
                             and self.execution_dispatch_enabled):
                         # The app coordinator restores the accepted Dispatch's
                         # actor before replaying any formal authority stage.
@@ -2399,6 +2399,20 @@ class ExecutionRuntime(CollaboratorAccess):
             output_ref = pending_memory.get("outputRef")
             if isinstance(output_ref, str) and output_ref:
                 references.add(output_ref)
+        # Frozen planning observations own diagnostic sources as well as their
+        # snapshots. Follow this typed boundary, never arbitrary user strings.
+        planning_loop = payload.get("planningLoop")
+        if isinstance(planning_loop, dict):
+            current = planning_loop.get("current")
+            observation = current.get("observation") if isinstance(current, dict) else None
+            if isinstance(observation, dict):
+                from contracts.runtime_planning import PlanningContextIndexEntry
+
+                for raw_entry in observation.get("contextCatalog", ()):
+                    entry = PlanningContextIndexEntry.model_validate(raw_entry)
+                    references.add(entry.context_ref)
+                    if entry.original_ref:
+                        references.add(entry.original_ref)
 
     def list_reviews(self, run_id: str) -> list[ReviewRecord]:
         """读取运行审核记录列表，不执行审核决策或状态迁移。"""
@@ -2628,7 +2642,11 @@ class ExecutionRuntime(CollaboratorAccess):
 
     def _planning_engine_for_run(self, run: RuntimeRunRecord):
         workspace_bound = isinstance(run.input.get("workspaceBinding"), dict)
+        from runtime.planning_results import read_planning_result_page
+        result_reader = lambda observation, **kwargs: read_planning_result_page(self, observation, **kwargs)
         if run.execution_scope is None and not self._react_planning_active() and not workspace_bound:
+            self.planning_engine.result_context_provider = result_reader
+            self.planning_engine.context_projection_provider = self._project_planning_context
             return self.planning_engine
         from components.planner.service import PlanningEngine
 
@@ -2663,10 +2681,42 @@ class ExecutionRuntime(CollaboratorAccess):
             engine.workspace_planning_task_type = workflow.intent
             engine.workspace_context_provider = lambda observation: load_workspace_discovery_materials(
                 self.execution_value_store, observation)
+        engine.result_context_provider = result_reader
+        engine.context_projection_provider = self._project_planning_context
         engine = self._attach_react_loop(engine, run)
+        if engine.react_loop is not None:
+            engine.react_loop.gateway.result_context_provider = result_reader
+            engine.react_loop.context_projection_provider = self._project_planning_context
         if engine.react_loop is not None and workspace_bound:
             engine.react_loop.workspace_context_provider = engine.workspace_context_provider
         return engine
+
+    def _project_planning_context(self, llm, *, observation, **kwargs):
+        """Persist derived planner history through the existing operation store."""
+        from adapters.planning_context_projection import project_planning_history
+
+        prefix = "planning-history:" + observation.fingerprint() + ":"
+        store = self.execution_value_store
+        def lookup(source_hash):
+            return store.get_tool_value(run_id=observation.run_id, key=prefix + source_hash)
+        def save(snapshot):
+            previous = lookup(snapshot["sourceHash"])
+            if previous is not None:
+                return previous
+            try:
+                store.put_tool_value(run_id=observation.run_id, step_id="__planner__",
+                    key=prefix + snapshot["sourceHash"], payload=snapshot)
+            except (ValueError, sqlite3.IntegrityError):
+                # Two read-only sessions may finish equivalent source-history
+                # projections concurrently. Keep the first immutable view;
+                # an unresolved storage failure must still propagate.
+                previous = lookup(snapshot["sourceHash"])
+                if previous is None:
+                    raise
+                return previous
+            return snapshot
+        return project_planning_history(llm, observation=observation,
+            snapshot_lookup=lookup, snapshot_sink=save, **kwargs)
 
     def _react_planning_active(self) -> bool:
         """PR-S01-02 opt-in：环境开关打开且注入了意图 LLM 才激活 ReAct 循环。"""

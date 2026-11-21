@@ -149,21 +149,32 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
         不在本方法内执行（与迁移前的执行异常路径逐行一致）。
         """
         from components.recovery import RecoveryService, failure_event_from_exception
+        from contracts.recovery import FailureType
 
         self._terminalize_active_execution(run, "ACG execution interrupted before commit")
 
-        failure = failure_event_from_exception(
-            error,
-            subject_ref=(
-                f"run:{run.run_id}:step:{state.current_step_id}"
-                if state.current_step_id
-                else f"run:{run.run_id}"
-            ),
-        )
+        step_causes = getattr(error, 'step_causes', None)
+        causes = list(step_causes.items()) if isinstance(step_causes, dict) and step_causes else [(state.current_step_id, error)]
+        failures = []
+        for step_id, cause in causes:
+            fact = failure_event_from_exception(cause,
+                subject_ref=f"run:{run.run_id}:step:{step_id}" if step_id else f"run:{run.run_id}")
+            if step_id:
+                fact.details['stepId'] = step_id
+            failures.append(fact)
+        # Completion order is not recovery priority. Preserve every fault,
+        # leaving the blocker that requires reconciliation/review as primary.
+        def priority(fact):
+            if fact.failure_type in {FailureType.POLICY, FailureType.STORAGE}:
+                return 3
+            if fact.reason_code == 'HANDS_OUTCOME_UNKNOWN':
+                return 2
+            return 0 if fact.retryable or fact.failure_type == FailureType.CAPACITY else 1
+        failures.sort(key=priority)
+        failure = failures[-1]
         recovery_plan = RecoveryService().propose(failure)
-        run.execution_state.setdefault("failureEvents", []).append(
-            failure.model_dump(by_alias=True, mode="json")
-        )
+        run.execution_state.setdefault("failureEvents", []).extend(
+            fact.model_dump(by_alias=True, mode="json") for fact in failures)
         run.execution_state["recoveryOutcome"] = {
             "failureId": failure.failure_id,
             "source": failure.source.value,
@@ -849,6 +860,9 @@ class RuntimeRecoveryCoordinator(CollaboratorAccess):
             retry.execution_state.setdefault("readOnlyRetryProofs", {}).update({
                 proof["operationId"]: proof for proof in readonly_retry_proofs
             })
+            # Freeze the send protocol before the new Attempt's first model
+            # turn. Historical attempts retain their original request hashes.
+            retry.execution_state["retryEvidenceContextVersion"] = 1
         if settled_retry_proofs:
             fresh = [proof for proof in settled_retry_proofs if not proof.get("authorizationRef")]
             if fresh:

@@ -49,11 +49,15 @@ def _selected_steps(run, phase):
 
 
 def _source(store, run_id, step_id, reference, commits):
-    store.assert_reference(kind="output", run_id=run_id, step_id=step_id, reference=reference)
-    matches = [item for item in commits if item.get("stage") == "committed" and item.get("outputRef") == reference]
-    if len(matches) != 1 or matches[0].get("auditOutcome") != "allow":
+    from runtime.planning_results import committed_output_commit
+
+    try:
+        commit = committed_output_commit(store, run_id, step_id, reference, commits=commits)
+    except ValueError as exc:
+        raise ValueError("workspace context requires one committed audited source") from exc
+    if commit.get("auditOutcome") != "allow":
         raise ValueError("workspace context requires one committed audited source")
-    return matches[0], store.get_output(run_id=run_id, output_ref=reference)
+    return commit, store.get_output(run_id=run_id, output_ref=reference)
 
 
 def _receipt_key(tool, path, output):
@@ -195,10 +199,12 @@ def load_workspace_discovery_materials(store, observation):
                 or proposal.get("sourceGraphVersion") != observation.graph_version
                 or proposal.get("rejection") != {key: rejection.get(key) for key in ("code", "reason")}):
             raise ValueError("workspace rejected proposal identity changed")
-        from contracts.planning import TaskPlanPatch
-
-        patch = TaskPlanPatch.model_validate(proposal.get("patch"))
-        if patch.mission_id != observation.mission_id or patch.base_plan_version != observation.plan_version:
+        # A rejected candidate can be invalid under the current schema. Its
+        # sealed boundary, rather than acceptance validation, governs diagnostic
+        # access; otherwise the model cannot inspect what it needs to correct.
+        patch = proposal.get("patch")
+        if (not isinstance(patch, dict) or patch.get("missionId") != observation.mission_id
+                or patch.get("basePlanVersion") != observation.plan_version):
             raise ValueError("workspace rejected proposal targets a different plan")
         return {**material, "rejectedProposal": proposal}
     return material

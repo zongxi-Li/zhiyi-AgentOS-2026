@@ -18,6 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator,
 from contracts import stable_checksum
 
 
+WORKSPACE_MUTATION_TOOLS = frozenset({"fs.write", "fs.patch", "shell.exec"})
+
+
 def workspace_relative_path(value: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 1024:
         raise ValueError("workspace path must be a bounded relative path")
@@ -159,12 +162,31 @@ def _current_records(run, store):
             if (isinstance(record, dict) and record.get("commitId") == commit.get("commitId")
                     and record.get("stepId") == step_id and record.get("runId") == owner_id):
                 records.append({**record, "_evidenceOwnerRunId": owner_id})
+        # Recovery revalidates these original receipts before the new node
+        # commits. They are evidence inputs, never actions of the new Attempt.
+        # The same request/receipt verifier below still checks their identities,
+        # workspace authority, completeness and subsequent mutation effects.
+        for record in commit.get("historicalToolEvidence") or ():
+            if (isinstance(record, dict) and record.get("tool") in {"fs.read", "fs.list"}
+                    and record.get("status") == "completed" and record.get("commitId")
+                    and record.get("commitId") != commit.get("commitId")
+                    and record.get("stepId") == step_id and record.get("runId") == owner_id):
+                records.append({**record, "_evidenceOwnerRunId": owner_id})
 
     for step in run.steps:
         ref = refs.get(step.step_id)
         if step.step_id in completed and ref:
             collect(run.run_id, step.step_id, ref, frozenset())
-    return records
+    list_mutations = getattr(store, "list_workspace_mutations", None)
+    if list_mutations is None:
+        return records
+    # The tool ledger is authoritative about effects, even if the node's
+    # projection disagrees or no node output was published.
+    mutations = [{**record, "_evidenceOwnerRunId": owner_id}
+                 for owner_id in dict.fromkeys((run.run_id, *commits_by_owner))
+                 for record in list_mutations(run_id=owner_id)]
+    mutation_refs = {record["receiptRef"] for record in mutations}
+    return mutations + [record for record in records if record.get("receiptRef") not in mutation_refs]
 
 
 @dataclass(frozen=True)
@@ -217,13 +239,16 @@ def _workspace_receipt_evidence(run, store, records):
         return _WorkspaceReceiptEvidence()
     receipts, mutations = [], {}
     mutation_refs = {record.get("receiptRef") for record in records
-                     if record.get("tool") in {"fs.write", "fs.patch", "shell.exec"}}
+                     if record.get("tool") in WORKSPACE_MUTATION_TOOLS
+                     and record.get("workspaceId") in (None, binding["workspaceId"])}
     seen = set()
     for record in records:
         if record.get("tool") not in {"fs.read", "fs.list", "fs.write", "fs.patch", "shell.exec"} or record.get("status") != "completed":
             continue
         ref = record.get("receiptRef")
         if not ref or ref in seen:
+            continue
+        if record["tool"] in WORKSPACE_MUTATION_TOOLS and ref not in mutation_refs:
             continue
         seen.add(ref)
         try:
@@ -262,7 +287,7 @@ def _workspace_receipt_evidence(run, store, records):
             ended = datetime.fromisoformat(receipt["completedAt"])
             if started.tzinfo is None or ended.tzinfo is None or ended < started:
                 continue
-            if record["tool"] in {"fs.write", "fs.patch", "shell.exec"}:
+            if record["tool"] in WORKSPACE_MUTATION_TOOLS:
                 path, listing_paths = None, frozenset()
                 if record["tool"] != "shell.exec":
                     output = receipt.get("output") or {}
@@ -508,11 +533,15 @@ def node_workspace_observation_feedback(context, store, records) -> str | None:
     requirements = effective_workspace_requirements(context.run)
     if not requirements:
         return None
-    previous = verified_node_workspace_receipts(context.run, store)
+    prior_records = _current_records(context.run, store)
+    previous = _verified_receipts(context.run, store, prior_records)
     before = _progress(requirements, previous)
     if all(item["complete"] for item in before):
         return None
-    current = _verified_receipts(context.run, store, records)
+    current = _verified_receipts(context.run, store, [
+        *(record for record in prior_records if record.get("tool") in WORKSPACE_MUTATION_TOOLS),
+        *records,
+    ])
     after = _progress(requirements, (*previous, *current))
     if before != after or _has_new_scoped_observation(requirements, previous, current):
         return None

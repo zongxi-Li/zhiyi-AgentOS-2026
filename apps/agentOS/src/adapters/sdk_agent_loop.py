@@ -54,7 +54,7 @@ class _HeadlessModel(Model):
     """Protocol adapter only; Runner owns when to call the model and tools."""
 
     def __init__(self, messages, tools, invoke_model, execute_tool, validate_completion, progress_feedback,
-                 feedback_allowed=None):
+                 feedback_allowed=None, model_input_feedback=None):
         self.messages = deepcopy(messages)
         self.names = {tool["function"]["name"] for tool in tools}
         self.invoke_model = invoke_model
@@ -62,6 +62,7 @@ class _HeadlessModel(Model):
         self.validate_completion = validate_completion
         self.progress_feedback = progress_feedback
         self.feedback_allowed = feedback_allowed
+        self.model_input_feedback = model_input_feedback
         self.last_progress_feedback = None
         self.turn = 0
         self.observations: dict[str, str] = {}
@@ -120,6 +121,15 @@ class _HeadlessModel(Model):
             self._flush_results()
             turn = self.turn
             self.turn += 1
+            if self.model_input_feedback is not None:
+                feedback = self.model_input_feedback(deepcopy(self.messages), turn)
+                if inspect.isawaitable(feedback):
+                    feedback = await feedback
+                self._assert_active()
+                if feedback is not None:
+                    if not isinstance(feedback, str) or not feedback.strip():
+                        raise ValueError("model input feedback must be None or nonempty text")
+                    self.messages.append({"role": "user", "content": feedback})
             if self.failed_tool_batch:
                 allowed = self.feedback_allowed(deepcopy(self.messages), turn) if self.feedback_allowed else True
                 if inspect.isawaitable(allowed):
@@ -311,7 +321,8 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
                          execute_tool: Callable[[dict[str, Any], int, int], Awaitable[str]],
                          validate_completion: Callable[[Any], Awaitable[str | None] | str | None] | None = None,
                          progress_feedback: Callable[[list[dict[str, Any]], int], Awaitable[str | None] | str | None] | None = None,
-                         feedback_allowed: Callable[[list[dict[str, Any]], int], Awaitable[bool] | bool] | None = None) -> Any:
+                         feedback_allowed: Callable[[list[dict[str, Any]], int], Awaitable[bool] | bool] | None = None,
+                         model_input_feedback: Callable[[list[dict[str, Any]], int], Awaitable[str | None] | str | None] | None = None) -> Any:
     """Run one headless node and return its original accepted model response.
 
     ``invoke_model(messages, turn)`` owns model routing, WAL and diagnostics.
@@ -325,6 +336,9 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
     ``feedback_allowed(messages, turn)`` suppresses new failed-tool guidance
     while the host replays an exact historical WAL transcript. Suppressed
     guidance never registers a repeated failure as no progress.
+    ``model_input_feedback(messages, turn)`` may append a host-owned instruction
+    update at every settled model boundary, including the initial request. Its
+    owner freezes and replays delivery before the model request is identified.
     Repeated rejected candidates with unchanged observations fail as no progress;
     new observations and corrections can continue without a turn-count ceiling.
     """
@@ -332,7 +346,7 @@ async def run_agent_loop(*, messages: list[dict[str, Any]], tools: list[dict[str
     if len(names) != len(set(names)):
         raise ValueError("tool wire names must be unique")
     model = _HeadlessModel(messages, tools, invoke_model, execute_tool, validate_completion, progress_feedback,
-                           feedback_allowed)
+                           feedback_allowed, model_input_feedback)
     def internal_tool(name, callback, properties):
         return FunctionTool(name=name, description="Internal execution scheduling adapter.",
             params_json_schema={"type": "object", "properties": properties,

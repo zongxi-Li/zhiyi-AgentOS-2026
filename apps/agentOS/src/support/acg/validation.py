@@ -130,7 +130,7 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
         raise ACGValidationError("Each Step requires exactly one AgentBindingSpec")
     if any(step_id not in bindings_by_step for step_id in step_ids):
         raise ACGValidationError("Each Step requires exactly one AgentBindingSpec")
-    for node in blueprint.nodes:
+    for node_index, node in enumerate(blueprint.nodes):
         if isinstance(node, ControlNode) and node.control_type == ControlType.LOOP:
             if node.loop_spec is None:
                 raise ACGValidationError(f"LOOP control {node.node_id} requires loopSpec")
@@ -171,13 +171,16 @@ def validate_blueprint(blueprint: ACGBlueprint) -> None:
             for source_id in from_map:
                 source = str(source_id)
                 if not blueprint.has_node(source):
-                    raise ACGValidationError(f"Step {node.node_id} input.from references missing Step {source}")
+                    raise ACGValidationError(f"Step {node.node_id} input.from references missing Step {source}",
+                        validation_code="input_source_missing", field_path=("nodes", node_index, "inputSpec", "from"))
                 source_node = blueprint.get_node(source)
                 if source_node.node_type != NodeType.STEP:
-                    raise ACGValidationError(f"Step {node.node_id} input.from source is not a Step: {source}")
+                    raise ACGValidationError(f"Step {node.node_id} input.from source is not a Step: {source}",
+                        validation_code="input_source_not_step", field_path=("nodes", node_index, "inputSpec", "from"))
                 if not _has_dependency_path(blueprint, source, node.node_id):
                     raise ACGValidationError(
-                        f"Step {node.node_id} consumes {source} without an execution dependency path"
+                        f"Step {node.node_id} consumes {source} without an execution dependency path",
+                        validation_code="input_dependency_missing", field_path=("nodes", node_index, "inputSpec", "from"),
                     )
 
     for spec in blueprint.resource_plan.memory:

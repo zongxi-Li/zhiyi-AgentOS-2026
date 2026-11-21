@@ -16,6 +16,8 @@ from contracts.capability import (
     CapabilityManifest,
 )
 from contracts.mission_semantic import intent_basis_fingerprint
+from contracts.memory import MemoryRecord
+from adapters.resource_execution import build_remote_execution_payload
 from contracts.workflow import RuntimeMissionRecord, WorkflowDefinition, RuntimeRunRecord, WorkflowStep
 from service.agents.base import AgentProfile, AgentRunContext
 
@@ -129,6 +131,8 @@ def test_framework_agent_remains_a_controlled_acg_node() -> None:
         "runId": context.run.run_id,
         "workflowId": "workflow-1",
         "stepId": "step-1",
+        "attemptId": "commit:run-1:step-1:0",
+        "commitId": "commit:run-1:step-1:0",
     }
     assert "checkpoint" not in invocation.input
     assert "memoryStore" not in invocation.input
@@ -145,6 +149,9 @@ def test_framework_agent_delivers_each_source_with_conflicting_fields(semantic_b
         registry=registry,
     )
     context = _context(semantic_basis=semantic_basis)
+    context.attempt_id = "scheduler-attempt"
+    context.memory = [MemoryRecord(memoryId="frozen-memory", memoryType="episodic",
+        scope="run:" + context.run.run_id, content={"finding": "accepted upstream conclusion"})]
     first_analysis = "仓库原始证据\n" * 10_000
     source_data = {
         "reader-1": {"analysis": first_analysis, "flag": True},
@@ -157,6 +164,10 @@ def test_framework_agent_delivers_each_source_with_conflicting_fields(semantic_b
         sourceData=source_data,
         evidenceRefs=["evidence:reader-1", "evidence:reader-2"],
     )
+    context.execution_guidance = {"version": "execution-guidance.v1", "runId": context.run.run_id,
+        "stepId": context.step.step_id, "userInputs": [{"sourceRunId": context.run.run_id,
+            "operationId": "finalize", "content": "Use existing evidence and submit the deliverable.",
+            "submittedAt": "2026-11-19T09:32:05Z"}]}
 
     asyncio.run(agent.run(context))
 
@@ -167,6 +178,21 @@ def test_framework_agent_delivers_each_source_with_conflicting_fields(semantic_b
     assert delivered["sourceData"]["reader-1"]["flag"] is True
     assert type(delivered["sourceData"]["reader-2"]["flag"]) is int
     assert delivered["evidenceRefs"] == ["evidence:reader-1", "evidence:reader-2"]
+    assert delivered["memory"] == [context.memory[0].model_dump(by_alias=True, mode="json")]
+    remote = build_remote_execution_payload(context)
+    assert remote["sourceData"] == delivered["sourceData"]
+    assert remote["memory"] == delivered["memory"]
+    assert remote["executionGuidance"] == delivered["executionGuidance"]
+    assert delivered["executionGuidance"]["userInputs"] == context.execution_guidance["userInputs"]
+    assert delivered["executionGuidance"]["runId"] == context.run.run_id
+    assert delivered["executionGuidance"]["stepId"] == context.step.step_id
+    delivered["executionGuidance"]["userInputs"][0]["content"] = "adapter-local change"
+    assert context.execution_guidance["userInputs"][0]["content"] == "Use existing evidence and submit the deliverable."
+    assert adapter.invocations[0].context["attemptId"] == remote["attemptId"] == "scheduler-attempt"
+    delivered["sourceData"]["reader-1"]["flag"] = "changed by framework"
+    delivered["memory"][0]["content"]["finding"] = "changed by framework"
+    assert context.context_pack.source_data["reader-1"]["flag"] is True
+    assert context.memory[0].content["finding"] == "accepted upstream conclusion"
 
 
 def test_framework_agent_propagates_cancellation() -> None:

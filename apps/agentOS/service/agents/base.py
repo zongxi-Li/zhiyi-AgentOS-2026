@@ -85,6 +85,10 @@ class AgentRunContext(BaseModel):
     # A live invocation captures its exact local registration. Durable binding
     # and cross-process recovery fencing are added at the scheduling boundary.
     agent_registration: AgentRegistrationRef | None = Field(default=None, alias="agentRegistration")
+    # Guidance is an explicit execution input, independent of memory retrieval.
+    # Only the bound host callable can refresh it between completed tool turns.
+    execution_guidance: Optional[dict[str, Any]] = Field(default=None, alias="executionGuidance")
+    execution_guidance_reader: Optional[Any] = Field(default=None, alias="executionGuidanceReader", exclude=True)
 
     @model_validator(mode="after")
     def bind_mission_intent(self):

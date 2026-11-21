@@ -256,13 +256,15 @@ async def test_formal_tool_keeps_nested_lease_until_receipt_or_quarantines_unkno
     def release(lease_id):
         releases.append((lease_id, external_ended.is_set()))
         return leases.release(lease_id)
+    async def wait_ready(**kwargs):
+        return SimpleNamespace(binding=SimpleNamespace(resource_id='hands', binding_id='binding'), lease=lease)
     runtime = SimpleNamespace(
         local_runtime_authorization=LocalRuntimeAuthorizationRef(grantId='grant', workspaceId='workspace'),
         local_runtime_health_projector=SimpleNamespace(refresh=healthy),
         local_runtime_transport=SimpleNamespace(execute_with_identity=execute),
         local_runtime_resource=SimpleNamespace(profile=SimpleNamespace(runtime_id='hands')),
         resource_binder=SimpleNamespace(coordinator=leases, release=release,
-            bind_ready=lambda **kwargs: SimpleNamespace(binding=SimpleNamespace(resource_id='hands', binding_id='binding'),lease=lease)),
+            wait_ready=wait_ready),
         resource_plane=SimpleNamespace(
             set_runtime_health=lambda resource_id, **kwargs: quarantine.append(('health',resource_id,kwargs)),
             set_runtime_enabled=lambda resource_id, **kwargs: quarantine.append(('enabled',resource_id,kwargs))),

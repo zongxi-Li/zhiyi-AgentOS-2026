@@ -495,6 +495,35 @@ def test_unconfigured_runtime_preserves_existing_execution(runtime_boundary):
     assert agent.calls == ["A"]
 
 
+def test_copilot_rerun_prepares_a_new_plan_from_current_mission_intent(ready_boundary):
+    from contracts.mission_semantic import MissionSemanticRequest
+    from runtime.planning_interaction import RuntimePlanningInteraction
+    from runtime.planning_operations import TaskOperationApplyRequest, TaskOperationPreviewRequest
+
+    runtime, store, agent, run_id, _ = ready_boundary
+    source = asyncio.run(runtime.execute_prepared_run(run_id))
+    assert source.status == WorkflowStatus.COMPLETED and source.execution_state["outputRefs"]
+    store.set_task_copilot_permission(source.mission_id, "task_collaboration")
+    objective = "Reinspect input using the current workspace review strategy"
+    runtime.mission_semantic_service.commit(runtime.semantic_principal_provider(), MissionSemanticRequest(
+        missionId=source.mission_id, operationId="updated-objective", expectedMissionRevision=1,
+        objective=objective, constraints=[], sourceRefs=["input:brief"]))
+    service = RuntimePlanningInteraction(runtime)
+    proposal = asyncio.run(service.preview_operation(run_id, TaskOperationPreviewRequest(
+        kind="rerun", operationId="fresh-rerun", content="重新规划后运行", permission="task_collaboration")))
+    action = proposal["action"]
+    assert action["planningMode"] == "fresh" and action["reusedStepIds"] == action["executeStepIds"] == []
+
+    response = asyncio.run(service.operations.apply(run_id, TaskOperationApplyRequest(
+        proposalId=proposal["operationId"], expectedRevision=action["expectedRevision"],
+        permission="task_collaboration")))
+    child = store.get_run(response["receipt"]["runId"])
+    assert child.run_id != run_id and child.mission_id == source.mission_id
+    assert run_intent_basis(child).objective == objective and child.execution_state["planningDeferred"]
+    assert "taskPlan" not in child.execution_state and "outputRefs" not in child.execution_state
+    assert store.get_run(run_id) == source and agent.calls == ["A"]
+
+
 def test_replay_rejects_changed_proposal_identity_and_foreign_run(ready_boundary):
     runtime, store, _, run_id, _ = ready_boundary
     source = store.get_run(run_id)

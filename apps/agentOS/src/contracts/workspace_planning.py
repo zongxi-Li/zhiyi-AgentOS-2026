@@ -71,7 +71,11 @@ def explicit_workspace_requirements(plan):
     """Return the accepted explicit baseline for evidence-informed replanning."""
     metadata = plan.metadata if hasattr(plan, "metadata") else plan.get("metadata", {})
     discovery = metadata.get("workspaceDiscovery")
-    if not isinstance(discovery, dict) or discovery.get("scopeOrigin") != "explicit":
+    if not isinstance(discovery, dict):
+        return ()
+    if "fixedObservations" in discovery:
+        return workspace_observation_requirements(discovery["fixedObservations"])
+    if discovery.get("scopeOrigin") != "explicit":
         return ()
     return _explicit_requirements(plan, metadata.get("workspaceScope"))
 
@@ -97,14 +101,16 @@ def validate_workspace_plan_revision(current, metadata) -> None:
     origin = original.get("scopeOrigin")
     if origin not in {"explicit", "inferred"} or revised.get("scopeOrigin") != origin:
         raise ValueError("workspace planning revision cannot change scopeOrigin")
+    if revised.get("fixedObservations") != original.get("fixedObservations"):
+        raise ValueError("workspace planning revision cannot change caller evidence requirements")
     if phase == "formal" and revised["phase"] != "formal":
         raise ValueError("formal workspace planning cannot return to discovery")
     old_scope, scope = previous.get("workspaceScope"), metadata.get("workspaceScope")
     if revised["phase"] != "formal" or phase == "formal" and scope == old_scope:
         return
     requirements = _validated_scope(scope)
-    if origin == "explicit" and any(not any(_covers_requirement(candidate, required) for candidate in requirements)
-            for required in _explicit_requirements(current, old_scope)):
+    if any(not any(_covers_requirement(candidate, required) for candidate in requirements)
+           for required in explicit_workspace_requirements(current)):
         raise ValueError("workspace scope revision cannot reduce explicit evidence requirements")
 
 

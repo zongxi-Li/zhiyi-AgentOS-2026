@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 from contracts.recovery import FailureEvent, FailureSource, FailureType
+from contracts.tools import safe_tool_failure_details
 
 
 _CLASSIFICATIONS: dict[str, tuple[FailureSource, FailureType, str, bool]] = {
@@ -25,6 +27,19 @@ _CLASSIFICATIONS: dict[str, tuple[FailureSource, FailureType, str, bool]] = {
 }
 
 
+_TOOL_CLASSIFICATIONS = {
+    "NO_ELIGIBLE_RESOURCE": (FailureSource.SCHEDULER, FailureType.CAPACITY, False),
+    "NO_MODEL_ENDPOINT": (FailureSource.SCHEDULER, FailureType.CAPACITY, False),
+    "EXECUTION_CAPACITY_UNAVAILABLE": (FailureSource.SCHEDULER, FailureType.CAPACITY, False),
+    "EXECUTION_RESOURCE_UNAVAILABLE": (FailureSource.SCHEDULER, FailureType.CAPACITY, False),
+    "SCHEDULER_UNAVAILABLE": (FailureSource.SCHEDULER, FailureType.TRANSIENT, True),
+    "EXECUTION_LEASE_LOST": (FailureSource.SCHEDULER, FailureType.LEASE_EXPIRED, False),
+    "EXECUTION_AUTHORIZATION_LOST": (FailureSource.AUDIT, FailureType.POLICY, False),
+    "HANDS_OUTCOME_UNKNOWN": (FailureSource.EXECUTOR, FailureType.PERMANENT, False),
+    "TOOL_TIMEOUT": (FailureSource.EXECUTOR, FailureType.TRANSIENT, False),
+}
+
+
 def failure_event_from_exception(
     exc: BaseException,
     *,
@@ -34,10 +49,14 @@ def failure_event_from_exception(
     """Convert an exception into the shared, reference-only failure contract."""
     cause = getattr(exc, "cause", None)
     classified = cause if isinstance(cause, BaseException) else exc
+    structured_code = getattr(classified, "code", None)
+    tool_classification = _TOOL_CLASSIFICATIONS.get(structured_code) if isinstance(structured_code, str) else None
     mapped = _CLASSIFICATIONS.get(type(classified).__name__)
-    if mapped is None:
+    if tool_classification is not None:
+        resolved_source, failure_type, retryable = tool_classification
+        reason_code = structured_code
+    elif mapped is None:
         resolved_source = source
-        structured_code = getattr(classified, "code", None)
         if isinstance(structured_code, str) and structured_code:
             reason_code = structured_code
             failure_type = (
@@ -53,6 +72,12 @@ def failure_event_from_exception(
     else:
         resolved_source, failure_type, reason_code, retryable = mapped
     details = {"exceptionType": type(classified).__name__}
+    metadata = getattr(classified, "metadata", None)
+    tool_details = safe_tool_failure_details(
+        metadata.get("toolFailure", getattr(classified, "details", None))
+        if isinstance(metadata, dict) else getattr(classified, "details", None))
+    if tool_details:
+        details.update(tool_details)
     if type(classified).__name__ == "MaterialSourceError":
         details.update(stepId=classified.step_id, manifestId=classified.manifest_id)
     if type(classified).__name__ == "SchedulerNoEligibleResource":
@@ -62,8 +87,11 @@ def failure_event_from_exception(
         details.update(stepId=getattr(classified, "step_id", None),
             candidateReasons=getattr(classified, "candidate_reasons", []))
     message = str(classified).strip() or type(classified).__name__
+    identity = ""
+    if tool_details:
+        identity = "|" + json.dumps(tool_details, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(
-        f"{subject_ref}|{resolved_source.value}|{reason_code}|{message}".encode("utf-8")
+        f"{subject_ref}|{resolved_source.value}|{reason_code}|{message}{identity}".encode("utf-8")
     ).hexdigest()[:24]
     return FailureEvent(
         failureId=f"failure_{digest}",

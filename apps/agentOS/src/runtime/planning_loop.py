@@ -235,6 +235,12 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
         if reason in {"resume", "restart", "failure"} and loop.current and loop.current.status in {"observed", "decided"}:
             previous = loop.current.observation
             replay = self.observe(run, state, previous.wake_reason)
+            if not previous.committed_results:
+                # Preserve an admitted pre-index observation's identity and
+                # saved decision. A fresh boundary receives the new index.
+                replay = replay.model_copy(update={"committed_results": ()})
+            if not previous.context_catalog:
+                replay = replay.model_copy(update={"context_catalog": ()})
             if not previous.resource_requirements and previous.failure_source is None:
                 # Rounds written before resource observations retain their
                 # original idempotency identity and already-persisted decision.
@@ -318,42 +324,15 @@ class RuntimePlanningCoordinator(CollaboratorAccess):
 
     @staticmethod
     def validate_decision(observation: RuntimePlanningObservation, decision: RuntimePlanningDecision) -> None:
-        if decision.observation_id != observation.fingerprint():
-            raise ValueError("Planner decision observation does not match the current snapshot")
-        if decision.action == "complete" and (observation.remaining_step_ids or observation.completion_blockers):
-            raise ValueError("Planner cannot complete unresolved work")
-        if decision.action == "complete" and observation.task_acceptance is not None:
-            results = {r.criterion_id: r for r in observation.task_acceptance_results}
-            if any(c.criterion_id not in results or results[c.criterion_id].outcome != "passed"
-                   for c in observation.task_acceptance.criteria):
-                raise ValueError("Planner cannot complete unverified task acceptance requirements")
-        if decision.action == "continue":
-            error = observation.continuation_error()
-            if error is not None:
-                raise ValueError(error)
-        if decision.wait_for is not None and decision.wait_for.kind == "node_available":
-            if decision.wait_for.node_id not in {node_id for node_id, _ in observation.resources}:
-                raise ValueError("Planner wait targets an unobserved node")
-        if decision.wait_for is not None and decision.wait_for.kind == "requirement_available":
-            condition = decision.wait_for
-            fact = next((r for r in observation.resource_requirements if r.step_id == condition.step_id), None)
-            if (condition.step_id not in observation.remaining_step_ids or fact is None
-                    or fact.requirement_id != condition.requirement_id or fact.ready):
-                raise ValueError("Planner wait must target a current observed blocked requirement")
+        if problem := observation.decision_error(decision):
+            raise ValueError(problem[1])
         if decision.action == "recover":
-            if observation.recovery_action not in {"retry", "rebind"} or len(observation.failed_step_ids) != 1:
-                raise ValueError("Recovery authority has no supported retry for this failure")
-            if observation.failure_source == "scheduler":
+            from runtime.binding import recovery_requires_resource_readiness
+            if recovery_requires_resource_readiness(observation):
                 fact = next((r for r in observation.resource_requirements
                     if r.step_id == observation.failed_step_ids[0]), None)
                 if fact is None or not fact.ready:
-                    raise ValueError("Scheduler recovery requires currently eligible resources")
-        if decision.action == "revise":
-            if observation.failure_type in {"policy", "storage"}:
-                raise ValueError("Semantic revision cannot bypass integrity or policy failures")
-            patch = decision.task_plan_patch
-            if patch.mission_id != observation.mission_id or patch.base_plan_version != observation.plan_version:
-                raise ValueError("Planner revision targets a stale or different TaskPlan")
+                    raise ValueError("Recovery requires currently eligible execution resources")
 
     def _verification_refs(self, run, state) -> tuple[str, ...]:
         return tuple(sorted(state.output_refs[s.step_id] for s in run.steps

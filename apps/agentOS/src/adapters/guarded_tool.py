@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
 from adapters.tool_adapter import ToolRuntime
-from contracts.tools import HOST_TOOL_FAILURE_CODES
+from contracts.tools import HOST_TOOL_FAILURE_CODES, HostToolExecutionError, safe_tool_failure_details
 
 
 _Result = TypeVar("_Result")
@@ -193,15 +193,20 @@ class GuardedToolRuntime:
                 "tool stream timed out",
                 retryable=True,
             ) from exc
-        except ToolInvocationError:
+        except (ToolInvocationError, HostToolExecutionError):
             raise
         except Exception as exc:
             if getattr(exc, 'code', None) == 'EXECUTION_CANCELLED':
                 raise
-            raise ToolInvocationError(
+            error = ToolInvocationError(
                 self._failure_code(exc),
                 "tool stream failed",
-            ) from exc
+                retryable=bool(getattr(exc, "retryable", getattr(exc, "code", None) == "SCHEDULER_UNAVAILABLE")),
+            )
+            details = safe_tool_failure_details(getattr(exc, "details", None))
+            if details:
+                error.details = details
+            raise error from exc
 
     @staticmethod
     def _failure_code(exc: Exception) -> str:
@@ -235,23 +240,37 @@ class GuardedToolRuntime:
                 )
                 if attempt > self.retries:
                     raise error from exc
+            except HostToolExecutionError:
+                # The host already classified the failure. A model-side retry
+                # wrapper cannot change its scheduling or settlement semantics.
+                raise
             except ToolInvocationError as exc:
+                if exc.code in HOST_TOOL_FAILURE_CODES:
+                    raise
                 error = ToolInvocationError(
                     exc.code,
                     f"tool operation failed ({exc.code})",
                     attempts=attempt,
                     retryable=exc.code in _RETRYABLE_CODES,
                 )
+                details = safe_tool_failure_details(getattr(exc, "details", None))
+                if details:
+                    error.details = details
                 if exc.code not in _RETRYABLE_CODES or attempt > self.retries:
                     raise error from exc
             except Exception as exc:
                 code = getattr(exc, 'code', 'TOOL_EXECUTION_FAILED')
                 if code == 'EXECUTION_CANCELLED':
                     raise
-                raise ToolInvocationError(
+                error = ToolInvocationError(
                     self._failure_code(exc),
-                    "tool operation failed", attempts=attempt
-                ) from exc
+                    "tool operation failed", attempts=attempt,
+                    retryable=bool(getattr(exc, "retryable", code == "SCHEDULER_UNAVAILABLE")),
+                )
+                details = safe_tool_failure_details(getattr(exc, "details", None))
+                if details:
+                    error.details = details
+                raise error from exc
             if self.retry_delay_seconds:
                 await asyncio.sleep(self.retry_delay_seconds)
         raise AssertionError("tool retry loop must return or raise")

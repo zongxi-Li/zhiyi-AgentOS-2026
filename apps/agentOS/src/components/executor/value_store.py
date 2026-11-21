@@ -23,6 +23,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+from contracts.execution_evidence import WORKSPACE_MUTATION_TOOLS
 from support.sqlite_connections import ThreadLocalSQLiteConnections
 
 
@@ -40,6 +41,37 @@ _NODE_TERMINAL_PHASES = {
     NodeExecutionPhase.FAILED,
     NodeExecutionPhase.CANCELLED,
 }
+
+
+def _tool_reference(run_id: str, key: str) -> str:
+    return "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+
+
+_MUTATION_WAL_FILTER = (
+    "reference GLOB 'tool:*' AND kind = 'output' "
+    "AND json_extract(payload_json, '$.request.capabilityId') IN ('fs.write','fs.patch','shell.exec')"
+)
+
+
+def _workspace_mutation_record(store, *, run_id, reference, step_id, payload):
+    """Read only immutable tool request/receipt pairs owned by this Run."""
+    request = payload.get("request") or {}
+    tool = request.get("capabilityId")
+    key = request.get("idempotencyKey")
+    identity = payload.get("identity") or {}
+    if (tool not in WORKSPACE_MUTATION_TOOLS or not isinstance(key, str) or not key
+            or reference != _tool_reference(run_id, key + ":request")
+            or identity.get("runId") != run_id or identity.get("stepId") != step_id):
+        return None
+    receipt = store.get_tool_value(run_id=run_id, key=key + ":receipt") or {}
+    authorization = request.get("authorization") or {}
+    return {
+        "tool": tool, "status": receipt.get("status", "unknown"), "requestRef": reference,
+        "receiptRef": _tool_reference(run_id, key + ":receipt"), "receiptChecksum": receipt.get("checksum"),
+        "runId": run_id, "stepId": step_id, "attemptId": identity.get("attemptId"), "commitId": identity.get("commitId"),
+        "workspaceId": authorization.get("workspaceId"), "grantId": authorization.get("grantId"),
+        "resourceId": request.get("resourceId"),
+    }
 
 
 def _record_payload(record: NodeExecutionRecord) -> dict[str, Any]:
@@ -88,6 +120,20 @@ class ExecutionValueAccessError(ValueError):
         self.requested_run_id = requested_run_id
 
 
+def _node_input_context_payload(*, run_id: str, operation_id: str, execution: NodeExecutionRecord,
+                                value: tuple[str, str, str | None, dict[str, Any]]) -> dict[str, Any]:
+    """Input inspection follows its execution WAL, never an output publication."""
+    owner_run_id, owner_step_id, value_operation_id, payload = value
+    reference = execution.artifact_refs.get("context", operation_id)
+    if owner_run_id != run_id:
+        raise ExecutionValueAccessError(reference, owner_run_id, run_id)
+    if (execution.run_id != run_id or execution.operation_id != operation_id
+            or owner_step_id != execution.step_id or value_operation_id != operation_id
+            or payload.get("runId") != run_id or payload.get("stepId") != execution.step_id):
+        raise ExecutionValueAccessError(reference, message="node input context does not match its execution identity")
+    return deepcopy(payload)
+
+
 @dataclass(frozen=True)
 class StoredValueRef:
     """不含正文的执行值引用元数据，供延迟清理与审计统计使用。"""
@@ -113,6 +159,9 @@ class ExecutionValueStore(Protocol):
 
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按当前 run 读取 ContextPack 正文；跨 run 与缺失引用必须失败。"""
+
+    def get_node_input_context(self, *, run_id: str, operation_id: str) -> dict[str, Any]:
+        """Inspect the exact input owned by an execution, including failed/prepared nodes."""
 
     def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
         """Persist a graph-patch body outside execution state."""
@@ -141,8 +190,17 @@ class ExecutionValueStore(Protocol):
     def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
         """Persist an operation value once; conflicting replay must fail."""
 
+    def list_workspace_mutations(self, *, run_id: str) -> list[dict[str, Any]]:
+        """Read mutation requests and receipts independently of node publication."""
+
     def transition_node_execution(self, record: NodeExecutionRecord) -> NodeExecutionRecord:
         """Persist one monotonic node execution phase transition."""
+
+    def list_node_executions(self, *, run_id: str) -> tuple[NodeExecutionRecord, ...]:
+        """List reference-only execution WALs owned by the requested Run."""
+
+    def list_tool_references(self, *, run_id: str) -> tuple[StoredValueRef, ...]:
+        """List immutable operation WAL addresses; body access uses get_output."""
 
     def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
         """列举早于保留阈值的输出与 ContextPack 元数据，绝不返回正文。"""
@@ -173,12 +231,12 @@ class InMemoryExecutionValueStore:
         return self._get(self._outputs, run_id=run_id, reference=output_ref)
 
     def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
-        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        reference = _tool_reference(run_id, key)
         return (self._get(self._outputs, run_id=run_id, reference=reference)
                 if reference in self._outputs else None)
 
     def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
-        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        reference = _tool_reference(run_id, key)
         current = self.get_tool_value(run_id=run_id, key=key)
         if current is not None:
             if current != payload:
@@ -186,6 +244,12 @@ class InMemoryExecutionValueStore:
             return reference
         self._outputs[reference] = (run_id, step_id, deepcopy(dict(payload)), self._now(), None)
         return reference
+
+    def list_workspace_mutations(self, *, run_id: str) -> list[dict[str, Any]]:
+        return [record for reference, (owner, step_id, payload, _, _) in self._outputs.items()
+                if owner == run_id and reference.startswith("tool:")
+                and (record := _workspace_mutation_record(self, run_id=run_id, reference=reference,
+                    step_id=step_id, payload=payload)) is not None]
 
     def put_context_pack(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """深拷贝已装配上下文，使 checkpoint 外的正文仍受服务边界保护。"""
@@ -196,6 +260,20 @@ class InMemoryExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """读取 ContextPack 的受控副本，不允许跨 run 访问。"""
         return self._get(self._context_packs, run_id=run_id, reference=context_ref)
+
+    def get_node_input_context(self, *, run_id: str, operation_id: str) -> dict[str, Any]:
+        node = self._node_executions.get(operation_id)
+        if node is None:
+            raise ExecutionValueAccessError(operation_id)
+        owner_run_id, execution = node
+        if owner_run_id != run_id:
+            raise ExecutionValueAccessError(operation_id, owner_run_id, run_id)
+        reference = execution.artifact_refs.get("context", "")
+        value = self._context_packs.get(reference)
+        if value is None:
+            raise ExecutionValueAccessError(reference or operation_id)
+        return _node_input_context_payload(run_id=run_id, operation_id=operation_id, execution=execution,
+            value=(value[0], value[1], value[4], value[2]))
 
     def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
         reference = self._new_reference("graph-patch", run_id, "__graph__")
@@ -274,6 +352,16 @@ class InMemoryExecutionValueStore:
                 return existing
         self._node_executions[record.operation_id] = (record.run_id, record)
         return record
+
+    def list_node_executions(self, *, run_id: str) -> tuple[NodeExecutionRecord, ...]:
+        return tuple(record.model_copy(deep=True) for operation, (owner, record)
+                     in sorted(self._node_executions.items()) if owner == run_id)
+
+    def list_tool_references(self, *, run_id: str) -> tuple[StoredValueRef, ...]:
+        return tuple(StoredValueRef(reference=reference, run_id=owner, step_id=step_id,
+                                    kind="output", created_at=created_at)
+                     for reference, (owner, step_id, _payload, created_at, _operation_id)
+                     in sorted(self._outputs.items()) if owner == run_id and reference.startswith("tool:"))
 
     def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
         """按 run 和保留阈值列出可评估的引用元数据，不暴露任何 JSON 正文。"""
@@ -451,6 +539,8 @@ class SQLiteExecutionValueStore:
             self._connection.execute(
                 "ALTER TABLE acg_node_commits ADD COLUMN stage TEXT NOT NULL DEFAULT 'prepared'"
             )
+        self._connection.execute("CREATE INDEX IF NOT EXISTS acg_workspace_mutation_requests "
+            "ON execution_values(run_id) WHERE " + _MUTATION_WAL_FILTER)
         self._connection.commit()
 
     @property
@@ -481,7 +571,7 @@ class SQLiteExecutionValueStore:
         return activity
 
     def get_tool_value(self, *, run_id: str, key: str) -> dict[str, Any] | None:
-        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        reference = _tool_reference(run_id, key)
         row = self._connection.execute("SELECT run_id,payload_json FROM execution_values WHERE reference=?", (reference,)).fetchone()
         if row is None:
             return None
@@ -491,7 +581,7 @@ class SQLiteExecutionValueStore:
 
     def put_tool_value(self, *, run_id: str, step_id: str, key: str, payload: dict[str, Any]) -> str:
         # An immutable operation value, not a second task/Run state machine.
-        reference = "tool:" + hashlib.sha256((run_id + ":" + key).encode()).hexdigest()
+        reference = _tool_reference(run_id, key)
         current = self.get_tool_value(run_id=run_id, key=key)
         if current is not None:
             if current != payload:
@@ -502,6 +592,13 @@ class SQLiteExecutionValueStore:
                                  (reference,run_id,step_id,"output",encoded,time()))
         self._connection.commit()
         return reference
+
+    def list_workspace_mutations(self, *, run_id: str) -> list[dict[str, Any]]:
+        rows = self._connection.execute("SELECT reference,step_id,payload_json FROM execution_values "
+            "WHERE run_id=? AND " + _MUTATION_WAL_FILTER, (run_id,)).fetchall()
+        return [record for reference, step_id, body in rows
+                if (record := _workspace_mutation_record(self, run_id=run_id, reference=reference,
+                    step_id=step_id, payload=json.loads(body))) is not None]
 
     def put_output(self, *, run_id: str, step_id: str, payload: dict[str, Any], operation_id: str | None = None) -> str:
         """持久化通过输出合同的节点正文，并返回稳定输出引用。"""
@@ -518,6 +615,23 @@ class SQLiteExecutionValueStore:
     def get_context_pack(self, *, run_id: str, context_ref: str) -> dict[str, Any]:
         """按 run 隔离读取 ContextPack 正文，禁止跨运行回退。"""
         return self._get("context", run_id=run_id, reference=context_ref)
+
+    def get_node_input_context(self, *, run_id: str, operation_id: str) -> dict[str, Any]:
+        row = self._connection.execute(
+            "SELECT run_id, payload_json FROM acg_node_executions WHERE operation_id=?", (operation_id,)).fetchone()
+        if row is None:
+            raise ExecutionValueAccessError(operation_id)
+        if row[0] != run_id:
+            raise ExecutionValueAccessError(operation_id, str(row[0]), run_id)
+        execution = NodeExecutionRecord.model_validate_json(row[1])
+        reference = execution.artifact_refs.get("context", "")
+        value = self._connection.execute(
+            "SELECT run_id, step_id, operation_id, payload_json FROM execution_values WHERE reference=? AND kind='context'",
+            (reference,)).fetchone()
+        if value is None:
+            raise ExecutionValueAccessError(reference or operation_id)
+        return _node_input_context_payload(run_id=run_id, operation_id=operation_id, execution=execution,
+            value=(str(value[0]), str(value[1]), value[2], json.loads(value[3])))
 
     def put_graph_patch(self, *, run_id: str, payload: dict[str, Any]) -> str:
         return self._put("graph-patch", run_id=run_id, step_id="__graph__", payload=payload)
@@ -659,6 +773,26 @@ class SQLiteExecutionValueStore:
         except Exception:
             self._connection.rollback()
             raise
+
+    def list_node_executions(self, *, run_id: str) -> tuple[NodeExecutionRecord, ...]:
+        rows = self._connection.execute(
+            "SELECT operation_id, payload_json FROM acg_node_executions WHERE run_id=? ORDER BY operation_id",
+            (run_id,)).fetchall()
+        records = []
+        for operation_id, payload_json in rows:
+            record = NodeExecutionRecord.model_validate_json(payload_json)
+            if record.run_id != run_id or record.operation_id != operation_id:
+                raise ExecutionValueAccessError(operation_id, message="node execution does not match its ledger identity")
+            records.append(record)
+        return tuple(records)
+
+    def list_tool_references(self, *, run_id: str) -> tuple[StoredValueRef, ...]:
+        rows = self._connection.execute(
+            "SELECT reference, step_id, created_at FROM execution_values "
+            "WHERE run_id=? AND kind='output' AND reference GLOB 'tool:*' ORDER BY reference", (run_id,)).fetchall()
+        return tuple(StoredValueRef(reference=str(reference), run_id=run_id, step_id=str(step_id),
+                                   kind="output", created_at=datetime.fromtimestamp(float(created_at), tz=timezone.utc))
+                     for reference, step_id, created_at in rows)
 
     def list_references(self, *, run_id: str, older_than: datetime) -> tuple[StoredValueRef, ...]:
         """只读取候选值的元数据；查询始终带 runId 条件避免跨运行扫描。"""

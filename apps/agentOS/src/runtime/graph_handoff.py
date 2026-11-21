@@ -22,8 +22,8 @@ from components.communicator.provenance import provenance_checksum
 from domain.identity_graph.resolver import IdentityResolver
 from runtime.graph_revision import GraphProvider, source_provenance, safe_cut
 from runtime.graph_materialization import validate_acceptance_ancestry
-from runtime.graph_step_projection import restore_initial_source_steps
-from runtime.planning_commit import fingerprint, fingerprint_observation
+from runtime.graph_step_projection import restore_initial_source_steps, restore_revision_source_steps
+from runtime.planning_commit import fingerprint, fingerprint_observation, protected_execution_nodes
 from runtime.permit_recovery import assert_replay_safe_operations
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.semantic_revision import SemanticRevisionService
@@ -205,21 +205,28 @@ class GraphHandoffAuthority:
         # Reconstruct only a historical validation view; never persist or execute it.
         # The accepted static fingerprint proves every reconstructed byte. Changes
         # to pending source semantics that cannot be recovered fail closed.
+        source_nodes = {n.key: n for n in original_plan.nodes}
+        with repos.storage.read() as conn:
+            rows = [dict(row) for row in conn.execute("""SELECT semantic_key,task_id,payload_json FROM task_plan_nodes
+                WHERE mission_id=? AND plan_version=? ORDER BY semantic_key""", (run.mission_id, original_plan.plan_version))]
+        if {row["semantic_key"] for row in rows} != set(source_nodes):
+            raise HandoffEvidenceError("source Identity plan mapping is incomplete")
+        source_bindings = {}
+        for row in rows:
+            bound = repos.task_bindings.find_for_task(row["task_id"], identity.blueprint_id)
+            if len(bound) != 1 or bound[0].binding_type.value != "primary" or not old.has_node(bound[0].acg_node_id):
+                raise HandoffEvidenceError("source Identity semantic snapshot mapping mismatch")
+            source_bindings[row["semantic_key"]] = bound[0].acg_node_id
         source_run = run.model_copy(deep=True)
         source_run.acg_blueprint = old.model_dump(mode="json", by_alias=True)
         source_run.steps = [s for s in source_run.steps if s.step_id in {n.node_id for n in old.step_nodes()}]
         source_run.execution_state.update(cp_state.model_dump(mode="json", by_alias=True))
         source_run.execution_state.update(taskPlan=original_plan.model_dump(mode="json", by_alias=True),
             taskPlanVersion=original_plan.plan_version, compiledACGPackage=old_package.model_dump(mode="json", by_alias=True),
-            taskBindings=[b.model_dump(mode="json", by_alias=True) for b in proposal.next_bindings if b.acg_node_id in {s.step_id for s in source_run.steps}])
+            taskBindings=[{"planNodeKey": node.key, "acgNodeId": source_bindings[node.key]} for node in original_plan.nodes])
+        restore_revision_source_steps(rt, source_run, old, proposal.candidate_graph,
+            protected_step_ids=protected_execution_nodes(source_run, cp_state, provider.node_commits(source_run)))
         restore_initial_source_steps(rt, source_run, old)
-        source_nodes = {n.key: n for n in original_plan.nodes}
-        source_bindings = {b["planNodeKey"]: b["acgNodeId"] for b in source_run.execution_state["taskBindings"]}
-        with repos.storage.read() as conn:
-            rows = [dict(row) for row in conn.execute("""SELECT semantic_key,task_id,payload_json FROM task_plan_nodes
-                WHERE mission_id=? AND plan_version=? ORDER BY semantic_key""", (run.mission_id, original_plan.plan_version))]
-        if set(source_bindings) != set(source_nodes) or {row["semantic_key"] for row in rows} != set(source_nodes):
-            raise HandoffEvidenceError("source Identity plan mapping is incomplete")
         source_identity_nodes = []
         for row in rows:
             node_key = row["semantic_key"]

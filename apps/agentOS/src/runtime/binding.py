@@ -17,6 +17,7 @@ from components.resource.scheduler.models import RequirementReadiness
 from contracts.authority import RuntimeResourceId
 from contracts.compiled_acg import BindingManifest
 from contracts.resource import ExecutionRequirement, NodeHealthStatus, RuntimeKind, RuntimeProfile
+from contracts.tools import HOST_TOOL_FAILURE_CODES, hands_tools, safe_tool_failure_details
 from contracts.workflow import (
     RunExecutionScope,
     RuntimeRunRecord,
@@ -27,6 +28,10 @@ from service.agents import AgentRegistry
 from service.agents.pool import AgentPool
 from support.acg.schema import RuntimeBlueprintSpec
 from runtime.ports import CollaboratorAccess
+
+
+_HANDS_CAPABILITIES = frozenset(tool.name for tool in hands_tools())
+_HOST_DEPENDENCY_FAILURE_CODES = HOST_TOOL_FAILURE_CODES | {"HANDS_OUTCOME_UNKNOWN"}
 
 
 def execution_requirements_for(binding_manifest: BindingManifest, step_ids, *, domain: str | None):
@@ -98,6 +103,57 @@ def queued_step_attempts(run: RuntimeRunRecord) -> dict[str, str]:
         if isinstance(attempt_id, str) and attempts.get(key) == attempt_id:
             current[step.step_id] = attempt_id
     return current
+
+
+def effective_recovery_requirement(run: RuntimeRunRecord, step_id: str) -> ExecutionRequirement:
+    """Observe the actual blocked dependency without changing the Step contract.
+
+    A callable Agent does not prove its Hands backend is available. Only a host
+    failure belonging to the current, unsettled execution may supply that tool
+    dependency; old attempts and unrelated failures keep the compiled demand.
+    This is readiness evidence, never an execution or replay authorization.
+    """
+    state = run.execution_state
+    original = ExecutionRequirement.model_validate(state["bindingRequirements"][step_id])
+    step = run.get_step(step_id)
+    settled = set(state.get("completedStepIds", ())) | set(state.get("skippedStepIds", ()))
+    failures = state.get("failureEvents") or []
+    if step.status != StepStatus.FAILED or step_id in settled or not failures:
+        return original
+    failure = failures[-1]
+    if (not isinstance(failure, dict) or failure.get("source") not in {"scheduler", "executor"}
+            or failure.get("reasonCode") not in _HOST_DEPENDENCY_FAILURE_CODES):
+        return original
+    details = safe_tool_failure_details(failure.get("details"))
+    binding = (state.get("executionBindings") or {}).get(step_id)
+    if (not isinstance(binding, dict) or details.get("stepId") != step_id
+            or not details.get("attemptId") or details["attemptId"] != binding.get("attemptId")
+            or binding.get("runId") != run.run_id or binding.get("stepId") != step_id
+            or details.get("tool") not in _HANDS_CAPABILITIES
+            or not details.get("resourceId")):
+        return original
+    from components.executor.node_runner import ACGNodeRunner
+    commit_id = ACGNodeRunner._commit_id(run.run_id, step_id, step.attempt,
+        loop_path=tuple((state.get("loopPaths") or {}).get(step_id, ())),
+        execution_generation=state.get("executionGeneration"))
+    if details.get("commitId") != commit_id:
+        return original
+    return ExecutionRequirement(requiredCapabilities=[details["tool"]],
+        runtimeKinds=[RuntimeKind.EXECUTION_BACKEND], allowedRuntimeIds=[details["resourceId"]])
+
+
+def recovery_requires_resource_readiness(observation) -> bool:
+    """Gate scheduler failures and attributed executor tool dependencies only."""
+    if observation.failure_source == "scheduler":
+        return True
+    if (observation.failure_source != "executor" or len(observation.failed_step_ids) != 1
+            or observation.failure_step_id != observation.failed_step_ids[0]
+            or observation.failure_reason not in _HOST_DEPENDENCY_FAILURE_CODES):
+        return False
+    fact = next((r for r in observation.resource_requirements
+        if r.step_id == observation.failure_step_id), None)
+    return bool(fact is not None and len(fact.required_capabilities) == 1
+        and fact.required_capabilities[0] in _HANDS_CAPABILITIES)
 
 
 class RuntimeBindingService:
@@ -258,4 +314,5 @@ def assess_run_requirement(services: CollaboratorAccess, run: RuntimeRunRecord,
         requirement, now=now, agent_candidates=binding.local_candidates(run))
 
 
-__all__ = ["RuntimeBindingService", "assess_run_requirement", "queued_step_attempts"]
+__all__ = ["RuntimeBindingService", "assess_run_requirement", "effective_recovery_requirement",
+    "recovery_requires_resource_readiness", "queued_step_attempts"]

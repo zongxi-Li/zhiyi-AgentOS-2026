@@ -61,20 +61,61 @@ def test_read_only_workspace_scope_preserves_authorized_context_reading(tmp_path
     assert observed.output["data"] == {"title": "brief"}
 
 
-def test_replay_charges_once_after_restoring_checkpoint_and_conflicts_fail_closed(tmp_path):
-    store, broker, reader = setup_reader(tmp_path)
+@pytest.mark.parametrize('budget', [SupplementalReadBudget(),
+    SupplementalReadBudget(maxReadTokens=4096, pageTokens=1024, totalTokens=16384)])
+def test_replay_charges_once_after_restoring_checkpoint_and_conflicts_fail_closed(tmp_path, budget):
+    store, broker, reader = setup_reader(tmp_path, budget=budget)
     asyncio.run(reader.read("producer", ["title"], operation_id="read:1"))
     usage = deepcopy(broker.usage_snapshot())
     asyncio.run(reader.read("producer", ["title"], operation_id="read:1"))
     assert broker.usage_snapshot() == usage
     restored = CommunicationBroker(manifest=broker.manifest, value_store=store, usage=usage)
     reader2 = CommunicationReader(broker=restored, run_id="run", consumer_step_id="consumer",
-        output_refs=reader._output_refs, max_tokens=None, model_budget=SupplementalReadBudget())
+        output_refs=reader._output_refs, max_tokens=None, model_budget=budget)
     asyncio.run(reader2.read("producer", ["title"], operation_id="read:1"))
     assert restored.usage_snapshot() == usage
     with pytest.raises(CommunicationAccessError, match="changed"):
         asyncio.run(reader2.read("producer", ["details"], operation_id="read:1"))
     assert "Sensitive source" not in json.dumps(usage)
+
+
+def test_new_default_reads_have_no_fixed_single_read_or_cumulative_ceiling(tmp_path):
+    text = 'source finding ' * 3000
+    _, broker, reader = setup_reader(tmp_path, data={'details': text})
+    assert reader.model_budget.max_read_tokens is None
+    assert reader.model_budget.total_tokens is None
+    tools = ContextReadTools(context(reader))
+    page_schema = next(tool.parameters['properties']['pageTokens'] for tool in tools.list_tools()
+                       if tool.name == 'context.read_page')
+    assert 'maximum' not in page_schema
+    for index in range(3):
+        result = asyncio.run(tools.execute('context.read', {'producerStepId': 'producer', 'fields': ['details']},
+            operation_key=f'large:{index}'))
+        assert result.output['data']['details'] == text
+    assert broker.usage_snapshot()['supplemental']['consumer'] > 16384
+    assert all(event['readPhase'] == 'supplemental' for event in broker.drain_events())
+
+
+def test_default_page_size_is_a_work_unit_without_a_fixed_maximum(tmp_path):
+    _, broker, reader = setup_reader(tmp_path, data={'details': 'source ' * 5000})
+    assert reader.model_budget.page_tokens == 1024
+    result = asyncio.run(ContextReadTools(context(reader)).execute('context.read_page',
+        {'producerStepId': 'producer', 'fields': ['details'], 'pageTokens': 5000}, operation_key='large-page'))
+    assert result.output['estimatedTokens'] > 4096
+    assert broker.usage_snapshot()['supplemental']['consumer'] == result.output['estimatedTokens']
+    assert broker.drain_events()[0]['readPhase'] == 'supplemental'
+
+
+def test_explicit_frozen_budget_and_host_read_limit_remain_effective(tmp_path):
+    frozen = {'version': 'supplemental-read.v1', 'maxReadTokens': 4096, 'pageTokens': 1024, 'totalTokens': 16384}
+    assert SupplementalReadBudget.model_validate(frozen).model_dump(by_alias=True) == frozen
+    _, broker, reader = setup_reader(tmp_path)
+    reader._max_tokens = 20
+    with pytest.raises(EntropyBudgetExceededError):
+        asyncio.run(reader.read('producer', ['details'], operation_id='host-denied'))
+    with pytest.raises(EntropyBudgetExceededError):
+        asyncio.run(reader.read_page('producer', ['details'], page_tokens=40, operation_id='host-page-denied'))
+    assert broker.usage_snapshot()['run'] == 0
 
 
 def test_page_reconstructs_escaped_unicode_text_with_hard_cap(tmp_path):
@@ -121,6 +162,45 @@ def test_oversized_nested_item_never_escapes_page_budget(tmp_path):
     with pytest.raises(EntropyBudgetExceededError):
         asyncio.run(reader.read_page("producer", ["details"], page_tokens=20))
     assert broker.usage_snapshot()["run"] == 0
+
+
+def test_nested_read_protocol_is_enabled_for_new_steps_without_changing_legacy_tool_schemas(tmp_path):
+    _, _, reader = setup_reader(tmp_path)
+    ctx = context(reader)
+    legacy = ContextReadTools(ctx)
+    legacy_page = next(tool for tool in legacy.list_tools() if tool.name == "context.read_page")
+    assert "path" not in legacy_page.parameters["properties"]
+    assert "describe" not in legacy_page.parameters["properties"]
+    ctx.step.input = {"contextPolicy": {"nestedReadVersion": 1}}
+    current_page = next(tool for tool in ContextReadTools(ctx).list_tools() if tool.name == "context.read_page")
+    assert {"path", "describe"} <= set(current_page.parameters["properties"])
+    assert legacy.list_tools() == ContextReadTools(context(reader)).list_tools()
+
+
+def test_context_tools_can_describe_and_page_nested_values_without_claiming_field_completion(tmp_path):
+    text = 'nested evidence "quoted"\n' * 100
+    _, broker, reader = setup_reader(tmp_path, data={"details": [{"body": text, "other": "not selected"}]})
+    ctx = context(reader)
+    ctx.step.input = {"contextPolicy": {"nestedReadVersion": 1}}
+    tools = ContextReadTools(ctx)
+    structure = asyncio.run(tools.execute("context.read_page", {"producerStepId": "producer",
+        "fields": ["details"], "describe": True}, operation_key="shape"))
+    assert structure.output["scope"] == "structure" and structure.output["complete"] is False
+    assert structure.output["structure"]["indices"] == {"start": 0, "stop": 1}
+    assert text not in structure.model_dump_json()
+    cursor, chunks = None, []
+    while True:
+        result = asyncio.run(tools.execute("context.read_page", {"producerStepId": "producer", "fields": ["details"],
+            "path": [0, "body"], "pageTokens": 80, "cursor": cursor}, operation_key="nested:" + str(cursor)))
+        output = result.output
+        assert output["scope"] == "subtree_page" and output["complete"] is False
+        assert output["path"] == [0, "body"]
+        chunks.append(output["data"]["details"])
+        cursor = output["nextCursor"]
+        if cursor is None:
+            break
+    assert "".join(chunks) == text
+    assert broker.usage_snapshot()["supplemental"]["consumer"] > 0
 
 
 def test_legacy_reader_does_not_enable_model_tools(tmp_path):

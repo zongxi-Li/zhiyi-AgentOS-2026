@@ -476,16 +476,36 @@ class ACGExecutionService(CollaboratorAccess):
         committed nodes remain completed and are replayed from the value store.
         Each step/resource pair gets at most one automatic failover attempt.
         """
-        resource_error = self._unwrap_resource_execution_error(error)
-        if resource_error is None or error.outcome_unknown or resource_error.outcome_unknown:
+        failed_step_ids = list(dict.fromkeys(error.failed_step_ids))
+        step_causes = error.step_causes
+        if not step_causes:
+            # Legacy single-node wrappers retain an unambiguous owner. A
+            # parallel frontier needs each failure's own settlement evidence.
+            if len(failed_step_ids) != 1:
+                return False
+            step_causes = {failed_step_ids[0]: error.cause}
+        if (set(step_causes) != set(failed_step_ids) or error.outcome_unknown
+                or any(not isinstance(cause, ResourceExecutionError) for cause in error.causes)):
             return False
+        resource_errors = {}
+        for step_id, cause in step_causes.items():
+            # A remote outage cannot authorize replay of a sibling's policy,
+            # storage or tool failure. Preserve those facts for Recovery.
+            if not isinstance(cause, ResourceExecutionError):
+                return False
+            resource_error = self._unwrap_resource_execution_error(cause)
+            if resource_error is None or resource_error.outcome_unknown:
+                return False
+            resource_errors[step_id] = resource_error
+        if not resource_errors:
+            return False
+        resource_error = resource_errors[failed_step_ids[0]]
 
         execution_bindings = run.execution_state.get("executionBindings")
         if not isinstance(execution_bindings, dict):
             return False
         history = list(run.execution_state.get("resourceFailoverHistory") or [])
         failed_resources: list[dict[str, str]] = []
-        failed_step_ids = list(dict.fromkeys(error.failed_step_ids))
         reset_step_ids = list(dict.fromkeys(
             [*error.failed_step_ids, *error.cancelled_step_ids]
         ))
@@ -1421,6 +1441,7 @@ class ACGExecutionService(CollaboratorAccess):
         )
         return ACGNodeRunner(
             task=resolved_task,
+            workflow_store=self.workflow_store,
             run=run,
             workflow=workflow,
             steps=steps,

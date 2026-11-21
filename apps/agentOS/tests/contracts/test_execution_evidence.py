@@ -640,11 +640,21 @@ def test_cyclic_reuse_lineage_is_rejected(evidence):
 
 
 @pytest.mark.parametrize("tool", ["fs.write", "fs.patch", "shell.exec"])
-def test_mutation_invalidates_earlier_reads_until_complete_reread(evidence, tool):
+@pytest.mark.parametrize("node_status", ["committed", "uncommitted", "conflicting-summary"])
+def test_mutation_invalidates_earlier_reads_until_complete_reread(evidence, tool, node_status):
     evidence.require({"kind": "file", "path": "source.py"})
     evidence.commit({}, step_id="first-read")
-    mutation = evidence.commit({"tool": tool, "started": "2026-11-16T01:00:03+00:00",
-        "ended": "2026-11-16T01:00:04+00:00"}, step_id="mutate")[0]
+    call = {"tool": tool, "started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}
+    if node_status == "uncommitted":
+        # Hands completed its work, then the process or node failed before publishing output.
+        attempt = "commit:evidence-run:mutate:0"
+        evidence.store.prepare_node_commit(run_id=evidence.run.run_id, commit_id=attempt)
+        mutation = evidence.record("mutate", attempt, 1, call)
+        assert evidence.store.get_node_commit(run_id=evidence.run.run_id, commit_id=attempt)["stage"] == "prepared"
+    else:
+        if node_status == "conflicting-summary":
+            call["record"] = {"status": "failed"}
+        mutation = evidence.commit(call, step_id="mutate")[0]
     assert evidence.blockers()
     assert evidence.progress()[0]["coverageInvalidation"] == {
         "tool": tool, "receiptRef": mutation["receiptRef"], "completedAt": "2026-11-16T01:00:04+00:00",
@@ -654,6 +664,21 @@ def test_mutation_invalidates_earlier_reads_until_complete_reread(evidence, tool
     evidence.commit({"started": "2026-11-16T01:00:05+00:00",
         "ended": "2026-11-16T01:00:06+00:00"}, step_id="reread")
     assert evidence.blockers() == ()
+
+
+def test_unpublished_mutation_follows_reused_prefix_without_crossing_workspace(evidence):
+    evidence.require({"kind": "file", "path": "source.py"}, {"kind": "file", "path": "unrelated.py"})
+    evidence.commit({}, {"path": "unrelated.py"})
+    timing = {"started": "2026-11-16T01:00:03+00:00", "ended": "2026-11-16T01:00:04+00:00"}
+    evidence.record("other-workspace", "other-attempt", 2, {"tool": "shell.exec", **timing,
+        "request": {"authorization": {"workspaceId": "other", "grantId": "grant-other"}},
+        "receipt": {"grantId": "grant-other"}})
+    assert evidence.successor().blockers() == ()
+    # The recovery copy still points at observations made before this write.
+    evidence.record("failed-writer", "writer-attempt", 3, {"tool": "fs.patch", **timing})
+    affected, unaffected = evidence.successor("after-write").progress()
+    assert not affected["complete"] and affected["coverageInvalidation"]["tool"] == "fs.patch"
+    assert unaffected["complete"] and "coverageInvalidation" not in unaffected
 
 
 def test_invalidation_facts_are_scoped_and_do_not_expose_command_or_source_bodies(evidence):
@@ -869,8 +894,7 @@ def test_shell_with_success_or_read_only_claim_still_invalidates_all_earlier_pat
                for item in evidence.progress())
 
 
-@pytest.mark.parametrize("change", [{"record": {"status": "failed"}},
-    {"receipt": {"status": "failed"}}, {"corrupt_checksum": True}])
+@pytest.mark.parametrize("change", [{"receipt": {"status": "failed"}}, {"corrupt_checksum": True}])
 def test_failed_or_unverified_mutation_cannot_leave_prior_read_coverage_valid(evidence, change):
     evidence.require({"kind": "file", "path": "source.py"})
     evidence.commit({}, step_id="first-read")

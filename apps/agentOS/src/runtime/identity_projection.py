@@ -425,6 +425,8 @@ class IdentityProjectionBridge:
         task_plan: TaskPlan,
         task_bindings: Sequence[TaskImplementationBinding],
         permit_id: str,
+        *,
+        retired_node_ids: Sequence[str] = (),
     ) -> None:
         """Promote the existing Identity Run only under the durable permit saga.
 
@@ -440,13 +442,16 @@ class IdentityProjectionBridge:
             "taskPlan": task_plan.model_dump(by_alias=True, mode="json"),
             "taskBindings": [item.model_dump(by_alias=True, mode="json") for item in task_bindings],
         }
+        if retired_node_ids:
+            payload["retiredNodeIds"] = list(retired_node_ids)
         with self._projection(
             f"execution.permit.identity:{permit_id}",
             "execution.permit.identity.promoted",
             run.run_id,
             payload,
         ):
-            self._promote_execution_permit_identity(run, blueprint, task_plan, task_bindings)
+            self._promote_execution_permit_identity(run, blueprint, task_plan, task_bindings,
+                retired_node_ids=retired_node_ids)
 
     def _promote_execution_permit_identity(
         self,
@@ -454,6 +459,8 @@ class IdentityProjectionBridge:
         blueprint: RuntimeBlueprintSpec,
         task_plan: TaskPlan,
         task_bindings: Sequence[TaskImplementationBinding],
+        *,
+        retired_node_ids: Sequence[str] = (),
     ) -> None:
         domain_run = self._run(run.run_id)
         if domain_run.mission_id != run.mission_id:
@@ -477,8 +484,15 @@ class IdentityProjectionBridge:
                                                    planning_metadata=planning_metadata)
             return
         prior_graph = RuntimeBlueprintSpec.model_validate(prior.graph)
-        if not {node.node_id for node in prior_graph.step_nodes()} <= {node.node_id for node in blueprint.step_nodes()}:
-            raise IdentityConflictError("execution permit cannot remove executable Identity nodes")
+        removed = {node.node_id for node in prior_graph.step_nodes()} - {node.node_id for node in blueprint.step_nodes()}
+        if removed != set(retired_node_ids):
+            raise IdentityConflictError("execution permit removed nodes differ from the accepted retirement")
+        attempted_tasks = {attempt.task_id for attempt in self.repositories.attempts.list_for_run(run.run_id)}
+        for node_id in removed:
+            bindings = self.repositories.task_bindings.find_for_acg_node(node_id, prior.blueprint_id)
+            if (len(bindings) != 1 or bindings[0].binding_type.value != "primary"
+                    or bindings[0].task_id in attempted_tasks):
+                raise IdentityConflictError("execution permit cannot retire attempted or unbound Identity work")
         if task_plan.mission_id != run.mission_id or task_plan.plan_version != int(prior.metadata.get("plannerPlanVersion") or 1) + 1:
             raise IdentityConflictError("execution permit TaskPlan must extend the current Identity plan")
         persisted = PlannerIdentityBridge(self.lifecycle_service, self.capability_catalog).record_task_plan(task_plan)
@@ -1575,6 +1589,7 @@ class IdentityProjectionBridge:
                 RuntimeBlueprintSpec.model_validate(payload["blueprint"]),
                 TaskPlan.model_validate(payload["taskPlan"]),
                 tuple(TaskImplementationBinding.model_validate(item) for item in payload["taskBindings"]),
+                retired_node_ids=tuple(payload.get("retiredNodeIds", ())),
             )
             return
         if event_type == "attempt.ensured":

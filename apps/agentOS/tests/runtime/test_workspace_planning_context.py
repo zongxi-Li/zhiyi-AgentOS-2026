@@ -261,6 +261,17 @@ def test_legacy_rejection_checksum_preserves_context_without_inventing_a_candida
     assert load_workspace_discovery_materials(evidence.store, legacy) == material
 
 
+def test_rejected_invalid_patch_remains_readable_for_correction(evidence):
+    commit(evidence)
+    observation, proposal = _rejected_proposal(evidence)
+    proposal["patch"]["metadata"] = {"workspaceReview": {"revision": "invalid_metadata"}}
+    feedback = dict(observation.planning_commit_rejection)
+    feedback["proposalRef"] = evidence.store.put_graph_patch(run_id=evidence.run.run_id, payload=proposal)
+    delivered = load_workspace_discovery_materials(evidence.store,
+        observation.model_copy(update={"planning_commit_rejection": feedback}))
+    assert delivered["rejectedProposal"]["patch"] == proposal["patch"]
+
+
 def test_scope_revision_can_cite_a_real_committed_review_alongside_other_caller_references(evidence):
     commit(evidence, "review", role="workspace_review", capability="verification", payload={"answer": "findings"})
     source = evidence.run.execution_state["outputRefs"]["review"]

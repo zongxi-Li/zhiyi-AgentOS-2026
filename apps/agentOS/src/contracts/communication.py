@@ -191,6 +191,26 @@ class ContextContractError(ValueError):
         super().__init__(f"{direction} contract violation at {step_id}{f' ({path})' if path else ''}: {message}")
 
 
+def schema_top_level_fields(schema: object) -> list[str]:
+    """Named top-level fields, independent of whether their presence is required.
+
+    Keep the historical required-field order, then add declared optional fields
+    in stable order. Nested schemas, patterns and open additional properties do
+    not grant field access. This is the runtime's flat object projection, not a
+    JSON Schema reference or composition resolver.
+    """
+    if not isinstance(schema, dict):
+        return []
+    raw_required = schema.get("required")
+    required = list(dict.fromkeys(
+        field for field in raw_required if isinstance(field, str)
+    )) if isinstance(raw_required, list) else []
+    properties = schema.get("properties")
+    optional = sorted(field for field in properties
+                      if isinstance(field, str) and field not in required) if isinstance(properties, dict) else []
+    return [*required, *optional]
+
+
 def check_contract_schema(schema: Dict[str, Any], *, label: str) -> None:
     """校验步骤 JSON Schema 的合法性。
 
@@ -360,6 +380,7 @@ __all__ = [
     "ContextContractError",
     "apply_contract_defaults",
     "check_contract_schema",
+    "schema_top_level_fields",
     "compact_contract_text_arrays",
     "validate_contract_payload",
 ]

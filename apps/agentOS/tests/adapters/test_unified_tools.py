@@ -419,11 +419,19 @@ async def test_permission_denial_cannot_dispatch_or_obtain_a_lease(stack):
 
 
 @pytest.mark.asyncio
-async def test_unknown_outcome_is_terminal_and_quarantines_resource(stack):
+async def test_invalid_receipt_requires_host_settlement_and_quarantines_resource(stack):
     stack.service.bad_receipt = True
     runner, state, step, http = node(stack, GeneralAgent(), [[('fs.read', {'path': 'n'})], {'answer': 'must not run'}])
-    with pytest.raises(RuntimeError, match='settlement'):
+    with pytest.raises(StructuredGenerationError) as captured:
         await runner(step.step_id, state)
+    assert captured.value.code == 'HANDS_OUTCOME_UNKNOWN'
+    assert captured.value.retryable is False
+    request = stack.service.requests[0]
+    assert captured.value.metadata['toolFailure'] == {
+        'stepId': request['identity']['stepId'], 'attemptId': request['identity']['attemptId'],
+        'commitId': request['identity']['commitId'], 'tool': 'fs.read', 'resourceId': 'hands',
+        'operationKey': request['invocationId'], 'phase': 'tool_settlement',
+    }
     assert len(http.requests) == 1
     assert stack.runtime.resource_plane.runtime('hands').enabled is False
     assert stack.runtime.resource_binder.coordinator.active_slots('hands') == 1
@@ -807,7 +815,7 @@ async def test_resume_after_precommit_fault_reuses_tool_decisions_and_receipts(s
 
 
 @pytest.mark.asyncio
-async def test_retrieval_preserves_existing_search_and_can_autonomously_use_hands(stack):
+async def test_retrieval_corrects_citations_in_the_same_session_without_repeating_tools(stack):
     from contracts.compiled_acg import EvidenceManifest, EvidenceRule
     class Search:
         calls = []
@@ -817,15 +825,30 @@ async def test_retrieval_preserves_existing_search_and_can_autonomously_use_hand
     search = Search()
     stack.tools.delegate.delegate.fallback = search
     stack.tools = AuditedToolRuntime(delegate=stack.tools.delegate, allowed_tools=['knowledge_search', 'web_search'])
-    runner, state, step, http = node(stack, ResearchAgent(), [[('fs.read', {'path': 'n'})], {'answer': 'evidence'}])
+
+    def corrected(payload):
+        assert 'citationId values from retrievalEvidence.sources' in payload['messages'][-1]['content']
+        retrieval = next(json.loads(message['content'])['retrievalEvidence'] for message in payload['messages']
+                         if message['role'] == 'user' and '"retrievalEvidence":' in message['content'])
+        return {'retrieved_information': ['Observed n'], 'evidence_refs': retrieval['evidence_refs']}
+
+    agent = ResearchAgent()
+    descriptor = agent.capability_catalog.get('information_retrieval')
+    runner, state, step, http = node(stack, agent, [[('fs.read', {'path': 'n'})],
+        {'retrieved_information': ['Observed n'], 'evidence_refs': ['n', 'src/*.py']}, corrected])
     step.capability = 'information_retrieval'
+    step.output_spec = descriptor.output_contract
     runner.evidence_manifest = EvidenceManifest(rules=(EvidenceRule(
         stepId=step.step_id, evidenceNodeId='retrieval-evidence', access='produce',
         evidenceType='retrieved', source='task-input'),))
-    runner.capability_descriptors[step.capability] = ResearchAgent().capability_catalog.get(step.capability)
-    await runner(step.step_id, state)
-    assert search.calls[0] == 'knowledge_search'
-    assert stack.service.requests[0]['capabilityId'] == 'fs.read' and len(http.requests) == 2
+    runner.capability_descriptors[step.capability] = descriptor
+    result = await runner(step.step_id, state)
+    data = runner.value_store.get_output(run_id=runner.run.run_id, output_ref=result['outputRef'])
+    assert data['evidence_refs'] == result['evidenceRefs']
+    assert len(result['evidenceRefs']) == 1 and result['evidenceRefs'][0] not in {'n', 'src/*.py'}
+    assert search.calls == ['knowledge_search', 'web_search']
+    assert [request['capabilityId'] for request in stack.service.requests] == ['fs.read']
+    assert len(http.requests) == 3
 
 
 @pytest.mark.asyncio
@@ -864,10 +887,17 @@ async def test_formal_infrastructure_failure_returns_to_host_without_another_mod
             raise ToolExecutionAuthorizationLost('private authority details')
 
         monkeypatch.setattr(stack.runtime.workspace_authority, 'resolve', revoked)
+    context = context_for(runner, step)
     with pytest.raises(StructuredGenerationError) as captured:
-        await AgentToolSession(context_for(runner, step)).generate_json(prompt='inspect', schema=ANSWER)
+        await AgentToolSession(context).generate_json(prompt='inspect', schema=ANSWER)
     assert captured.value.code == expected
-    assert captured.value.retryable
+    assert captured.value.retryable is (failure == 'scheduler')
+    details = captured.value.metadata['toolFailure']
+    expected_details = {
+        'stepId': step.step_id, 'attemptId': context.attempt_id, 'commitId': context.commit_id,
+        'tool': 'fs.list', 'operationKey': context.commit_id + ':tools:0:call:0',
+    }
+    assert {key: details[key] for key in expected_details} == expected_details
     assert captured.value.audit['toolActionsExecuted'] == 1
     assert len(http.requests) == 1
     assert stack.service.requests == []

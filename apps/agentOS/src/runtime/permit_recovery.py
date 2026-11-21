@@ -20,7 +20,12 @@ from contracts.agents import AgentRegistrationRef
 from contracts.capability import ModelInvocationResponse
 from contracts.local_runtime import LocalRuntimeExecutionRequest
 from contracts.native_retrieval import RETRIEVAL_COMMIT_SUFFIXES, RETRIEVAL_LEDGER_VERSION, retrieval_operation_key
+from contracts.planning_context import PLANNING_CONTEXT_OWNER, is_planning_context_snapshot
 from contracts.execution_evidence import workspace_relative_path
+from contracts.execution_guidance import (
+    execution_guidance_key, validate_initial_guidance_record,
+    validate_session_guidance_record, validate_guidance_completion_record,
+)
 from contracts.resource import ExecutionBinding
 from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
 from contracts import stable_checksum
@@ -259,6 +264,7 @@ def _assert_native_readonly_retry_safe(services, run, node, *, connection=None, 
     prover = getattr(services, "tool_non_invocation_prover", None)
     session_contract = {
         "memory_policy": effective_memory_policy(step.step_id, step.input, memory_manifest),
+        "context_policy": step.input.get("contextPolicy") or {},
         "retrieval": execution_path == "retrieval",
         "task_input_only": graph_metadata.get("evidenceScope") == "task_input_only",
     }
@@ -279,7 +285,7 @@ def _readonly_session_proof(run, node, workspace, conn, *, non_invocation_prover
 
 def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=None,
                           execution_value_store=None, settled_authorization=None,
-                          memory_policy=None, retrieval=False, task_input_only=False):
+                          memory_policy=None, context_policy=None, retrieval=False, task_input_only=False):
     settled = settled_authorization is not None
     frozen_workspace = workspace
     identity = {"runId": run.run_id, "stepId": node.step_id,
@@ -308,9 +314,9 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
     def value(key):
         reference = _tool_reference(run.run_id, key)
         if reference not in values:
-            row = conn.execute("SELECT payload_json,step_id,kind,operation_id FROM execution_values WHERE run_id=? AND reference=?",
-                               (run.run_id, reference)).fetchone()
-            if row and tuple(row[1:]) != (node.step_id, "output", None):
+            row = conn.execute("SELECT payload_json,run_id,step_id,kind,operation_id FROM execution_values WHERE reference=?",
+                               (reference,)).fetchone()
+            if row and tuple(row[1:]) != (run.run_id, node.step_id, "output", None):
                 raise ValueError("tool evidence belongs to another node or kind")
             payload = json.loads(row[0]) if row else None
             if payload is not None and not isinstance(payload, dict):
@@ -324,6 +330,16 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
         reference, snapshot = memory_input
         internal_refs.add(reference)
         values[reference] = snapshot
+    initial_key = execution_guidance_key(node.operation_id)
+    initial_guidance = value(initial_key)
+    initial_ref = _tool_reference(run.run_id, initial_key)
+    linked_guidance = getattr(node, "artifact_refs", {}).get("executionGuidance")
+    if linked_guidance is not None and (linked_guidance != initial_ref or initial_guidance is None):
+        raise ValueError("execution guidance input reference is missing or misaddressed")
+    if initial_guidance is not None:
+        validate_initial_guidance_record(initial_guidance, reference=initial_ref,
+            run_id=run.run_id, step_id=node.step_id, commit_id=node.operation_id)
+        internal_refs.add(initial_ref)
     retrieval_requests = retrieval_results = 0
     if retrieval:
         retrieval_refs, retrieval_requests, retrieval_results = _native_retrieval_proof(
@@ -342,22 +358,62 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
             turn_id = (payload.get("response") or {}).get("requestId")
             if not isinstance(turn_id, str) or reference != _tool_reference(run.run_id, turn_id + ":model-turn"):
                 raise ValueError("native retry has a hidden or misaddressed frozen model turn")
-    activity = conn.execute(
-        "SELECT reference,json_extract(payload_json, '$.request.invocationId') "
+    activity_rows = conn.execute(
+        "SELECT reference,json_extract(payload_json, '$.request.invocationId'),step_id,kind,operation_id,"
+        "CASE WHEN step_id=? THEN payload_json END "
         "FROM execution_values WHERE run_id=? AND reference LIKE 'tool:%' AND ("
         "substr(json_extract(payload_json, '$.request.invocationId'),1,?)=? "
         "OR json_extract(payload_json, '$.identity.commitId')=? "
         "OR json_extract(payload_json, '$.record.commitId')=? "
         "OR json_extract(payload_json, '$.commitId')=? "
         "OR substr(json_extract(payload_json, '$.response.requestId'),1,?)=?)",
-        (run.run_id, len(prefix), prefix, node.operation_id, node.operation_id, node.operation_id, len(prefix), prefix),
+        (PLANNING_CONTEXT_OWNER, run.run_id, len(prefix), prefix,
+         node.operation_id, node.operation_id, node.operation_id, len(prefix), prefix),
     ).fetchall()
+    activity = []
+    for reference, invocation, owner, kind, operation_id, snapshot_body in activity_rows:
+        if owner == PLANNING_CONTEXT_OWNER and is_planning_context_snapshot(
+                run_id=run.run_id, reference=reference, step_id=owner, kind=kind,
+                operation_id=operation_id, payload=json.loads(snapshot_body)):
+            # Reading a prior request creates a derived Planner snapshot, never
+            # another dispatch. Keep it outside the original execution closure.
+            continue
+        if (owner, kind, operation_id) != (node.step_id, "output", None):
+            raise ValueError("tool evidence belongs to another node or kind")
+        activity.append((reference, invocation))
 
     declared, expected_refs, turns = {}, set(internal_refs), 0
+    previous_guidance_hash = None
+
+    def guidance_delivery(turn_index):
+        nonlocal previous_guidance_hash
+        key = f"{node.operation_id}:tools:{turn_index}:execution-guidance:v1"
+        receipt = value(key)
+        if receipt is not None:
+            reference = _tool_reference(run.run_id, key)
+            previous_guidance_hash = validate_session_guidance_record(receipt, reference=reference,
+                run_id=run.run_id, step_id=node.step_id, commit_id=node.operation_id,
+                turn=turn_index, previous_guidance_hash=previous_guidance_hash)
+            expected_refs.add(reference)
+            internal_refs.add(reference)
+        return receipt is not None
+
     while (turn := value(f"{node.operation_id}:tools:{turns}:model-turn")) is not None:
         key = f"{node.operation_id}:tools:{turns}"
         expected_refs.add(_tool_reference(run.run_id, key + ":model-turn"))
         response = ModelInvocationResponse.model_validate(turn["response"])
+        delivered = guidance_delivery(turns)
+        completion_key = key + ":guidance-completion:v1"
+        completion = value(completion_key)
+        if completion is not None:
+            if not delivered or response.tool_calls:
+                raise ValueError("execution guidance completion lacks its delivered final model response")
+            reference = _tool_reference(run.run_id, completion_key)
+            validate_guidance_completion_record(completion, reference=reference,
+                run_id=run.run_id, step_id=node.step_id, commit_id=node.operation_id,
+                turn=turns, delivered_guidance_hash=previous_guidance_hash, candidate=response.content)
+            expected_refs.add(reference)
+            internal_refs.add(reference)
         if not isinstance(turn.get("requestHash"), str) or len(turn["requestHash"]) != 64:
             raise ValueError("read-only retry has an invalid frozen model turn")
         if settled and (response.request_id != key or any(c not in "0123456789abcdef" for c in turn["requestHash"])):
@@ -372,6 +428,11 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
                 raise ValueError("read-only retry contains a write, shell or unknown tool declaration")
             declared[f"{key}:call:{index}"] = (name, function.get("arguments"))
         turns += 1
+    # Delivery is sealed before the next paid model request. A process may
+    # stop after that internal write and before its model-turn is available.
+    guidance_delivery(turns)
+    if value(f"{node.operation_id}:tools:{turns}:guidance-completion:v1") is not None:
+        raise ValueError("execution guidance completion has no frozen model response")
     non_invocations = []
     if not turns:
         # A native Agent can fail while preparing historical evidence, before
@@ -407,17 +468,12 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
         admission = value(operation + ":admission")
         unsettled = value(operation + ":unsettled")
         if tool.startswith("context."):
+            from contracts.context_read import validate_context_read_arguments
             arguments = json.loads(raw_arguments)
-            if not isinstance(arguments, dict) or (tool == "context.list_sources" and arguments):
-                raise ValueError("native retry contains malformed context-read arguments")
-            allowed = {"producerStepId", "fields"} | ({"cursor", "pageTokens"} if tool == "context.read_page" else set())
-            if (set(arguments) - allowed or "cursor" in arguments and arguments["cursor"] is not None and not isinstance(arguments["cursor"], str)
-                    or "pageTokens" in arguments and (type(arguments["pageTokens"]) is not int or arguments["pageTokens"] <= 0)):
-                raise ValueError("native retry contains malformed context-read arguments")
-            if tool != "context.list_sources" and (not isinstance(arguments.get("producerStepId"), str)
-                    or not arguments["producerStepId"] or not isinstance(arguments.get("fields"), list)
-                    or not arguments["fields"] or any(not isinstance(field, str) or not field for field in arguments["fields"])):
-                raise ValueError("native retry contains malformed context-read scope")
+            policy = context_policy or {}
+            budget = policy.get("supplementalReadBudget") or {}
+            validate_context_read_arguments(tool, arguments, nested_read_version=policy.get("nestedReadVersion"),
+                max_read_tokens=budget.get("maxReadTokens"))
             if any(item is not None for item in (request_wal, receipt, cached, admission, unsettled)):
                 raise ValueError("context-read declaration contains unexplained external tool activity")
             continue
@@ -495,6 +551,14 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
                 effects += tool in {"fs.write", "fs.patch", "shell.exec"}
                 tool_evidence.append({"operationKey": operation, "record": record,
                     "requestRef": record["requestRef"], "receiptRef": record["receiptRef"]})
+            elif (receipt["status"] == "completed" and unsettled is None
+                    and record.get("status") == "completed"
+                    and cached.get("data") == _settled_result_data(receipt, record["executionId"], tool)):
+                # Retry safety and usable evidence differ: an unacknowledged or
+                # failed read can be repeated, but only a completed receipt and
+                # its exact cached projection may supply historical content.
+                tool_evidence.append({"operationKey": operation, "record": record,
+                    "requestRef": record["requestRef"], "receiptRef": record["receiptRef"]})
         confirmed += 1
     for ref, _invocation in activity:
         if ref not in expected_refs:
@@ -509,6 +573,7 @@ def _native_session_proof(run, node, workspace, conn, *, non_invocation_prover=N
             **({"retrievalRequestCount": retrieval_requests, "retrievalResultCount": retrieval_results} if retrieval else {}),
             **({"kind": "native_retrieval_readonly" if retrieval else "native_session_not_dispatched"} if not turns else {}),
             **({"nonInvocationProofs": non_invocations} if non_invocations else {}),
+            **({"toolEvidence": tool_evidence} if tool_evidence and not settled else {}),
             **({"kind": "settled_native_session", "authorization": settled_authorization,
                 "settledActionCount": effects, "toolEvidence": tool_evidence} if settled and turns else {}),
             "evidenceFingerprint": stable_checksum(evidence)}
@@ -660,23 +725,37 @@ def assert_settled_operations(services, run):
 
 def settled_retry_observations(services, run, step_id):
     """Revalidate old evidence for this retry; never relabel it as a new action."""
-    if not run.execution_state.get("settledSessionRetryProofs"):
+    settled = run.execution_state.get("settledSessionRetryProofs") or {}
+    readonly = run.execution_state.get("readOnlyRetryProofs") or {}
+    if not settled and not readonly:
         return []
     observations = []
     # A fresh Attempt can already be active when its model context is assembled.
     # Revalidate only admitted historical operations, never demand its new WAL
     # be terminal before it has had an opportunity to execute.
     with sqlite3.connect(services.execution_value_store.db_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
-        for operation, registered in run.execution_state["settledSessionRetryProofs"].items():
+        for operation, registered in {**readonly, **settled}.items():
             if registered.get("stepId") != step_id:
                 continue
             row = conn.execute("SELECT payload_json FROM acg_node_executions WHERE run_id=? AND operation_id=?",
                                (run.run_id, operation)).fetchone()
             if row is None:
-                raise ValueError("settled-session observation lacks its historical execution")
+                raise ValueError("retry observation lacks its historical execution")
             node = NodeExecutionRecord.model_validate_json(row[0])
-            proof = _registered_settled_proof(services, run, node, registered, connection=conn)
-            for item in proof["toolEvidence"]:
+            if operation in settled:
+                proof = _registered_settled_proof(services, run, node, registered, connection=conn)
+            else:
+                proof = assert_native_readonly_retry_safe(services, run, node, connection=conn, allow_historical=True)
+                # Earlier read-only proofs did not index usable results. All
+                # original proof fields, including the complete WAL digest,
+                # must still match; evidence is derived by the same validator.
+                comparable = {key: value for key, value in proof.items()
+                    if key != "toolEvidence" or key in registered}
+                if comparable != registered:
+                    raise ValueError("read-only recovery evidence changed after retry admission")
+            if node.step_id != step_id or proof.get("operationId") != operation:
+                raise ValueError("retry observation belongs to a different node or operation")
+            for item in proof.get("toolEvidence", ()):
                 result = services.execution_value_store.get_tool_value(run_id=run.run_id, key=item["operationKey"] + ":result")
                 observations.append({"kind": "previous_attempt_tool_observation", **item, "result": result["data"]})
     return observations

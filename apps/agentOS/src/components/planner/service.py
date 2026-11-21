@@ -148,6 +148,8 @@ class PlanningEngine:
             observation=observation, task_plan=task_plan,
             llm=self.intent_parser.llm,
             workspace_context_provider=self.workspace_context_provider,
+            result_context_provider=self.result_context_provider,
+            context_projection_provider=self.context_projection_provider,
         )
 
     def _plan_from_workspace_discovery(self, *, observation, task_plan):
@@ -159,7 +161,7 @@ class PlanningEngine:
         data["objective"] = observation.goal
         from contracts.workspace_planning import explicit_workspace_requirements, validate_workspace_plan_revision
         explicit_scope = explicit_workspace_requirements(task_plan)
-        if explicit_scope:
+        if explicit_scope and task_plan.metadata["workspaceDiscovery"]["scopeOrigin"] == "explicit":
             # The accepted discovery contract can originate in precise caller
             # wording even when the original Run has no machine scope field.
             # Give the ordinary intent parser that exact authoritative scope;
@@ -278,6 +280,8 @@ class PlanningEngine:
         template_threshold: float = 0.85,
         react_loop: Optional[Any] = None,
         workspace_context_provider: Callable[[RuntimePlanningObservation], dict[str, Any]] | None = None,
+        result_context_provider: Callable[..., dict[str, Any]] | None = None,
+        context_projection_provider: Callable[..., dict[str, Any]] | None = None,
         workspace_planning_input: Mapping[str, Any] | None = None,
         workspace_planning_domain: str = "general",
         workspace_planning_task_type: str = "general",
@@ -296,6 +300,8 @@ class PlanningEngine:
         # decide_runtime 走受限工具循环；默认 None 保持既有单次决策路径。
         self.react_loop = react_loop
         self.workspace_context_provider = workspace_context_provider
+        self.result_context_provider = result_context_provider
+        self.context_projection_provider = context_projection_provider
         self.workspace_planning_input = deepcopy(dict(workspace_planning_input or {}))
         self.workspace_planning_domain = workspace_planning_domain
         self.workspace_planning_task_type = workspace_planning_task_type

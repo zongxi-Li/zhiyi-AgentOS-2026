@@ -27,13 +27,14 @@ from components.content import ContentManifestStore, ContentWorksetSession
 from adapters.agent_invocation import AgentInvocationAdapter, AgentInvocationError
 from adapters.audited_tool_runtime import AuditedToolRuntime
 from adapters.resource_execution import ResourceExecutionAdapter
-from contracts.communication import validate_contract_payload
+from contracts.communication import schema_top_level_fields, validate_contract_payload
 from contracts.artifacts import canonicalize_artifact_identity, final_synthesis_output_schema
 from contracts.governance import AuditRequest
 from contracts.memory import MemoryPolicy, MemoryType
 from contracts.workflow import RuntimeMissionRecord, RuntimeRunRecord, WorkflowDefinition, WorkflowStep
 from contracts.compiled_acg import CompiledACGPackage, EvidenceManifest, MemoryManifest, SkillManifest
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+from contracts.execution_context import has_retry_evidence
 from contracts.content import ContentKind
 from contracts.planning import TaskImplementationBinding, TaskPlan
 from service.agents.base import BaseAgent, AgentRunContext
@@ -76,6 +77,12 @@ def _workspace_read_only_step(run: RuntimeRunRecord, step: WorkflowStep) -> bool
 
 class EntropyBudgetExceededError(ValueError):
     """跨步骤上下文的估算熵超过运行允许的预算，Adapter 尚未被调用。"""
+
+
+class NodeEvidenceReferenceError(ValueError):
+    """An Agent result cites evidence outside its compiled evidence contract."""
+
+    code = "OUTPUT_CONTRACT_VIOLATION"
 
 
 def _safe_request_diagnostics(value: object) -> dict[str, Any]:
@@ -165,10 +172,12 @@ class ACGNodeRunner:
         compiled_package: CompiledACGPackage | None = None,
         fault_hook: Callable[[str], None] | None = None,
         invocation_guard: Callable[[str, ACGExecutionState], None] | None = None,
+        workflow_store: object | None = None,
     ) -> None:
         """注入本 run 冻结的服务、步骤和 Agent 解析结果；不创建外部连接。"""
         self.task = task
         self.run = run
+        self.workflow_store = workflow_store
         from contracts.mission_semantic import run_intent_basis
         self.mission_intent_basis = run_intent_basis(run)
         if self.mission_intent_basis is not None:
@@ -408,6 +417,16 @@ class ACGNodeRunner:
             # Broker 是唯一正文读取入口；读取成功后才用已裁剪的 ContextPack 登记
             # 消费与交互血缘。账本仅封存摘要、字段名和引用，恢复会复用 commitId。
             self.communicator.record_context_consumption(pack, operation_id=commit_id)
+        # Preserve the admitted input before any Agent/model invocation, so a
+        # failed execution remains inspectable without publishing an output.
+        # The reference belongs to the execution WAL, not committed graph state.
+        context_ref = self.value_store.put_context_pack(
+            run_id=state.run_id, step_id=step_id,
+            payload=pack.model_dump(by_alias=True, mode="json"), operation_id=commit_id,
+        )
+        execution_record = self.value_store.transition_node_execution(execution_record.model_copy(update={
+            "artifact_refs": {**execution_record.artifact_refs, "context": context_ref},
+        }))
         if pack.contract_status != "valid":
             raise ValueError(f"input contract is incomplete for {step_id}: {', '.join(pack.missing_fields)}")
         input_schema = step.input.get("schema", {}) if isinstance(step.input, dict) else {}
@@ -427,6 +446,11 @@ class ACGNodeRunner:
         memories, retrieval_event = self._frozen_memory_retrieval(
             step=step, execution=execution_record, policy=memory_policy,
         )
+        if self.value_store.get_tool_value(run_id=state.run_id, key=memory_retrieval_key(commit_id)) is not None:
+            execution_record = self.value_store.transition_node_execution(execution_record.model_copy(update={
+                "artifact_refs": {**execution_record.artifact_refs,
+                    "memoryInput": memory_retrieval_reference(state.run_id, commit_id)},
+            }))
         memory_access = {
             "policyId": memory_policy["policyId"],
             "read": memory_policy["read"],
@@ -470,6 +494,15 @@ class ACGNodeRunner:
             if readonly:
                 allowed.intersection_update(_WORKSPACE_READ_ONLY_TOOLS)
             step_tool_runtime = step_tool_runtime.scoped(allowed, allow_unstructured_run=not readonly)
+        from runtime.execution_guidance import bind_execution_guidance
+        guidance, guidance_reader = bind_execution_guidance(workflow_store=self.workflow_store,
+            run=self.run, step_id=step_id, commit_id=commit_id, value_store=self.value_store,
+            legacy_execution=committed is not None)
+        from contracts.execution_guidance import execution_guidance_reference
+        execution_record = self.value_store.transition_node_execution(execution_record.model_copy(update={
+            "artifact_refs": {**execution_record.artifact_refs,
+                "executionGuidance": execution_guidance_reference(state.run_id, commit_id)},
+        }))
         agent_context = AgentRunContext(
             task=self.task,
             run=self.run,
@@ -486,6 +519,8 @@ class ACGNodeRunner:
             commitId=commit_id,
             attemptId=execution_record.attempt_id,
             agentRegistration=self.agent_registrations.get(step_id),
+            executionGuidance=guidance,
+            executionGuidanceReader=guidance_reader,
         )
         if hasattr(step_tool_runtime, 'bind_context'):
             guard = (lambda: self.invocation_guard(step_id, state)) if self.invocation_guard else None
@@ -496,6 +531,9 @@ class ACGNodeRunner:
             RuntimeEvent(eventType="node.started", runId=state.run_id, nodeId=step_id,
                          attemptId=self.attempt_ids.get(step_id) or commit_id or step_id, sequence=0,
                          payload={"nodeTitle": step.name, "agentName": agent.profile.agent_name,
+                                  "contextRef": context_ref,
+                                  **({"memoryInputRef": execution_record.artifact_refs["memoryInput"]}
+                                     if "memoryInput" in execution_record.artifact_refs else {}),
                                   **({"agentRegistration": agent_context.agent_registration.model_dump(by_alias=True, mode="json")}
                                      if agent_context.agent_registration else {})}),
         )
@@ -542,6 +580,32 @@ class ACGNodeRunner:
         final_attempt_id = getattr(agent_context.model_runtime, "last_attempt_id", None)
         if isinstance(final_attempt_id, str) and final_attempt_id:
             self.attempt_ids[step_id] = final_attempt_id
+        # A completed tool action has its own receipt. Accept the candidate's
+        # schema and citation identities before settling its output for audit.
+        payload = dict(output.output)
+        validate_contract_payload(
+            payload,
+            final_synthesis_output_schema(step.output_spec, step.logical_role),
+            step_id=step_id,
+            direction="output",
+        )
+        allowed = set(schema_top_level_fields(step.output_spec)) if step.output_spec else set(payload)
+        controlled = {key: value for key, value in payload.items() if key in allowed}
+        evidence_refs = list(output.evidence_refs)
+        for key in ("evidence_refs", "evidenceRefs"):
+            if isinstance(controlled.get(key), list):
+                evidence_refs.extend(controlled[key])
+        evidence_refs = list(dict.fromkeys(str(item) for item in evidence_refs if str(item).strip()))
+        allowed_evidence_refs = set()
+        if self.evidence_manifest.for_step(step_id, "produce"):
+            allowed_evidence_refs.update(
+                str(source["citationId"]) for source in output.sources if source.get("citationId")
+            )
+        if self.evidence_manifest.for_step(step_id, "consume"):
+            allowed_evidence_refs.update(pack.evidence_refs)
+        if set(evidence_refs) - allowed_evidence_refs:
+            raise NodeEvidenceReferenceError(f"step {step_id} produced unauthorized evidence references")
+
         execution_record = self.value_store.transition_node_execution(
             execution_record.model_copy(update={"phase": NodeExecutionPhase.EXECUTED})
         )
@@ -556,18 +620,22 @@ class ACGNodeRunner:
         if self.communication_broker is not None:
             state.communication_usage = self.communication_broker.usage_snapshot()
         tool_events = list(output.tool_executions)
+        historical_tool_events = []
+        if self.run.execution_state.get("retryEvidenceContextVersion") == 1 and has_retry_evidence(agent_context):
+            collect_previous = getattr(step_tool_runtime, "previous_attempt_observations", None)
+            if not callable(collect_previous):
+                raise ValueError("retry evidence requires its bound collector before result commit")
+            for item in await collect_previous(agent_context):
+                record = item.get("record") or {}
+                if record.get("tool") not in {"fs.read", "fs.list"} or record.get("status") != "completed":
+                    continue
+                if (record.get("runId") != state.run_id or record.get("stepId") != step_id
+                        or record.get("commitId") == commit_id):
+                    raise ValueError("historical tool evidence differs from the current node's prior Attempt")
+                historical_tool_events.append(record)
         runtime_events = getattr(step_tool_runtime, "events", None)
         if isinstance(runtime_events, list):
             tool_events.extend(runtime_events)
-        payload = dict(output.output)
-        validate_contract_payload(
-            payload,
-            final_synthesis_output_schema(step.output_spec, step.logical_role),
-            step_id=step_id,
-            direction="output",
-        )
-        allowed = set((step.output_spec.get("properties") or {}).keys()) if step.output_spec else set(payload)
-        controlled = {key: value for key, value in payload.items() if key in allowed}
         risk_level = (output.risk_level or "").lower()
         severity_counts = {risk_level: 1} if risk_level else {}
         decision = self.execution_audit.assess_node(
@@ -601,33 +669,6 @@ class ACGNodeRunner:
             })
         )
         requires_review = step.requires_review or persisted_decision.outcome == "review"
-        output_evidence = controlled.get("evidence_refs") or controlled.get("evidenceRefs") or []
-        evidence_refs = [
-            *output.evidence_refs,
-            *(output_evidence if isinstance(output_evidence, list) else []),
-        ]
-        evidence_refs = list(dict.fromkeys(str(item) for item in evidence_refs if str(item).strip()))
-        produced_citation_refs = {
-            str(item.get("citationId"))
-            for item in output.sources
-            if isinstance(item, dict) and str(item.get("citationId") or "").strip()
-        }
-        upstream_evidence_refs = {
-            str(item) for item in getattr(pack, "evidence_refs", ()) if str(item).strip()
-        }
-        produce_allowed = bool(self.evidence_manifest.for_step(step_id, "produce"))
-        consume_allowed = bool(self.evidence_manifest.for_step(step_id, "consume"))
-        unauthorized = {
-            item for item in evidence_refs
-            if not (
-                (produce_allowed and item in produced_citation_refs)
-                or (consume_allowed and item in upstream_evidence_refs)
-            )
-        }
-        if unauthorized:
-            raise ValueError(
-                f"step {step_id} produced unauthorized evidence references: {sorted(unauthorized)}"
-            )
         memory_event = StructuredMemoryEventBuilder.build(
             run_id=state.run_id,
             step_id=step_id,
@@ -664,12 +705,6 @@ class ACGNodeRunner:
             run_id=state.run_id,
             step_id=step_id,
             payload=controlled,
-            operation_id=commit_id,
-        )
-        context_ref = self.value_store.put_context_pack(
-            run_id=state.run_id,
-            step_id=step_id,
-            payload=pack.model_dump(by_alias=True, mode="json"),
             operation_id=commit_id,
         )
         self._inject_fault("after_values")
@@ -711,22 +746,13 @@ class ACGNodeRunner:
             for item in communication_reads
             if isinstance(item, dict) and item.get("outputRef")
         ))
+        artifact_refs = {**execution_record.artifact_refs, "output": output_ref,
+                         "context": context_ref, "trace": f"trace:{step_id}"}
+        if pending_memory is not None and not requires_review:
+            artifact_refs["memory"] = f"memory:{state.run_id}:{step_id}"
         committed_execution_record = execution_record.model_copy(update={
             "phase": NodeExecutionPhase.COMMITTED,
-            "artifact_refs": {
-                key: value
-                for key, value in {
-                    "output": output_ref,
-                    "context": context_ref,
-                    "memory": (
-                        f"memory:{state.run_id}:{step_id}"
-                        if pending_memory is not None and not requires_review
-                        else None
-                    ),
-                    "trace": f"trace:{step_id}",
-                }.items()
-                if isinstance(value, str)
-            },
+            "artifact_refs": artifact_refs,
             "commit_id": commit_id,
         })
         result = {
@@ -744,6 +770,8 @@ class ACGNodeRunner:
             # 生成正文或供应商对象。Trace 投影层可直接消费该紧凑列表。
             "modelInvocations": self._safe_model_invocations(output.model_invocations),
             "toolCalls": self._safe_tool_calls(tool_events),
+            **({"historicalToolEvidence": self._safe_tool_calls(historical_tool_events)}
+               if historical_tool_events else {}),
             "provenanceEvents": self.communicator.drain_provenance_events(step_id=step_id),
             # Broker 的读取事件只含引用、字段名、计数和通道，Runtime 会投影为安全
             # Trace；正文仍只存在于 Value Store 与当前 Agent 调用栈。

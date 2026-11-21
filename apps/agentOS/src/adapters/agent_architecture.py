@@ -12,6 +12,7 @@ from contracts.capability import (
     CapabilityKind,
     CapabilityManifest,
 )
+from contracts.execution_context import execution_attempt_id, project_execution_context
 from service.agents.base import AgentOutput, AgentProfile, AgentRunContext, BaseAgent
 
 
@@ -87,6 +88,8 @@ class FrameworkAgent(BaseAgent):
                 "runId": context.run.run_id,
                 "workflowId": context.workflow.workflow_id,
                 "stepId": context.step.step_id,
+                "attemptId": execution_attempt_id(context),
+                "commitId": str(context.commit_id or ""),
             },
             options={"commitId": context.commit_id} if context.commit_id else {},
         )
@@ -117,15 +120,7 @@ class FrameworkAgent(BaseAgent):
     @staticmethod
     def _input_for(context: AgentRunContext) -> dict[str, Any]:
         """只投影当前节点已经获得的任务、解析输入和上下文包。"""
-        pack = context.context_pack
-        pack_data = getattr(pack, "data", {}) if pack is not None else {}
-        source_data = getattr(pack, "source_data", {}) if pack is not None else {}
-        evidence_refs = getattr(pack, "evidence_refs", []) if pack is not None else []
-        delivered_context = {
-            "data": dict(pack_data) if isinstance(pack_data, dict) else {},
-            "sourceData": dict(source_data) if isinstance(source_data, dict) else {},
-            "evidenceRefs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
-        }
+        delivered_context = project_execution_context(context)
         if context.mission_intent_basis is not None:
             from runtime.planner_input_adapter import material_input
             return {

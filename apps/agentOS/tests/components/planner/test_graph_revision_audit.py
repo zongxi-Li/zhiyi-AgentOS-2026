@@ -93,10 +93,11 @@ def test_existing_execution_channels_protect_pending_identity(ready_boundary, ch
     with runtime.run_lock_manager.lock_for(run_id):
         source = runtime.planning_commit_authority.accept_patch_locked(run_id, candidate,
             proposal_id="channel", idempotency_key="channel")
-    assert source.status == "ACCEPTED", source.model_dump()
-    result = runtime.accept_graph_revision(run_id, source.commit_id, idempotency_key="graph")
-    assert result.status == "REJECTED", result.model_dump()
-    assert len(ledger.pending_events()) == 1
+    # Semantic acceptance and graph safe-cut share the same protected execution
+    # facts. Reject at the first boundary instead of creating an unusable head.
+    assert source.status == "REJECTED" and source.code == Code.INVALID_PROPOSAL
+    assert source.reason == "started or settled work cannot be changed"
+    assert not ledger.pending_events()
 
 
 @pytest.mark.parametrize("channel", ["outputRefs", "blackboardSnapshots"])

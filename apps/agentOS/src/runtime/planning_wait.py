@@ -3,9 +3,8 @@
 from components.executor import ACGExecutionState
 from contracts.execution import WorkflowProgressPhase
 from contracts.runtime_planning import RuntimeConditionWake, RuntimePlanningState, requirement_fingerprint
-from contracts.resource import ExecutionRequirement
 from contracts.workflow import WorkflowStatus, TraceEventType, utc_now
-from runtime.binding import assess_run_requirement
+from runtime.binding import assess_run_requirement, effective_recovery_requirement
 from runtime.ports import CollaboratorAccess
 from runtime.state_persistence import acg_execution_state_from_run
 from runtime.workspace_review_execution import automatic_workspace_review, retire_stale_workspace_continuation
@@ -93,8 +92,7 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         elif condition.kind == "requirement_available":
             if condition.step_id in set(state.completed_step_ids) | set(state.skipped_step_ids):
                 raise ValueError("resource wait targets settled work")
-            requirement = ExecutionRequirement.model_validate(
-                run.execution_state["bindingRequirements"][condition.step_id])
+            requirement = effective_recovery_requirement(run, condition.step_id)
             if requirement_fingerprint(requirement) != condition.requirement_id:
                 raise ValueError("resource wait requirement changed after arming")
             if timestamp >= condition.expires_at:
@@ -155,8 +153,7 @@ class RuntimePlanningWaitService(CollaboratorAccess):
         for fact in blocked:
             if fact.step_id in settled:
                 raise ValueError("resource observation targets settled work")
-            requirement = ExecutionRequirement.model_validate(
-                run.execution_state["bindingRequirements"][fact.step_id])
+            requirement = effective_recovery_requirement(run, fact.step_id)
             if requirement_fingerprint(requirement) != fact.requirement_id:
                 raise ValueError("resource observation requirement changed after waiting")
             requirements.append((fact.step_id, requirement))

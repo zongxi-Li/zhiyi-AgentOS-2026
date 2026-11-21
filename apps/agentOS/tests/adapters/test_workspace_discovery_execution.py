@@ -96,7 +96,7 @@ class DiscoveryPlannerModel:
                     ("understand", "Confirm review plan", "Apply the observed project configuration to the review criteria",
                      "task_understanding", "understanding"),
                     ("inspect-source", "Inspect source", "Acquire representative source details for the code review",
-                     "information_extraction", "workspace_acquisition"),
+                     "information_retrieval", "acquisition"),
                     ("analyze", "Analyze findings", "Assess defects using the committed reviewed source evidence",
                      "analysis", "analysis"),
                     ("report", "Write report", "Deliver the source review and configured test recommendations",

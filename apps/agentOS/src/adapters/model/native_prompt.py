@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
+from contracts.execution_guidance import EXECUTION_GUIDANCE_POLICY
 from contracts.mission_semantic import MissionIntentBasis
 
 from .prompt_context import project_inline_content, project_prompt_context
@@ -86,6 +88,7 @@ class NativeCapabilityPromptBuilder:
         tool_observations: list[dict[str, Any]] | None = None,
         context_fields: dict[str, list[str]] | None = None,
         mission_intent_basis: MissionIntentBasis | None = None,
+        execution_guidance: dict[str, Any] | None = None,
     ) -> PromptEnvelope:
         """Compose trusted execution policy separately from structured runtime data."""
         descriptor = capability_descriptor.model_dump(
@@ -136,15 +139,23 @@ class NativeCapabilityPromptBuilder:
                 {"schema": output_schema},
             ),
         }
+        if execution_guidance:
+            request["executionGuidance"] = trust_envelope(
+                TrustClass.RUNTIME_AUTHORITATIVE, execution_guidance,
+                authority="accepted_user_guidance_and_public_planner_decision",
+            )
         if aliases:
             request["contextPack"]["upstreamOutputRefs"] = trust_envelope(
                 TrustClass.AGENT_GENERATED, aliases,
             )
         request["contextPack"] = project_inline_content(request["contextPack"])
-        return compose_execution_prompt(
+        envelope = compose_execution_prompt(
             descriptor=capability_descriptor,
             execution_request=request,
         )
+        if execution_guidance:
+            envelope = replace(envelope, system_prompt=envelope.system_prompt + "\n" + EXECUTION_GUIDANCE_POLICY)
+        return envelope
 
     @staticmethod
     def _canonical_task_scope(task_title: str, task_input: dict[str, Any]) -> dict[str, Any]:
