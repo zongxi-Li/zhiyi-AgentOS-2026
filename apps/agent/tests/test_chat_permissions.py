@@ -228,6 +228,8 @@ def test_approval_ttl_expires_fail_closed_without_reaching_executor():
             await service.resolve(required_payload['approval']['approvalId'],
                 decision=ApprovalDecision.ALLOW_ONCE, session_id='session-expiry')
         assert expired.value.code == 'APPROVAL_EXPIRED'
+        assert expired.value.approval.status == 'expired'
+        assert expired.value.approval.approval_id == required_payload['approval']['approvalId']
 
     asyncio.run(scenario())
 
@@ -285,6 +287,88 @@ def test_approval_endpoint_resolves_pending_request_without_grant_authority(monk
         assert response["decision"] == "allow_once"
         await pending
         assert events[-1][0] == "approval_resolved"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('initial,repeated,status,executed', [
+    (ApprovalDecision.ALLOW_ONCE, ApprovalDecision.ALLOW_ONCE, 'approved', 1),
+    (ApprovalDecision.ALLOW_ONCE, ApprovalDecision.DENY, 'approved', 1),
+    (ApprovalDecision.DENY, ApprovalDecision.ALLOW_ONCE, 'denied', 0),
+])
+def test_replayed_approval_returns_original_terminal_receipt_without_repeating_work(
+    initial, repeated, status, executed,
+):
+    async def scenario():
+        service, executor, queue = ChatPermissionService(), _Executor(), asyncio.Queue()
+        context = ToolInvocationContext(_catalog(service, executor), frozenset({'write_file'}),
+            session_id='owner', permission_event_queue=queue)
+        task = asyncio.create_task(context.invoke('write_file', {'path': 'one.txt', 'content': 'A'}, call_id='call'))
+        _, required = await queue.get()
+        approval_id = required['approval']['approvalId']
+        await service.resolve(approval_id, decision=initial, session_id='owner')
+        await task
+        before = tuple(executor.calls), service.session_store.grants('owner')
+        with pytest.raises(ApprovalResolutionError) as replayed:
+            await service.resolve(approval_id, decision=repeated, session_id='owner',
+                invocation_id='call', capability_id='fs.write', relative_path='one.txt')
+        assert replayed.value.code == 'APPROVAL_REPLAYED'
+        assert replayed.value.status_code == 409
+        assert replayed.value.approval.status == status
+        assert replayed.value.approval.invocation_id == 'call'
+        assert len(executor.calls) == executed
+        assert (tuple(executor.calls), service.session_store.grants('owner')) == before
+        assert service.pending(approval_id) is None
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('override,code', [
+    ({'session_id': 'other'}, 'APPROVAL_SESSION_MISMATCH'),
+    ({'invocation_id': 'other'}, 'APPROVAL_INVOCATION_MISMATCH'),
+    ({'capability_id': 'shell.exec'}, 'APPROVAL_SCOPE_MISMATCH'),
+    ({'relative_path': 'other.txt'}, 'APPROVAL_SCOPE_MISMATCH'),
+])
+def test_completed_approval_receipt_retains_original_session_and_scope_isolation(override, code):
+    async def scenario():
+        service, queue = ChatPermissionService(), asyncio.Queue()
+        task = asyncio.create_task(service.authorize(tool_name='write_file', arguments={'path': 'one.txt'},
+            call_id='call', session_id='owner', workspace_id='workspace', emit=lambda event, data: queue.put((event, data))))
+        _, required = await queue.get()
+        approval_id = required['approval']['approvalId']
+        await service.resolve(approval_id, decision=ApprovalDecision.ALLOW_ONCE, session_id='owner')
+        await task
+        parameters = {'session_id': 'owner', 'invocation_id': 'call', 'capability_id': 'fs.write',
+                      'relative_path': 'one.txt', **override}
+        with pytest.raises(ApprovalResolutionError) as rejected:
+            await service.resolve(approval_id, decision=ApprovalDecision.DENY, **parameters)
+        assert rejected.value.code == code and rejected.value.approval is None
+
+    asyncio.run(scenario())
+
+
+def test_approval_endpoint_exposes_scoped_terminal_receipt_without_claiming_new_decision(monkeypatch):
+    async def scenario():
+        service, queue = ChatPermissionService(), asyncio.Queue()
+        task = asyncio.create_task(service.authorize(tool_name='run_command', arguments={'command': 'inspect', 'cwd': '.'},
+            call_id='command', session_id='owner', workspace_id='workspace', emit=lambda event, data: queue.put((event, data))))
+        _, required = await queue.get()
+        approval_id = required['approval']['approvalId']
+        await service.resolve(approval_id, decision=ApprovalDecision.ALLOW_ONCE, session_id='owner')
+        await task
+        monkeypatch.setattr(chat, 'get_chat_permission_service', lambda: service)
+        with pytest.raises(chat.HTTPException) as replayed:
+            await chat.resolve_chat_approval(approval_id, chat.ChatApprovalDecisionRequest(
+                decision='deny', sessionId='owner', invocationId='command', capabilityId='shell.exec', relativePath='.'))
+        assert replayed.value.status_code == 409
+        detail = replayed.value.detail
+        assert detail['code'] == 'APPROVAL_REPLAYED'
+        assert detail['approval']['status'] == 'approved'
+        assert detail['approval']['approvalId'] == approval_id
+        assert 'decision' not in detail
+        with pytest.raises(chat.HTTPException) as foreign:
+            await chat.resolve_chat_approval(approval_id, chat.ChatApprovalDecisionRequest(decision='allow_once', sessionId='other'))
+        assert foreign.value.status_code == 403 and 'approval' not in foreign.value.detail
 
     asyncio.run(scenario())
 

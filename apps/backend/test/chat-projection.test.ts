@@ -40,6 +40,94 @@ describe('shared chat projection', () => {
     expect((metadata.executionSummary as any[]).find(item=>item.stage==='tool:write_file:once'))
       .toMatchObject({status:'interrupted',approval:{status:'expired'}});
   });
+  it('folds nested approval events and their tool execution into one durable summary', () => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',toolCallId:'call-one',invocationId:'call-one',
+      toolName:'run_command',capabilityId:'shell.exec',sessionId:'session-one',status:'pending'};
+    capture.apply({event:'approval_required',data:{approval}});
+    capture.apply({event:'approval_resolved',data:{approval:{...approval,status:'approved'},decision:'allow_once'}});
+    capture.apply({event:'tool_start',data:{callId:'call-one',toolName:'run_command'}});
+    capture.apply({event:'tool_result',data:{callId:'call-one',toolName:'run_command',terminal:{stdout:'verified'}}});
+    capture.apply({event:'done',data:{status:'completed'}});
+    const metadata = capture.metadata();
+    expect(metadata.toolExecutions).toEqual([expect.objectContaining({callId:'call-one',toolName:'run_command',
+      status:'completed',approval:{...approval,status:'approved'},terminal:{stdout:'verified'}})]);
+    expect((metadata.executionSummary as any[]).filter(item=>item.stage.startsWith('tool:'))).toEqual([
+      expect.objectContaining({stage:'tool:run_command:call-one',status:'completed',approval:{...approval,status:'approved'}}),
+    ]);
+  });
+  it('keeps parallel approvals for the same tool independent', () => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',toolCallId:'call-one',toolName:'run_command',status:'pending'};
+    const other = {...approval,approvalId:'approval-two',toolCallId:'call-two'};
+    capture.apply({event:'approval_required',data:{approval}});
+    capture.apply({event:'approval_required',data:{approval:other}});
+    capture.apply({event:'approval_resolved',data:{approval:{...approval,status:'approved'}}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'call-one',approval:{...approval,status:'approved'}}),
+      expect.objectContaining({callId:'call-two',approval:other}),
+    ]);
+  });
+  it.each(['approved','denied','expired'])('does not reopen a %s approval on a late pending event', status => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',invocationId:'call-one',toolName:'run_command',status:'pending'};
+    capture.apply({event:'approval_resolved',data:{approval:{...approval,status}}});
+    capture.apply({event:'approval_required',data:{approval}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'call-one',status:'running',approval:{...approval,status}}),
+    ]);
+  });
+  it.each([
+    ['tool_result','completed'],['tool_error','failed'],['execution_cancelled','cancelled'],
+  ])('retains the %s outcome and output when approval events arrive late', (event, status) => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',toolCallId:'call-one',toolName:'run_command',status:'pending'};
+    const terminal = {command:'node --version',stdout:'v24'};
+    const activity = {kind:'command',status,summary:'check node'};
+    capture.apply({event:'approval_required',data:{approval}});
+    capture.apply({event,data:{callId:'call-one',toolName:'run_command',terminal,activity}});
+    capture.apply({event:'approval_resolved',data:{approval:{...approval,status:'approved'}}});
+    capture.apply({event:'approval_required',data:{approval}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'call-one',status,terminal,activity,approval:{...approval,status:'approved'}}),
+    ]);
+  });
+  it('accepts a new approval identity for an existing call', () => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',toolCallId:'call-one',toolName:'run_command',status:'approved'};
+    capture.apply({event:'approval_resolved',data:{approval}});
+    capture.apply({event:'approval_required',data:{approval:{...approval,approvalId:'approval-two',status:'pending'}}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'call-one',status:'approval_required',
+        approval:{...approval,approvalId:'approval-two',status:'pending'}}),
+    ]);
+  });
+  it('uses the approval ID as a stable fallback and upgrades it when the call ID becomes available', () => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',toolName:'run_command',status:'pending'};
+    capture.apply({event:'approval_required',data:{approval}});
+    capture.apply({event:'approval_required',data:{approval}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'approval:approval-one',approval}),
+    ]);
+    capture.apply({event:'approval_resolved',data:{approval:{...approval,toolCallId:'call-one',status:'approved'}}});
+    capture.apply({event:'approval_required',data:{approval}});
+    capture.apply({event:'tool_result',data:{callId:'call-one',toolName:'run_command'}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'call-one',status:'completed',approval:{...approval,toolCallId:'call-one',status:'approved'}}),
+    ]);
+  });
+  it('keeps approvals without call IDs separate by approval identity', () => {
+    const capture = new StreamCapture();
+    const approval = {approvalId:'approval-one',toolName:'run_command',status:'pending'};
+    capture.apply({event:'approval_required',data:{approval}});
+    capture.apply({event:'approval_required',data:{approval:{...approval,approvalId:'approval-two'}}});
+    capture.apply({event:'approval_resolved',data:{approval:{...approval,status:'denied'}}});
+    expect(capture.metadata().toolExecutions).toEqual([
+      expect.objectContaining({callId:'approval:approval-one',approval:{...approval,status:'denied'}}),
+      expect.objectContaining({callId:'approval:approval-two',approval:{...approval,approvalId:'approval-two'}}),
+    ]);
+  });
   it('preserves text/tool/text boundaries and updates a tool in place', () => {
     const blocks: TranscriptBlock[] = [];
     for (const event of [

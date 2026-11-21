@@ -19,4 +19,23 @@ describe('approval terminal responses', () => {
     request.defaults.adapter=async config=>({status:status as number,statusText:'error',headers:{},config,data:{detail:{code,message:'real error'}}})
     await expect(chatApi.resolveApproval('approval',{decision:'allow_once',sessionId:'session'})).rejects.toMatchObject({response:{status}})
   })
+  it.each(['approved', 'denied'])('reconciles an already %s approval only with its matching original receipt', async status => {
+    const notify=vi.spyOn(ElMessage,'error')
+    request.defaults.adapter=async config=>({status:409,statusText:'conflict',headers:{},config,
+      data:{detail:{code:'APPROVAL_REPLAYED',message:'already resolved',approval:{approvalId:'approval',
+        sessionId:'session',invocationId:'call',capabilityId:'shell.exec',relativePath:'.',status}}}})
+    const result=await chatApi.resolveApproval('approval',{decision:'allow_once',sessionId:'session',
+      invocationId:'call',capabilityId:'shell.exec',relativePath:'.'})
+    expect(result).toEqual({approvalId:'approval',status})
+    expect(notify).not.toHaveBeenCalled()
+  })
+  it.each(['sessionId','invocationId','capabilityId','relativePath','approvalId','status'])('rejects a replay receipt with a mismatched %s', async key => {
+    const original:Record<string,string>={approvalId:'approval',sessionId:'session',invocationId:'call',
+      capabilityId:'shell.exec',relativePath:'.',status:'approved'}
+    original[key]='wrong'
+    request.defaults.adapter=async config=>({status:409,statusText:'conflict',headers:{},config,
+      data:{detail:{code:'APPROVAL_REPLAYED',message:'real conflict',approval:original}}})
+    await expect(chatApi.resolveApproval('approval',{decision:'allow_once',sessionId:'session',
+      invocationId:'call',capabilityId:'shell.exec',relativePath:'.'})).rejects.toMatchObject({code:'APPROVAL_REPLAYED'})
+  })
 })

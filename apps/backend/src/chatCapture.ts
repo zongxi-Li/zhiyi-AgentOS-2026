@@ -103,10 +103,42 @@ export class StreamCapture {
       return envelope;
   }
   private addTool(data: Record<string, unknown>) {
-    const key = String(data.callId ?? data.toolName ?? this.tools.size);
-    const previous = this.tools.get(key) || {};
+    const record = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown> : undefined;
+    const identity = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const approval = record(data.approval);
+    const approvalId = identity(approval?.approvalId);
+    const callId = identity(data.callId) ?? identity(approval?.toolCallId) ?? identity(approval?.invocationId);
+    const toolName = identity(data.toolName) ?? identity(approval?.toolName);
+    let normalizedCallId = callId ?? (approvalId ? `approval:${approvalId}` : undefined);
+    // Approval events carry their call identity inside approval, unlike tool events.
+    // An approval without any identity cannot safely become a durable control.
+    if (approval && !normalizedCallId && !toolName) return;
+    let key = normalizedCallId ?? toolName ?? String(this.tools.size);
+    let previous = this.tools.get(key);
+    if (!previous && approvalId) {
+      for (const [previousKey, item] of this.tools) if (identity(record(item.approval)?.approvalId) === approvalId) {
+        previous = item;
+        if (!callId && identity(item.callId)) {
+          normalizedCallId = identity(item.callId);
+          key = previousKey;
+        } else this.tools.delete(previousKey);
+        break;
+      }
+    }
+    previous ??= {};
+    const previousApproval = record(previous.approval);
+    const staleApproval = approvalId && approvalId === identity(previousApproval?.approvalId)
+      && ['approved', 'denied', 'expired'].includes(String(previousApproval?.status)) && approval?.status === 'pending';
+    data = { ...data, ...(normalizedCallId ? {callId: normalizedCallId} : {}), ...(toolName ? {toolName} : {}),
+      ...(staleApproval ? {approval: {...approval, ...previousApproval}, status: previous.status} : {}) };
     if ((data.activity as any)?.status === 'running') data = { ...data, status: 'running' };
-    if (['completed', 'failed', 'cancelled'].includes(String(previous.status)) && data.status === 'running') return;
+    if (['completed', 'failed', 'cancelled'].includes(String(previous.status))
+      && ['running', 'approval_required'].includes(String(data.status))) {
+      data = { ...data, status: previous.status,
+        ...(previous.terminal !== undefined ? {terminal: previous.terminal} : {}),
+        ...(previous.activity !== undefined ? {activity: previous.activity} : {}) };
+    }
     this.tools.set(key, { ...previous, ...Object.fromEntries(Object.entries(data).filter(([field, value]) => value !== undefined
       && ['callId', 'toolName', 'status', 'durationMs', 'inputSummary', 'outputSummary', 'sourceRefs', 'errorCode', 'terminal', 'activity', 'approval'].includes(field))) });
   }

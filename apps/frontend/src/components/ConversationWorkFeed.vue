@@ -11,7 +11,7 @@
           :class="{ 'is-resolved': item.approval?.status !== 'pending' }"
         >
           <div class="approval-work__title">
-            {{ item.approval?.status === 'expired' ? '审批已过期' : item.approval?.operation === 'Run command' ? '需要确认命令执行' : '需要确认文件操作' }}
+            {{ item.approval?.status === 'approved' ? '审批已允许' : item.approval?.status === 'denied' ? '审批已拒绝' : item.approval?.status === 'expired' ? '审批已过期' : item.approval?.operation === 'Run command' ? '需要确认命令执行' : '需要确认文件操作' }}
           </div>
           <div class="approval-work__summary">{{ item.approval?.operationSummary }}</div>
           <div v-if="item.approval?.command" class="approval-work__command">
@@ -121,6 +121,7 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { chatApi, type ChatApprovalDecision } from '@/services/api/chat'
 import { wasErrorUserNotified } from '@/utils/request'
+import { normalizeExecutionSummary } from '@/features/chat/executionSummary'
 
 interface TerminalExecution {
   command: string
@@ -178,16 +179,23 @@ interface Props {
 
 const props = defineProps<Props>()
 const approvalBusy = ref<Record<string, boolean>>({})
+const approvalOutcomes = ref<Record<string, string>>({})
+const approvalKey = (approval: ChatApproval) => JSON.stringify([approval.sessionId, approval.approvalId])
+const workItems = computed(() => normalizeExecutionSummary(props.items).map(item => {
+  const approval = item.approval
+  const status = approval && approvalOutcomes.value[approvalKey(approval)]
+  return status ? { ...item, approval: { ...approval!, status } } : item
+}))
 
-const terminalActivities = computed(() => props.items
+const terminalActivities = computed(() => workItems.value
   .filter(item => item.terminal || item.approval?.status !== 'expired')
   .filter(item => item.stage.split(':')[1] === 'terminal' || item.stage.split(':')[1] === 'run_command'))
 
-const fileActivities = computed(() => props.items
+const fileActivities = computed(() => workItems.value
   .filter(item => item.activity?.status === 'completed' || item.approval?.status !== 'expired')
   .filter(item => item.activity && item.activity.kind !== 'terminal'))
 
-const approvalActivities = computed(() => props.items
+const approvalActivities = computed(() => workItems.value
   .filter(item => item.approval))
 
 const pendingApprovalCount = computed(() => approvalActivities.value
@@ -216,7 +224,18 @@ const resolveApproval = async (item: WorkFeedItem, decision: ChatApprovalDecisio
       capabilityId: approval.capabilityId,
       relativePath: approval.relativePath
     })
-    if (result.status === 'expired') approval.status = 'expired'
+    const status = result.status === 'resolved'
+      ? (result.decision === 'deny' ? 'denied' : 'approved') : result.status
+    if (['approved', 'denied', 'expired'].includes(status)) {
+      approvalOutcomes.value = { ...approvalOutcomes.value, [approvalKey(approval)]: status }
+      // Parent work feeds may shallow-copy items. Update the underlying matching
+      // approval too, so badges and a delayed snapshot do not resurrect a card.
+      for (const source of props.items) {
+        if (source.approval && approvalKey(source.approval) === approvalKey(approval)) {
+          source.approval.status = status
+        }
+      }
+    }
   } catch (error) {
     if (!wasErrorUserNotified(error)) ElMessage.error('审批请求处理失败，请重试')
   } finally {

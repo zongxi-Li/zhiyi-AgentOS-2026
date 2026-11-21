@@ -116,6 +116,17 @@ export const chatApi = {
         || (response.status === 409 && code === 'APPROVAL_EXPIRED')) {
       return {approvalId, status:'expired', decision:payload.decision}
     }
+    const original = response.data?.detail?.approval
+    if (response.status === 409 && code === 'APPROVAL_REPLAYED'
+        && original?.approvalId === approvalId && original.sessionId === payload.sessionId
+        && (payload.invocationId === undefined || original.invocationId === payload.invocationId)
+        && (payload.capabilityId === undefined || original.capabilityId === payload.capabilityId)
+        && (payload.relativePath === undefined || original.relativePath === payload.relativePath)
+        && ['approved', 'denied', 'expired'].includes(original.status)) {
+      // Reconcile an already-settled card with the original authority receipt.
+      // This request's decision was not executed and must not replace that fact.
+      return {approvalId, status:original.status as string}
+    }
     if (response.status >= 400) {
       throw new AxiosError(response.data?.detail?.message || response.data?.message || '审批请求处理失败',
         code || 'APPROVAL_REQUEST_FAILED', response.config, response.request, response)
