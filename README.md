@@ -149,7 +149,7 @@
 ### 前置条件
 
 - **Windows 11**（当前唯一支持的本地原生持久运行形态；不再需要 Docker Desktop / WSL 容器）
-- Node.js 24 LTS、Python 3.14
+- Node.js 24（至少 24.9；仓库 `.node-version` 固定验收版本）、Python 3.14（`.python-version`）
 - Git
 
 PostgreSQL 15.19、Memurai 4.1.2 与 Python 3.14 venv 由
@@ -163,7 +163,7 @@ PostgreSQL 15.19、Memurai 4.1.2 与 Python 3.14 venv 由
 # 1. 首次：Python 依赖与本地 PostgreSQL/Memurai 依赖包
 python -m venv "$env:LOCALAPPDATA\ZhiyiNative\python"
 $py = "$env:LOCALAPPDATA\ZhiyiNative\python\Scripts\python.exe"
-& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.native-tools.lock
+& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock
 & $py ops/scripts/infra/windows/native/prepare_persistent_dependencies.py
 
 # 2. 构建 TypeScript 后端
@@ -182,6 +182,8 @@ $homeDir = "$env:LOCALAPPDATA\ZhiyiNative\default"
 & $entry status -HomeDir $homeDir -Python $py
 & $entry down -HomeDir $homeDir -Python $py
 ```
+
+端口与 SSE 默认值统一维护于 `apps/backend/src/shared/runtime-defaults.json`；Backend 构建会复制该文件，原生启动器与 Python 配置读取同一合同。已有 `ZHIYI_BACKEND_TS_*` 环境变量作为兼容配置接口保留，目录/包名均为 `backend`。
 
 默认 loopback 端口：PostgreSQL 15432、Memurai 16379、Python 18761、知行 Host 18765、
 TypeScript Backend 18080、Vite 15200；`-Desktop` 额外使用 Chromium CDP 19222。
@@ -202,15 +204,18 @@ N03 栈运行时（无需 `-Desktop`）：
 
 ## 测试
 
-```powershell
-Set-Location .
-python -m pytest -c apps/agentOS/pytest.ini TEST/tests -q
+Python 测试先安装开发锁（仅用于开发/CI，运行锁需同时安装）：
 
-Set-Location apps/agent
-python -m pytest tests -q
+```powershell
+python -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.dev.lock
+npm ci --prefix apps/agentOS/src/components/environment/hands
+npm ci --prefix apps/agentOS/src/components/environment/compact
+python -m pytest --rootdir=. -c apps/agentOS/pytest.ini TEST/tests -n 4 --dist loadscope -q
+
+python -m pytest --rootdir=. -c apps/agentOS/pytest.ini apps/agent/tests -n 4 --dist loadscope -q
 
 # TypeScript 平台服务（不依赖 JVM）
-Set-Location ../backend
+Set-Location apps/backend
 npm ci
 npm run typecheck
 npm test

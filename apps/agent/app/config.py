@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 from typing import List
 from pathlib import Path
 import os
+import json
 from dotenv import load_dotenv
 
 
@@ -70,15 +71,22 @@ else:
     else:
         _env_file_path = None
 
+# The portable assembler ships this contract in Backend dist; source checkouts
+# read the same file before a Backend build exists.
+_backend = Path(__file__).resolve().parents[3] / "apps/backend"
+_source_defaults = _backend / "src/shared/runtime-defaults.json"
+_runtime_defaults = json.loads((_source_defaults if _source_defaults.is_file() else
+    _backend / "dist/shared/runtime-defaults.json").read_text(encoding="utf-8"))
+
 class Settings(BaseSettings):
     # 应用配置
     APP_NAME: str = "知弈 AI Service"
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     AI_INTERNAL_TOKEN: str = ""
-    SSE_HEARTBEAT_INTERVAL: float = 5.0
+    SSE_HEARTBEAT_INTERVAL: float = _runtime_defaults["stream"]["heartbeatSeconds"]
     SSE_TEST_MODE: bool = False
-    PROVIDER_STATE_ENABLED: bool = False
+    PROVIDER_STATE_ENABLED: bool = _runtime_defaults["stream"]["providerStateEnabled"]
     PROVIDER_STATE_REDIS_URL: str = "redis://127.0.0.1:16379/2"
     PROVIDER_STATE_TTL_SECONDS: int = 3600
     REDIS_PASSWORD: str = ""

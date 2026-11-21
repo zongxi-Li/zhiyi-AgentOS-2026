@@ -13,9 +13,9 @@ Hands 是独立 Node.js 服务，源代码仅从本仓 `apps/agentOS/src/compone
 ## 构建
 
 ```powershell
-pnpm --dir apps/agentOS/src/components/environment/hands install --frozen-lockfile
-pnpm --dir apps/agentOS/src/components/environment/hands exec tsc --noEmit
-pnpm --dir apps/agentOS/src/components/environment/hands test
+npm --prefix apps/agentOS/src/components/environment/hands ci
+npm --prefix apps/agentOS/src/components/environment/hands run typecheck
+npm --prefix apps/agentOS/src/components/environment/hands test
 # 构建 TypeScript Backend，不依赖 JVM。
 Push-Location apps/backend
 npm ci

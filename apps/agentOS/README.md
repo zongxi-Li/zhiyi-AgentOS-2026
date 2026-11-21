@@ -10,9 +10,10 @@
 
 ## Python 环境
 
-Python 依赖入口统一为 `requirements.txt`，已整合本地工具及 Safe 模型、HTTP/TLS、绘图和测试依赖。
+N03 应用运行环境统一安装 `apps/agent/requirements.lock`，开发/CI 再安装同目录 `requirements.dev.lock`。
+本目录的 `requirements.txt` 仅是 Safe 与本地工具的独立历史平台锁，不是全应用安装入口。
 当前带哈希的平台锁验收范围为 Windows x64 / Python3.10 / CPU 的 Safe 与本地工具；
-完整 AgentOS 核心使用 Python3.11+ 接口，本轮在 Python3.13 隔离环境中另行验证。
+完整 AgentOS 核心使用 Python3.11+ 接口，当前应用与内核开发/CI 基线为 Python3.14。
 该锁尚不能作为全应用跨 Python 版本的验收证明，详见[环境配置](docs/环境配置.md)。
 
 ```powershell
@@ -180,8 +181,7 @@ runtime 可以协调跨部件事务、补偿和投影更新，但业务状态是
 迁移前快照为 `faf7ba8a`，目录与源码迁移检查点为 `1c63269b`。实施计划见[迁移计划](../../docs/superpowers/plans/2026-11-15-agentos-architecture-convergence.md)；各批次结果和未通过项见[迁移与验证记录](../../docs/audits/2026-11-16-agentos-architecture-convergence.md)。
 
 在仓库根目录运行 Python 回归；应用层依赖由 `apps/agent/requirements.in` 维护，
-原生运行环境使用对应的哈希锁 `apps/agent/requirements.lock` 与
-`apps/agent/requirements.native-tools.lock`：
+原生运行环境使用对应的哈希锁 `apps/agent/requirements.lock`，测试工具使用 `apps/agent/requirements.dev.lock`：
 
 ```powershell
 python -m pytest --rootdir=. -c apps/agentOS/pytest.ini TEST/tests/architecture TEST/tests/components/scheduler -q

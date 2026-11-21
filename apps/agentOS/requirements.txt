@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-# AgentOS 唯一 Python 环境入口，整合基础运行、本地工具及 Safe 全部已实现能力。
+# 独立 Safe/本地工具历史实验环境锁；不用于 N03 全应用运行。
+# N03 运行和测试安装 apps/agent/requirements.lock 与 requirements.dev.lock。
 # 平台：Windows x64 / CPython 3.10 / Torch CPU；2026-11-16 解析实际 wheel。
 # 安装（仓库根目录）：python -m pip install --require-hashes -r apps/agentOS/requirements.txt
 # 每个直接/传递依赖均精确固定并校验 wheel SHA256；本文件同时承担版本锁职责。

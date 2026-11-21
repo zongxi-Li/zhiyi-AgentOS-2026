@@ -22,7 +22,7 @@ Python 3.14 使用 N01A 的两份锁文件安装到固定用户目录，参见 [
 # 仓库根目录
 python -m venv "$env:LOCALAPPDATA\ZhiyiNative\python"
 $py = "$env:LOCALAPPDATA\ZhiyiNative\python\Scripts\python.exe"
-& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.native-tools.lock
+& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock
 & $py -m pip check
 & $py ops/scripts/infra/windows/native/prepare_persistent_dependencies.py
 Push-Location apps/backend

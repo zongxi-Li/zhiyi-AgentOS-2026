@@ -1,8 +1,6 @@
 fastapi==0.139.2
 PyYAML==6.0.3
 uvicorn[standard]==0.51.0
-# Keep the Linux-only uvicorn extra in the cross-platform hash lock when compiled on Windows.
-uvloop==0.22.1; sys_platform != "win32"
 pydantic==2.13.4
 pydantic-settings==2.14.2
 jsonschema==4.26.0
@@ -31,3 +29,13 @@ colorama==0.4.6
 
 # PostgreSQL workspace authority (including Windows binary libpq).
 psycopg[binary]==3.3.6
+
+# Chat tool sessions, preview extraction and AgentOS base components used by N03.
+openai-agents==0.19.1
+tavily-python==0.7.26
+python-pptx==1.0.2
+langchain-core==1.4.7
+aiosqlite==0.22.1
+xxhash==4.1.0
+pypdf==7.0.0
+Markdown==3.7

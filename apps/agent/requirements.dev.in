@@ -1,0 +1,6 @@
+# Test tools use the runtime's resolved versions for shared transitive packages.
+-c requirements.lock
+pytest==8.4.2
+pytest-asyncio==1.3.0
+pytest-cov==7.1.0
+pytest-xdist==3.8.0

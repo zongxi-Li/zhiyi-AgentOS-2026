@@ -14,9 +14,10 @@ AgentOS Core 提供任务、运行记录、Trace、Review、Checkpoint 与通用
 
 ## 依赖入口
 
-- `requirements.in` 是应用依赖输入清单，`requirements.lock` 是应用运行锁。
-- Windows 原生运行还安装 `requirements.native-tools.lock`；其版本来自维护用的 `requirements.tools.lock`。
-- 内核与 Safe 独立环境使用 `apps/agentOS/requirements.txt`，不与应用锁合并。
+- `requirements.in` 是应用依赖输入清单，`requirements.lock` 是 Windows / Python 3.14 应用运行锁。
+- 模型工具、预览提取和内核基础依赖已并入上述运行锁；不再叠加工具锁。
+- `requirements.dev.in` / `requirements.dev.lock` 仅增加测试工具，并以运行锁约束共享依赖。安装使用 `python -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.dev.lock`（仓库根目录）。
+- N03 应用与内核测试使用上述运行锁和开发锁；`apps/agentOS/requirements.txt` 仅用于独立 Safe / 本地工具历史实验环境。
 
 ## 启动
 
@@ -34,10 +35,10 @@ curl http://localhost:8000/health
 
 ## 测试
 
-在 `apps/agent/` 目录运行：
+先按根 README 安装 Python 开发锁与 Hands / Compact npm 依赖，再在仓库根目录运行（使用 `.node-version` 指定的 Node）：
 
 ```bash
-python -m pytest tests -q
+python -m pytest --rootdir=. -c apps/agentOS/pytest.ini apps/agent/tests -n 4 --dist loadscope -q
 ```
 
 ## 主要 API
@@ -61,6 +62,8 @@ POST /ai/core/workflows/runs/{runId}/cancel
 ```
 
 ## 能力边界
+
+旧联邦模型演示不再导入已删除的 `safe.encryptionservice`。聚合调用方必须显式提供参数解码器；未配置时 API 返回 503 并保留原模型与待处理更新。本次未恢复旧加密或旧差分隐私算法。
 
 ### OScode 会话上下文与缓存统计
 

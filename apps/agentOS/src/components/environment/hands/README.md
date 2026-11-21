@@ -198,12 +198,12 @@ zhiyi Hands/
 ## 四、运行
 
 ```bash
-pnpm install        # node-pty 构建脚本被 pnpm 策略拒绝属预期（仅类型引用）
-pnpm typecheck      # hands + tests + vendor 全量（严格度与 DSH 上游等价）
-pnpm test           # 93 项：真实 PowerShell / Job Object / ACL / 独立进程服务，forks 池
-pnpm demo                       # 无 LLM 全流程演示：读写/补丁/越界拒绝/授权失败/超时/Provider 换装
-pnpm run run:exec 'Write-Output "hi"'   # 单命令走完整协议（签发 Grant→执行→收据）
-pnpm exec tsx hands/service-main.ts --config <service.config.json>
+npm ci              # package-lock.json 是此工程的依赖安装真相源
+npm run typecheck      # hands + tests + vendor 全量（严格度与 DSH 上游等价）
+npm test           # 当前项数以实际收集为准；真实 PowerShell / Job Object / ACL / 独立进程服务，forks 池
+npm run demo                       # 无 LLM 全流程演示：读写/补丁/越界拒绝/授权失败/超时/Provider 换装
+npm run run:exec -- 'Write-Output "hi"'   # 单命令走完整协议（签发 Grant→执行→收据）
+npx tsx hands/service-main.ts --config <service.config.json>
                                  # 独立执行服务（回环 HTTP + 资源 HMAC + 账本；配置形状见文件头注释）
 ```
 

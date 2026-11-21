@@ -51,9 +51,12 @@
     "@vue/test-utils": "^2.4.11",
     "jsdom": "^25.0.1",
     "sass-embedded": "^1.97.1",
-    "typescript": "5.4.5",
+    "typescript": "5.9.3",
     "vite": "^5.0.0",
     "vitest": "^2.1.9",
     "vue-tsc": "^2.2.12"
+  },
+  "engines": {
+    "node": ">=24.9.0 <25"
   }
 }

@@ -486,6 +486,7 @@ def validate(target: Path) -> list[str]:
         "runtime/pgsql/bin/initdb.exe",
         "runtime/memurai/memurai.exe",
         "apps/backend/dist/main.js",
+        "apps/backend/dist/shared/runtime-defaults.json",
         "apps/backend/node_modules/fastify/package.json",
         "apps/backend/migrations/V13__drop_user_feedback.sql",
         "apps/agent/app/main.py",

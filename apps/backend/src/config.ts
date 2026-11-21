@@ -1,3 +1,5 @@
+import defaults from './shared/runtime-defaults.json' with { type: 'json' };
+
 export interface Config {
   readonly port: number;
   readonly allowedOrigins: readonly string[];
@@ -14,10 +16,10 @@ export interface Config {
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const rawPort = env.ZHIYI_BACKEND_TS_PORT ?? '18080';
+  const rawPort = env.ZHIYI_BACKEND_TS_PORT ?? String(defaults.ports.backend);
   if (!/^\d+$/.test(rawPort)) throw new Error('Invalid backend port');
   const port = Number(rawPort);
-  const existingPorts = [15432, 16379, 18761, 18765, 15200, 18766, 19222];
+  const existingPorts = Object.entries(defaults.ports).filter(([name]) => name !== 'backend').map(([, port]) => port);
   if (!Number.isSafeInteger(port) || port > 65535 || existingPorts.includes(port)) {
     throw new Error('Invalid or reserved backend port');
   }
@@ -45,11 +47,11 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
     expectedUserId: env.ZHIYI_BACKEND_TS_EXPECTED_USER_ID,
     homeBinding: env.ZHIYI_BACKEND_TS_HOME_BINDING,
     databaseUrl: env.ZHIYI_DATABASE_URL ?? env.DATABASE_URL,
-    pythonBaseUrl: env.AI_SERVICE_URL ?? env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:18761',
+    pythonBaseUrl: env.AI_SERVICE_URL ?? env.PYTHON_SERVICE_URL ?? `http://127.0.0.1:${defaults.ports.ai}`,
     internalServiceToken: env.AI_INTERNAL_TOKEN,
     aiTimeoutMs: numeric(env.AI_TIMEOUT_MS, 240000, 1, 86_400_000),
-    streamIdleTimeoutMs: numeric(env.SSE_IDLE_TIMEOUT_MS ?? env.SSE_IDLE_TIMEOUT, 240000, 1, 86_400_000),
-    streamMaxDurationMs: numeric(env.SSE_MAX_DURATION_MS ?? env.SSE_MAX_DURATION, 0, 0, 86_400_000),
+    streamIdleTimeoutMs: numeric(env.SSE_IDLE_TIMEOUT_MS ?? env.SSE_IDLE_TIMEOUT, defaults.stream.idleTimeoutMs, 1, 86_400_000),
+    streamMaxDurationMs: numeric(env.SSE_MAX_DURATION_MS ?? env.SSE_MAX_DURATION, defaults.stream.maxDurationMs, 0, 86_400_000),
     uploadDir: env.APP_UPLOAD_DIR,
   });
 }

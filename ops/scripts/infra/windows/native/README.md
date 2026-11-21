@@ -15,7 +15,7 @@ Create a **new** virtual environment outside this repository, then install:
 ```powershell
 python -m venv "$env:TEMP\kinlin-native-venv"
 $py = "$env:TEMP\kinlin-native-venv\Scripts\python.exe"
-& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.native-tools.lock
+& $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock
 & $py -m pip check
 ```
 
@@ -104,9 +104,12 @@ retains state on shutdown failure, and never kills processes by name. Successful
 stop checks ports, directory rename handles and the OS workflow lock. Data and
 evidence remain. A second `down` is safe; a stopped `status` returns nonzero.
 
-The maintenance-only `refresh_tool_lock.py` preserves exact tool pins and
-original Linux hashes and adds published Windows/universal wheel hashes. The
-Windows-only transitive requirements `colorama==0.4.6` and `pywin32==312` are
-explicitly pinned. Network failures retain the previous lock; pip still verifies
-artifact bytes with TLS and `--require-hashes`. Do not use the Windows tool lock
-for the Linux image, which continues using its existing lock unchanged.
+Python dependencies now use one application runtime lock:
+`apps/agent/requirements.in` -> `apps/agent/requirements.lock`. The complete
+runtime includes the tool SDK, document previews and kernel base packages.
+Development/CI adds `requirements.dev.lock`, constrained by the runtime lock.
+Both are regenerated with Python 3.14 and pip-compile --generate-hashes
+--strip-extras --no-emit-index-url, then installed into a fresh environment
+with --require-hashes --only-binary=:all: and verified with pip check.
+The application lock is validated on Windows x64 / Python 3.14. The independent
+Safe Python 3.10 experiment lock has a separate scope and is not overlaid.

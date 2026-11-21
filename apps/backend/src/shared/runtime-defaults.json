@@ -1,0 +1,18 @@
+{
+  "ports": {
+    "postgres": 15432,
+    "redis": 16379,
+    "ai": 18761,
+    "host": 18765,
+    "backend": 18080,
+    "frontend": 15200,
+    "terminal": 18766,
+    "debug": 19222
+  },
+  "stream": {
+    "heartbeatSeconds": 5,
+    "idleTimeoutMs": 240000,
+    "maxDurationMs": 0,
+    "providerStateEnabled": false
+  }
+}

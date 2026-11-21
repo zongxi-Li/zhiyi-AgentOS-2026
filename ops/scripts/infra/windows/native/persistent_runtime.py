@@ -25,9 +25,10 @@ import desktop_runtime as desktop
 import desktop_shell
 import terminal_service
 import platform_database
+from runtime_defaults import DEFAULTS
 
 ROOT = native.ROOT
-PORTS = [15432, 16379, 18761, 18765, 18080, 15200, 18766, 19222]
+PORTS = list(DEFAULTS['ports'].values())
 FORMAT = 'zhiyi-windows-persistent-v1'
 
 
@@ -74,7 +75,7 @@ class StartupProgress:
                 pass
 
 def ports(info):
-    return dict(zip(['postgres','redis','ai','host','backend','frontend','terminal','debug'], [port+int(info.get('portOffset',0)) for port in PORTS]))
+    return {name: port + int(info.get('portOffset', 0)) for name, port in DEFAULTS['ports'].items()}
 
 
 def protect(directory):

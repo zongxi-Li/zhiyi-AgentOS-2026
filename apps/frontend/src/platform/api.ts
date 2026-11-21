@@ -1,3 +1,5 @@
+import runtimeDefaults from '../../../backend/src/shared/runtime-defaults.json'
+
 type ViteRuntimeEnv = {
   DEV?: boolean
   MODE?: string
@@ -7,7 +9,7 @@ type ViteRuntimeEnv = {
 const env = (import.meta as ImportMeta & { env?: ViteRuntimeEnv }).env || {}
 const isDesktopFamilyMode = env.MODE === 'electron'
 const defaultDesktopApiOrigin = isDesktopFamilyMode && !env.DEV
-  ? 'http://127.0.0.1:18080'
+  ? `http://127.0.0.1:${runtimeDefaults.ports.backend}`
   : ''
 // Desktop hot reload always uses its local Vite proxy. In particular, do not
 // inherit a shell-level VITE_API_BASE_URL left by another local service.

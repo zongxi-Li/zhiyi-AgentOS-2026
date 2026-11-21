@@ -2,6 +2,8 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 apps/agentOS/requirements.txt text eol=lf
+apps/agent/requirements*.in text eol=lf
+apps/agent/requirements*.lock text eol=lf
 
 # 固定 Safe 实验脚本换行，保证跨平台检出后源码指纹保持一致。
 evals/safe/exam/analyze_network_sensitivity.py text eol=lf

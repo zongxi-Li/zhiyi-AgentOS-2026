@@ -505,7 +505,7 @@ def preflight(run, ai_port, host_port):
         port_free(port)
     import re
     mismatches = []
-    for filename in ['requirements.lock', 'requirements.native-tools.lock']:
+    for filename in ['requirements.lock']:
         for name, version, rest in re.findall(r'^([\w-]+)==([^\s\\;]+)([^\n]*)',
                                             (ROOT / 'apps/agent' / filename).read_text(), re.M):
             if 'sys_platform != "win32"' in rest:
