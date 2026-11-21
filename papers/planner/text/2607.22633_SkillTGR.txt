@@ -1,1163 +1,0 @@
-                                               Evolving from Lessons: Skill-Augmented Table
-                                                 Graph Reasoning for Operation-wise Table
-                                                            Question Answering
-                                                Guixin Su, Qiankun Pi, Mayi Xu, Wenli Li, Ming Zhong, Yuanyuan Zhu, Jiawei Jiang, Tieyun Qian*
-                                                                            School of Computer Science, Wuhan University, Wuhan, China
-
-
-                                            Abstract—Table Question Answering (TableQA) aims to reason           (I) Operation-wise Blindspot
-                                         over tables to answer user queries. Existing research treats            Table: 1997 Colorado Rockies season              Overall assessment                                  Operation-wise TableQA
-                                                                                                                   Date     Opponent Attendance    …      Q1: Which team played against on Aug. 1?
-                                                                                                                                                                                                                                            Performance Gap
-                                         all questions uniformly and evaluates solely through overall              Aug. 1    Pirates    22,657     …      A1: Pirates
-                                                                                                                                                   …      Q2: Which date had more attendances, on
-arXiv:2607.22633v2 [cs.AI] 14 Sep 2026
-
-
-
-
-                                                                                                                   Aug. 2    Astros     32,388
-                                         accuracy, obscuring a critical reality that LLMs excel at simple            …          …          …       …      August 1 or October 31?
-                                         lookups yet struggle with complex operations like aggregation            Sep. 16    Phillies    48,311    …      A2: August 1
-                                                                                                                                                          Q3: Which date had the most attendances?
-                                                                                                                                                                                                         actually
-
-                                         and arithmetic. To reveal this disparity, we introduce a novel           Sep. 17    Pirates    48,440     …      A3: Dec. 28                                                Overall CL Comp Ext Agg Arith
-                                                                                                                     …          …          …       …      Q4: How many games over 30,000 people?         Conditional Lookup (CL): Cell-level Retrieve
-                                         Operation-wise TableQA task with a fine-grained question taxon-          Oct. 30    Astros     48,143     …      A4: 3                                          Comparison (Comp): Cross-row Comparison
-                                                                                                                                                   …      Q5: What's the attendance difference vs.       Extremum (Ext): Multi-row Ranking
-                                         omy and release two datasets named WikiTQ-ow and TabFact-ow              Oct. 31    Phillies   22,675
-                                                                                                                                                          the Phillies??
-                                                                                                                     …          …          …       …                                                     Aggregation (Agg): Multi-entry Statistics
-                                         for evaluation. As for modeling bottlenecks, existing methods flat-      Dec. 28     Reds      48,262     …
-                                                                                                                                                          A5: 23,222
-                                                                                                                                                                            …                            Arithmetic (Arith): Numerical Computation
-
-                                                                                                                                                   …           Overall              I can complete                               I still limited to solve
-                                         ten tables into linearized texts, disrupting inherent structures and     Dec. 29    Pirates    32,288
-                                                                                                                                                              Accuracy
-                                                                                                                                                                       70%+
-                                                                                                                                                                                    TableQA well !                               complex operations !
-
-                                         inducing the “lost-in-the-middle” issue, which poses a primary
-                                                                                                                 (II) Modeling Bottlenecks                                                                            Attributed Table Graph
-                                         barrier to complex cross-row reasoning. Moreover, they typically                                                                                                                                        Attendance
-                                                                                                                            Table Linearization                Linearization-based Reasoning                                              Row1            22,657
-                                         reason from scratch, neglecting reusable patterns shared across                                                                                                             48,440
-
-                                                                                                                                                                                                                                           Opponent
-                                                                                                                   Header: Date | Opponent | Q: What is the total attendances
-                                         similar operations. To address these limitations, we propose a            Attendance | … | Row1: | Aug. 1 for games played against the Pirates?
-                                                                                                                                                                                                                                                            32,288
-
-                                                                                                                                                                                                                    Row47              Pirates
-                                         Skill-augmented Table Graph Reasoning (SkillTGR) framework                | Pirates | 22,657 | …| Row2: |
-                                                                                                                                                                 Reasoning Process:
-                                                                                                                                                                                                         Table-to
-                                                                                                                                                                                                                                                 Row151
-                                                                                                                   Aug. 2 | Astros | 32,388 | …| …                                                        -Graph
-                                                                                                                                                                 Colorado Rockies played
-                                         for self-evolving structured reasoning. Specifically, SkillTGR            ……           ……           ……                  against Pirates on Aug. 1                              Reasoning Process:
-                                         represents tables as attributed graphs with explicit row-column-         … | Row47: | Sep. 17 | Pirates |                          and Dec. 29, so the total                   Against Pirates with records in
-                                                                                                                  48,440 | … | …                                            attendances is 22,657 +                     Row1, Row 47 and Row151. Thus,
-                                                                                                                                                                            32,288 = 54,945                             the total attendances is 22,657
-                                         cell structures, where LLMs plan and execute dynamic chains to            ……           ……           ……                                                                         + 48,440 + 32,288 = 103,385
-                                                                                                                  … | Row151: | Dec. 29 | Pirates                Lim.1：Disrupt table structure
-                                         retrieve evidence subgraphs for graph traversal reasoning. Based         | 32,288 | …                                   Lim.2: Induce lost-in-the-middle
-                                                                                                                                                                                                                    Adv.1：Row-Column-Cell structure
-                                                                                                                                                                                                                    Adv.2: Mitigate lost-in-the-middle
-                                         on this, SkillTGR builds a hierarchical SkillBank to distill reason
-                                                                                                                     Reason-from-Scratch                              Reasoning Experience                          Skill-augmented Reasoning
-                                         trajectories into abstract skills under cognitive heuristics, then      Q1: On which date was the audience                  Similar Question Pattern:
-                                                                                                                                                                                                                                                           CL
-                                                                                                                                                                                                                                                          Comp
-                                                                                                                 largest for the match against Astros?                                                      store
-                                         hybrid retrieves both successful and failed skills for contrastive                                                          when was the [entity] with the
-                                                                                                                                                           distill [superlative] [metric] [condition]?
-                                                                                                                                                                                                                        Successful                         Ext
-                                                                                                                                                                                                                                                           Agg
-                                                                                                                         Against on Aug.2 and Oct.8,                                                                          Failed
-                                         augmented table graph reasoning, thereby enabling the continual                 32,388 < 48,143. Answer: Oct.8              Successful experience for Q1:
-                                                                                                                                                                     Identify qualifying records, then                         SkillBank
-                                                                                                                                                                                                                                                          Arith
-
-
-                                                                                                                 Q2: When the match had smallest                                                             Q3: When the game had the lowest
-                                         self-evolution. Extensive experiments demonstrate that SkillTGR         attendance held before October?
-                                                                                                                                                            Isolated compare to find the extremum.
-                                                                                                                                                                                                             audience against Pirates after August?
-                                                                                                                                                                     Failed experience for Q2:
-                                         achieves superior performance with an average of 5.91% overall                  Aug.1 has 22,657,…, Oct.31                  Incorrect parsing of the temporal                 Against on Sep.17 and Dec.29,
-                                                                                                                         has 22,675. Answer: Oct.30                  condition in the question.                        48,440<32,288. Answer: Dec.29
-                                         and 5.06% operation-wise improvement, also reducing 19.76%
-                                         token consumption and 27.64% inference latency. Our codes and          Fig. 1: Operation-wise blindspot and modeling bottlenecks in
-                                         data will be released upon publication.
-                                            Index Terms—Table Question Answering, Dynamic Graph                 existing research, and promising solution for TableQA.
-                                         Traversal Reasoning, Skill-Augmented Self-Evolution
-
-                                                                                                                results when handling complex questions due to the limited
-                                                                    I. I NTRODUCTION
-                                                                                                                reasoning capabilities of small-scale pre-trained models.
-                                            As the fundamental task in table reasoning, Table Question             In recent years, large language models (LLMs) have demon-
-                                         Answering (TableQA) focuses on resolving natural language              strated their remarkable capabilities in semantic comprehen-
-                                         queries through evidence retrieval and reasoning over given            sion and knowledge reasoning across diverse tasks [12]–[14].
-                                         tables, requiring models to understand tabular structures, pre-        Consequently, recent research has resorted to leveraging LLMs
-                                         cisely locate relevant entries, and perform multi-step numerical       to address the complex reasoning bottlenecks in TableQA.
-                                         computations, which is widely applied in data engineering [1]–            An intuitive solution is to employ decomposition strategies
-                                         [3], financial auditing [4] and medical records analysis [5].          that iteratively break down tables or questions into interme-
-                                            Early studies mainly involve training or fine-tuning special-       diate reasoning steps for progressive problem solving. For
-                                         ized TableQA models [6]–[8]. TAPAS [9] introduces weakly               example, Binder [15] utilizes LLMs to decompose complex
-                                         supervised pre-training to learn text-table correlations without       questions into executable sub-programs (e.g., SQL or Python),
-                                         logical forms, while TAPEX [10] mitigates data scarcity by             and iteratively refine them before execution. Based on this,
-                                         mimicking a neural SQL executor. TACUBE [11] further en-               Dater [16] employs a parsing-execution-filling strategy for
-                                         hances numerical reasoning through pre-computing question-             question decomposition and further leverages LLMs as ver-
-                                         aware data cubes. However, these methods exhibit suboptimal            satile decomposers for sub-table retrieval. In addition, Chain-
-                                                                                                                of-Table [17] dynamically evolves tables step-by-step through
-                                           *corresponding author.                                               the reasoning chain to facilitate context-aware reasoning. How-
-ever, decomposition-based methods often suffer from error            ison and Extremum require cross-row relational reasoning to
-propagation and insufficient interaction across reasoning steps.     identify differences or boundary values. Aggregation involves
-Therefore, several studies introduce multi-agent frameworks to       jointly processing multiple entries for statistical summariza-
-collaboratively optimize the reasoning process. For instance,        tion, whereas Arithmetic further demands multi-step numerical
-ReAcTable [18] follows the reason-then-action [19] paradigm          computation over retrieved evidence. To support systematic
-to iteratively reason and execute external code tools, while         evaluation, we construct two refined datasets named WikiTQ-
-Table-Critic [20] assigns LLMs as judge, critic, and refiner         ow and TabFact-ow, by annotating questions with operation
-agents to progressively improve reasoning until convergence          types for fine-grained operation-wise analysis.
-to correct solutions. Besides, some efforts [21], [22] exploit the      For the RQ2, we propose a Skill-augmented Table Graph
-structured semantics of tables or questions to enhance evidence      Reasoning (SkillTGR) framework for self-evolving structured
-retrieval and reasoning reliability.                                 reasoning. SkillTGR transforms tables into attributed graphs
-   Despite the notable progress, existing studies still exhibit      with explicit row-column-cell structures, enabling LLMs to
-substantial limitations in terms of evaluation granularity and       employ predefined operators to plan and execute dynamic
-modeling paradigms, which naturally raise two key research           chains for evidence subgraph retrieval and graph traversal
-questions as discussed below.                                        reasoning, thereby mitigating both structural semantic loss and
-   RQ1: How does coarse-grained overall assessment obscure           the “lost-in-the-middle” issue inherent in table linearization.
-the operation-wise reasoning disparity of LLMs? Existing             Furthermore, SkillTGR constructs a hierarchical SkillBank to
-studies treat all questions uniformly and evaluate TableQA per-      distill historical trajectories into reusable skills under cognitive
-formance solely through the coarse-grained overall accuracy,         heuristics, and performs hybrid retrieval of both successful and
-obscuring a critical reality that LLMs exhibit markedly dif-         failed skills for contrastive augmented reasoning, effectively
-ferent capabilities across diverse operations. As illustrated in     breaking the reason-from-scratch limitation and supporting
-Fig. 1 (I), previous methods tend to excel at simple questions       continuous self-evolution across diverse instances.
-involving conditional lookup, which requires the model to               Our contributions can be concluded as follows:
-locate relevant entries through cell-level retrieval. In contrast,     • To the best of our knowledge, we are the first to investi-
-they still struggle with complex questions demanding cross-              gate the TableQA task in the fine-grained perspective with
-row reasoning across multiple entries, such as comparison,               an operation-wise question taxonomy rather than limited
-extremum and aggregation, as well as arithmetic questions                overall assessment, which explores how LLMs perform in
-requiring multi-step numerical computation. Therefore, coarse-           five core types of table reasoning. Accordingly, we release
-grained evaluation obscures the operation-wise reasoning dis-            two refined benchmark datasets named WikiTQ-ow and
-parity of LLMs and fails to precisely identify reasoning                 TabFact-ow for evaluation, also reproduce and construct
-bottlenecks for model improvement, highlighting the necessity            the baseline system with diverse modeling paradigms for
-of fine-grained evaluation with an operation-wise question               operation-wise comparison.
-taxonomy for comprehensive assessment.                                 • We propose a novel Skill-augmented Table Graph Rea-
-   RQ2: What modeling bottlenecks underlie the operation-                soning (SkillTGR) framework for self-evolving struc-
-wise reasoning disparity of existing methods? As depicted in             tured reasoning. SkillTGR represents tables as attributed
-Fig. 1 (II), existing methods suffer from inherent deficiencies          graphs, enabling structure-aware evidence retrieval and
-in both table representation and reasoning paradigm. In terms            graph traversal reasoning. Moreover, SkillTGR constructs
-of table representation, these methods typically linearize tables        a hierarchical SkillBank to distill historical trajectories
-into flat sequences as long-context inputs, inevitably disrupting        into reusable skills for subsequent reasoning, thereby
-the row-column-cell structural semantics and impairing cross-            progressively evolving reasoning capability across diverse
-row relational reasoning. In addition, such linearization further        operation-wise questions.
-induces the “lost-in-the-middle” issue, where LLMs over-               • Extensive experiments on WikiTQ-ow and TabFact-ow
-attend to boundary tokens while neglecting critical intermedi-           across two LLMs demonstrate that SkillTGR consis-
-ate evidence, thereby hindering multi-row information retrieval          tently achieves the state-of-the-art performance, yield-
-for complex operations. On the reasoning side, prevailing                ing average improvements of 5.91% in overall accuracy
-methods uniformly follow the reason-from-scratch paradigm                and 5.06% in operation-wise accuracy over competitive
-to infer each question independently without leveraging any              baselines, while reducing token consumption by 19.76%
-historical experience. Thus, reasoning patterns for structurally         and inference latency by 27.64%, validating both the
-similar operation-wise questions can neither be effectively              effectiveness and efficiency of our proposed framework.
-reused nor transferred across instances, imposing constraints
-on both reasoning efficiency and answer accuracy.                                          II. R ELATED W ORK
-   For the RQ1, we introduce a novel Operation-wise TableQA
-task to investigate how LLMs perform across a fine-grained              This section reviews related work from two relevant direc-
-question taxonomy with five core operations rather than              tions: Table Question Answering and Self-Evolution for Large
-limited overall assessment. Specifically, Conditional Lookup         Language Models. Representative studies from both areas are
-retrieves target entries via cell-level matching, while Compar-      briefly discussed below.
-A. Table Question Answering                                                              III. M ETHODOLOGY
-   As the core task in table reasoning, Table Question Answer-        In this section, we first formalize the Operation-wise
-ing requires models to jointly understand table structures and      TableQA task and then elaborate on our SkillTGR framework.
-contents while parsing complex question intents, has evolved
-through several paradigms.                                          A. Task Definition
-   Early work primarily focused on developing special-                 TableQA aims to infer answers to natural language questions
-ized models through fine-tuning pre-trained language mod-           based on table context for overall assessment. Formally, given
-els [10], [23], [24]. Benefiting from the remarkable instruction-   the column headers H = {hj | 1 ≤ j ≤ n} and a table T =
-following capabilities of large language models (LLMs) [25]–        {cij | 1 ≤ i ≤ m, 1 ≤ j ≤ n} with m rows and n columns,
-[27], recent studies have shifted toward in-context learning        cij denotes as the cell value at the i-th row and j-th column.
-paradigms [28]–[31]. Inspired by step-wise decomposition            Together with the associated metadata M (e.g., table caption)
-strategies for progressive reasoning [32]–[35], decomposition-      and a natural language question Q, the TableQA task requires
-based methods iteratively generated executable programs [15],       models to optimize the mapping function F (H, T , M, Q) →
-symbolic operations [17], or context-aware table partitions         A to generate an answer A that accurately responds to the
-[16] to break complex table reasoning into manageable steps,        question Q. Accordingly, the answer A can correspond to a
-such as intermediate tables or sub-questions. Furthermore,          span of cell values, a set of entries, or an aggregated numerical
-some efforts exploited unified knowledge representations [21]       result, depending on the semantic intent of the question Q.
-or explicit entity dependencies [22] to enhance LLMs’ com-          Based on this, the Operation-wise TableQA task associates
-prehension of table structures and question patterns. To har-       each question Q with an operation type OQ (i.e., Conditional
-ness the collaborative synergies of LLMs [36]–[40], recent          Lookup, Comparison, Extremum, Aggregation or Arithmetic)
-multi-agent frameworks have integrated iterative reasoning-         for operation-wise evaluation, enabling fine-grained diagnosis
-execution strategy [18] and critique-refinement loops [20] for      of model capabilities beyond overall performance.
-agent collaboration, substantially improving the robustness and
-                                                                    B. Overview
-accuracy of table reasoning.
-   Although previous methods have achieved promising re-               To address the aforementioned bottlenecks, we propose
-sults, they typically focused on the overall assessment and lin-    SkillTGR, a skill-augmented table graph reasoning framework
-earized tables into long-context input, which not only disrupted    with three key components. (1) To overcome structural se-
-the row-column-cell structure but also incurred the “lost-in-       mantic loss from table linearization and mitigate the “lost-
-the-middle” issue [41]. Moreover, these approaches mainly           in-the-middle” issue, Attributed Table Graph Construction
-relied on reasoning from scratch, without leveraging historical     transforms tables into attributed graphs with explicit row-
-experiences to facilitate subsequent inference. To address these    column-cell structures for cross-row relational modeling. (2)
-issues, we introduce the Operation-wise TableQA task for fine-      To facilitate structured evidence retrieval, Dynamic Graph
-grained evaluation, and the proposed framework transforms           Traversal Reasoning employs LLMs to plan and execute
-tables into attributed graphs for structured reasoning, and         dynamic reasoning chains to retrieve evidence subgraphs for
-further abstracts historical experiences into reusable skills to    graph traversal reasoning. (3) To break the reason-from-scratch
-continually augment table graph reasoning with self-evolution.      limitation and enable cross-instance experience transfer, Skill-
-                                                                    Augmented Self-Evolution distills historical trajectories into
-B. Self-Evolution for Large Language Model                          reusable skills and performs contrastive augmented reasoning
-   Self-evolution methods [42] enhance LLM behavior by              through both successful and failed skills, enabling continual
-incorporating self-reflection, iterative revision, or feedback-     self-evolution. The overview of SkillTGR is shown in Fig. 2.
-driven refinement. Representative works explore this direc-
-tion from diverse perspectives: Recursive Introspection [43]        C. Attributed Table Graph Construction
-enables LLMs to iteratively revisit and refine prior reason-           As discussed above, existing methods typically linearize
-ing attempts through repeated self-evaluation. Self-Evolving        tables into flat long-context sequences for LLM inference.
-Curriculum [44] focuses on the automatic construction of            Such serialization inevitably disrupts the intrinsic row-column-
-curricula to progressively strengthen reasoning capabilities.       cell structural semantics and weakens cross-row relational
-In addition, Uncertainty-enhanced Preference Optimization           reasoning. Moreover, long sequential representations induce
-[45] improves LLM policies by leveraging uncertainty-aware          the “lost-in-the-middle” issue, causing LLMs to overlook
-feedback sampling to yield more reliable learning signals.          critical intermediate evidence, limiting their effectiveness on
-   Unlike prior self-evolution approaches that refine LLM           multi-row retrieval and reasoning for complex operations.
-behavior through model training or implicit policy shifts, our         To overcome these limitations, we represent the table as
-SkillTGR is complementary to externalize reusable problem-          an attributed table graph to explicitly preserve the intrinsic
-solving patterns into structured skills without any parameter       row-column-cell structural semantics and establish relational
-updating. These skills are continuously evolved through ex-         dependencies among cross-row table elements.
-plicit operations such as revision and merging, which makes            Specifically, given a structured table T with m rows and n
-the improvement process more transparent and controllable.          columns, together with its associated header H and metadata
- (1) Attributed Table Graph Construction                                                                                   (2) Dynamic Graph Traversal Reasoning                                                                               (3) Skill-Augmented Self-Evolution
-                   Table caption: 2008 Season
-                                                                                  …
-      Comp No.          Cyclist               Points               Time                                     Q: Which country had the most cyclists finish within the top 5?                                                                                                    Successful skills               Failed skills
-         1            Ivan (RUS)                25                5h 29’ 21"      …
-                                                                                                                                                                                                                                                 Top-K Skills Plan: Expand hidden info                 Plan: Missing Rank
-          2          John (USA)                  12              5h 32’ 07"       …                                                                                                                                                                                         Execute: Rank then group   Execute: Error order
-                                                                                                                           Planning Process:
-          …                  …                   …                    …           …                                                                                                                                                                                         Reason: Trace extremum     Reason: Ignore ties
-                                                                                                                           Step1: Country info in the Cyclist column -> Expand                                                                                                          …       contrastive      …
-          16          Alex (ESP)                 40              5h 29' 10"       …                                        Step2: Select the relevant columns -> Anchor
-          17         Jack (ITA)                  20              5h 29’ 33"       …                                        Step3: Top 5 should be sorted by Points -> Rank                                                                                                  Hybrid               SkillBank
-          …                  …                   …                    …           …                                        Step4: Identify top 5 records after ranking -> Navigate                                                                                         Retrieval
-                                                                                                      Planner
-                                                                                                                                                                                                                                  ugmented Reason
-         32           Luke (ESP)                 20              5h 29’ 32"       …                                        Step5: Count the number of cyclists per country -> Cluster                                       ki
-                                                                                                                                                                                                                              ll-a               i
-                                                                                                                                                                                                                                                                                                             CL
-
-
-
-
-                                                                                                                                                                                                                                                                      ng
-                                                                                                                                                                                                                          S
-         33           Ryan (ITA)                 25              5h 29’ 24"       …
-                                                                                                                                             Dynamic Reasoning Chain:                                                       Continual                                                                       Comp          Successful
-          …                  …                   …                    …           …
-                                                                                                                                             Expand(Country) -> Anchor(Country, Points) ->                                Self-Evolution                                                                    Ext
-         49          Mark (USA)                  12              5h 32’ 02"       …                   Dynamic                                Rank(Points)->Navigate(Top5)->Cluster(Country)                                                                                                                               Failed
-         50          David (FRA)                 12               5h 31’ 58"      …                    cycle                                                                                                                                                                                                Agg
-      Meta node                                                                                                                                                                                                             ea
-
-
-
-
-                                                                                                                                                                                                                                                            ng
-                                                                                                                                                                                                                                                                 vi
-
-
-
-
-                                                                                                                                                                                                                           R
-                                                                                       Table Graph                                                                        Evidence Subgraph Retrieval
-                                                                                                                                                                                                                                 soni
-                                           Table-to-Graph
-                                                                                                                  Executing Process:
-                                                                                                                                                                                                                                        n g S k il l s E v o l
-                                                                                                                                                                                                                                                                                                            Arith
-      Row node                                                                          Reasoning
-                                                                                                                  Step1: Add column =>                     Jack
-                                                                                                                                                                                                                                                                                                  Skill Management
-      Cell node           Ryan                          25                                                                                                               ITA                                 25                                                                        update                                 update
-                         (ITA)                                                                                    Expand(Country)               FRA
-                                                                                                                                                          (ITA)Cyclist
-                                                                                                                                                                      Country
-                                                                                                                                                                                      Ryan                                   ITA
-              40
-                              Cyclist
-                                                                          Ivan                                    Step2:Select column =>               Country
-                                                                                                                                                                Row17 Row33
-                                                                                                                                                                                     (ITA)            Points Points
-                                                                                                                                                                                                                  Row33
-                                                   Points                                                                                  David                                                                                                                                                                   Drop
-                                                                 Cyclist (RUS)                                    Anchor(Country, Points) (FRA) Cyclist
-                                                                                                                                                     Row50
-                                     Row33
-                                                                                                                                                                 has has
-                                                                                                                                                                                            RUS   RUS      Row1       has
-                                                                                                                  Step3: Sort column =>                                  has
-                                                                                                                                                                  2008 has                                                  Row17
-                                                                                                                                                                                                                                                                                           Add           Discard          Merge
-                                                         Row1                                                                                                                   Row1            …                  2008
-                                                                                                                                                                                                                                                                       Manager
-                                                                                                                                                             has
-
-
-         Alex
-                      Row16
-                                                                           Row50
-                                                                                                     Executor Rank(Points)                 Alex      Row16 season has
-                                                                                                                                          (ESP) Cyclist          has has
-                                                                                                                                                                                       Cyclist
-                                                                                                                                                                                           Ivan
-                                                                                                                                                                                                                  season Points
-                                                                                                                  Step4: Select rows =>      Country
-                                                                                                                                                                           Row49 (RUS)
-                                                                                                                                                                                                         Row16                                                                  Candidate Skill
-        (ESP)                                                                                                                                                                                     40                                                                                                 Name: Identify_TopN
-                                         2008
-                                                                   John                                  Graph    Navigate(Top5)                       Row32 Row2                    Cyclist
-                                                                                                                                                                                                     Country        Row32
-                                                                                                                                                                                                                               20
-                                                                                                                                                                                                                                                                                                     Tag: Ext; successful
-                                                                                   Cyclist
-
-
-
-
-                                                                                                                                            ESP                              Country    Mark                              Points
-                                        season
-                                                                  (USA)                                 Traversal Step5:Group column =>           Country              Country
-                                                                                                                                                                                       (USA)                ESP                                                             Manage                   Des: rank then cluster …
-                     Row32                                                                                                                             Luke        John
-           Cyclist                                     Cyclist                                          Reasoning Cluster(Country)                    (ESP) (USA)
-                                                                                                                                                                             USA
-
-         Luke                                                                    David                                                                                                                                                                                                              Skill Extraction
-        (ESP)                Row17
-                                                  Row2                           (FRA)                                     Reasoning Process:                                                                                                                                                   Stage1: Trajectory Parsing
-                                                                                                                                                                                                                                                                                ACT-R
-                                                                     12                                                    <Path> (row16, country, ESP), (row32, country, ESP), (row33, country,
-                                                       Points
-                       Cyclist       Row49                                                                                 ITA), (row17, country, ITA), (row1, country, RUS) </Path>                                                                                                            Stage2: Procedural Induction
-              20
-                              Jack                        Mark                                                             <Thought>Two cyclists each from ESP and ITA are in top 5 </Thought>
-                             (ITA)       …
-                                             Cyclist     (USA)                                        Reasoner             <Answer> ESP|ITA </Answer>                                                                                                                      Mentor               Stage3: Rule Synthesis
-
-
-
-                                                                                             Fig. 2: The overall architecture of our SkillTGR framework.
-
-
-M, we formalize these table content as an attributed table                                                                                                            Accordingly, the relational structure of table T can be de-
-graph G = {V, E} with the explicit row-column-cell triple                                                                                                                                                Sm atSthe
-                                                                                                                                                                   composed into a set of structured triples        cell level in the
-                                                                                                                                                                                                                  n
-structures, where V and E denote the node set and edge set                                                                                                         attributed table graph G, defined as i=1 j=1 {⟨ri , hj , cij ⟩},
-respectively. The graph construction process consists of the                                                                                                       where cij denotes the cell value at row ri and column colj .
-following two stages:                                                                                                                                              Triples sharing the same column colj and identical cell value
-                                                                                                                                                                                                              (k)
-Node Construction. The node set V is composed of three                                                                                                             cij are connected to the same cell node cj , enabling efficient
-hierarchically organized node types:                                                                                                                               value-anchored retrieval across multiple rows.
-  • Meta node vmeta : A global anchor node represents                                                                                                                 We utilize the open-source NetworkX 1 toolkit to transform
-    the entire table T , attributed with the table caption in                                                                                                      tables into graphs in the offline manner. The graph construction
-    metadata M as its semantic identifier, and serves as the                                                                                                       over all m × n cell entries runs in O(m · n · log m) and takes
-    entry point for graph traversal.                                                                                                                               O(m · n) space to store, where log m accounts for the time
-                      m
-  • Row nodes {ri }i=1 : Each row node ri represents the i-
-                                                                                                                                                                   cost of checking whether a cell node is unique.
-    th row of table T , encoding the tuple-level semantics of                                                                                                      D. Dynamic Graph Traversal Reasoning
-    a table record.
-                Sn S|Uj | (k)                                                                                                                                         Based on the attributed table graph, our proposed SkillTGR
-  • Cell nodes    j=1 k=1 {cj }: For each column colj , we                                                                                                         framework assigns LLMs with distinct roles in a collaborative
-    enumerate its distinct values and assign a unique cell node                                                                                                    multi-agent system, namely the Planner, Executor, and Rea-
-     (k)
-    cj to the k-th unique value, where Uj denotes the set                                                                                                          soner, to progressively perform operator-based dynamic chain
-    of unique values in colj . Notably, identical values across                                                                                                    planning, evidence subgraph retrieval, and graph traversal
-    different columns are treated as semantically indepen-                                                                                                         reasoning for answer derivation.
-    dent nodes, thereby preserving column-specific semantics                                                                                                          Specifically, to enable LLMs to effectively plan, retrieve and
-    without cross-column merging.                                                                                                                                  reason over attributed table graphs, we define a set of LLM-
-Edge Connection. The edge set E encodes structural relation-                                                                                                       friendly graph operator primitives OG , including Expand,
-ships at two levels:                                                                                                                                               Navigate, Anchor, Cluster and Rank described in Table I.
-                                                                                                                                                                      Based on this, the LLM agents Planner and Executor
-  • Meta-to-Row Edges: Meta node vmeta serves as the
-                                                                                                                                                                   work in a collaborative manner to retrieve the minimal yet
-    root node to connect all row nodes {ri }m    i=1 with “has”                                                                                                    sufficient evidence subgraph. The Planner focuses on high-
-    relation, thereby establishing a global structural backbone
-                                                                                                                                                                   level decision-making by selecting appropriate graph operators
-    for top-down traversal.
-                                                         (k)                                                                                                       and organizing the reasoning chain. Meanwhile, the Executor
-  • Row-to-Cell Edges: An undirected edge (ri , cj ) is
-                                                                                                                                                                   translates these abstract decisions into concrete graph-level
-    established if the value at position (i, j) in table T
-                                                             (k)                                                                                                   actions and executes the corresponding operators to update
-    corresponds to the unique value represented by cj .                                                                                                            the evidence subgraph accordingly. Through iterative planning
-    Each edge is annotated with the column header hj as                                                                                                            and execution, the evidence subgraph is progressively refined
-    an attribute, enabling explicit traceability of the column-
-    level provenance for each cell value.                                                                                                                              1 https://networkx.org/en/
-     TABLE I: Graph operators on attributed table graph                            Accordingly, the LLM agent Reasoner performs structured
- Operator                             Description
-                                                                                graph traversal reasoning over the retrieved evidence subgraph
-                                                                                to derive the final answer. Specifically, given the question Q,
-             Identify composite cell values in a target column, decom-
-             pose them into fine-grained attributes, and extend the graph       the dynamic reasoning chain C with the accumulated procedu-
-  Expand     with newly derived column edges and cell nodes, thereby            ral information (e.g., grouping statistics and ranking results),
-             enriching the table graph for subsequent precise retrieval,        the Reasoner instructed by the reasoning prompt Preason to
-             analogous to adding columns in tabular processing.
-                                                                                conduct traversal-based reasoning over evidence subgraph G ∗
-             Locate condition-constrained column edges and traverse con-        via Chain-of-Thought, generating the explicit structured rea-
-             nected cell nodes to verify value constraints, then backtrack
-  Navigate   to associated row nodes and target cell nodes for qualifying       soning path composed of row-column-cell triples and inferring
-             evidence, thereby enabling condition-guided multi-hop graph        the final answer. The reasoning process is formulated as:
-             traversal, analogous to selecting rows in tabular processing.
-                                                                                           R, T, A = πReasoner Q, C, G ∗ ; Preason ,
-                                                                                                                                    
-             Match candidate column edges according to question seman-                                                                       (5)
-  Anchor     tics, and retrieve their associated row and cell nodes, thereby
-             constructing a local evidence subgraph for subsequent rea-         where R denotes the reasoning path, T is the Chain-of-
-             soning, analogous to selecting columns in tabular processing.      Thought text and A represents the derived answer. By progres-
-             Group cell nodes sharing the same semantics in target              sively aggregating semantic evidence along the reasoning path,
-  Cluster    column edges into community-like structures, thereby facili-       the Reasoner grounds each inferential decision in an explicit
-             tating aggregation-oriented reasoning, analogous to grouping       graph traversal trajectory, enhancing both interpretability and
-             in tabular processing.
-                                                                                reliability in answer derivation.
-             Sort cell nodes associated with target column edges by nu-
-             merical values, enabling the extraction of top-k, maximum,
-                                                                                   Although the above multi-agent collaborative framework
-   Rank                                                                         enables dynamic structured reasoning over attributed table
-             or minimum nodes for comparative and extremum reasoning,
-             analogous to sorting in tabular processing.                        graphs, it still follows a reason-from-scratch paradigm, where
-                                                                                agent capabilities remain stagnant and fail to leverage the
-                                                                                historical reasoning experience. Therefore, this limitation mo-
-along the dynamic chain into a minimal yet sufficient structure                 tivates the incorporation of reusable reasoning skills for con-
-for subsequent reasoning.                                                       tinual self-evolution and enhanced reasoning capability.
-   At reasoning step t, let C<t = {(o1 , a1 ), . . . , (ot−1 , at−1 )}
-denote the historical dynamic reasoning chain, where oi ∈ OG                    E. Skill-Augmented Self-Evolution
-represents the graph operator selected at step i and ai denotes                    As discussed above, existing methods uniformly employ the
-its corresponding execution arguments. Given the question Q,                    reason-from-scratch paradigm for table reasoning, which is
-the historical reasoning chain C<t , and the current evidence                   the modeling bottleneck to infer each question independently
-subgraph Gt−1 (initialized as G0 = G), the Planner is instructed                without leveraging historical reasoning experience. Conse-
-by the planning prompt Pplan to dynamically determine the                       quently, reasoning patterns for structurally similar operation-
-next graph operator for the current reasoning step:                             wise questions can neither be effectively reused nor transferred
-                                                                                across instances, imposing constraints on both reasoning effi-
-              ot = πPlanner (Q, C<t , Gt−1 ; Pplan ),                     (1)   ciency and answer accuracy.
-where ot ∈ OG denotes the reasoning action at step t.                              To address this limitation, our proposed SkillTGR frame-
-   Upon receiving the planned operator, the Executor generates                  work introduces a plug-and-play hierarchical skill library
-the corresponding execution arguments conditioned on the                        SkillBank, which distills historical reasoning trajectories into
-execution prompt Pexec , and subsequently executes the graph                    compact reusable skills, thereby augmenting the multi-agent
-operator to retrieve the updated evidence subgraph:                             framework with the continual self-evolution capability for
-                                                                                dynamic graph traversal reasoning.
-              at = πExecutor (Q, Gt−1 , ot ; Pexec ),                     (2)      1) Skill Extraction: Our SkillTGR first collects reasoning
-                        Gt = ot (Gt−1 , at ),                             (3)   trajectories by rolling out the environment from dynamic graph
-                                                                                traversal reasoning. For a given question Q, the reasoning
-where at denotes the execution arguments for operator ot , and                  trajectory is formally defined as τ = Q, C, G ∗ , R, T, A
-Gt represents the retrieved evidence subgraph at step t.                        as produced by the dynamic graph traversal reasoning process.
-   The aforementioned iterative interaction continues until the                 However, raw trajectories are inherently verbose and instance-
-Planner emits a termination signal ⟨EOS⟩ or reaches the                         specific, precluding direct reuse across instances. Therefore,
-maximum step T , thereby yielding the final evidence subgraph                   how to distill concise and reusable procedural knowledge from
-G ∗ , which can be formulated as:                                               such redundant experience remains the pivotal challenge for
-                                                                                enabling self-evolving reasoning.
-              G ∗ = Execute G0 , {(ot , at )}Tt=1 ,
-                                                 
-                                                            (4)
-                                                                                   Inspired by the Adaptive Control of Thought-Rational (ACT-
-where each step in the reasoning chain C = {(ot , at )}Tt=1 is                  R) theory [46] in cognitive science, which models how humans
-dynamically conditioned on preceding actions and the evolving                   progressively abstract declarative memory into procedural
-subgraph, thereby enabling progressive and adaptive evidence                    knowledge, our SkillTGR introduces the LLM agent Mentor
-retrieval in a structured and interpretable manner.                             to progressively distill the verbose reasoning trajectories into
-{
-    "Name": "filter_group_max",
-                                                                                {
-                                                                                    "Name": "premature_extremum_selection",
-                                                                                                                                                             trajectories into transferable candidate skills for SkillBank
-    "Tag": "extremum",
-    "Description": "Retrieve maximum among records meeting conditions",
-                                                                                    "Tag": "extremum",
-                                                                                    "Description": "Selecting extremum without full record checking ",       construction and continual evolution.
-    "Trigger": {                                                                    "Error Step": "chain error",
-      "semantic": ["highest", "most recent", "latest", "top", "maximum"],           "Root Cause":                                                               2) Hierarchical SkillBank: Our SkillTGR framework or-
-      "structure": [                                                                [
-          "requires conditional filtering",                                             "Only a subset of candidate rows is considered during the scan",     ganizes the distilled knowledge into a hierarchical skill library
-          "requires ranking after filtering",                                           "Extremum is selected before verifying all eligible records",
-          "requires extremum retrieval"]},
-    "Question pattern": [                                                           ],
-                                                                                        "No validation to ensure the selected value is maximal or minimal"   SkillBank, which enables efficient retrieval of operation-wise
-         "Which [entity] has the highest [attribute] under [condition]?",
-         "Find the latest/most recent [entity] satisfying [condition].",
-                                                                                    "Mitigation":
-                                                                                    [
-                                                                                                                                                             insights during dynamic graph traversal reasoning, and con-
-         "What was the last [time period] when [condition] held?",                      "Scan all matching rows before selecting an extremum",
-         "What are the top [N] [entities] by [attribute] under [condition]?",           "Keep a running extremum candidate during iteration",                tinuously evolves throughout the reasoning process to endow
-         "What is the maximum [attribute] among [condition]?"],                         "Validate the extremum against the full dataset",
-    "Reasoning logic": [
-         "Identify the target sortable column",
-                                                                                        "Use sorting or ranking as a verification step",
-                                                                                        "Pay special attention to edge cases and missing values"
-                                                                                                                                                             the multi-agent framework with self-evolution capability.
-         "Filter rows satisfying the condition",
-         "Rank filtered rows by the target column",
-                                                                                    ],
-                                                                                    "Constraints": [
-                                                                                                                                                                Specifically, SkillBank B is structured as a two-level hierar-
-         "Return the maximum value"],
-    "Operator pattern": "anchor -> navigate -> cluster -> rank",
-                                                                                        "Applies to both max and min retrieval",
-                                                                                        "More likely in large tables with many rows",
-                                                                                                                                                             chy aligned with our proposed Operation-wise TableQA task.
-    "Constraints": [                                                                    "Severe error if the extremum lies outside the scanned subset",
-       "The target column must be sortable",                                            "Not an issue if all records are fully enumerated",                  At the first level, skills are partitioned according to operation-
-       "The condition column must be categorical",                                      "Requires the target column to be sortable and comparable"
-       "If no rows match the condition, the skill fails"]                           ]                                                                        wise question taxonomy OQ (i.e., Conditional Lookup, Com-
-}                                                                               }
-                                                                                                                                                             parison, Extremum, Aggregation and Arithmetic), thereby en-
-Fig. 3: Examples of the successful (left) and failed (right) skills                                                                                          suring the operation-wise skill retrieval. At the second level,
-                                                                                                                                                             skills within each operation type are bifurcated by trajectory
-                                                                                                                                                             status σ ∈ {+, −} into successful skills and failed skills,
-compact transferable skills through the following three-stage                                                                                                which encapsulate transferable reasoning strategies and in-
-knowledge compilation process:                                                                                                                               structive failure lessons respectively. Formally:
-Stage 1: Trajectory Parsing. Given a reasoning trajectory                                                                                                                                 [              
-τ , the Mentor performs the structured analysis instructed by                                                                                                                      B=           Bo+ ∪ Bo−                   (9)
-the parsing prompt Pparse , to identify the reasoning objective,                                                                                                                           o∈OQ
-
-critical decision points, and dependencies among reasoning                                                                                                   Such a hierarchical architecture brings two key advantages:
-actions. In addition, the Mentor further critiques the trajectory                                                                                            operation-wise partitioning eliminates cross-operation inter-
-to verify whether the reasoning process derives the correct                                                                                                  ference, while the dual-track design enables the LLM agent
-answer, thereby categorizing it as a successful τ + or failed                                                                                                to simultaneously leverage successful strategies and failure
-trajectory τ − for differential induction in the subsequent stage.                                                                                           heuristics for experience-augmented reasoning.
-The trajectory parsing is formulated as:                                                                                                                         Prior to admission into SkillBank, each candidate skill
-                       parse                                                                                                                                 sσcand is evaluated by the LLM agent Manager in terms of
-          D, τ σ = πMentor
-                                       
-                             τ ; Pparse , σ ∈ {+, −},          (6)                                                                                           completeness, portability and compactness, yielding a decision
-where D is the description of structured analysis, and τ σ                                                                                                   d ∈ {Add, Discard, M erge} for skill management. To sup-
-denotes the successful or failed trajectory.                                                                                                                 port this evaluation, the Manager first employs hybrid retrieval
-Stage 2: Procedural Induction. Conditioned on the structured                                                                                                 to identify the most relevant skill ŝσo from the corresponding
-analysis and induction prompt Pinduce , the Mentor employs                                                                                                   SkillBank branch Boσ , which shares the same operation type
-differential strategies to induce procedural knowledge from                                                                                                  and skill status:
-                                                                                                                                                                               h                                           i
-the labeled trajectory. For the successful trajectory τ + , it                                                                                               ŝσo = arg maxσ α·Sem(sσcand , si )+(1−α)·Lex(sσcand , si ) ,
-extracts the strategic patterns underlying correct reasoning and                                                                                                        si ∈Bo
-
-transferable across instances of the same operation type. For                                                                                                                                                            (10)
-the failed trajectory τ − , it summarizes failure lessons that                                                                                               where α denotes the weight to trade-off the dense semantic
-reveal the root causes of reasoning errors to avoid. The induced                                                                                             similarity2 and lexical BM25 matching for hybrid retrieval.
-experiences are subsequently generalized into a set of instance-                                                                                             Conditioned on candidate skill sσcand and its relevant skill ŝσo ,
-independent production rules:                                                                                                                                the Manager then derives the decision via prompt Pmanage :
-                                                                                                                                                                         d, s∗ = πManager sσcand , ŝσo ; Pmanage ,
-                                                                                                                                                                                                                 
-                                                                                                                                                                                                                         (11)
-       Rσprod = πMentor
-                   induce
-                          D, τ σ ; Pinduce , σ ∈ {+, −},
-                                          
-                                                              (7)
-                                                                                                                                                             where d ∈ {Add, Discard, M erge} denotes the manage-
-where Rσprod denotes the production rules induced from the                                                                                                   ment decision and s∗ is the merged skill or ∅. Specifically,
-successful or failed reasoning trajectory.                                                                                                                   Add incorporates the candidate skill sσcand as a new entry
-Stage 3: Rule Synthesis. To consolidate these production rules                                                                                               when it is complete and non-redundant. While Discard drops
-into compact reasoning knowledge, the Mentor distills and                                                                                                    it if knowledge-deficient or duplicative. M erge consolidates
-synthesizes the operation-wise reasoning patterns or failure                                                                                                 the candidate skill sσcand and its most relevant skill ŝσo into a
-lessons into structured forms, yielding the high-level candidate                                                                                             refined skill s∗ when they are similar yet complementary. The
-skill instructed by the synthesis prompt Psynth :                                                                                                            evolution of SkillBank is formalized as:
-                synth
-                                                                                                                                                                            σ
-     sσcand = πMentor Q, Rσprod ; Psynth , σ ∈ {+, −},                                                                                                                        B ∪ {sσcand },
-                                        
-                                                             (8)                                                                                                                                     d = Add
-                                                                                                                                                                            o
-                                                                                                                                                                           
-                                                                                                                                                                           
-                                                                                                                                                                       ∗
-                                                                                                                                                                     σ         σ
-where sσcand is the candidate skill for subsequent management.                                                                                                      Bo = Bo ,                        d = Discard           (12)
-                                                                                                                                                                           
-   Fig. 3 illustrates the JSON-style examples of successful and                                                                                                            
-                                                                                                                                                                            σ
-                                                                                                                                                                               Bo \ {ŝσo } ∪ {s∗ }, d = M erge
-                                                                                                                                                                                           
-failed skills. Through the above skill extraction under cognitive
-heuristics, the Mentor progressively distills the reasoning                                                                                                    2 https://huggingface.co/sentence-transformers
-   Through the synergy of hierarchical architecture and man-         Algorithm 1 The overall workflow of SkillTGR
-agement decision, SkillBank continuously accumulates and             Input: Question set Qset , tables T
-refines operation-wise skills throughout the reasoning process,      Output: Answer set Aset , evolved SkillBank B ∗
-                                                                      1: Initialize SkillBank B ← o∈O Bo+ ∪ Bo−
-                                                                                                     S              
-forming the self-evolution loop that progressively strengthens                                             Q
-experiential support for dynamic graph traversal reasoning.           2: // Attributed Table Graph Construction
-   3) Skill-augmented Reasoning: Upon constructing the hi-            3: G ← Table2Graph(T ) ▷ represent T as structured triples
-erarchical SkillBank, our SkillTGR introduces the contrastive         4: for Q ∈ Qset do
-augmentation mechanism that incorporates both successful and          5:     // Dynamic Graph Traversal Reasoning
-failed skills into each pivotal step of dynamic graph traversal       6:     Ŝoσ ← SkillRetrieve(Q, B)           ▷ Eq. (13)–(14)
-reasoning, achieving coordinated enhancement of the Planner,          7:     C ← Planner(Q, G, Ŝoσ )                   ▷ Eq. (15)
-Executor and Reasoner.                                                8:     G ∗ ← Executor(Q, G, C, Ŝoσ )       ▷ Eq. (16)–(17)
-   Specifically, given a question Q with its identified operation     9:     R, T, A ← Reasoner(Q, G ∗ , C, Ŝoσ )      ▷ Eq. (18)
-type o ∈ OQ , our SkillTGR first retrieves top-k successful          10:     Aset ← Aset ∪ {A}
-and failed skill candidates from the corresponding SkillBank         11:     // Skill-Augmented Self-Evolution
-branches Boσ via hybrid retrieval, and then filters them by the      12:     τ ← (Q, C, G ∗ , R, T, A)         ▷ collect trajectory
-similarity threshold η to form a contrastive skill set:              13:     sσcand ← Mentor(τ )                     ▷ Eq. (6)–(8)
-    Ŝoσ = {si ∈ Top-k(Boσ ; k) | Score(Q, si ) ≥ η} ,       (13)    14:     ŝσo ← SkillRetrieve(sσcand , B)           ▷ Eq. (10)
-                                                                     15:     d, s∗ ← Manager(sσcand , ŝσo )            ▷ Eq. (11)
- Score(Q, si ) = α · Sem(Q, si ) + (1 − α) · Lex(Q, si ), (14)       16:     B ∗ ← SkillBank(sσcand , d, s∗ )           ▷ Eq. (12)
-where Ŝoσ = ⟨Ŝo+ , Ŝo− ⟩ denotes the contrastive skill set        17: end for
-consisting of k successful skills and k failed skills, serving       18: return Aset , B ∗
-as the experiential prior injected into the Planner, Executor
-and Reasoner to augment their reasoning processes.
-Planner Augmentation. The Planner is responsible for dy-                                   Gt = ot (Gt−1 , at ) ,                (17)
-namically selecting the appropriate graph operator ot ∈ OG at                  skill
-                                                                     where Pexec     denotes the execution prompt augmented with
-each reasoning step t. Without explicit experiential guidance,       contrastive skills. The mechanism enables the Executor to
-the Planner is prone to redundant exploration or erroneous           generate graph-aligned execution arguments within a well-
-operator selection when reasoning from scratch.                      constrained parameter space, thereby enhancing both the pre-
-   By incorporating contrastive skill augmentation, successful       cision and completeness of evidence subgraph retrieval.
-skills Ŝo+ supply validated operator chain patterns as a positive   Reasoner Augmentation. The Reasoner conducts structured
-anchor that steers the Planner toward high-confidence chain          graph traversal reasoning over the final evidence subgraph
-and accelerates planning convergence, while failed skills Ŝo−       G ∗ to generate an explicit reasoning path R and derive the
-expose historical planning pitfalls as the negative constraint       final answer A. The key challenge lies in generating coherent
-to suppress erroneous chain recurrence. The skill-augmented          and reliable reasoning paths over evidence subgraphs while
-Planner is formalized as:                                            minimizing hallucinations and semantic errors.
-                                                        
-      ot = πPlanner Q, C<t , Gt−1 , Ŝo+ , Ŝo− ; Pplan
-                                                   skill
-                                                           , (15)        Through contrastive skill augmentation, successful skills
-                                                                     Ŝo+ provide validated traversal strategies as positive guidance
-           skill
-Where Pplan      denotes the planning prompt augmented with          to direct the Reasoner toward proven reasoning patterns and
-contrastive skills. The contrastive guidance orients the Planner     mitigate hallucinations, while failed skills Ŝo− encode root
-toward successful planning patterns while avoiding failure-          causes of semantic misjudgments as negative constraints to
-prone ones, thereby jointly improving planning accuracy and          reduce errors. The skill-augmented Reasoner is defined as:
-reducing search overhead.                                                                                                    
-Executor Augmentation. The Executor generates precise                   R, T, A = πReasoner Q, C, G ∗ , Ŝo+ , Ŝo− ; Preason
-                                                                                                                        skill
-                                                                                                                                , (18)
-execution arguments at conditioned on the operator ot and                      skill
-updates the evidence subgraph Gt . The quality of argument           where Preason   denotes the reasoning prompt augmented with
-generation directly determines the fidelity of evidence sub-         contrastive skills. The contrastive augmentation mechanism
-graph retrieval, with argument errors constituting the primary       facilitates the Reasoner toward accurate graph traversal and
-source of subgraph deviation.                                        reliable answer generation.
-   Building upon contrastive skill augmentation, successful             In summary, successful and failed skills collectively es-
-skills Ŝo+ provide the Executor with successful argument-           tablish an implicit contrastive augmentation mechanism for
-setting paradigms as positive exemplars to guide graph-aligned       skill-augmented reasoning. By continuously distilling reason-
-argument generation, while failed skills Ŝo− record argument        ing trajectories into transferable skills to enhance subsequent
-errors as negative warnings constraining the generation pro-         reasoning, SkillTGR realizes the continual self-evolution that
-cess. The skill-augmented Executor is formulated as:                 progressively improves reasoning effectiveness through experi-
-                                                                   ence accumulation. The workflow of SkillTGR is summarized
-      at = πExecutor Q, Gt−1 , ot , Ŝo+ , Ŝo− ; Pexec
-                                                   skill
-                                                           , (16)    in Algorithm 1, and prompt details are available in our codes.
-                                                                                     & R Q G L W L R Q D O  O R R N X S                                                                                                 & R Q G L W L R Q D O  O R R N X S
-                     IV. E XPERIMENTS
-                                                                                                                                                                        $ U L W K P H W L F                                                                    
-A. Experimental Settings                                                                                                           
-                                                                                                                                                               
-                                                                                                                                                                                                                                                                                                        $ U L W K P H W L F
-                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                 
-Datasets. To explore the proposed Operation-wise TableQA
-                                                                                                                                        2 Y H U D O O                                                                                                                  2 Y H U D O O
-task, we introduce two benchmark datasets named WikiTQ-ow                                                                                                                                                                                                              
-                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                        
-                                                                    & R P S D U L V R Q                                                                         
-and TabFact-ow, which are refined by the widely recognized                                                                                                      
-                                                                                                                                                                                                       & R P S D U L V R Q                                                                     
-                                                                                                                                                                                                                                                                                               
-                                                                                                                                                                                                                                                             
-                                                                                                                                                                              $ J J U H J D W L R Q
-TableQA datasets under the operation-oriented taxonomy with                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                            $ J J U H J D W L R Q
-
-five core reasoning types. Specifically, the Conditional Lookup                              ( [ W U H P X P                                                                                                                       ( [ W U H P X P
-
-(CL) focuses on cell-level retrieval under one or multiple
-                                                                                                        (a) WikiTQ-ow                                                                                                                       (b) TabFact-ow
-constraints. Comparison (Comp), Extremum (Ext) and Aggre-
-gation (Agg) involve local or global comparison, ranking, and                                     Fig. 4: Statistics of two operation-wise datasets.
-statistical reasoning across multiple rows, while the Arithmetic
-(Arith) further requires multi-step numerical computation.
-Fig. 4 presents the statistics of both datasets, and the details   Implementation Details. To ensure comprehensive evalua-
-of each dataset are described as follows:                          tion, we conduct experiments employing Qwen3.5-9B3 and
-   • WikiTQ-ow: WikiTQ [47] is a widely used table rea-
-                                                                   Ministral3-8B4 as backbone LLMs, which are deployed as
-      soning benchmark containing 4,344 test samples derived       API servers through the vLLM [51] inference engine on a
-      from 421 tables. To support the proposed Operation-wise      single NVIDIA L20-48G GPU with CUDA 12.4. For generic
-      TableQA task, we refine it by employing the powerful         reasoning methods, we reproduce them using the prompt
-      GPT-5 [48] to categorize questions into the above opera-     settings adopted in Chain-of-Table [17], while implementing
-      tion types with table contexts prompting. The annotations    other baselines with their default configurations to ensure
-      are verified by three domain postgraduates via majority      optimal performance. For our SkillTGR, we warm up the
-      voting, while cases with inconsistent judgments are fur-     SkillBank with 1,054 successful and 518 failed skills, which
-      ther resolved by a senior doctoral expert.                   are distilled from 14,151 reasoning trajectories on the WikiTQ
-   • TabFact-ow: TabFact [49] is a fact verification bench-
-                                                                   training set by skill management. For skill retrieval, we set the
-      mark with 2,024 test samples from 298 tables. However, it    weight α as 0.8 to trade-off semantic and lexical matching,
-      exhibits two key limitations: (1) The binary answer space    and retain the top-3 (i.e., k=3) retrieved skills whose matching
-      (entailed or refuted) allows models to predict correctly     scores exceed the threshold η of 0.7. Across all experiments,
-      with erroneous evidence retrieval. (2) Its positive and      we configure the temperature to 0.0 for greedy decoding.
-      negative samples are mainly constructed by modifying the     B. Main Results
-      core claim, repeatedly testing similar reasoning patterns.
-      These issues restrict reasoning diversity and provide no        Table II and Table III report the main results across different
-      explicit supervision over the underlying operations, mak-    LLMs on both datasets. Our systematic evaluation reveals
-      ing it insufficient for operation-wise evaluation. There-    several noteworthy observations as follows.
-      fore, we reformulate TabFact into QA forms following            First, SkillTGR consistently outperforms all baseline meth-
-      the WikiTQ paradigm. Specifically, GPT-5 is utilized to      ods both in overall and operation-wise assessment. On average,
-      convert positive samples into QA pairs annotated with        our method achieves 76.68% overall accuracy on WikiTQ-ow
-      predefined operation types, and further generate diverse     and 80.56% on TabFact-ow, yielding significant improvements
-      operation types of QA pairs to replace negative samples      of 5.49% and 6.33% over the strongest baselines respectively.
-      based on table contexts. The QA pairs are screened           Under the operation-wise evaluation, SkillTGR further brings
-      and verified by three domain postgraduates to enrich         average gains of 4.40% and 5.72% accuracy, highlighting its
-      the dataset diversity and coverage. The quality control      superiority in fine-grained table reasoning.
-      procedure remains consistent with WikiTQ-ow.                    Second, most baselines exhibit a pronounced operation-wise
-                                                                   performance gap: while performing well on simple Condi-
-Metric. We follow previous studies to adopt the denotation
-                                                                   tional Lookup questions, they suffer notable degradation on
-accuracy as the evaluation metric, and report both the overall
-                                                                   other complex operations requiring cross-row reasoning and
-and operation-wise results across all experiments.
-                                                                   multi-step computation. Such limitations mainly stem from
-Baselines. To conduct the systematic evaluation, we perform
-                                                                   table linearization, which disrupts table structural semantics
-comprehensive experiments comparing our SkillTGR against
-                                                                   and induces the “lost-in-the-middle” issue in long contexts.
-the following four categories of mainstream baselines: (1)
-                                                                   In contrast, our SkillTGR models tables as attributed graphs
-Generic Reasoning: E2E TQA, Few-Shot TQA [25] and
-                                                                   with explicit row-column-cell structures for dynamic graph
-CoT TQA [50]. (2) Decomposition-based Reasoning: Binder
-                                                                   traversal reasoning, while leveraging reusable skills to transfer
-[15], Dater [16] and Chain-of-Table [17]. (3) Structure-aware
-                                                                   reasoning patterns across analogous instances. Consequently,
-Reasoning: TrustUQA [21] and TIDE [22]. (4) Agent-based
-                                                                   our method maintains more balanced reasoning capabilities
-Reasoning: ReAcTable [18] and Table-Critic [20]. Detailed
-descriptions of these baselines have been discussed in the                 3 https://huggingface.co/Qwen/Qwen3.5-9B
-
-I NTRODUCTION and R ELATED W ORK sections.                                 4 https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512
-  TABLE II: Experimental results of WikiTQ-ow dataset. The best results are in bold and the second best are underlined.
-                                           Qwen3.5-9B                                         Ministral3-8B
-           Method
-                         Overall    CL     Comp     Ext     Agg     Arith   Overall    CL     Comp      Ext     Agg     Arith
-       Generic Reasoning
-       E2E TQA           51.73     67.41   48.06    57.16   36.22   32.03    38.86    56.03   38.50    18.80    28.18   44.16
-       Few-Shot TQA      54.12     70.46   53.75    59.48   36.96   35.06    50.92    68.84   53.75    49.92    31.65   46.75
-       CoT TQA           63.56     73.82   61.50    62.56   53.91   59.74    62.96    75.62   64.08    68.41    47.11   58.44
-       Decomposition-based Reasoning
-       Binder             56.61    69.22   47.55    45.61   53.23   36.36    51.96    62.94   32.82    39.14    55.28   22.51
-       Dater              62.25    71.70   61.76    62.10   52.14   61.90    54.42    58.46   52.20    59.17    48.94   51.52
-       Chain-of-Table     66.83    74.01   65.37    63.48   61.33   63.64    55.64    66.54   55.81    54.39    46.02   44.16
-       Structure-aware Reasoning
-       TrustUQA           51.06    62.62   56.33    42.99   40.64   50.65    42.56    54.04   50.65    32.82    32.54   40.26
-       TIDE               63.74    71.89   62.27    65.49   54.60   62.77    55.34    61.82   50.39    51.31    52.08   50.65
-       Agent-based Reasoning
-       ReAcTable          60.57    70.40   58.91    57.63   52.55   54.11    56.31    66.67   57.88    52.08    48.06   45.89
-       Table-Critic       79.42    82.96   77.26    76.12   78.56   73.16    61.30    67.10   59.69    61.94    56.30   53.68
-       Skill-augmented Reasoning
-       SkillTGR (Ours)    80.39    82.34   79.84    77.20   80.74   74.46   72.97     75.75    75.19   71.96   70.80    66.67
-              △           ↑0.97    ↓0.62   ↑2.58    ↑1.08   ↑2.18   ↑1.3    ↑10.01    ↑0.13   ↑11.11   ↑3.55   ↑14.50   ↑8.23
-
- TABLE III: Experimental results of TabFact-ow dataset. The best results are in bold and the second best are underlined.
-                                           Qwen3.5-9B                                         Ministral3-8B
-           Method
-                         Overall    CL     Comp     Ext     Agg     Arith   Overall   CL      Comp     Ext      Agg     Arith
-       Generic Reasoning
-       E2E TQA           52.77     71.63   54.77   51.82    33.84   32.54    41.50    65.36   39.20    20.46   24.32    33.73
-       Few-Shot TQA      59.09     72.81   59.30   54.13    47.45   46.15    51.38    70.85   60.30    50.83   25.34    44.38
-       CoT TQA           67.84     73.33   67.34   65.35    63.10   64.50    65.37    70.98   66.83    66.67   56.80    65.68
-       Decomposition-based Reasoning
-       Binder             62.15    71.76   54.27   53.14    61.05   47.93    52.87    64.31   43.72    41.58   53.91    28.40
-       Dater              66.21    72.68   66.33   63.37    60.54   61.54    53.56    57.52   54.77    55.12   48.30    49.70
-       Chain-of-Table     73.22    76.34   72.86   67.66    72.79   71.01    54.59    65.10   62.81    53.80   44.73    33.14
-       Structure-aware Reasoning
-       TrustUQA           56.52    68.50   61.31   49.83    43.54   53.85    47.23    58.56   53.77    40.26   34.18    46.15
-       TIDE               68.77    73.07   69.85   66.34    64.97   65.68    61.66    65.49   61.31    59.74   59.35    56.21
-       Agent-based Reasoning
-       ReAcTable          65.02    71.63   65.83   60.40    59.86   60.36    58.60    64.84   61.31    58.75   51.36    52.07
-       Table-Critic       83.10    85.10   83.92   77.56    84.01   79.88    63.54    63.53   73.87    61.06   62.59    59.17
-       Skill-augmented Reasoning
-       SkillTGR (Ours)    86.17    86.27   88.44   79.87    89.29   83.43    74.95    75.03   83.42    72.61   72.79    76.33
-              △           ↑3.07    ↑1.17   ↑4.52   ↑2.31    ↑5.28   ↑3.55    ↑9.58    ↑4.05   ↑9.55    ↑5.94   ↑10.20   ↑10.65
-
-
-
-across diverse operation types and consistently achieves the        accuracy on Ministral3-8B.
-best performance on complex operations, yielding significant           Finally, to investigate the impact of backbone size, we
-improvements of 5.57% and 6.50% accuracy on average.                conduct scaling experiments on Qwen3.5-27B and Ministral3-
-   Third, although the strong baseline Table-Critic achieves        14B against strong baselines CoT TQA and Table-Critic. As
-competitive performance on Qwen3.5-9B, the overall accuracy         shown in Fig. 5, although all methods benefit from increased
-drops by 18.12% and 19.56% on two datasets when utilizing           model capacity, our SkillTGR still consistently achieves supe-
-Ministral3-8B. This observation suggests that its iterative self-   rior performance under both overall and operation-wise eval-
-refinement paradigm relies heavily on the intrinsic reasoning       uation, yielding average improvements of 5.89% and 5.13%.
-ability of LLMs. In contrast, SkillTGR exhibits stronger ro-        Notably, SkillTGR attains the highest accuracies of 91.96%,
-bustness across different backbones by decomposing reason-          84.49%, 92.18% and 85.80% on the Comparison, Extremum,
-ing into explicit graph traversal operations guided by skills       Aggregation and Arithmetic operations, which further validate
-augmentation. Such a design reduces reliance on the LLM’s           that attributed graph modeling effectively facilitates cross-row
-reasoning capability and achieves a better trade-off between        relational reasoning and multi-step numerical computation,
-performance and robustness, with a substantial margin of            while the SkillBank enables experience transfer and pattern
-11.54% in overall accuracy and 12.16% in operation-wise             reuse across analogous instances.
-                                                                                                                                                                                                                                                          & R 7  7 4 $                                                                                                                                                                                                                                                                   & R 7  7 4 $
-                                                                                                                                                                                                                                                             7 D E O H  & U L W L F                                                                                                                                                                                                                                                           7 D E O H  & U L W L F
-                                                                                                                                                                                                                                                             6 N L O O 7 * 5                                                                                                                                                                                                                                                                   6 N L O O 7 * 5
-                                                                                                                                                                                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                                                                                                                                                               
-         $ F F X U D F \    
-
-
-
-
-                                                                                                                                                                                                                                                                                        $ F F X U D F \    
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
-                                                                                                                                                                                                                                                                                                                                                                     
-                                                                                                                                                                                                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                       
-                                                                                                                                                                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
-                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                                             
-                                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
-
-                                                                                                                                                                                                                                                                                                                  
-                                                 2 Y H U D O O                                 & /                            & R P S                                      ( [ W                                 $ J J                               $ U L W K                                                                2 Y H U D O O                                 & /                               & R P S                                     ( [ W                                   $ J J                                 $ U L W K
-                                                                                                                4 Z H Q       %  R Q  : L N L 7 4  R Z                                                                                                                                                                                                                              0 L Q L V W U D O     %  R Q  : L N L 7 4  R Z
-                                                                                                                                                                                                                                                          & R 7  7 4 $                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               & R 7  7 4 $
-                                                                                                                                                                                                                                                             7 D E O H  & U L W L F                                                                                                                                                                                                                                                           7 D E O H  & U L W L F
-                                                                                                                                                                                                                                                   6 N L O O 7 * 5                                                                                                                                                                                                                                                              6 N L O O 7 * 5
-                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
-         $ F F X U D F \    
-
-
-
-
-                                                                                                                                                                                                                                                                                        $ F F X U D F \    
-                                                                                                                                                                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                                                                                                                                                                                                           
-                                                                                                                                                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
-                                                                                                                                                                      
-                                                                                                                                                                                                                                                    
-                                                                                                                                                                                                           
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-
-
-
-                                                                                                                                                                                                                                                                                                                  
-                                                 2 Y H U D O O                                 & /                            & R P S                                      ( [ W                                 $ J J                               $ U L W K                                                                2 Y H U D O O                                 & /                               & R P S                                     ( [ W                                   $ J J                                 $ U L W K
-                                                                                                                4 Z H Q       %  R Q  7 D E ) D F W  R Z                                                                                                                                                                                                                             0 L Q L V W U D O     %  R Q  7 D E ) D F W  R Z
-                                            Fig. 5: Scaling analysis on Qwen3.5-27B (left) and Ministral3-14B (right) across two benchmarks.
-
-TABLE IV: Computational efficiency comparison between Table-Critic and our SkillTGR. Input/Output/Total tokens and
-Inference latency (second) are averaged per question, while Table-to-Graph reports the one-time graph construction overhead.
-                                                                                                                                                                                Qwen3.5-9B                                                                                                                                                                                         Ministral3-8B                                                                                                                                 Table-to-Graph
-     Dataset                                         Method
-                                                                                                                    Input                                       Output                                                Total                                     Inference                                                 Input                                    Output                                                   Total                                     Inference                                                 Avg (s)                                  Total (s)
-                                              Table-Critic                                                         34,287                                        1,019                                          35,306                                                      11.78                                        29,758                                            894                                           30,652                                                        6.64                                      0.0                                       0.0
-   WikiTQ-ow                                  SkillTGR                                                             26,843                                         827                                           27,670                                                      8.82                                         23,848                                            753                                           24,601                                                        4.51                                     0.025                                     10.48
-                                                                    △                                         ↓21.71%                                           ↓18.84%                                     ↓21.63%                                                ↓25.13%                                               ↓19.86%                                  ↓15.77%                                         ↓19.74%                                                  ↓32.08%                                              ↑0.025                                    ↑10.48
-                                              Table-Critic                                                         31,932                                           994                                         32,926                                                         9.01                                      27,461                                            873                                           28,334                                                        4.33                                      0.0                                       0.0
-   TabFact-ow                                 SkillTGR                                                             25,749                                           818                                         26,567                                                         6.57                                      22,495                                            746                                           23,241                                                        3.04                                     0.016                                      4.79
-                                                                    △                                         ↓19.36%                                           ↓17.71%                                     ↓19.31%                                                ↓27.08%                                               ↓18.08%                                  ↓14.55%                                         ↓17.98%                                                  ↓29.79%                                              ↑0.016                                    ↑4.79
-
-
-
-C. Efficiency Analysis                                                                                                                                                                                                                                                                                     D. Ablation Study
-   To further assess computational efficiency, we compare                                                                                                                                                                                                                                                     To dissect component contributions, we conduct an ablation
-SkillTGR with the strong baseline Table-Critic in terms of                                                                                                                                                                                                                                                 study using Qwen3.5-9B with two groups of ablations on both
-token consumption and inference latency. As reported in                                                                                                                                                                                                                                                    datasets, as reported in Table V.
-Table IV, our SkillTGR consistently outperforms Table-Critic                                                                                                                                                                                                                                                  For the Table Graph Ablation, w/o Reasoner removes
-across both datasets and LLM backbones, reducing token                                                                                                                                                                                                                                                     explicit reasoning path generation with overall and operation-
-consumption and inference latency by 19.76% and 27.64%                                                                                                                                                                                                                                                     wise decline of 5.22% and 5.72%, verifying graph traversal
-on average, respectively. The underlying reason is that Table-                                                                                                                                                                                                                                             reasoning enhances evidence aggregation for complex multi-
-Critic relies on iterative critique-refinement interactions until                                                                                                                                                                                                                                          step inference. Moreover, w/o Planner&Executor eliminates
-converging to correct solutions, which repeatedly propagates                                                                                                                                                                                                                                               dynamic chain planning and evidence subgraph retrieval with
-the full linearized table as context and generates redundant                                                                                                                                                                                                                                               substantial degradation of 11.06% on cross-row operations, in-
-intermediate responses, thus resulting in higher computational                                                                                                                                                                                                                                             dicating dynamic evidence retrieval is crucial for filtering noise
-overhead. In contrast, our SkillTGR confines reasoning to local                                                                                                                                                                                                                                            and pinpointing supporting evidence. w/o Table-to-Graph fur-
-evidence subgraphs through dynamic graph traversal, while                                                                                                                                                                                                                                                  ther discards both table graph construction and dynamic graph
-leveraging historical reasoning experience to augment infer-                                                                                                                                                                                                                                               traversal reasoning, retaining only skill-augmented reasoning.
-ence with reusable skills rather than reasoning from scratch,                                                                                                                                                                                                                                              This variant exhibits the largest degradation of 15.55% and
-thereby improving efficiency substantially. Although SkillTGR                                                                                                                                                                                                                                              15.88% on overall and operation-wise accuracy, confirming
-requires an additional table-to-graph construction, the average                                                                                                                                                                                                                                            that attributed table graphs effectively preserve structural se-
-overhead is merely 0.025 and 0.016 seconds per table on two                                                                                                                                                                                                                                                mantics and mitigate the “lost-in-the-middle” issue.
-datasets. As a one-time offline preprocessing step, it is neg-                                                                                                                                                                                                                                                For the Skill-related Ablation, w/o Hierarchy causes de-
-ligible compared with overall inference costs. Consequently,                                                                                                                                                                                                                                               creases of 1.38% operation-wise performance when removing
-our SkillTGR achieves a more favorable accuracy-efficiency                                                                                                                                                                                                                                                 the operation-wise partitioning and success/failure bifurcation,
-trade-off while delivering superior reasoning performance.                                                                                                                                                                                                                                                 verifying that the hierarchical organization reduces cross-skill
- TABLE V: Ablation study of SkillTGR, evaluating the contributions of Table Graph design and Skill-related components.
-                                                              WikiTQ-ow                                                            TabFact-ow
-              Method
-                                   Overall       CL           Comp        Ext         Agg       Arith      Overall      CL         Comp      Ext        Agg       Arith
-      SkillTGR (Full model)         80.39        82.34        79.84   77.20           80.74     74.46       86.17       86.27      88.44     79.87      89.29     83.43
-      Table Graph Ablation
-        w/o Reasoner                76.04        78.54        72.61   74.11           76.11     69.26       80.09       81.44      78.89     73.60      82.65     78.11
-        w/o Planner&Executor        71.48        74.69        70.28   68.10           70.32     67.97       74.36       77.65      72.86     68.65      73.81     73.37
-        w/o Table-to-Graph          66.78        73.88        63.82   63.02           62.08     62.77       68.68       73.46      68.34     65.68      64.97     65.68
-      Skill-related Ablation
-        w/o Hierarchy               79.10        81.22        78.29   76.58           79.17     72.29       85.03       85.49      86.93     78.55      87.93     82.25
-        w/o Skill Evolving          78.91        81.28        78.04   75.65           79.10     71.86       84.93       85.23      87.44     78.88      87.76     81.66
-        w/o Planner Aug.            77.95        80.60        76.49   75.04           77.74     71.43       82.71       83.27      82.91      76.9      85.54     80.47
-        w/o Executor Aug.           77.83        80.47        76.23   74.88           77.54     72.29       82.36       83.53      81.41     76.24      84.69     81.07
-        w/o Reasoner Aug.           77.76        80.53        76.74   75.19           77.26     70.56       82.11       82.88      80.90     75.91      84.86     81.66
-        w/o SkillBank               76.59        78.98        73.39   74.58           76.79     69.70       80.58       81.57      79.90     73.93      83.16     79.88
-
-        TABLE VI: Performance comparison on short and long tables under row-based and token-based partitioning.
-                                                                 Qwen3.5-9B                                                          Ministral3-8B
-       Partition          Method
-                                        Overall          CL      Comp           Ext       Agg      Arith      Overall        CL      Comp       Ext        Agg      Arith
-                         Table-Critic    80.11        83.66       78.03     76.80        79.30     73.56       62.30       68.07     60.40      62.25     57.78     54.33
-    Row<50 (4,003)       SkillTGR        80.71        82.71       80.35     77.29        81.13     74.52       73.27       76.07     76.01      72.06     71.07     66.83
-                         Table-Critic    71.26        75.19       70.73     64.86        69.16     69.57       49.56       56.39     53.66      56.76     37.38     47.83
-    Row≥50 (341)         SkillTGR        76.54        78.20       75.61     75.68        75.70     73.91       69.50       72.18     68.29      70.27     67.29     65.22
-
-                         Table-Critic    79.70        83.14       78.11     76.42        78.81     73.57       61.90       67.89     60.00      62.18     57.05     53.74
-    Token<4k (4202)      SkillTGR        80.41        82.36       79.73     77.22        80.84     74.45       73.11       75.90     75.41      72.15     70.95     66.52
-                         Table-Critic    71.13        78.33       58.82     64.71        70.45     50.00       43.66       46.67     52.94      52.94     31.82     50.00
-    Token≥4k (142)       SkillTGR        79.58        81.67       82.35     76.47        77.27     75.00       69.01       71.67     70.59      64.71     65.91     75.00
-
-
-
-interference and improves retrieval precision. In addition, w/o                             As shown in Table VI, both methods achieve competitive
-Skill Evolving disables continual merging for skill refine-                              performance on short tables under Qwen3.5-9B, whereas
-ment with 1.36% overall and 1.56% operation-wise drops,                                  the advantage of SkillTGR becomes increasingly pronounced
-suggesting skill evolution benefits maintaining high-quality                             on long tables. Under row-based partitioning, our SkillTGR
-experience accumulation. Furthermore, w/o Planner Aug., w/o                              outperforms Table-Critic by 5.28% and 19.94% in overall
-Executor Aug. and w/o Reasoner Aug. remove contrastive                                   accuracy on Qwen3.5-9B and Ministral3-8B respectively, with
-skill augmentation for the Planner, Executor and Reasoner,                               gains further increasing to 8.45% and 25.35% under token-
-which consistently incur significant decline with 2.95%–                                 based partitioning. In particular, the improvements are concen-
-3.35% overall and 3.21%–3.60% operation-wise performance,                                trated on Comparison, Extremum, Aggregation and Arithmetic
-demonstrating that contrastive augmentation from successful                              questions, which require extensive cross-row evidence integra-
-and failed skills facilitates reasoning with positive guidance                           tion and multi-step numerical reasoning. SkillTGR achieves
-and negative constraint. Finally, w/o SkillBank completely                               average operation-wise gains of 12.75% and 19.45% on these
-removes the Skill-Augmented Self-Evolution module, yield-                                complex questions under row-based and token-based partition-
-ing the largest degradation of 4.70% and 5.06% on overall                                ing respectively. Such disparities stem from the fact that Table-
-and operation-wise accuracy, which confirms the continual                                Critic still relies on linearized tables and reason-from-scratch
-self-evolution mechanism effectively accumulates transferable                            inference, making it vulnerable to inefficient evidence retrieval
-experience and enhances reasoning capability beyond the                                  on large tables. In contrast, SkillTGR preserves explicit table
-conventional reason-from-scratch paradigm.                                               structures through attributed graphs and further leverages
-   In summary, each module of our SkillTGR contributes to                                reusable skills for experience-augmented reasoning, leading
-the entire performance on the operation-wise table reasoning.                            to stronger scalability for complex reasoning over long tables.
-                                                                                         F. Case Study
-E. Table Size Analysis
-                                                                                            To intuitively illustrate the superiority of our SkillTGR in
-   To evaluate robustness across different table scales, we                              complex structured reasoning, we present an aggregation case
-partition WikiTQ-ow tables (since all TabFact-ow tables are                              study against the baseline Table-Critic, as shown in Fig. 6.
-short) into short and long subsets along two dimensions: row-                               Specifically, this question requires counting games that
-based (Row≥50 as long) and token-based (Token≥4k as long),                               simultaneously satisfy three constraints: the opponent is In-
-yielding 341 and 142 long-table questions respectively.                                  ternazionale Milan, the match occurs after September, and
-                                                            Table caption: Serie A                                                                                                                                                           Table-Critic                                                                                                                                                                                 SkillTGR (ours)
-                                          No.                Away Team              Date              Score       …
-                                                                                                                                                      Thought: we can find that the away team Inter Milan and                                                                                                                                              Successful skills: Expand hidden info; Filter then count; Aggregate subset
-                                           1                 Inter Milan           Sep. 10             1-1        …
-                                           2                  A.C. Milan           Sep. 11            2-2         …                                   A.C. Milan with total 4 games played against in row1, row2,                                                                                                                                          Failed skills: Skip aggregate; Misread time constraint; Count outside subset
-                                          …                       …                  …                 …          …                                   row54 and row379.                                                                                                                                                                                    Planner: Anchor -> Navigate -> Expand -> Cluster
-                                          53                  A.S. Roma            Oct. 16            2-1         …
-                                                                                                                  …                                   Judge: Incorrect                                                                                                                                                                                     Executor: Anchor(Away Team, Date, Score) -> Navigate(Inter Milan, Date) -
-                                          54                  A.C. Milan           Oct. 17            0-0
-                                          …                       …                  …                 …          …                                   Critic: Team A.C. Milan is not Team Internazionale Milan                                                                                                                                             > Expand(result) -> Cluster(result)
-                                          138                Inter Milan           Dec. 11            3-3         …                                   Refiner: Based on the critique, we can find that there are                                                                                                                                           Evidence subgraph: [(row138, Away Team, Inter Milan), (row217, Away Team,
-                                          139                 Torino F.C.          Dec. 12            2–3         …
-                                          …                       …                  …                 …          …                                   2 games played against Inter Milan in row1 and row379.                                                                                                                                               Inter Milan), (row379, Away Team, Inter Milan), (row138, Date, Dec. 11),
-                                          217                Inter Milan           Feb. 5             1-1         …                                   Judge: Incorrect                                                                                                                                                                                     (row217, Date, Feb. 5), (row379, Date, May. 13), (row138, result, tie),
-                                          218                 Como 1907            Mar. 8             0-1         …
-                                                                                                                                                      Critic: The game should score in tie after September.                                                                                                                                                (row217, result, tie), (row217, result, win)]
-                                          …                       …                  …                 …          …
-                                          379                Inter Milan           May. 13            2-1         …                                   Refiner: Based on the critique, we can find that there are                                                                                                                                           Reasoner: <Path> (row138, result, tie), (row217, result, tie), (row138, Away
-                                          380                 S.S. Lazio           May 14             0-1         …                                   no games satisfy the conditions.                                                                                                                                                                     Team, Inter Milan), (row217, Away Team, Inter Milan) </Path>
-                                   Q: How many games against Internazionale                                                                           Judge: Correct                                                                                                                                                                                       <Thought> Based on the path, 2 games satisfy the conditions </Thought>
-                                   Milan ended in a tie after September?                                                                              Prediction: 0                                                                                                                                                                                        <Answer> 2 </Answer>
-
-
-                                                                                                                                                                                                                                                                     Fig. 6: Case study.
-
-                                                                                                                          : L N L 7 4  R Z      4 Z H Q      %
-                                                                                                                                                                                                                                       : L N L 7 4  R Z      4 Z H Q      %
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               : L N L 7 4  R Z      4 Z H Q      %
-                                                                                                                            : L N L 7 4  R Z      0 L Q L V W U D O    %                                                        : L N L 7 4  R Z      0 L Q L V W U D O    %                                                                                                                                                                                                   : L N L 7 4  R Z      0 L Q L V W U D O    %
-                                                                                                                            7 D E ) D F W  R Z      4 Z H Q      %                                                            7 D E ) D F W  R Z      4 Z H Q      %                                                                                                                                                                                                       7 D E ) D F W  R Z      4 Z H Q      %
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-                                                                                         
-                                                                                                                   
-                                                                                                                            7 D E ) D F W  R Z      0 L Q L V W U D O    %                                                      7 D E ) D F W  R Z      0 L Q L V W U D O    %
-                                                                                                                                                                                                                                                                                                                                                                                                                                                       7 D E ) D F W  R Z      0 L Q L V W U D O    %
-                                                  
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
-                                                                                                                                                                                       2 Y H U D O O  $ F F     
-
-
-
-
-                                                                                                                                                                                                                                                                                                                                                                                        2 Y H U D O O  $ F F     
- 2 Y H U D O O  $ F F     
-
-
-
-
-                                                                                                                                                                                                                                                                                                                                                                                                                                        
-                                                                                                       
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
-
-
-                                                                                                                                                                                                                                                                                                                                                                                                                               
-                                                                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                                                                                                                                                             
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                                                                
-                                                    
-                                                    
-                                                                                                                                                               
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
-
-                                                                                                                                                                                                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-                                                                                       7 R S  .                                                                                                                                                                                                      : H L J K W                                                                                                                                           : H L J K W 
-
-                                                                                                                                                                                      Fig. 7: Hyperparameter sensitivity analysis
-
-
-the final result is a tie. Since the target evidence rows are                                                                                                                                                                                                                                                     semantically similar skills, while a higher α improves semantic
-deeply buried within lengthy and noisy contexts, the task poses                                                                                                                                                                                                                                                   generalization at the expense of discriminative ability. The op-
-significant challenges for long-context retrieval and multi-                                                                                                                                                                                                                                                      timal α = 0.8 suggests that semantic-dominant retrieval with
-step aggregation. Although Table-Critic progressively corrects                                                                                                                                                                                                                                                    moderate lexical constraints best captures transferable skill
-errors through iterative critique-refinement, its linearized table                                                                                                                                                                                                                                                patterns. Finally, the threshold η filters retrieved candidates by
-representation is inherently susceptible to the “lost-in-the-                                                                                                                                                                                                                                                     relevance. A lower threshold introduces noisy skills, whereas a
-middle” issue, causing crucial evidence overlooked and lead-                                                                                                                                                                                                                                                      higher threshold over-filters useful ones and reduces coverage.
-ing to an incorrect answer. In contrast, SkillTGR transforms                                                                                                                                                                                                                                                      The best performance is achieved at η = 0.7, demonstrating
-tables into attributed graphs and performs dynamic graph                                                                                                                                                                                                                                                          the importance of balancing skill quality and coverage.
-traversal reasoning to efficiently retrieve evidence subgraphs
-while filtering irrelevant information. Furthermore, contrastive                                                                                                                                                                                                                                                                                                                                             V. C ONCLUSION
-augmentation with successful and failed skills equips the                                                                                                                                                                                                                                                            In this paper, we introduce a novel Operation-wise TableQA
-multi-agent framework with transferable reasoning experience,                                                                                                                                                                                                                                                     task together with two refined benchmarks, to investigate how
-enabling more accurate retrieval planning and aggregation                                                                                                                                                                                                                                                         LLMs perform across a fine-grained question taxonomy with
-reasoning, thereby producing the correct prediction.                                                                                                                                                                                                                                                              five core operations rather than the limited overall assessment.
-                                                                                                                                                                                                                                                                                                                  Based on this, we propose the SkillTGR framework to rep-
-G. Hyperparameter sensitivity analysis                                                                                                                                                                                                                                                                            resent tables as attributed graphs for dynamic graph traver-
-  To investigate the impact of the key hyperparameters in the                                                                                                                                                                                                                                                     sal reasoning, mitigating both structural semantic loss and
-hybrid skill retrieval, we conduct a sensitivity study on both                                                                                                                                                                                                                                                    the “lost-in-the-middle” issue inherent in conventional table
-datasets across different LLMs, as illustrated in Fig. 7.                                                                                                                                                                                                                                                         linearization approaches. Moreover, our SkillTGR constructs
-  Specifically, the Top-k determines the number of successful                                                                                                                                                                                                                                                     a hierarchical SkillBank to distill historical trajectories into
-and failed skills injected for contrastive augmentation. Smaller                                                                                                                                                                                                                                                  reusable skills for contrastive augmented reasoning, facilitat-
-values provide insufficient experience coverage, whereas larger                                                                                                                                                                                                                                                   ing the continual self-evolution across diverse operation-wise
-values introduce irrelevant noise. SkillTGR achieves the best                                                                                                                                                                                                                                                     instances. Extensive experiments demonstrate that our method
-performance at k=3, indicating an optimal balance between                                                                                                                                                                                                                                                         significantly outperforms competitive baselines in both overall
-experience diversity and retrieval noise. The weight coefficient                                                                                                                                                                                                                                                  and operation-wise evaluations, while substantially reducing
-α balances dense semantic similarity and BM25-based lexical                                                                                                                                                                                                                                                       token consumption and inference latency, validating both the
-matching. A lower α favors lexical alignment but overlooks                                                                                                                                                                                                                                                        effectiveness and efficiency of our proposed framework.
-                     ACKNOWLEDGMENT                                              [16] Y. Ye, B. Hui, M. Yang, B. Li, F. Huang, and Y. Li, “Large language
-                                                                                      models are versatile decomposers: Decomposing evidence and questions
-   In accordance with IEEE guidelines, we disclose the usage                          for table-based reasoning,” in Proceedings of the 46th International
-of AI tools in this work. GPT-5 was employed in the construc-                         ACM SIGIR Conference on Research and Development in Information
-tion of the WikiTQ-ow and TabFact-ow datasets (described                              Retrieval, 2023, pp. 174–184.
-                                                                                 [17] Z. Wang, H. Zhang, C. Li, J. M. Eisenschlos, V. Perot, Z. Wang,
-in Section 4, Experimental Settings) to assist with question                          L. Miculicich, Y. Fujii, J. Shang, C. Lee, and T. Pfister, “Chain-of-
-categorization, operation-type annotation, and QA pair genera-                        table: Evolving tables in the reasoning chain for table understanding,”
-tion. All AI-generated annotations and data were subsequently                         in The Twelfth International Conference on Learning Representations,
-                                                                                      2024, pp. 55 587–55 610.
-reviewed and verified by domain experts to ensure correctness                    [18] Y. Zhang, J. Henkel, A. Floratou, J. Cahoon, S. Deep, and J. M. Patel,
-and reliability. In addition, LLMs are used for grammar                               “Reactable: Enhancing react for table question answering,” Proc. VLDB
-checking and linguistic polishing of the manuscript.                                  Endow., vol. 17, no. 8, pp. 1981–1994, 2024.
-                                                                                 [19] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao,
-                              R EFERENCES                                             “React: Synergizing reasoning and acting in language models,” in The
-                                                                                      Eleventh International Conference on Learning Representations, 2023.
- [1] X. Li, Q. Cai, Y. Shu, C. Guo, and B. Yang, “AID-SQL: adaptive              [20] P. Yu, G. Chen, and J. Wang, “Table-critic: A multi-agent framework for
-     in-context learning of text-to-sql with difficulty-aware instruction and         collaborative criticism and refinement in table reasoning,” in Proceedings
-     retrieval-augmented generation,” in 41st IEEE International Conference           of the 63rd Annual Meeting of the Association for Computational
-     on Data Engineering, 2025, pp. 3945–3957.                                        Linguistics, 2025, pp. 17 432–17 451.
- [2] B. Xu, Y. Cai, S. Shi, Z. Hao, and R. Cai, “Chat2db: Chatting to the        [21] W. Zhang, L. Jin, Y. Zhu, J. Chen, Z. Huang, J. Wang, Y. Hua, L. Liang,
-     database with interactive agent assisted language models,” in 41st IEEE          and H. Chen, “Trustuqa: A trustful framework for unified structured
-     International Conference on Data Engineering, 2025, pp. 4620–4623.               data question answering,” in Thirty-Ninth AAAI Conference on Artificial
- [3] Y. Song, J. Lu, Y. Song, C. C. Cao, R. C. Wong, and H. Zhang, “Fevisqa:          Intelligence, 2025, pp. 25 931–25 939.
-     Free-form question answering over data visualizations,” in 41st IEEE        [22] Z. Yang, Z. Du, M. Zhang, W. Du, J. Chen, Z. Duan, and S. Zhao,
-     International Conference on Data Engineering, 2025, pp. 2726–2739.               “Triples as the key: Structuring makes decomposition and verification
- [4] Z. Chen, W. Chen, C. Smiley, S. Shah, I. Borova, D. Langdon,                     easier in llm-based tableqa,” in The Thirteenth International Conference
-     R. Moussa, M. Beane, T. K. Huang, B. R. Routledge, and W. Y.                     on Learning Representations, 2025, pp. 37 951–37 975.
-     Wang, “Finqa: A dataset of numerical reasoning over financial data,” in     [23] P. Yin, G. Neubig, W. Yih, and S. Riedel, “Tabert: Pretraining for joint
-     Proceedings of the 2021 Conference on Empirical Methods in Natural               understanding of textual and tabular data,” in Proceedings of the 58th
-     Language Processing, 2021, pp. 3697–3711.                                        Annual Meeting of the Association for Computational Linguistics, 2020,
- [5] A. Pampari, P. Raghavan, J. J. Liang, and J. Peng, “emrqa: A large               pp. 8413–8426.
-     corpus for question answering on electronic medical records,” in Pro-       [24] Z. Gu, J. Fan, N. Tang, P. Nakov, X. Zhao, and X. Du, “PASTA: table-
-     ceedings of the 2018 Conference on Empirical Methods in Natural                  operations aware fact verification via sentence-table cloze pre-training,”
-     Language Processing, 2018, pp. 2357–2368.                                        in Proceedings of the 2022 Conference on Empirical Methods in Natural
- [6] J. Devlin, M. Chang, K. Lee, and K. Toutanova, “BERT: pre-training               Language Processing, 2022, pp. 4971–4983.
-     of deep bidirectional transformers for language understanding,” in          [25] T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal,
-     Proceedings of the 2019 Conference of the North American Chapter                 A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-
-     of the Association for Computational Linguistics: Human Language                 Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler,
-     Technologies, 2019, pp. 4171–4186.                                               J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray,
- [7] M. Lewis, Y. Liu, N. Goyal, M. Ghazvininejad, A. Mohamed, O. Levy,               B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever,
-     V. Stoyanov, and L. Zettlemoyer, “BART: denoising sequence-to-                   and D. Amodei, “Language models are few-shot learners,” in The Thirty-
-     sequence pre-training for natural language generation, translation, and          Fourth Annual Conference on Neural Information Processing Systems,
-     comprehension,” in Proceedings of the 58th Annual Meeting of the                 2020, pp. 1877–1901.
-     Association for Computational Linguistics, 2020, pp. 7871–7880.             [26] T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa, “Large
- [8] C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena,                 language models are zero-shot reasoners,” in The Thirty-Sixth An-
-     Y. Zhou, W. Li, and P. J. Liu, “Exploring the limits of transfer learning        nual Conference on Neural Information Processing Systems, 2022, pp.
-     with a unified text-to-text transformer,” Journal of Machine Learning            22 199–22 213.
-     Research, vol. 21, pp. 140:1–140:67, 2020.                                  [27] X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang,
- [9] J. Herzig, P. K. Nowak, T. Müller, F. Piccinno, and J. M. Eisenschlos,          A. Chowdhery, and D. Zhou, “Self-consistency improves chain of
-     “Tapas: Weakly supervised table parsing via pre-training,” in Proceed-           thought reasoning in language models,” in The Eleventh International
-     ings of the 58th Annual Meeting of the Association for Computational             Conference on Learning Representations, 2023.
-     Linguistics, 2020, pp. 4320–4333.                                           [28] S. Chen, L. Miculicich, J. Eisenschlos, Z. Wang, Z. Wang, Y. Chen,
-[10] Q. Liu, B. Chen, J. Guo, M. Ziyadi, Z. Lin, W. Chen, and J. Lou,                 Y. Fujii, H. Lin, C. Lee, and T. Pfister, “Tablerag: Million-token table
-     “TAPEX: table pre-training via learning a neural SQL executor,” in The           understanding with language models,” in The Thirty-Eighth Annual Con-
-     Tenth International Conference on Learning Representations, 2022.                ference on Neural Information Processing Systems, 2024, pp. 74 899–
-[11] F. Zhou, M. Hu, H. Dong, Z. Cheng, F. Cheng, S. Han, and D. Zhang,               74 921.
-     “Tacube: Pre-computing data cubes for answering numerical-reasoning         [29] Y. Zhao, L. Chen, A. Cohan, and C. Zhao, “Tapera: Enhancing faithful-
-     questions over tabular data,” in Proceedings of the 2022 Conference on           ness and interpretability in long-form table QA by content planning
-     Empirical Methods in Natural Language Processing, 2022, pp. 2278–                and execution-based reasoning,” in Proceedings of the 62nd Annual
-     2291.                                                                            Meeting of the Association for Computational Linguistics, 2024, pp.
-[12] W. Xu, R. Tommasini, and O. Curé, “No rule is forever: Datalog                  12 824–12 840.
-     reasoning with rule amendments,” in 41st IEEE International Conference      [30] X. Zhang, D. Wang, K. Xu, Q. Zhu, and W. Che, “Rot: Enhancing table
-     on Data Engineering, 2025, pp. 2867–2879.                                        reasoning with iterative row-wise traversals,” in Proceedings of the 2025
-[13] Z. Zhao, B. Lu, X. Gan, G. Tang, L. Fu, and X. Wang, “Chainsformer:              Conference on Empirical Methods in Natural Language Processing,
-     Numerical reasoning on knowledge graphs from a chain perspective,”               2025, pp. 559–579.
-     in 41st IEEE International Conference on Data Engineering, 2025, pp.        [31] F. Lei, J. Meng, Y. Huang, S. He, J. Zhao, and K. Liu, “Tarex:
-     2963–2976.                                                                       Reinforcement learning for code-driven table reasoning,” in Fortieth
-[14] Z. Chen, Y. Wang, T. Xiao, R. Zhou, X. Yang, W. Wang, Z. Sui,                    AAAI Conference on Artificial Intelligence, 2026, pp. 31 501–31 509.
-     and J. Wang, “From mathematical reasoning to code: Generalization of        [32] D. Zhou, N. Schärli, L. Hou, J. Wei, N. Scales, X. Wang, D. Schuurmans,
-     process reward models in test-time scaling,” in Fortieth AAAI Conference         C. Cui, O. Bousquet, Q. V. Le, and E. H. Chi, “Least-to-most prompting
-     on Artificial Intelligence, 2026, pp. 30 368–30 376.                             enables complex reasoning in large language models,” in The Eleventh
-[15] Z. Cheng, T. Xie, P. Shi, C. Li, R. Nadkarni, Y. Hu, C. Xiong, D. Radev,
-     M. Ostendorf, L. Zettlemoyer, N. A. Smith, and T. Yu, “Binding                   International Conference on Learning Representations, 2023.
-     language models in symbolic languages,” in The Eleventh International
-     Conference on Learning Representations, 2023.
-[33] T. Khot, H. Trivedi, M. Finlayson, Y. Fu, K. Richardson, P. Clark,                from past selves: Self-evolution contrast for robust depth estimation,”
-     and A. Sabharwal, “Decomposed prompting: A modular approach for                   in Fortieth AAAI Conference on Artificial Intelligence, 2026, pp. 2580–
-     solving complex tasks,” in The Eleventh International Conference on               2588.
-     Learning Representations, 2023.                                              [43] Y. Qu, T. Zhang, N. Garg, and A. Kumar, “Recursive introspection:
-[34] Z. Tang, B. Niu, X. Zhou, B. Li, W. Zhou, J. Wang, G. Li, X. Zhang,               Teaching language model agents how to self-improve,” in The Thirty-
-     and F. Wu, “St-raptor: Llm-powered semi-structured table question                 Eighth Annual Conference on Neural Information Processing Systems,
-     answering,” Proc. ACM Manag. Data, vol. 3, no. 6, pp. 1–27, 2025.                 2024, pp. 55 249–55 285.
-[35] Z. Zhang, L. Bai, C. Guo, and J. Song, “Syllogism-inspired tableqa: Ev-      [44] X. Chen, J. Lu, M. Kim, D. Zhang, J. Tang, A. Piché, N. Gontier,
-     identialization makes decomposition reasoning and answer verification             Y. Bengio, and E. Kamalloo, “Self-evolving curriculum for llm reason-
-     more reliable,” in Fortieth AAAI Conference on Artificial Intelligence,           ing,” arXiv preprint arXiv:2505.14970, 2025.
-     2026, pp. 34 888–34 896.                                                     [45] J. Wang, Y. Zhou, X. Zhang, M. Bao, and P. Yan, “Self-evolutionary
-[36] N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao,                     large language models through uncertainty-enhanced preference opti-
-     “Reflexion: language agents with verbal reinforcement learning,” in the           mization,” in Thirty-Ninth AAAI Conference on Artificial Intelligence,
-     Thirty-Seventh Annual Conference on Neural Information Processing                 2025, pp. 25 362–25 370.
-     Systems, 2023, pp. 8634–8652.                                                [46] C. Lebiere and J. R. Anderson, “A connectinonist implementation of the
-[37] X. Bo, Z. Zhang, Q. Dai, X. Feng, L. Wang, R. Li, X. Chen, and                    act-r productino system,” in Proceedings of the annual meeting of the
-     J. Wen, “Reflective multi-agent collaboration based on large language             Cognitive Science Society, vol. 15, 1993.
-     models,” in The Thirty-Eighth Annual Conference on Neural Information        [47] P. Pasupat and P. Liang, “Compositional semantic parsing on semi-
-     Processing Systems, 2024, pp. 138 595–138 631.                                    structured tables,” in Proceedings of the 53rd Annual Meeting of the
-[38] W. Chen, Y. Su, J. Zuo, C. Yang, C. Yuan, C. Chan, H. Yu, Y. Lu,                  Association for Computational Linguistics, 2015, pp. 1470–1480.
-     Y. Hung, C. Qian, Y. Qin, X. Cong, R. Xie, Z. Liu, M. Sun, and J. Zhou,      [48] A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky,
-     “Agentverse: Facilitating multi-agent collaboration and exploring emer-           A. McLaughlin, A. Low, A. Ostrow, A. Ananthram et al., “Openai gpt-5
-     gent behaviors,” in The Twelfth International Conference on Learning              system card,” arXiv preprint arXiv:2601.03267, 2025.
-     Representations, 2024, pp. 20 094–20 136.                                    [49] W. Chen, H. Wang, J. Chen, Y. Zhang, H. Wang, S. Li, X. Zhou,
-[39] Y. Du, S. Li, A. Torralba, J. B. Tenenbaum, and I. Mordatch, “Improving           and W. Y. Wang, “Tabfact: A large-scale dataset for table-based fact
-     factuality and reasoning in language models through multiagent debate,”           verification,” in The Eighth International Conference on Learning Rep-
-     in Forty-first International Conference on Machine Learning, 2024, pp.            resentations, 2020.
-     11 733–11 763.                                                               [50] J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. H. Chi,
-[40] X. Zeng, H. Su, Z. Wang, and Z. Lin, “Graph diffusion for robust                  Q. V. Le, and D. Zhou, “Chain-of-thought prompting elicits reasoning
-     multi-agent coordination,” in Forty-second International Conference on            in large language models,” in The Thirty-Sixth Annual Conference on
-     Machine Learning, 2025.                                                           Neural Information Processing Systems, 2022, pp. 24 824–24 837.
-[41] N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and   [51] W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez,
-     P. Liang, “Lost in the middle: How language models use long contexts,”            H. Zhang, and I. Stoica, “Efficient memory management for large
-     Transactions of the Association for Computational Linguistics, vol. 12,           language model serving with pagedattention,” in Proceedings of the 29th
-     pp. 157–173, 2024.                                                                Symposium on Operating Systems Principles, 2023, pp. 611–626.
-[42] J. Cao, K. Jiang, S. Li, X. Feng, and Y. Huang, “Learning depth
-

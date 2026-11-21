@@ -1,3 +1,7 @@
+> 仓库瘦身（2026-11-21）：保留研究笔记、索引、脚本和可编辑源图；PDF、全文提取、页面快照、导出文件与 `.build` 不再进入 Git。本地原件未删除。退出跟踪的路径、字节数与原 Git blob 见 [ARTIFACTS.csv](ARTIFACTS.csv)，完整原件可从提交 `ba2799ba` 恢复。新克隆中的这些本地资源链接需要先恢复原件，不能当作随仓交付的文件。
+>
+> 恢复到独立 ZIP（不覆盖当前文档）：`git archive --format=zip --output=../kinlin-research-ba2799ba.zip ba2799ba -- papers`。退出当前版本跟踪不会缩减既有 Git 历史，不做历史改写。
+
 # 论文下载清单：AI Agent「记忆」与「通讯」两部分
 
 检索来源：arXiv（外部学术网站）。检索与下载日期：2026-11-18。

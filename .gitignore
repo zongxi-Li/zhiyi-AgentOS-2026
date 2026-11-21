@@ -166,3 +166,15 @@ frontend/.vite/
 # Local Playwright MCP snapshots and ZCode ignore profile
 .playwright-mcp/
 .zcodeignore
+
+# Research originals and generated exports stay local; preserve authored sources.
+/papers/**
+!/papers/**/
+!/papers/**/*.md
+!/papers/**/*.py
+!/papers/**/*.cjs
+!/papers/**/*.js
+!/papers/**/*.drawio
+!/papers/**/*.svg
+!/papers/ARTIFACTS.csv
+/papers/**/.build/
