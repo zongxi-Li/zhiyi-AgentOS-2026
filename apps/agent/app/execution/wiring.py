@@ -6,6 +6,7 @@ import os
 import asyncio
 import json
 import logging
+from copy import deepcopy
 from datetime import timedelta
 from pathlib import Path
 from threading import Thread
@@ -196,24 +197,57 @@ def bind_registered_planner_llm(runtime: ExecutionRuntime) -> bool:
     return True
 
 
+_UNDECLARED_MODEL_CAPABILITIES = object()
+
+
+def _model_capability_metadata(model: str, base_url: str, provider: str,
+                               configured=_UNDECLARED_MODEL_CAPABILITIES) -> Any:
+    """Project the application's catalog once, preserving explicit route facts.
+
+    Model names, aliases and trusted endpoint rules belong to that catalog.
+    Unknown capacity stays unknown; capability metadata does not request an
+    output limit or change any already frozen execution input.
+    """
+    from app.llm.capabilities import provider_model_capabilities
+
+    caps = provider_model_capabilities(model, base_url, provider)
+    defaults = {
+        "source": "adapter_declared", "revision": caps.version,
+        "contextWindowTokens": caps.context_window_tokens,
+        "maxOutputTokens": caps.max_output_tokens,
+        "maxTokensField": caps.max_tokens_field,
+        "features": {"tools": caps.supports_tools, "thinking": caps.supports_thinking,
+                     "jsonSchema": caps.supports_json_schema},
+    }
+    defaults = {key: value for key, value in defaults.items() if value is not None}
+    if configured is _UNDECLARED_MODEL_CAPABILITIES:
+        return defaults
+    # Keep malformed explicit configuration intact for ApplicationSetup's
+    # existing validator instead of replacing it with inferred defaults.
+    if not isinstance(configured, dict):
+        return configured
+    merged = {**defaults, **deepcopy(configured)}
+    if isinstance(configured.get("features", {}), dict):
+        merged["features"] = {**defaults["features"], **deepcopy(configured.get("features", {}))}
+    return merged
+
+
 def sync_active_model_profile(runtime: ExecutionRuntime, setup: ApplicationSetup, config) -> None:
     """Publish a new default route while preserving every previously frozen version."""
     from time import time_ns
     from uuid import uuid4
     from runtime.app_setup import ModelSetup
-    from app.llm.capabilities import provider_model_capabilities
 
     if config.provider in {"", "mock", "unavailable"} or not all((config.model, config.base_url, config.api_key)):
         runtime.default_model_binding = None
         _sync_model_endpoints_from_registry(runtime)
         return
-    caps = provider_model_capabilities(config.model, config.base_url, config.provider)
     binding = setup.register_model(ModelSetup(
         capability_id=f"model.profile.{uuid4().hex}",
         provider=config.provider, models=(config.model,), base_url=config.base_url,
         key_env=None, version=f"1.0.{time_ns()}", priority=100,
         request_timeout=config.timeout_seconds, allow_insecure=False,
-        model_capabilities={config.model: {"features": {"tools": caps.supports_tools}}},
+        model_capabilities={config.model: _model_capability_metadata(config.model, config.base_url, config.provider)},
     ), api_key=config.api_key)
     runtime.default_model_binding = binding
     bind_registered_planner_llm(runtime)
@@ -340,9 +374,8 @@ def build_model_setup(
                 "priority": 100,
                 "requestTimeoutSeconds": config.timeout_seconds,
             }])
-    # Reuse the application's provider capability catalog. Merely registering
-    # an adapter previously left tools=unknown, disabling real Tool Calling.
-    from app.llm.capabilities import provider_model_capabilities
+    # The registry, Planner and resource catalog receive the same complete
+    # capability projection; partial explicit declarations override per field.
     try:
         model_entries = json.loads(values.get('AGENTOS_MODELS') or '[]')
     except (ValueError, TypeError):
@@ -351,10 +384,13 @@ def build_model_setup(
         for entry in model_entries:
             if not isinstance(entry, dict) or not isinstance(entry.get('models'), list):
                 continue
-            if 'modelCapabilities' not in entry:
-                entry['modelCapabilities'] = {name: {'features': {'tools': provider_model_capabilities(
-                    name, str(entry.get('baseUrl') or ''), str(entry.get('provider') or '')).supports_tools}}
-                    for name in entry['models'] if isinstance(name, str)}
+            explicit = entry.get('modelCapabilities', {})
+            if not isinstance(explicit, dict):
+                continue  # Preserve the existing invalid-config diagnostic.
+            entry['modelCapabilities'] = {**explicit, **{
+                name: _model_capability_metadata(name, str(entry.get('baseUrl') or ''),
+                    str(entry.get('provider') or ''), explicit.get(name, _UNDECLARED_MODEL_CAPABILITIES))
+                for name in entry['models'] if isinstance(name, str)}}
         values['AGENTOS_MODELS'] = json.dumps(model_entries)
     setup = ApplicationSetup.from_environment(
         values,
