@@ -459,6 +459,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle(IPC.windowToggleMaximize, (event) => {
     guard(event)
     if (!mainWindow) return null
+    // 全屏态下点标题栏按钮：maximize() 会撤掉 fullscreen 标志但不走
+    // setFullScreen(false)，DWM 圆角标记（DONOTROUND）没人补写，窗口从此
+    // 四角直角；这里保持 maximize 语义后再补一刀（非全屏下的 setFullScreen(false)
+    // 无副作用，只会重写圆角标记）。
+    if (mainWindow.isFullScreen()) {
+      mainWindow.maximize()
+      mainWindow.setFullScreen(false)
+      return null
+    }
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
     else mainWindow.maximize()
     return null
