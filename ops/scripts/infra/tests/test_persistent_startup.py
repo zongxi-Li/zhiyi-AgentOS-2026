@@ -16,10 +16,10 @@ def configure_startup(monkeypatch, tmp_path, fail_at=None):
     for name in ('postgres', 'redis', 'temp', 'logs', 'workspace', 'data'):
         (tmp_path / name).mkdir()
     (tmp_path / 'postgres/PG_VERSION').write_text('15')
-    entry = tmp_path / 'apps/backend-ts/scripts/dev.mjs'
+    entry = tmp_path / 'apps/backend/scripts/dev.mjs'
     entry.parent.mkdir(parents=True)
     entry.touch()
-    compiler = tmp_path / 'apps/backend-ts/node_modules/typescript/lib/typescript.js'
+    compiler = tmp_path / 'apps/backend/node_modules/typescript/lib/typescript.js'
     compiler.parent.mkdir(parents=True)
     compiler.touch()
     monkeypatch.setattr(runtime, 'ROOT', tmp_path)

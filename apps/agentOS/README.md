@@ -179,7 +179,9 @@ runtime 可以协调跨部件事务、补偿和投影更新，但业务状态是
 
 迁移前快照为 `faf7ba8a`，目录与源码迁移检查点为 `1c63269b`。实施计划见[迁移计划](../../docs/superpowers/plans/2026-11-15-agentos-architecture-convergence.md)；各批次结果和未通过项见[迁移与验证记录](../../docs/audits/2026-11-16-agentos-architecture-convergence.md)。
 
-在仓库根目录运行 Python 回归；应用集成测试还需安装 `apps/agent/requirements.txt` 中的依赖：
+在仓库根目录运行 Python 回归；应用层依赖由 `apps/agent/requirements.in` 维护，
+原生运行环境使用对应的哈希锁 `apps/agent/requirements.lock` 与
+`apps/agent/requirements.native-tools.lock`：
 
 ```powershell
 python -m pytest --rootdir=. -c apps/agentOS/pytest.ini TEST/tests/architecture TEST/tests/components/scheduler -q

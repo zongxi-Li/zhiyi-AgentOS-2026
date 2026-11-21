@@ -210,7 +210,7 @@ def initialize(home: Path) -> dict:
         "initialized": False,
         "portOffset": offset,
         "backend": "hands",
-        "backendEntry": str(PRODUCT_ROOT / "apps/backend-ts/dist/main.js"),
+        "backendEntry": str(PRODUCT_ROOT / "apps/backend/dist/main.js"),
         "authMode": "local",
     }
     native.write_json(home / "environment.json", info)
@@ -379,7 +379,7 @@ def up(home: Path, *, window: bool = True) -> dict:
         backend_env = persistent.prepare_platform(home, info, creds)
         backend_env.pop("ZHIYI_BACKEND_TS_DEV_ORIGIN", None)
         backend = start_service(home, session, state, "backend", [
-            str(PATHS["node"]), str(PRODUCT_ROOT / "apps/backend-ts/dist/main.js")], backend_env)
+            str(PATHS["node"]), str(PRODUCT_ROOT / "apps/backend/dist/main.js")], backend_env)
         desktop.wait_until(
             lambda: native.health(persistent.ports(info)["backend"], "/health/ready").get("status") == "UP",
             backend, 90)

@@ -145,8 +145,8 @@ def copy_shell(win_unpacked: Path, target: Path) -> None:
 
 def copy_backend(source: Path, target: Path) -> None:
     if not (source / "dist/main.js").is_file():
-        raise SystemExit("先在 apps/backend-ts 执行 npm ci && npm run build")
-    destination = target / "apps/backend-ts"
+        raise SystemExit("先在 apps/backend 执行 npm ci && npm run build")
+    destination = target / "apps/backend"
     robocopy(source / "dist", destination / "dist")
     robocopy(source / "migrations", destination / "migrations")
     for name in ("package.json", "package-lock.json"):
@@ -485,9 +485,9 @@ def validate(target: Path) -> list[str]:
         "runtime/pgsql/bin/postgres.exe",
         "runtime/pgsql/bin/initdb.exe",
         "runtime/memurai/memurai.exe",
-        "apps/backend-ts/dist/main.js",
-        "apps/backend-ts/node_modules/fastify/package.json",
-        "apps/backend-ts/migrations/V13__drop_user_feedback.sql",
+        "apps/backend/dist/main.js",
+        "apps/backend/node_modules/fastify/package.json",
+        "apps/backend/migrations/V13__drop_user_feedback.sql",
         "apps/agent/app/main.py",
         "apps/agentOS/src/runtime/workflow_runtime.py",
         "apps/agentOS/src/components/environment/hands/node_modules/tsx/dist/cli.mjs",
@@ -508,7 +508,7 @@ def main() -> int:
     parser.add_argument("--node-exe", type=Path, default=Path(shutil.which("node") or ""))
     parser.add_argument("--win-unpacked", type=Path,
                         default=REPO / "apps/desktop/electron/release/win-unpacked")
-    parser.add_argument("--backend", type=Path, default=REPO / "apps/backend-ts")
+    parser.add_argument("--backend", type=Path, default=REPO / "apps/backend")
     parser.add_argument("--checksums", action="store_true", help="额外生成逐文件 SHA-256（较慢）")
     parser.add_argument("--zip", action="store_true", help="装配后压缩为 zip")
     parser.add_argument("--dry-run", action="store_true")

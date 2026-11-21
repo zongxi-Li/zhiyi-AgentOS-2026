@@ -6,7 +6,6 @@ import { agentosApi, type AcgView, type WorkflowRun } from '@/services/api/agent
 import { workflowApi, type WorkflowProgress } from '@/services/api/workflow'
 import { conversationApi } from '@/services/api/conversation'
 import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
-import AcgRunInspector from '@/components/agentos/AcgRunInspector.vue'
 import GenericArtifactPanel from '@/features/acg/GenericArtifactPanel.vue'
 import ChatView from './ChatView.vue'
 import NativeWorkspacePicker from '@/components/platform/NativeWorkspacePicker.vue'
@@ -139,7 +138,6 @@ const mountPage = async (query = '?workspace=agent&contextId=conversation_1'): P
       stubs: {
         FormalExecutionControls: false,
         PermissionSelector: false,
-        AcgRunInspector: { ...AcgRunInspector, name: 'AcgRunInspector', template: '<div />' },
         GenericArtifactPanel: { ...GenericArtifactPanel, name: 'GenericArtifactPanel', template: '<div />' },
         'el-button': buttonStub,
         'el-input': inputStub,
@@ -535,7 +533,6 @@ describe('ChatView ACG progress integration', () => {
     expect(wrapper.find('.workflow-history-detail').exists()).toBe(false)
     expect(wrapper.find('.context-panel-dock').exists()).toBe(false)
     expect(wrapper.find('.workflow-acg-dock').exists()).toBe(false)
-    expect(wrapper.findComponent({ name: 'AcgRunInspector' }).exists()).toBe(false)
     expect(bubble.props('message')).toMatchObject({ executionSummary })
     expect(chatStoreMock.startAgentRun).not.toHaveBeenCalled()
     // 命令/文件工作迁入右侧信息栏「命令与执行」页签：气泡不再渲染工作块

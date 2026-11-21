@@ -15,11 +15,11 @@ export interface Config {
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const rawPort = env.ZHIYI_BACKEND_TS_PORT ?? '18080';
-  if (!/^\d+$/.test(rawPort)) throw new Error('Invalid backend-ts port');
+  if (!/^\d+$/.test(rawPort)) throw new Error('Invalid backend port');
   const port = Number(rawPort);
   const existingPorts = [15432, 16379, 18761, 18765, 15200, 18766, 19222];
   if (!Number.isSafeInteger(port) || port > 65535 || existingPorts.includes(port)) {
-    throw new Error('Invalid or reserved backend-ts port');
+    throw new Error('Invalid or reserved backend port');
   }
 
   const allowedOrigins = ['kinlin-app://shell'];

@@ -12,7 +12,7 @@ export const mapping = {
 };
 
 export async function fixture(value: unknown = mapping) {
-  const directory = await mkdtemp(join(tmpdir(), 'zhiyi-backend-ts-test-'));
+  const directory = await mkdtemp(join(tmpdir(), 'zhiyi-backend-test-'));
   const file = join(directory, 'identity.json');
   await writeFile(file, JSON.stringify(value));
   const env = {
@@ -25,7 +25,7 @@ export async function fixture(value: unknown = mapping) {
     file, env, config: readConfig(env),
     async cleanup() {
       // Only this helper's newly-created, direct temp child may be recursively removed.
-      if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('zhiyi-backend-ts-test-')) {
+      if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('zhiyi-backend-test-')) {
         throw new Error('Unsafe test cleanup path');
       }
       await rm(directory, { recursive: true, force: true });

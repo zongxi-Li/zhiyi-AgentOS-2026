@@ -612,7 +612,6 @@ import WorkflowProgressBar from '@/components/agentos/WorkflowProgressBar.vue'
 const WorkflowReviewPanel = defineAsyncComponent(() => import('@/components/agentos/WorkflowReviewPanel.vue').then(module => module.default))
 import AgentOsRunSummaryCard from '@/components/agentos/AgentOsRunSummaryCard.vue'
 const RuntimeAuditTimeline = defineAsyncComponent(() => import('@/components/agentos/RuntimeAuditTimeline.vue').then(module => module.default))
-const AcgRunInspector = defineAsyncComponent(() => import('@/components/agentos/AcgRunInspector.vue').then(module => module.default))
 const GenericArtifactPanel = defineAsyncComponent(() => import('@/features/acg/GenericArtifactPanel.vue').then(module => module.default))
 import {
   agentosApi,

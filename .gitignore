@@ -8,8 +8,8 @@
 *.swo
 
 # TypeScript 后端
-apps/backend-ts/dist/
-apps/backend-ts/node_modules/
+apps/backend/dist/
+apps/backend/node_modules/
 
 # 前端
 apps/frontend/node_modules/

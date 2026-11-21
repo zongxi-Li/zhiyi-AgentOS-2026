@@ -17,7 +17,7 @@ pnpm --dir apps/agentOS/src/components/environment/hands install --frozen-lockfi
 pnpm --dir apps/agentOS/src/components/environment/hands exec tsc --noEmit
 pnpm --dir apps/agentOS/src/components/environment/hands test
 # 构建 TypeScript Backend，不依赖 JVM。
-Push-Location apps/backend-ts
+Push-Location apps/backend
 npm ci
 npm run build
 Pop-Location

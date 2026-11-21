@@ -12,14 +12,14 @@ import persistent_runtime as runtime
 def configured(monkeypatch, tmp_path):
     root, home = tmp_path/'repo', tmp_path/'home'
     home.mkdir()
-    entry = root/'apps/backend-ts/scripts/dev.mjs'
+    entry = root/'apps/backend/scripts/dev.mjs'
     entry.parent.mkdir(parents=True)
     entry.touch()
-    compiler = root/'apps/backend-ts/node_modules/typescript/lib/typescript.js'
+    compiler = root/'apps/backend/node_modules/typescript/lib/typescript.js'
     compiler.parent.mkdir(parents=True)
     compiler.touch()
     node = str(tmp_path/'node.exe')
-    old = {'pid': 10, 'command': [node, str(root/'apps/backend-ts/dist/main.js')]}
+    old = {'pid': 10, 'command': [node, str(root/'apps/backend/dist/main.js')]}
     state = {'session': 'test-session', 'processes': {
         'backend': old, 'ai': {'pid': 20}, 'frontend': {'pid': 30}, 'postgres': {'pid': 40}}}
     monkeypatch.setattr(runtime, 'ROOT', root)

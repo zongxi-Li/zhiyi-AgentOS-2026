@@ -361,7 +361,7 @@ describe('Workbench / OScode shell', () => {
           ErrorBoundary: passthrough, 'el-container': passthrough, 'el-aside': passthrough,
           'el-main': passthrough, 'el-menu': passthrough, 'el-menu-item': passthrough,
           'el-drawer': passthrough, 'el-alert': passthrough, 'el-icon': iconStub,
-          PermissionSelector: false, AcgRunInspector: true, GenericArtifactPanel: true,
+          PermissionSelector: false, GenericArtifactPanel: true,
           WorkflowProgressBar: true, MessageBubble: true, ModelRuntimeControls: true,
           NativeWorkspacePicker: true, AgentOsRunSummaryCard: true, RuntimeAuditTimeline: true,
           FileManager: true, WorkflowReviewPanel: true, 'el-button': true, 'el-input': true,

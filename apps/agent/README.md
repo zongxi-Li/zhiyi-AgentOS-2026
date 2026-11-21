@@ -12,6 +12,12 @@
 
 AgentOS Core 提供任务、运行记录、Trace、Review、Checkpoint 与通用执行协议；通用任务由 Core Native ACG 执行。
 
+## 依赖入口
+
+- `requirements.in` 是应用依赖输入清单，`requirements.lock` 是应用运行锁。
+- Windows 原生运行还安装 `requirements.native-tools.lock`；其版本来自维护用的 `requirements.tools.lock`。
+- 内核与 Safe 独立环境使用 `apps/agentOS/requirements.txt`，不与应用锁合并。
+
 ## 启动
 
 在 `apps/agent/` 目录运行：
@@ -31,7 +37,7 @@ curl http://localhost:8000/health
 在 `apps/agent/` 目录运行：
 
 ```bash
-python -m pytest tests
+python -m pytest tests -q
 ```
 
 ## 主要 API

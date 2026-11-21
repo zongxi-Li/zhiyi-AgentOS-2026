@@ -96,7 +96,7 @@ const mountShell = async (url = '/chat?workspace=chat&contextId=ctx&missionId=mi
       'el-menu': passthrough, 'el-menu-item': passthrough, 'el-drawer': passthrough,
       'el-button': button, 'el-input': input, 'el-icon': passthrough, 'el-dialog': true,
       'el-select': true, 'el-option': true, 'el-tag': true, 'el-collapse': true, 'el-collapse-item': true,
-      PermissionSelector: true, AcgRunInspector: true, GenericArtifactPanel: true,
+      PermissionSelector: true, GenericArtifactPanel: true,
       WorkflowProgressBar: !realPresentation, ModelRuntimeControls: true, NativeWorkspacePicker: true,
       AgentOsRunSummaryCard: !realPresentation, RuntimeAuditTimeline: true, FileManager: true, WorkflowReviewPanel: true,
       MessageBubble: { props: ['message'], template: '<p class="test-message" :data-file="message.fileUrl">{{ message.content }}</p>' },

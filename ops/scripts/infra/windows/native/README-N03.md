@@ -25,7 +25,7 @@ $py = "$env:LOCALAPPDATA\ZhiyiNative\python\Scripts\python.exe"
 & $py -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.native-tools.lock
 & $py -m pip check
 & $py ops/scripts/infra/windows/native/prepare_persistent_dependencies.py
-Push-Location apps/backend-ts
+Push-Location apps/backend
 npm ci
 npm run build
 Pop-Location

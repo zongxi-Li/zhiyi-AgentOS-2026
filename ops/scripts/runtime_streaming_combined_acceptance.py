@@ -93,9 +93,9 @@ def _free_port() -> int:
 
 
 def _start_backend_gateway(python_base_url: str, directory: Path) -> tuple[subprocess.Popen[str], str, list[str]]:
-    entry = PROJECT_ROOT / "apps/backend-ts/dist/main.js"
+    entry = PROJECT_ROOT / "apps/backend/dist/main.js"
     if not entry.is_file():
-        raise RuntimeError("Build apps/backend-ts first: npm run build")
+        raise RuntimeError("Build apps/backend first: npm run build")
     port = _free_port()
     identity = directory / "gateway-identity.json"
     identity.write_text(json.dumps({"format": "zhiyi-local-identity-v1", "version": 1,

@@ -167,7 +167,7 @@ $py = "$env:LOCALAPPDATA\ZhiyiNative\python\Scripts\python.exe"
 & $py ops/scripts/infra/windows/native/prepare_persistent_dependencies.py
 
 # 2. 构建 TypeScript 后端
-Push-Location apps/backend-ts
+Push-Location apps/backend
 npm ci
 npm run build
 Pop-Location
@@ -203,14 +203,14 @@ N03 栈运行时（无需 `-Desktop`）：
 ## 测试
 
 ```powershell
-Set-Location apps/agentOS
-python -m pytest tests -q
+Set-Location .
+python -m pytest -c apps/agentOS/pytest.ini TEST/tests -q
 
-Set-Location ../agent
+Set-Location apps/agent
 python -m pytest tests -q
 
 # TypeScript 平台服务（不依赖 JVM）
-Set-Location ../backend-ts
+Set-Location ../backend
 npm ci
 npm run typecheck
 npm test
@@ -224,9 +224,9 @@ npm run test
 
 | 测试集                      |                         规模 | 覆盖范围                                                              |
 | :-------------------------- | ---------------------------: | :-------------------------------------------------------------------- |
-| AgentOS Kernel              |         **1730 cases** | ACG 节点/边模型、图执行、通信、记忆、恢复、规划提交、图修订、资源调度 |
+| AgentOS Kernel              | 见 `TEST/tests`（实时收集） | ACG 节点/边模型、图执行、通信、记忆、恢复、规划提交、图修订、资源调度 |
 | Agent Runtime / API / Packs |      见 `apps/agent/tests` | 规划器、通信器、执行器、领域 Packs、SSE 流式事件                      |
-| TypeScript Backend          | 见 `apps/backend-ts/test` | 本机身份、PostgreSQL 业务、Python Gateway 与 SSE |
+| TypeScript Backend          | 见 `apps/backend/test` | 本机身份、PostgreSQL 业务、Python Gateway 与 SSE |
 | Milan Frontend              |     见 `apps/frontend/src` | 视图、组件、状态与交互回归                                            |
 
 ### 最近一次完整收束基线（2026-08-19）
@@ -235,7 +235,7 @@ npm run test
 | :------------------------------------------ | --------------------------------------------------------------: |
 | AgentOS Kernel                              |                                            **187 passed** |
 | Python Application / Packs / AgentOS v2 API |                                 **102 passed**, 1 skipped |
-| TypeScript Backend / Gateway                 |                    由 `apps/backend-ts` 当前测试覆盖 |
+| TypeScript Backend / Gateway                 |                    由 `apps/backend` 当前测试覆盖 |
 | Milan Frontend                              |                            **24 files, 115 tests passed** |
 | N03 原生栈健康检查                          | PostgreSQL / Memurai / AI / Host / Node Backend / Vite 全部 UP |
 
@@ -257,7 +257,7 @@ npm run test
 │   ├── agent/                  # FastAPI 运行时
 │   │   ├── app/                #   Composition Root · API · 适配器
 │   │   └── packs/              #   通用 Agent Pack（当前仅 workspace）
-│   ├── backend-ts/             # Fastify 平台业务、数据访问与 Python 网关
+│   ├── backend/                # Fastify 平台业务、数据访问与 Python 网关
 │   ├── frontend/               # Vue 3 · Milan 工作台 + ACG 可视化
 │   └── desktop/                # Electron 桌面壳
 ├── contracts/                  # AgentOS v2 接口契约
@@ -282,6 +282,7 @@ Memurai RDB/AOF、SQLite Store、uploads、workspace、Electron 用户数据与 
 | [ACG 引擎技术设计](docs/架构设计/05-ACG动态群体智能引擎技术设计.md)                                      | ACG 引擎深度设计                   |
 | [历史：律师 AgentOS 设计](docs/架构设计/06-知弈律师AgentOS技术设计文档.md)                               | 已下线的合同审查场景（历史设计）   |
 | [N03 原生运行说明](ops/scripts/infra/windows/native/README-N03.md)                                       | 依赖、启停、数据布局与冷备份       |
+| [前端迁移状态](apps/frontend/FRONTEND_MIGRATION.md)                                                       | Workbench 与 ChatView 的能力边界及迁移项 |
 | [Windows 原生运行链（N01A ~ N03 + 移除 Docker）](docs/开发记录/PR-N01A-N03-Windows原生运行链-合并记录.md)  | 零 Docker 原生形态与移除 Docker 的证据 |
 | [PromptRuntime 与系统提示词清单](docs/开发记录/PromptRuntime与系统提示词清单-合并记录.md)                 | 提示词权威、信任封装与审计身份     |
 | [WKN-C4-Milan 稳定集成报告](apps/agentOS/docs/系统迁移档案/阶段迁移报告/WKN-C4-Milan稳定集成总结报告.md) | 三线收束证据                       |

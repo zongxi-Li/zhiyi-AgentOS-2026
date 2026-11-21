@@ -10,7 +10,7 @@ export function createDatabase(config: { databaseUrl?: string } = {}): Database 
   return new pg.Pool({
     connectionString: config.databaseUrl ?? process.env.ZHIYI_DATABASE_URL ?? process.env.DATABASE_URL,
     max: 8, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000,
-    statement_timeout: 15000, application_name: 'zhiyi-backend-ts',
+    statement_timeout: 15000, application_name: 'zhiyi-backend',
   });
 }
 
