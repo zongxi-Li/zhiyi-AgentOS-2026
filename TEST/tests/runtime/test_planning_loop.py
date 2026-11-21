@@ -508,7 +508,7 @@ def test_registered_planner_path_uses_fresh_observation_contract(tmp_path):
     assert result.status == WorkflowStatus.COMPLETED
     assert len(model.requests) == 1
     assert len(model.requests[0]["observation"]["steps"]) == 2
-    assert "Without waitFor or question" in model.requests[0]["instructions"]
+    assert "Other waits without waitFor or question preserve the existing external-resolution barrier" in model.requests[0]["instructions"]
     assert "conditionWake records an independently checked readiness condition" in model.requests[0]["instructions"]
 
 

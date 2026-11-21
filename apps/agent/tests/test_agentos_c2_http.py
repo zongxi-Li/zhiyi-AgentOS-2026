@@ -12,7 +12,7 @@ from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
 from app.execution.wiring import build_default_runtime, aclose_runtime
 from app.security.internal_auth import InternalServiceAuthMiddleware
-from examples.contract_review import CONTRACT, WORKFLOW_ID, ContractReviewAgent, workflow
+from TEST.fixtures.contract_review import CONTRACT, WORKFLOW_ID, ContractReviewAgent, workflow
 from support.stores import c2_schema_upgrade as ops
 from runtime.orchestration.execution_permit import ExecutionPermitError
 
@@ -64,8 +64,8 @@ def server(folder, *, semantic=True, c2=True, legacy=False, dispatch=False, agen
         agent = agent_factory() if agent_factory else ContractReviewAgent()
         runtime.agent_registry.register(agent)
         runtime.workflow_registry.register(workflow())
-        from examples.contract_review import BoundaryPlanner
-        runtime.runtime_planning_coordinator.planner_for_run = lambda run: BoundaryPlanner()
+        from TEST.fixtures.contract_review import BoundaryPlanner
+        runtime.runtime_planning_coordinator.planner_for_run = lambda run: BoundaryPlanner(pause_after_a=False)
         coordinator = RunExecutionCoordinator(runtime)
         runtime._test_coordinator = coordinator
         app.include_router(create_router(runtime, coordinator))

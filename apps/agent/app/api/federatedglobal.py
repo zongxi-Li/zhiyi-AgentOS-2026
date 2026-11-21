@@ -5,7 +5,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from app.services.globalmodelmanager import global_model_manager
+from app.services.globalmodelmanager import global_model_manager, ParameterDecoderUnavailable
 
 router = APIRouter()
 
@@ -106,6 +106,8 @@ async def aggregate_updates(min_clients: int = 3):
         result = global_model_manager.aggregate_updates(min_clients=min_clients)
         
         return result
+    except ParameterDecoderUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

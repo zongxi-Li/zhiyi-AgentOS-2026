@@ -5,7 +5,7 @@
 import logging
 import hashlib
 import json
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -24,10 +24,16 @@ class ModelVersion:
         self.performance_metrics = {}
 
 
+class ParameterDecoderUnavailable(RuntimeError):
+    """The retired encryption singleton is not a supported parameter decoder."""
+
+
 class GlobalModelManager:
     """全局模型管理器"""
     
-    def __init__(self, model_storage_dir: str = "data/global_models"):
+    def __init__(self, model_storage_dir: str = "data/global_models", *,
+                 parameter_decoder: Callable[[Dict], Dict] | None = None):
+        self.parameter_decoder = parameter_decoder
         self.storage_dir = Path(model_storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
@@ -206,13 +212,13 @@ class GlobalModelManager:
         
         logger.info(f"开始聚合{len(self.pending_updates)}个客户端的参数更新")
         
-        # 1. 解密参数(使用加密服务)
-        from safe.encryptionservice import encryption_service
+        # The old safe.encryptionservice was removed. Keep encrypted updates
+        # untouched unless the caller explicitly supplies a supported decoder.
+        if self.parameter_decoder is None:
+            raise ParameterDecoderUnavailable("Encrypted aggregation is unavailable without a parameter decoder")
         decrypted_updates = []
         for update_info in self.pending_updates:
-            decrypted = encryption_service.decrypt_parameters(
-                update_info['update']
-            )
+            decrypted = self.parameter_decoder(update_info['update'])
             decrypted_updates.append({
                 'client_id': update_info['client_id'],
                 'params': decrypted,

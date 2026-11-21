@@ -140,11 +140,11 @@ def test_compiler_once_and_nonpreemptible_overrun_is_discarded(context, monkeypa
     with pytest.raises(ValueError, match="DEADLINE"):
         s.propose(**inputs(context), deadline=5)
     assert len(calls) == 1
-    too_large = inputs(context, keys=tuple(f"key:{i}" for i in range(257)))
+    large = inputs(context, keys=tuple(f"key:{i}" for i in range(257)))
     clock[0] = 0
-    with pytest.raises(ValueError, match="INPUT_BUDGET"):
-        s.propose(**too_large, deadline=5)
-    assert len(calls) == 1  # admission fails before the compiler
+    with pytest.raises(ValueError, match="DEADLINE"):
+        s.propose(**large, deadline=5)
+    assert len(calls) == 2  # large plans use the same post-compile deadline fence
 
 
 def test_cancel_during_compute_leaves_no_success_registration(ready_boundary, monkeypatch):

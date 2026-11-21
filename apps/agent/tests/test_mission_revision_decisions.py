@@ -7,8 +7,8 @@ import pytest
 from contracts.workflow import WorkflowStatus
 from contracts.mission_semantic import run_intent_basis
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
-from test_mission_semantic_commands import api, create, edit, BODY, HEADERS, finished
-from test_mission_semantic_commands import application, _environment
+from apps.agent.tests.test_mission_semantic_commands import api, create, edit, BODY, HEADERS, finished
+from apps.agent.tests.test_mission_semantic_commands import application, _environment
 from fastapi.testclient import TestClient
 
 

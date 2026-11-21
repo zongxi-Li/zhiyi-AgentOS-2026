@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 import textwrap
@@ -19,6 +20,7 @@ def test_main_static_mount_uses_canonical_app_data_dir():
     # main constructs a process-owned assembly on import. Isolate that import
     # and close its owners instead of leaking its database lock/registries into
     # every later Runtime fixture in this pytest process.
+    child_env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
     subprocess.run([sys.executable, '-c', textwrap.dedent('''
         import asyncio
         import app.main as main
@@ -36,7 +38,7 @@ def test_main_static_mount_uses_canonical_app_data_dir():
                 ])
                 assert not failures, failures
             asyncio.run(close())
-    ''')], check=True, timeout=120)
+    ''')], check=True, timeout=120, env=child_env)
 
 
 def test_digital_human_service_uses_canonical_paths():

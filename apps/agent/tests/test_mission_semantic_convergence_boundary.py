@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
 
-from test_execution_runtime_application_wiring import _environment, _InjectedToolRuntime, _InjectedModelRuntime, _InjectedIntentLLM
+from apps.agent.tests.test_execution_runtime_application_wiring import _environment, _InjectedToolRuntime, _InjectedModelRuntime, _InjectedIntentLLM
 from app.execution.wiring import build_default_runtime, close_runtime
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context, current_semantic_principal
 from app.api.agentos_v2 import _actor_input, create_router

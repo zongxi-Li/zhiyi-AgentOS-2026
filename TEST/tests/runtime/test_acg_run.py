@@ -280,6 +280,9 @@ def test_runtime_persists_broker_communication_usage_without_output_body() -> No
         "fields",
         "tokens",
         "channel",
+        "readPhase",
+        "readKind",
+        "operationId",
     }
     assert broker_events[0].payload["fields"] == ["title"]
     trace_payloads = [event.payload for event in result.trace]

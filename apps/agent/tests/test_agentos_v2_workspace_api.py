@@ -129,7 +129,8 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
             ),
         )
         app = FastAPI()
-        app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
+        router = create_router(runtime, RunExecutionCoordinator(runtime))
+        app.include_router(router)
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -165,8 +166,8 @@ async def test_workspace_api_projects_read_model_without_artifact_body(tmp_path)
         # between HTTP snapshot loading and the SSE handshake.
         with storage.transaction() as conn:
             conn.execute("UPDATE missions SET description=? WHERE mission_id=?", ("updated", mission.mission_id))
-        endpoint = next(route.endpoint for route in app.routes
-            if route.path == "/agentos/v2/missions/{mission_id}/workspace/events")
+        endpoint = next(route.endpoint for route in router.routes
+            if getattr(route, "path", None) == "/agentos/v2/missions/{mission_id}/workspace/events")
         stream = await endpoint(mission.mission_id)
         first = await anext(stream.body_iterator)
         initial = json.loads(first.split("data: ")[1])

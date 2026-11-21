@@ -6,7 +6,7 @@ import pytest
 
 from app.security.internal_auth import TrustedUserContext, _trusted_user_context
 from runtime.orchestration.execution_permit import ExecutionPermitError
-from test_agentos_c2_http import (
+from apps.agent.tests.test_agentos_c2_http import (
     PREFIX, accepted, activation_body, base, create, materialize, prepare, server,
 )
 
@@ -73,17 +73,13 @@ def control(client, created):
 
 
 def ready_resource(runtime, run_id):
-    from contracts.resource import ExecutionRequirement, RuntimeProfile, Placement
+    from contracts.resource import ExecutionRequirement
     run = runtime.workflow_store.get_run(run_id)
     requirement = ExecutionRequirement.model_validate(next(iter(run.execution_state["bindingRequirements"].values())))
-    plane = runtime.resource_plane
-    placement = requirement.allowed_placements[0] if requirement.allowed_placements else Placement.DEVICE
-    plane.ensure_node("node:http-permit-test", placement=placement)
-    plane.register_runtime(RuntimeProfile(runtimeId="runtime:http-permit-test", nodeId="node:http-permit-test",
-        placement=placement, kind=requirement.runtime_kinds[0], capabilities=list(requirement.required_capabilities),
-        trust=requirement.min_trust or "host_trusted", domains=[requirement.domain] if requirement.domain else []))
-    plane.heartbeat_runtime("runtime:http-permit-test")
-    assert runtime.resource_binder.assess(requirement).ready
+    runtime.runtime_binding_service.refresh_embedded_runtime()
+    candidates = runtime.runtime_binding_service.local_candidates(run)
+    assert any(candidates.values())  # readiness must include a concrete Agent registration
+    assert runtime.resource_binder.assess(requirement, agent_candidates=candidates).ready
 
 
 def test_http_full_permit_chain_gate_execution_and_restart(tmp_path):

@@ -28,7 +28,7 @@ from app.middleware.errorhandler import (
 )
 
 
-FIXTURES = Path(__file__).resolve().parents[3] / "contracts" / "agentos-v2"
+FIXTURES = Path(__file__).resolve().parents[3] / "TEST" / "fixtures" / "agentos_v2"
 
 
 def _fixture(name: str) -> dict:

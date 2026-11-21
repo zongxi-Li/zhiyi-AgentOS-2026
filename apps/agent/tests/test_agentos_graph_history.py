@@ -21,7 +21,7 @@ from support.stores.graph_activation_store import SQLiteGraphActivationStore
 from support.stores.graph_handoff_store import SQLiteGraphHandoffStore
 from support.stores.graph_materialization_store import SQLiteGraphMaterializationStore
 from support.stores.planning_commit_store import SQLitePlanningCommitStore, content_fingerprint
-from test_agentos_v2_api import _runtime
+from apps.agent.tests.test_agentos_v2_api import _runtime
 
 
 @pytest.fixture

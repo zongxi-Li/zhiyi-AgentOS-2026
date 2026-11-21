@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import runtimeDefaults from '../backend/src/shared/runtime-defaults.json'
 import { loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
@@ -35,7 +36,7 @@ export default defineConfig(({ mode, command }) => {
   )
   const BACKEND_PROXY_TARGET =
     env.DEV_BACKEND_PROXY_TARGET ||
-    'http://127.0.0.1:18080'
+    `http://127.0.0.1:${runtimeDefaults.ports.backend}`
 
   const devPort = isElectron ? 15100 : 3000
   // Same-origin browser GETs omit Origin. Only our exact local Vite host may
@@ -84,10 +85,13 @@ export default defineConfig(({ mode, command }) => {
       globals: true,
       css: false,
       setupFiles: ['./src/test/setup.ts'],
-      // 全量 625 条 jsdom 用例在并行 worker 下存在负载型计时抖动（断言调用次数/
-      // 列表渲染条数的用例偶发漂移，单跑必现通过）；失败重跑一次吸收调度抖动，
-      // 确定性失败仍然两次都挂，不会被掩盖。
-      retry: 1,
+      // Keep jsdom workers bounded so CI load does not turn setup into a race.
+      // Deterministic failures are reported immediately rather than retried.
+      retry: 0,
+      maxWorkers: 4,
+      minWorkers: 1,
+      testTimeout: 15000,
+      hookTimeout: 15000,
       server: {
         deps: {
           inline: ['element-plus']

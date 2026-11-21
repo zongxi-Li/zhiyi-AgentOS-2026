@@ -8,7 +8,7 @@ import pytest
 from app.tools import permissions
 from contracts.workflow import WorkflowStatus
 from contracts.local_runtime import LocalRuntimeAuthorizationRef
-from test_mission_semantic_commands import api, create
+from apps.agent.tests.test_mission_semantic_commands import api, create
 
 
 def pending_run(api, monkeypatch):

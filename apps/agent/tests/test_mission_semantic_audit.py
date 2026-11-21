@@ -1,6 +1,6 @@
 """Closing audit: existing public rerun recovery and schema capability boundary."""
 import time
-from test_mission_semantic_commands import api, create, finished, edit
+from apps.agent.tests.test_mission_semantic_commands import api, create, finished, edit
 
 
 def test_public_rerun_retries_submission_without_duplicate_or_rebinding(api, monkeypatch):
@@ -53,7 +53,7 @@ def test_failed_step_successor_retries_submission_preserving_old_basis(api, monk
     async def fail(_):
         raise TimeoutError('injected failed node')
     monkeypatch.setattr(agent,'run',fail)
-    from test_planning_loop import Planner, attach
+    from TEST.tests.runtime.test_planning_loop import Planner, attach
     from contracts.runtime_planning import RuntimePlanningDecision
     attach(runtime, Planner(lambda o, p: RuntimePlanningDecision(observationId=o.fingerprint(),
         action='abort' if o.wake_reason == 'failure' else 'complete' if not o.remaining_step_ids else 'continue',

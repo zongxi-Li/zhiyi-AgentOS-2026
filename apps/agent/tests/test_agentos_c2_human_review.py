@@ -2,10 +2,10 @@
 import hashlib
 import pytest
 
-from test_agentos_c2_http import PREFIX, CONTRACT, WORKFLOW_ID, accepted, materialize, base, activation_body, server
-from test_agentos_c2_dispatch_http import database, endpoint, wait_run
-from test_agentos_c2_final_delivery import final_delivery_setup
-from test_agentos_c2_permit_http import handoff, issue, ready_resource, trusted_call
+from apps.agent.tests.test_agentos_c2_http import PREFIX, CONTRACT, WORKFLOW_ID, accepted, materialize, base, activation_body, server
+from apps.agent.tests.test_agentos_c2_dispatch_http import database, endpoint, wait_run
+from apps.agent.tests.test_agentos_c2_final_delivery import final_delivery_setup
+from apps.agent.tests.test_agentos_c2_permit_http import handoff, issue, ready_resource, trusted_call
 
 
 def create_review_run(client, mode='human_in_loop'):
@@ -130,7 +130,7 @@ def test_human_review_rejection_or_cancel_never_reexecutes(tmp_path, decision):
 def test_old_permit_cannot_be_reinterpreted_as_manual_review(tmp_path):
     database(tmp_path)
     with server(tmp_path, dispatch=True, setup=final_delivery_setup) as (client, runtime, agent):
-        from test_agentos_c2_dispatch_http import permitted
+        from apps.agent.tests.test_agentos_c2_dispatch_http import permitted
         created, request = permitted(client)
         def drift():
             run = runtime.workflow_store.get_run(created['runId'])
@@ -153,7 +153,7 @@ def test_conflicting_policy_fails_before_formal_acceptance(tmp_path, monkeypatch
 
 
 def test_review_write_revocation_rejects_before_any_persisted_effect(tmp_path, monkeypatch):
-    from test_agentos_c2_permit_http import snapshot
+    from apps.agent.tests.test_agentos_c2_permit_http import snapshot
     database(tmp_path)
     with server(tmp_path, dispatch=True, setup=final_delivery_setup) as (client, runtime, agent):
         created = create_review_run(client)

@@ -8,7 +8,7 @@ import pytest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from test_mission_semantic_commands import api, create
+from apps.agent.tests.test_mission_semantic_commands import api, create
 
 
 def completed_source(client, runtime, coordinator):
@@ -97,7 +97,7 @@ def executing_branches(api, monkeypatch, modes=('complete', 'complete')):
             blueprint = blueprint.model_copy(update={'nodes': [node.model_copy(update={'review_required': True})
                 if node.node_id == 'A' else node for node in blueprint.nodes]})
         return blueprint, plan, bindings
-    from test_planning_loop import Planner
+    from TEST.tests.runtime.test_planning_loop import Planner
     from contracts.runtime_planning import RuntimePlanningDecision
     def decide(observation, _plan):
         return RuntimePlanningDecision(observationId=observation.fingerprint(),

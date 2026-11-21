@@ -8,7 +8,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 
-from test_mission_semantic_commands import api, create
+from apps.agent.tests.test_mission_semantic_commands import api, create
 from components.resource.scheduler.binder import LeaseKeepAlive
 
 
@@ -120,7 +120,9 @@ def test_api_cancel_settles_acg_children_before_releasing_lease(api, monkeypatch
         client.portal.call(settled)
         assert all(owned[key].done() for key in ('parent', 'runner', 'waiter'))
         assert owned['keep_alive']._task.done()
-        assert len(releases) == 1 and releases[0]['runnerDone']
+        assert len(releases) == 2 and all(item['runnerDone'] for item in releases)
+        assert len({item['leaseId'] for item in releases}) == 2
+        assert sum(item['leaseId'].endswith(':agent') for item in releases) == 1
         assert not coordinator.is_active(run_id)
         assert runtime.workflow_store.get_run(run_id).status.value == 'cancelled'
         events = step_events(runtime, run_id)
@@ -136,7 +138,7 @@ def test_api_cancel_settles_acg_children_before_releasing_lease(api, monkeypatch
 
 @contextmanager
 def managed_branches(api, monkeypatch, *, suppress=False, cleanup_error=False):
-    from test_branch_safe_mission_lifecycle import completed_source, pending_branches
+    from apps.agent.tests.test_branch_safe_mission_lifecycle import completed_source, pending_branches
     client, runtime, coordinator, agent = api
     source = completed_source(client, runtime, coordinator)
     original = agent.run
@@ -213,12 +215,12 @@ def test_two_managed_branches_cancel_and_late_success_are_isolated(api, monkeypa
         settle(client, owned[a])
         assert runtime.workflow_store.get_run(a).status.value == 'cancelled'
         assert coordinator.is_active(b)
-        assert releases == [(a, True)]
+        assert releases == [(a, True)] * 2  # host and Agent-instance leases
         assert not any(kind == 'step.succeeded' for kind, _ in step_events(runtime, a))
         settle(client, owned[b])
         assert runtime.workflow_store.get_run(b).status.value == 'completed'
         assert runtime.workflow_store.get_run(source.run_id).model_dump(mode='json') == source_before
-        assert releases == [(a, True), (b, True)]
+        assert releases == [(a, True)] * 2 + [(b, True)] * 2
         assert not coordinator._tasks
 
 
@@ -240,7 +242,8 @@ def test_repeated_cancel_and_shutdown_cannot_interrupt_runner_cleanup(api, monke
         settle(client, owned[a])
         settle(client, owned[b])
         shutdown_future.result(timeout=15)
-        assert len(releases) == 2 and all(done for _, done in releases)
+        assert len(releases) == 4 and all(done for _, done in releases)
+        assert {key: sum(item[0] == key for item in releases) for key in branches} == {a: 2, b: 2}
         assert not coordinator._tasks
         assert runtime.workflow_store.get_run(a).status.value == 'cancelled'
         assert runtime.workflow_store.get_run(b).status.value == 'failed'
@@ -316,7 +319,7 @@ def test_concurrent_api_cancels_commit_one_terminal_trace_and_one_release(api, m
         record = runtime.workflow_store.get_run(a)
         assert record.status.value == 'cancelled'
         assert sum(event.event_type.value == 'run_cancelled' for event in record.trace) == 1
-        assert releases == [(a, True)]
+        assert releases == [(a, True)] * 2
         assert coordinator.is_active(b)
 
 
@@ -367,14 +370,14 @@ def test_lease_renewal_failure_settles_runner_before_release_even_during_cancel(
         settle(client, owned[a])
         record = runtime.workflow_store.get_run(a)
         assert record.status.value == ('cancelled' if operator_cancel else 'waiting_review')
-        assert releases == [(a, True)]
+        assert releases == [(a, True)] * 2
         assert coordinator.is_active(b)
 
 
 def test_cancel_preserves_completed_prefix_and_never_starts_next_node(api, monkeypatch):
     from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
     from contracts.planning import PlannedTask, TaskPlanRelation
-    from test_mission_semantic_commands import BODY
+    from apps.agent.tests.test_mission_semantic_commands import BODY
     client, runtime, coordinator, agent = api
     runtime.workflow_registry.register(WorkflowDefinition(workflowId='semantic-test', name='progress', domain='general',
         runtimeEngine='acg', planningNodes=[PlannedTask(key=f'step:{key}', title=key, objective=f'do {key}') for key in 'ABC'],
@@ -434,7 +437,7 @@ def test_natural_completion_racing_api_cancel_has_one_explainable_terminal(api, 
         assert response.status_code in (200, 409)
         assert record.status.value == ('cancelled' if response.status_code == 200 else 'completed')
         assert sum(event.event_type.value == 'run_cancelled' for event in record.trace) == (response.status_code == 200)
-        assert releases == [(a, True)]
+        assert releases == [(a, True)] * 2
 
 
 def test_cancel_during_deferred_planning_keeps_thread_and_signal_owned_until_it_stops(api, monkeypatch):

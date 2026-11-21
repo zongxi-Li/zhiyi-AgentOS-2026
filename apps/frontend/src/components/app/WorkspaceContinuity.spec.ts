@@ -63,6 +63,7 @@ const channel = (contextId: string) => {
 }
 let wrapper: VueWrapper | undefined
 let chatTransport: Promise<Response> | undefined
+let chatEventTransport: Response | undefined
 let activeStreams = 0, maximumStreams = 0
 let runtimeWriter: ReadableStreamDefaultController<Uint8Array>
 let newestRun = 'run'
@@ -297,7 +298,7 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     localStorage.clear(); localStorage.setItem('userId', 'local-owner'); sessionStorage.clear(); observations.instances = []; resetOpenFile(); workspaceDocuments.reset()
     localStorage.setItem('layout.workspace_mode', 'chat'); localStorage.setItem('layout.chat_nav_open', '1')
     localStorage.setItem('chat.workflow_draft_conversation_id', 'draft:original')
-    activeStreams = 0; maximumStreams = 0; newestRun = 'run'; chatTransport = undefined
+    activeStreams = 0; maximumStreams = 0; newestRun = 'run'; chatTransport = undefined; chatEventTransport = undefined
     vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {} })
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) })
     HTMLElement.prototype.scrollTo = vi.fn()
@@ -312,7 +313,8 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     vi.spyOn(conversationApi, 'getConversation').mockImplementation(async contextId => ({ contextId, roleId: 'original-role', workspaceMode: 'chat' } as any))
     vi.spyOn(chatApi, 'getHistory').mockResolvedValue([{ id: 'history', role: 'assistant', content: 'restored from history', fileUrl: '/history-file' }])
     vi.stubGlobal('fetch', vi.fn(async (url, init) => {
-      if (String(url).includes('/chat/text/stream')) return chatTransport!
+      if (String(url).includes('/chat/executions') && init?.method === 'POST') return chatTransport!
+      if (String(url).includes('/chat/executions/')) return chatEventTransport!
       if (String(url).includes('/events')) {
         activeStreams++; maximumStreams = Math.max(maximumStreams, activeStreams)
         return new Response(new ReadableStream({ start(controller) {
@@ -393,12 +395,13 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     let deliver!: (response: Response) => void
     chatTransport = new Promise(resolve => { deliver = resolve })
     const delayed = channel('ctx-from-stream')
+    chatEventTransport = delayed.response
     const { chat, router, clear } = await mountShell('/chat?workspace=chat&runId=run&missionId=mission', null)
     const view = wrapper!.findComponent(ChatView).vm.$.uid
     await wrapper!.get('.composer-card textarea').setValue('stream question')
     await wrapper!.get('.composer-send').trigger('click')
     await toWorkbench()
-    deliver(delayed.response); delayed.send('content_delta', { delta: 'first ' }); await settle()
+    deliver(Response.json({ chatExecutionId: 'execution-1', contextId: 'ctx-from-stream' })); delayed.send('content_delta', { delta: 'first ' }); await settle()
     expect(router.currentRoute.value.path).toContain('/workspace')
     expect(chat.contextId).toBe('ctx-from-stream')
     delayed.send('content_delta', { delta: 'second' }); delayed.send('done', { status: 'completed', contextId: 'ctx-from-stream' }); delayed.close()
@@ -408,7 +411,7 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     expect(router.currentRoute.value.query.contextId).toBe('ctx-from-stream')
     expect(chat.getLatestWorkflowBinding('ctx-from-stream')?.runId).toBe('run')
     expect(chat.getLatestWorkflowBinding('draft:original')?.conversationId).toBe('ctx-from-stream')
-    const calls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/chat/text/stream'))
+    const calls = vi.mocked(fetch).mock.calls.filter(([url, init]) => String(url).includes('/chat/executions') && init?.method === 'POST')
     expect(calls).toHaveLength(1); expect(calls[0][1]!.signal!.aborted).toBe(false)
     expect(chat.loading).toBe(false); expect(chat.isStreaming).toBe(false); expect(clear).not.toHaveBeenCalled()
   })
@@ -425,7 +428,7 @@ describe('PR-UI-02B actual Shell / Chat / Workbench continuity', () => {
     delta(1, 'visible '); await settle()
     expect(activeStreams).toBe(1)
     await toChat(); expect(activeStreams).toBe(1)
-    delta(2, 'hidden output'); await settle()
+    delta(2, 'hidden output'); await settle(); await vi.advanceTimersByTimeAsync(100); await settle()
     expect(runtime.planning.outputBuffer).toBe('visible hidden output')
     const reads = vi.mocked(agentosApi.getMissionWorkspace).mock.calls.length
     await vi.advanceTimersByTimeAsync(20000); await settle()

@@ -7,14 +7,14 @@ import sqlite3
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from test_agentos_c2_dispatch_http import database, delivery_setup, permitted, endpoint, wait_run
-from test_agentos_c2_http import server, PREFIX, HEADERS
-from test_agentos_c2_permit_http import ready_resource, trusted_call
+from apps.agent.tests.test_agentos_c2_dispatch_http import database, delivery_setup, permitted, endpoint, wait_run
+from apps.agent.tests.test_agentos_c2_http import server, PREFIX, HEADERS
+from apps.agent.tests.test_agentos_c2_permit_http import ready_resource, trusted_call
 
 
 def final_delivery_setup(runtime, coordinator):
     delivery_setup(runtime, coordinator)
-    from examples.contract_review import WORKFLOW_ID
+    from TEST.fixtures.contract_review import WORKFLOW_ID
     definition = runtime.workflow_registry.get(WORKFLOW_ID)
     runtime.workflow_registry.register(definition.model_copy(update={
         'planning_nodes': tuple(n.model_copy(update={'logical_role': 'final_synthesis'}) if n.key == 'step:C' else n for n in definition.planning_nodes),

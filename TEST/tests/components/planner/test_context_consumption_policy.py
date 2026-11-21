@@ -58,7 +58,8 @@ def test_lowering_freezes_policy_and_incremental_producer_capability():
     assert initial.input_spec["contextPolicy"]["supplementalReadBudget"] == {
         "version": "supplemental-read.v1", "maxReadTokens": 2048, "pageTokens": 512, "totalTokens": 8192}
     assert initial.input_spec["contextPolicy"]["requestBudget"] == {
-        "version": "request-budget.v1", "totalTokens": 32000, "outputReserveTokens": 8000}
+        "version": "request-budget.v1", "totalTokens": 32000, "outputReserveTokens": 8000,
+        "workingSetMode": "observe", "workingSetTargetTokens": None, "workingSetTriggerTokens": None}
     descriptor.context_policy.prefetch_fields["producer"] = ["large_unrelated"]
     assert initial.input_spec == frozen
 

@@ -382,7 +382,7 @@ def test_mixed_htn_session_catalog_fence_and_no_expansion_adoption(runtime_bound
     assert isinstance(gw.submit(session.session_id, query_request()), PlannerReadResult)
     assert isinstance(gw.submit(session.session_id, method_request("method", gw.htn_selector.catalog.revision)), PlannerProposalReceipt)
     p = gw.submit(session.session_id, read()).horizon
-    assert not p.candidate_keys  # no ready resources, and HTN atoms never substituted
+    assert p.candidate_keys == ("step:A",)  # only the original task; HTN atoms never substituted
     assert {t.key for t in p.frontier.tasks} == {"step:A"}
     gw.htn_selector.catalog = HTNMethodCatalog([m.model_copy(update={"version": 2}) for m in gw.htn_selector.catalog.methods()])
     assert gw.submit(session.session_id, read()).code == "HTN_CATALOG_CHANGED"

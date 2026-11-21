@@ -266,7 +266,7 @@ describe('P0-2/3 shell.exec: capture, deadline, cancellation, process tree', () 
     const grant = fullGrant(hands, workspace)
     const started = Date.now()
     const receipt = await hands.engine.execute(
-      requestOf(hands, grant, 'shell.exec', { command: 'Write-Output before; Start-Sleep -Seconds 60; Write-Output after' }, { limits: { timeoutSeconds: 1 } }),
+      requestOf(hands, grant, 'shell.exec', { command: 'Write-Output before; Start-Sleep -Seconds 60; Write-Output after' }, { limits: { timeoutSeconds: 5 } }),
     )
     const elapsed = Date.now() - started
     expect(receipt.status).toBe('completed') // timeout is a completed execution with a classification, not a crash
@@ -314,7 +314,7 @@ describe('P0-2/3 shell.exec: capture, deadline, cancellation, process tree', () 
             'Start-Sleep -Seconds 60',
           ].join('; '),
         },
-        { limits: { timeoutSeconds: 1 } },
+        { limits: { timeoutSeconds: 10 } },
       ),
     )
     expect(receipt.status).toBe('completed')

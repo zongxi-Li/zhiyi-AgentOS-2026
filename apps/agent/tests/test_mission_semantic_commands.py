@@ -12,14 +12,14 @@ from fastapi.testclient import TestClient
 
 from app.api.agentos_v2 import create_router
 from app.execution.coordinator import RunExecutionCoordinator
-from app.execution.wiring import build_default_runtime, close_runtime
+from app.execution.wiring import build_default_runtime, aclose_runtime
 from app.security.internal_auth import InternalServiceAuthMiddleware
 from contracts.mission_semantic import run_intent_basis
 from contracts.planning import PlannedTask
 from contracts.workflow import WorkflowDefinition, WorkflowStepDefinition
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
-from test_execution_runtime_application_wiring import _environment, _InjectedToolRuntime, _InjectedModelRuntime, _InjectedIntentLLM
-from test_planning_loop import Agent, Planner, attach
+from apps.agent.tests.test_execution_runtime_application_wiring import _environment, _InjectedToolRuntime, _InjectedModelRuntime, _InjectedIntentLLM
+from TEST.tests.runtime.test_planning_loop import Agent, Planner, attach
 
 
 TOKEN = "s00-isolated-internal-service-token-123456"
@@ -38,6 +38,9 @@ def application(env):
         runtime = build_default_runtime(environment=env, tool_runtime=_InjectedToolRuntime(),
             model_runtime=_InjectedModelRuntime(), intent_llm=_InjectedIntentLLM())
         agent = Agent()
+        # Branch-isolation fixtures execute two Runs concurrently; both the
+        # embedded host and the registered Agent instance need real capacity.
+        agent.profile.capacity = 2
         runtime.agent_registry.register(agent)
         runtime.workflow_registry.register(WorkflowDefinition(workflowId="semantic-test", name="semantic test", domain="general",
             runtimeEngine="acg", planningNodes=[PlannedTask(key="step:A", title="A", objective="do A")],
@@ -50,8 +53,7 @@ def application(env):
             yield
         finally:
             await coordinator.shutdown()
-            await asyncio.get_running_loop().shutdown_default_executor()
-            close_runtime(runtime)
+            await aclose_runtime(runtime)
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(InternalServiceAuthMiddleware, token=TOKEN)
     return app

@@ -363,11 +363,7 @@ def resolve_tests(changed_paths: list[str]) -> tuple[list[str], list[str]]:
         if (path.startswith("apps/agentOS/src/") or path in EXTERNAL_SOURCES)
         and path.endswith(".py") and path not in APP_TEST_INPUTS
     ]
-    changed_tests = [
-        path.removeprefix("apps/agentOS/")
-        for path in changed_paths
-        if path.startswith("apps/agentOS/tests/") and path.endswith(".py")
-    ]
+    changed_tests = []
     changed_tests.extend("../../" + path for path in changed_paths
                          if path.startswith("TEST/tests/") and path.endswith(".py"))
     changed_tests.extend("../agent/tests/" + Path(path).name for path in changed_paths

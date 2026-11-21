@@ -77,4 +77,4 @@ def test_staged_initial_planning_repairs_only_the_relation_unit():
     assert len(model.calls) == 4
     assert model.calls[2]["schema"]["properties"]["controlPolicies"]["maxItems"] == 0
     assert "INITIAL DAG CONTRACT" in model.calls[2]["prompt"]
-    assert model.calls[-1]["prompt_version"].endswith(".relations.initial-dag-repair1")
+    assert model.calls[-1]["prompt_version"].endswith(".relations.repair1")

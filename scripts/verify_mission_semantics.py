@@ -11,8 +11,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
-for path in [ROOT / "apps/agent", ROOT / "apps/agentOS", ROOT / "apps/agentOS/src",
-             ROOT / "apps/agent/tests", ROOT / "apps/agentOS/tests/runtime"]:
+for path in [ROOT, ROOT / "apps/agent", ROOT / "apps/agentOS", ROOT / "apps/agentOS/src",
+             ROOT / "apps/agent/tests", ROOT / "TEST/tests/runtime"]:
     sys.path.insert(0, str(path))
 
 API = ["apps/agent/tests/test_mission_semantic_commands.py",
@@ -20,15 +20,15 @@ API = ["apps/agent/tests/test_mission_semantic_commands.py",
        "apps/agent/tests/test_mission_semantic_audit.py",
        "apps/agent/tests/test_mission_semantic_convergence_boundary.py",
        "apps/agent/tests/test_workspace_semantic_boundary.py"]
-CORE = ["apps/agentOS/tests/support", "apps/agentOS/tests/runtime/test_mission_semantic_convergence.py",
-        "apps/agentOS/tests/runtime/test_identity_projection_lifecycle.py",
-        "apps/agentOS/tests/runtime/test_acg_run.py", "apps/agentOS/tests/runtime/test_planning_loop.py",
-        "apps/agentOS/tests/runtime/test_semantic_patch.py", "apps/agentOS/tests/runtime/test_graph_patch.py",
-        "apps/agentOS/tests/runtime/test_runtime_guards.py", "apps/agentOS/tests/runtime/v2"]
+CORE = ["TEST/tests/support", "TEST/tests/runtime/test_mission_semantic_convergence.py",
+        "TEST/tests/runtime/test_identity_projection_lifecycle.py",
+        "TEST/tests/runtime/test_acg_run.py", "TEST/tests/runtime/test_planning_loop.py",
+        "TEST/tests/runtime/test_semantic_patch.py", "TEST/tests/runtime/test_graph_patch.py",
+        "TEST/tests/runtime/test_runtime_guards.py", "TEST/tests/runtime/v2"]
 AUDIT = list(dict.fromkeys([*CORE, *API,
-    "apps/agentOS/tests/runtime/test_cancellation_and_execution_exclusivity.py",
-    "apps/agentOS/tests/runtime/test_review_recovery_extraction.py",
-    "apps/agentOS/tests/runtime/test_fault_recovery.py",
+    "TEST/tests/runtime/test_cancellation_and_execution_exclusivity.py",
+    "TEST/tests/runtime/test_review_recovery_extraction.py",
+    "TEST/tests/runtime/test_fault_recovery.py",
     "apps/agent/tests/test_agentos_v2_api.py", "apps/agent/tests/test_agentos_v2_workspace_api.py",
     "apps/agent/tests/test_agentos_v2_artifact_api.py", "apps/agent/tests/test_execution_coordinator.py",
     "apps/agent/tests/test_execution_runtime_application_wiring.py", "apps/agent/tests/test_internal_service_auth.py",
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         os.environ["AGENT_CHROMA_PATH"] = str(isolated / "chroma")
         os.environ["AGENTOS_ATTACHMENT_STORAGE_DIR"] = str(isolated / "attachments")
         import pytest
-        result = pytest.main(["--noconftest", "-c", str(ROOT / "apps/agentOS/pytest.ini"),
+        result = pytest.main(["--noconftest", "--rootdir", str(ROOT), "-c", str(ROOT / "apps/agentOS/pytest.ini"),
             *[str(ROOT / p) for p in paths], "--basetemp", str(isolated / "pytest"),
             "-o", "asyncio_mode=auto", "-q", "-p", "no:cacheprovider"])
         os.chdir(ROOT)

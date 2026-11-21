@@ -6,16 +6,16 @@ import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
-from app.execution.wiring import build_default_runtime, close_runtime
-from test_mission_semantic_commands import application, create, HEADERS
-from test_execution_runtime_application_wiring import _environment
+from app.execution.wiring import build_default_runtime, aclose_runtime
+from apps.agent.tests.test_mission_semantic_commands import application, create, HEADERS
+from apps.agent.tests.test_execution_runtime_application_wiring import _environment
 
 
 @pytest.mark.parametrize("module_name,test_name", [
     ("test_general_golden_recovery", "test_golden_workflow_integration_survives_two_ai_service_restarts"),
 ])
 async def test_golden_failure_releases_runtime_lock(module_name, test_name, tmp_path, monkeypatch):
-    module = importlib.import_module(module_name)
+    module = importlib.import_module(f"apps.agent.tests.{module_name}")
     entered = []
     def build(**kwargs):
         runtime = build_default_runtime(**kwargs)
@@ -33,7 +33,7 @@ async def test_golden_failure_releases_runtime_lock(module_name, test_name, tmp_
     try:
         assert tuple(next_runtime.workflow_store.list_non_terminal_runs()) == ()
     finally:
-        close_runtime(next_runtime)
+        await aclose_runtime(next_runtime)
 
 
 @pytest.mark.parametrize("status", ["completed", "cancelled", "pending", "running"])

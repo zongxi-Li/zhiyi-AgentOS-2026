@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from contracts.workflow import WorkflowStatus
-from examples.contract_review import CONTRACT, open_runtime, prepare_revision, result_projection
+from TEST.fixtures.contract_review import CONTRACT, open_runtime, prepare_revision, result_projection
 
 
 def _crash_after_B(folder, run_id):
@@ -92,7 +92,7 @@ def test_contract_revision_restart_delivers_canonical_artifact_and_http(tmp_path
     from app.api.agentos_v2 import create_router
     from app.execution.coordinator import RunExecutionCoordinator
     from app.security.internal_auth import InternalServiceAuthMiddleware
-    from examples.contract_review import OWNER
+    from TEST.fixtures.contract_review import OWNER
     app = FastAPI()
     token = "local-c1-integration-test-token-00000001"
     app.add_middleware(InternalServiceAuthMiddleware, token=token)
@@ -132,7 +132,7 @@ def test_contract_revision_restart_delivers_canonical_artifact_and_http(tmp_path
 def test_invalid_contract_and_cancel_never_claim_final_success(tmp_path):
     rt, agent = open_runtime(tmp_path / "invalid", initialize=True)
     # Even invalid text goes through the real Agent/Runtime; no generated outputs.
-    from examples.contract_review import WORKFLOW_ID, OWNER
+    from TEST.fixtures.contract_review import WORKFLOW_ID, OWNER
     from contracts.mission_semantic import MissionSemanticRequest
     mission = rt.create_mission("invalid", workflow_id=WORKFLOW_ID, input={"contractText": "missing required terms", "deterministicIntent": True})
     rt.mission_semantic_service.commit(OWNER, MissionSemanticRequest(missionId=mission.mission_id,

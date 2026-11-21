@@ -101,7 +101,9 @@ describe('HANDS-02B events: ordering, sequences, deltas', () => {
 
   it('truncates the ring under heavy output but NEVER drops lifecycle events', async () => {
     // ~400KB of stdout → ring budget (256KB) exceeded → oldest deltas evicted.
-    const command = "$pad=('y'*250); 1..1600 | ForEach-Object { Write-Output $pad }"
+    // Keep the producer below the observed-reader polling cadence so this
+    // tests the service ring budget, rather than substrate tail overflow.
+    const command = "$pad=('y'*12000); 1..40 | ForEach-Object { [Console]::Write($pad); Start-Sleep -Milliseconds 75 }"
     const first = post('evt-3', command)
     const executionId = (first.body as { executionId: string }).executionId
     await pollTerminal(service, executionId, { credentialId: CRED, secret: SECRET, timeoutMs: 90_000 })

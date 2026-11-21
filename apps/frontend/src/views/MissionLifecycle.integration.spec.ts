@@ -25,7 +25,7 @@ const detail = (id = 'a'): WorkflowRun => {
   const superseded = run.status === 'superseded' || Boolean(run.lineage?.supersededByRunId)
   return { ...run, runtimeRevision: run.runtimeRevision ?? 1,
     actionCapabilities: offersByRun[id] === null ? null : capabilitiesFixture(id, 'm', run.status, run.runtimeRevision ?? 1, { lineage: run.lineage || {},
-      isSuperseded: superseded, canCancel: !superseded && ['pending', 'planning', 'running', 'waiting_review', 'retrying'].includes(run.status),
+      isSuperseded: superseded, canSetPermission: !superseded && (run.status === 'failed' || ['pending', 'planning', 'running', 'waiting_review', 'retrying'].includes(run.status)), canCancel: !superseded && ['pending', 'planning', 'running', 'waiting_review', 'retrying'].includes(run.status),
       canCollaborate: !superseded && ['pending', 'planning', 'running', 'waiting_review', 'retrying'].includes(run.status),
       canReview: !superseded && Boolean(run.review), canRetrySuccessor: !superseded && run.status === 'failed' && run.steps.some(step => step.status === 'failed'),
       retryStepId: !superseded && run.status === 'failed' ? run.steps.find(step => step.status === 'failed')?.stepId || null : null,

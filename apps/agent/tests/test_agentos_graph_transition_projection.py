@@ -9,8 +9,8 @@ from contracts.runtime_planning import RuntimePlanningDecision
 from contracts.workflow import WorkflowStatus
 from app.security.internal_auth import current_semantic_principal
 from support.stores.execution_dispatch_store import DispatchCommand, SQLiteExecutionDispatchStore
-from test_agentos_formal_recovery import HttpHarness, PREFIX, trusted_call
-from test_agentos_formal_recovery import ready_handoff, recovery_seed  # noqa: F401 - shared durable fixtures
+from apps.agent.tests.test_agentos_formal_recovery import HttpHarness, PREFIX, trusted_call
+from apps.agent.tests.test_agentos_formal_recovery import ready_handoff, recovery_seed  # noqa: F401 - shared durable fixtures
 from TEST.tests.components.planner.test_graph_handoff_generation import activate_next_graph
 from TEST.tests.components.planner.test_planning_commit_runtime import dump_databases
 

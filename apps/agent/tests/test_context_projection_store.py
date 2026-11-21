@@ -13,7 +13,7 @@ from app.config import settings
 from app.context_compaction.runtime import TypeScriptInputFilter
 from app.tools.chat_catalog import ChatToolCatalog
 from agents.run import ModelInputData
-from test_compaction_protocol_delivery import RecordingModel
+from apps.agent.tests.test_compaction_protocol_delivery import RecordingModel
 
 
 @pytest.fixture
@@ -215,7 +215,7 @@ async def test_actual_sdk_tool_loop_uses_the_same_watermark_after_a_later_reques
     import httpx
     from agents import function_tool
     from app.tools.runtime import AgentsToolRuntime
-    from test_oscode_tool_continuation import install_client, frame
+    from apps.agent.tests.test_oscode_tool_continuation import install_client, frame
     requests=[]
     @function_tool
     async def observe_state() -> str:

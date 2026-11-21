@@ -1,10 +1,10 @@
 """Independent capability tests with real C2 authorities, databases and Review."""
-from test_agentos_c2_http import (server, create, accepted, materialize, base, PREFIX, facts, activation_body)
-from test_agentos_c2_dispatch_http import database, wait_run
-from test_agentos_c2_final_delivery import final_delivery_setup
-from test_agentos_c2_human_review import create_review_run, dispatch_review_run
-from test_agentos_c2_permit_http import handoff, issue, trusted_call, ready_resource
-from test_agentos_c2_dispatch_http import endpoint
+from apps.agent.tests.test_agentos_c2_http import (server, create, accepted, materialize, base, PREFIX, facts, activation_body)
+from apps.agent.tests.test_agentos_c2_dispatch_http import database, wait_run
+from apps.agent.tests.test_agentos_c2_final_delivery import final_delivery_setup
+from apps.agent.tests.test_agentos_c2_human_review import create_review_run, dispatch_review_run
+from apps.agent.tests.test_agentos_c2_permit_http import handoff, issue, trusted_call, ready_resource
+from apps.agent.tests.test_agentos_c2_dispatch_http import endpoint
 
 
 def test_formal_offers_follow_existing_sources_and_semantic_revision_revokes_old_offer(tmp_path):

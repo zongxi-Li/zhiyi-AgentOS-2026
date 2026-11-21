@@ -13,7 +13,6 @@ import pytest
 from fastapi import FastAPI
 
 import app.api.agentos_v2 as agentos_v2
-import components.executor.node_runner as node_runner
 import runtime.events.live_events as live_events
 from adapters.model.compatibility import ModelCompatibilityRegistry
 from adapters.model.registered_runtime import RegisteredModelRuntime
@@ -319,11 +318,7 @@ async def _test_native_http_provider_to_fastapi_sse_streams_before_node_completi
 
     broker = RuntimeEventBroker()
     monkeypatch.setattr(live_events, "runtime_event_broker", broker)
-    monkeypatch.setattr(node_runner, "runtime_event_broker", broker)
     monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
-    import adapters.agent.native as native_module
-
-    monkeypatch.setattr(native_module, "runtime_event_broker", broker)
 
     task = runtime.create_mission(
         "Native HTTP streaming acceptance",
@@ -434,11 +429,7 @@ async def _test_planner_http_provider_to_fastapi_sse_precedes_planner_completion
 
     broker = RuntimeEventBroker()
     monkeypatch.setattr(live_events, "runtime_event_broker", broker)
-    monkeypatch.setattr(node_runner, "runtime_event_broker", broker)
     monkeypatch.setattr(agentos_v2, "runtime_event_broker", broker)
-    import adapters.agent.native as native_module
-
-    monkeypatch.setattr(native_module, "runtime_event_broker", broker)
     task = runtime.create_mission(
         "Planner HTTP streaming acceptance",
         workflow_id="planner-http-streaming-e2e",

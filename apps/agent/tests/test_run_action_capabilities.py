@@ -7,9 +7,9 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from test_mission_semantic_commands import api, create
+from apps.agent.tests.test_mission_semantic_commands import api, create
 from support.stores.sqlite_workflow_store import SQLiteWorkflowStore
-from test_mission_semantic_commands import BODY
+from apps.agent.tests.test_mission_semantic_commands import BODY
 
 
 def test_same_source_has_multiple_active_branches_and_stable_replay(api, monkeypatch):

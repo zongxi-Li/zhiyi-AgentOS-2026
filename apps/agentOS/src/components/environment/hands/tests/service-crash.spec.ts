@@ -34,11 +34,14 @@ interface ServiceHandle {
 const children: ChildProcess[] = []
 const dirs: string[] = []
 
-afterAll(() => {
-  for (const child of children) {
-    if (child.exitCode === null) child.kill()
-  }
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+afterAll(async () => {
+  // A kill request is asynchronous: Windows may still hold the ledger handles
+  // until the service has exited. Observe that exit before removing its files.
+  await Promise.all(children.map(async child => {
+    if (child.exitCode === null && child.signalCode === null) child.kill()
+    await waitExit(child)
+  }))
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 /** Write config + key/grant files and spawn the real service process. */
@@ -89,7 +92,7 @@ async function startServiceProcess(setup: { workspace: string; dataDir: string; 
 }
 
 async function waitExit(child: ChildProcess, timeoutMs = 20_000): Promise<number | null> {
-  if (child.exitCode !== null) return child.exitCode
+  if (child.exitCode !== null || child.signalCode !== null) return child.exitCode
   return new Promise((resolveExit, rejectExit) => {
     const timer = setTimeout(() => rejectExit(new Error('service did not exit after the injected fault')), timeoutMs)
     child.on('exit', (code) => {

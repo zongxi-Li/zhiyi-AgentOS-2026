@@ -11,7 +11,7 @@ import sqlite3
 
 import pytest
 
-from examples.contract_review import OWNER, WORKFLOW_ID, open_runtime, prepare_revision, result_projection
+from TEST.fixtures.contract_review import OWNER, WORKFLOW_ID, open_runtime, prepare_revision, result_projection
 from contracts.mission_semantic import MissionSemanticRequest
 from contracts.workflow import RunRecordState
 
@@ -251,7 +251,7 @@ def test_invalid_resume_preflight_preserves_every_file(delivery, tmp_path, monke
     before = directory_snapshot(folder)
     def no_constructor(*args, **kwargs):
         raise AssertionError("Store construction must follow successful preflight")
-    monkeypatch.setattr("examples.contract_review.SQLiteWorkflowStore", no_constructor)
+    monkeypatch.setattr("TEST.fixtures.contract_review.SQLiteWorkflowStore", no_constructor)
     with pytest.raises(ValueError):
         open_runtime(folder, initialize=False)
     assert directory_snapshot(folder) == before
@@ -259,7 +259,7 @@ def test_invalid_resume_preflight_preserves_every_file(delivery, tmp_path, monke
 
 @pytest.mark.freeze_gate
 def test_valid_wal_only_schema_is_read_without_touching_source(delivery, tmp_path):
-    from examples.contract_review import _preflight_resume
+    from TEST.fixtures.contract_review import _preflight_resume
     folder, _, _ = clone_sample(delivery, tmp_path / "copy")
     # Keep a real writer open: the required table exists only in committed WAL.
     with sqlite3.connect(folder / "memory.sqlite3") as conn:

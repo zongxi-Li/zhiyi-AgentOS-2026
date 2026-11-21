@@ -38,17 +38,16 @@ class _FakeStreamingProvider:
             yield RuntimeEvent(eventType=event_type, runId=run_id, nodeId=node_id, attemptId="attempt-1", sequence=index + 1, payload=payload)
 
 
-def test_fake_provider_native_agent_broker_timeline_and_sse_shape(monkeypatch) -> None:
+def test_fake_provider_native_agent_broker_timeline_and_sse_shape() -> None:
     async def scenario() -> list[RuntimeEvent]:
         broker = RuntimeEventBroker()
-        import adapters.agent.native as native_module
-        monkeypatch.setattr(native_module, "runtime_event_broker", broker)
         agent = NativeGeneralAgent()
         model = _FakeStreamingProvider(broker)
         task = RuntimeMissionRecord(missionId="m1", title="understand")
         run = RuntimeRunRecord(missionId=task.mission_id, workflowId="wf", domain="general", runtimeEngine="acg")
         step = WorkflowStep(stepId="step-1", name="understand", agentName=agent.profile.agent_name, capability="task_understanding")
         context = AgentRunContext(task=task, run=run, workflow=WorkflowDefinition(workflowId="wf", name="wf", domain="general", runtimeEngine="acg"), step=step, memory=[], contextPack=ContextPack(runId=run.run_id, stepId=step.step_id), modelRuntime=model, capabilityDescriptor=build_default_capability_catalog().get("task_understanding"), commitId="attempt-1")
+        context.runtime_event_publisher = broker
         queue = asyncio.Queue()
         broker._queues[run.run_id].add(queue)
         result = await agent.run(context)

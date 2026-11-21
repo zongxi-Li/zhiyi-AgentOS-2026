@@ -249,8 +249,8 @@ def test_real_executed_A_pending_BC_materialized_D_survives_process_restart(tmp_
     runtime.runtime_planning_coordinator.boundary = pause_at_completed_boundary
     if explicit_communication:
         # Construct a complete initial graph fixture BEFORE persistence/execution.
-        # Legacy template graphs omit explicit communication contracts; the
-        # existing safe-cut deliberately refuses to add them to a settled A.
+        # Also cover explicit initial channels. Without them, the safe-cut may
+        # add immutable-result pulls without changing settled A's execution.
         from contracts.acg.planning import CommunicationSpec
         from runtime.orchestration.semantic_revision import SemanticRevisionService
         original_build = runtime._build_acg_blueprint
@@ -280,9 +280,6 @@ def test_real_executed_A_pending_BC_materialized_D_survives_process_restart(tmp_
             proposal_id="D", idempotency_key="D")
     assert source.status == "ACCEPTED", source.model_dump()
     graph = runtime.accept_graph_revision(run.run_id, source.commit_id, idempotency_key="graph-D")
-    if not explicit_communication:
-        assert graph.status == "REJECTED" and graph.reason == "protected logical implementation changed"
-        return
     assert graph.status == "ACCEPTED", graph.model_dump()
     SQLiteGraphMaterializationStore.upgrade_schema(workflow.db_path)
     journal = SQLiteGraphMaterializationStore(workflow.db_path)

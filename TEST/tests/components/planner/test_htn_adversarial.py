@@ -67,14 +67,14 @@ def test_constraint_source_cannot_invent_evidence(context):
         expansion(selector((forged,)), context, "custom")
 
 
-def test_large_cross_group_ordering_is_bounded(context):
+def test_large_cross_group_ordering_preserves_content_capacity(context):
     root = method("root", slots=(slot("left", abstract="left"), slot("right", abstract="right")),
                   ordering=(edge("left", "right"),))
     left = method("left", "left", slots=tuple(slot(f"l{i}", "task_understanding") for i in range(16)))
     right = method("right", "right", slots=tuple(slot(f"r{i}", "task_understanding") for i in range(16)))
     with pytest.raises(HTNError, match="HTN_BUDGET_EXHAUSTED"):
-        expansion(selector((root, left, right)), context, "root")
-    proposal = expansion(selector((root, left, right), budget=HTNBudget(max_relations=512)), context, "root")
+        expansion(selector((root, left, right), budget=HTNBudget(max_content_chars=1)), context, "root")
+    proposal = expansion(selector((root, left, right), budget=HTNBudget(max_relations=128)), context, "root")
     assert len(proposal.atomic_keys) == 32
     assert len([e for e in proposal.relations if e.relation_type.value == "depends_on"]) == 256
 

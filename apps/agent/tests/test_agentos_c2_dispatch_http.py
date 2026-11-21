@@ -13,10 +13,10 @@ import time
 import pytest
 
 from contracts.workflow import WorkflowStatus
-from examples.contract_review import ContractReviewAgent
+from TEST.fixtures.contract_review import ContractReviewAgent
 from support.stores.execution_dispatch_store import SQLiteExecutionDispatchStore
-from test_agentos_c2_http import PREFIX, base, prepare, server
-from test_agentos_c2_permit_http import paused, handoff, issue, ready_resource, trusted_call, snapshot
+from apps.agent.tests.test_agentos_c2_http import PREFIX, base, prepare, server
+from apps.agent.tests.test_agentos_c2_permit_http import paused, handoff, issue, ready_resource, trusted_call, snapshot
 
 
 def database(folder):
@@ -51,7 +51,7 @@ def wait_run(client, created):
 
 
 def delivery_setup(runtime, coordinator):
-    from examples.contract_review import WORKFLOW_ID
+    from TEST.fixtures.contract_review import WORKFLOW_ID
     from support.packs.native_capabilities import build_default_capability_catalog
     definition = runtime.workflow_registry.get(WORKFLOW_ID)
     output = build_default_capability_catalog().get("artifact_generation").output_contract
@@ -229,10 +229,10 @@ def test_real_process_death_dispatch_recovery(tmp_path, mode, exit_code):
     child = r'''
 import json, os, sys
 from pathlib import Path
-from test_agentos_c2_dispatch_http import database, permitted, endpoint
-from test_agentos_c2_http import server
-from test_agentos_c2_permit_http import trusted_call, ready_resource
-from examples.contract_review import ContractReviewAgent
+from apps.agent.tests.test_agentos_c2_dispatch_http import database, permitted, endpoint
+from apps.agent.tests.test_agentos_c2_http import server
+from apps.agent.tests.test_agentos_c2_permit_http import trusted_call, ready_resource
+from TEST.fixtures.contract_review import ContractReviewAgent
 folder, mode = Path(sys.argv[1]), sys.argv[2]
 database(folder)
 class Agent(ContractReviewAgent):

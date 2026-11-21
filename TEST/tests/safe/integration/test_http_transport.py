@@ -213,7 +213,8 @@ def test_http_rejects_ambiguous_framing_and_encoding_before_kv(cloud, extra):
     client, runner, _, digest = cloud
     path = "/safe/v1/sessions"
     body = json.dumps({"manifest_digest": digest}).encode()
-    headers = {**signed(make_credential(), "POST", path, body), "Content-Type": "application/json", **extra}
+    headers = {**signed(make_credential(), "POST", path, body), "Content-Type": "application/json",
+               "Content-Length": str(len(body)), **extra}
     response = client.post(path, content=body, headers=headers)
     assert response.status_code == 400
     assert not runner.handles

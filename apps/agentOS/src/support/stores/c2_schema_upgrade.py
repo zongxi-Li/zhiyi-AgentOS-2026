@@ -119,6 +119,8 @@ def _reference():
             pass
         with _connect(legacy_path) as conn:
             result["identity_alter_semantic_tasks"] = _objects(conn)["semantic_tasks"]
+            result["identity_alter_semantic_tasks_update"] = _objects(conn)[
+                "workspace_revision_semantic_tasks_update"]
         legacy_policy_path = Path(folder) / "workflow_legacy_policy.sqlite"
         with closing(sqlite3.connect(legacy_policy_path)) as conn:
             conn.execute("""CREATE TABLE task_copilot_permissions (
@@ -220,6 +222,12 @@ def _inspect_one(role, path, reference, initialize_empty):
                     continue
                 if (role == "identity" and name == "semantic_tasks"
                         and current[name] == _reference()["identity_alter_semantic_tasks"]):
+                    continue
+                if (role == "identity" and name == "workspace_revision_semantic_tasks_update"
+                        and current.get("semantic_tasks") == _reference()["identity_alter_semantic_tasks"]
+                        and current[name] == _reference()["identity_alter_semantic_tasks_update"]):
+                    # The official ADD COLUMN layout generates an equivalent
+                    # revision trigger in that exact historical column order.
                     continue
                 raise SchemaUpgradeError(f"{role}: incompatible definition: {name}; no destructive repair")
         if role == "workflow":

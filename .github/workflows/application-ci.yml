@@ -1,0 +1,100 @@
+name: application-ci
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+concurrency:
+  group: application-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  hygiene:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - run: python ops/scripts/infra/check_repository_hygiene.py
+
+  python:
+    name: Python kernel, application and native launcher
+    needs: hygiene
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            apps/agent/requirements.lock
+            apps/agent/requirements.dev.lock
+      - run: python -m pip install --require-hashes --only-binary=:all: -r apps/agent/requirements.lock -r apps/agent/requirements.dev.lock
+      - run: python -m pip check
+      - run: npm ci
+        working-directory: apps/agentOS/src/components/environment/hands
+      - run: npm ci
+        working-directory: apps/agentOS/src/components/environment/compact
+      - name: AgentOS kernel
+        run: python -m pytest --rootdir=. -c apps/agentOS/pytest.ini TEST/tests -n 4 --dist loadscope -q
+      - name: Agent application
+        if: ${{ !cancelled() }}
+        run: python -m pytest --rootdir=. -c apps/agentOS/pytest.ini apps/agent/tests -n 4 --dist loadscope -q
+      - name: Native launcher and repository regression tests
+        if: ${{ !cancelled() }}
+        run: python -m pytest --rootdir=. -c apps/agentOS/pytest.ini ops/scripts/infra/tests -q
+
+  frontend:
+    needs: hygiene
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build:web
+      - run: npm run build:electron
+      - run: npm test
+
+  native-typescript:
+    name: ${{ matrix.package }}
+    needs: hygiene
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - apps/desktop/electron
+          - apps/terminal
+          - apps/agentOS/src/components/environment/hands
+          - apps/agentOS/src/components/environment/compact
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck --if-present
+      - run: npm test

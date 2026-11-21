@@ -1,5 +1,5 @@
 """Creation reconciliation against the real SQLite creation/idempotency anchors."""
-from test_mission_semantic_commands import api, BODY, HEADERS, create, finished
+from apps.agent.tests.test_mission_semantic_commands import api, BODY, HEADERS, create, finished
 
 
 def reconcile(client, body=None, headers=None):
@@ -87,7 +87,7 @@ def test_lookup_refuses_requests_without_a_trusted_user(tmp_path):
     from fastapi.testclient import TestClient
     from app.api.agentos_v2 import create_router
     from app.execution.coordinator import RunExecutionCoordinator
-    from test_agentos_v2_api import _runtime
+    from apps.agent.tests.test_agentos_v2_api import _runtime
     runtime = _runtime(tmp_path)
     app = FastAPI()
     app.include_router(create_router(runtime, RunExecutionCoordinator(runtime)))
@@ -101,7 +101,7 @@ async def test_trusted_unscoped_user_can_reconcile_their_own_creation(tmp_path):
     from app.api.agentos_v2 import create_router
     from app.execution.coordinator import RunExecutionCoordinator
     from app.security.internal_auth import TrustedUserContext, _trusted_user_context
-    from test_agentos_v2_api import _runtime
+    from apps.agent.tests.test_agentos_v2_api import _runtime
     runtime = _runtime(tmp_path)
     coordinator = RunExecutionCoordinator(runtime)
     app = FastAPI()

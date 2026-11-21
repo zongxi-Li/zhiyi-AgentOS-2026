@@ -70,7 +70,7 @@ describe('MissionEditor', () => {
       status: 'COMMITTED', missionId: 'mission_1', operationId: 'op', missionRevision: 3
     })
     const wrapper = mount(MissionEditor, { props: { projection: editable(), entry: entry('') } })
-    await wrapper.find('header button').trigger('click')
+    await wrapper.find('button[aria-label="编辑正式目标与约束"]').trigger('click')
     await wrapper.find('textarea[aria-label="正式目标"]').setValue('修改后的目标')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -87,7 +87,7 @@ describe('MissionEditor', () => {
   it('keeps a conflicting draft and requires a refresh before a new CAS request', async () => {
     vi.mocked(agentosApi.editMissionSemantics).mockRejectedValue({ response: { status: 409 } })
     const wrapper = mount(MissionEditor, { props: { projection: editable(), entry: entry('') } })
-    await wrapper.find('header button').trigger('click')
+    await wrapper.find('button[aria-label="编辑正式目标与约束"]').trigger('click')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
     expect(wrapper.find('[role="alert"]').text()).toContain('版本冲突')
@@ -99,11 +99,11 @@ describe('MissionEditor', () => {
   it('offers explicit initialization for legacy missions and hides editing when the flag is off', async () => {
     const value = projection()
     const wrapper = mount(MissionEditor, { props: { projection: value, entry: entry('') } })
-    expect(wrapper.find('header button').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label="编辑正式目标与约束"]').exists()).toBe(false)
     value.missionSemanticView = { missionId: 'mission_1', semanticStatus: 'UNINITIALIZED', missionRevision: 0,
       objective: null, constraints: [], sourceReferences: [], sourceStatus: 'NOT_APPLICABLE' }
     await wrapper.setProps({ projection: { ...value } })
-    await wrapper.find('header button').trigger('click')
+    await wrapper.find('button[aria-label="编辑正式目标与约束"]').trigger('click')
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('')
   })
 

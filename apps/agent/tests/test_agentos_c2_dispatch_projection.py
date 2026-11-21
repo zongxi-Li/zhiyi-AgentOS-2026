@@ -1,9 +1,9 @@
 """Read-only Dispatch discovery for Workbench; no task creation or private facts."""
 import sqlite3
 
-from test_agentos_c2_dispatch_http import database, permitted, endpoint, wait_run
-from test_agentos_c2_http import server, PREFIX
-from test_agentos_c2_permit_http import ready_resource, trusted_call, snapshot
+from apps.agent.tests.test_agentos_c2_dispatch_http import database, permitted, endpoint, wait_run
+from apps.agent.tests.test_agentos_c2_http import server, PREFIX
+from apps.agent.tests.test_agentos_c2_permit_http import ready_resource, trusted_call, snapshot
 
 
 def test_dispatch_projection_survives_restart_and_is_public_read_only(tmp_path):

@@ -15,7 +15,7 @@ import sqlite3
 import pytest
 
 from contracts.mission_semantic import MissionSemanticRequest, SemanticPrincipal
-from examples.contract_review import (
+from TEST.fixtures.contract_review import (
     CONTRACT,
     WORKFLOW_ID,
     BoundaryPlanner,

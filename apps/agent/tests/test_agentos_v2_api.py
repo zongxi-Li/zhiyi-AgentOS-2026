@@ -186,6 +186,15 @@ class _GatedApiAgent(BaseAgent):
         return AgentOutput(output={"report": "done"}, summary="done")
 
 
+class _ApiRuntime(ExecutionRuntime):
+    def create_mission(self, *args, input=None, **kwargs):
+        # Identity-free API fixtures explicitly opt in to planning now that
+        # implicit workflow-step promotion has been removed.
+        defaults = ({"usePlanner": True, "planningMode": "template_preferred", "deterministicIntent": True}
+                    if self.identity_lifecycle is None else {})
+        return super().create_mission(*args, input={**defaults, **(input or {})}, **kwargs)
+
+
 def _runtime(tmp_path, *, with_identity: bool = False, agent: BaseAgent | None = None) -> ExecutionRuntime:
     agents = AgentRegistry()
     agents.register(agent or _ApiAgent())
@@ -227,7 +236,7 @@ def _runtime(tmp_path, *, with_identity: bool = False, agent: BaseAgent | None =
             identity_service.repositories,
             content_manifest_store,
         )
-    return ExecutionRuntime(
+    return _ApiRuntime(
         agent_registry=agents,
         workflow_registry=workflows,
         workflow_store=MemoryWorkflowStore(),
@@ -1999,7 +2008,7 @@ async def test_v2_material_and_resource_projections_preserve_unknown_capacity(tm
     assert body["contextPressure"]["currentInputTokens"] == 100
     assert body["contextPressure"]["peakInputTokens"] == 100
     assert body["contextPressure"]["contextWindowTokens"] is None
-    assert body["contextPressure"]["source"] == "unknown"
+    assert body["contextPressure"]["source"] == "usage_derived"
     assert body["usage"]["totalTokens"] == 140
     assert body["usage"]["reasoningTokens"] == 10
     assert calls.json()["items"][0]["outputPolicy"] == "api_controlled"
@@ -2397,7 +2406,8 @@ async def test_v2_single_step_retry_is_idempotent_and_enqueues_child_run(tmp_pat
     async def submit(run_id: str) -> None:
         submitted.append(run_id)
 
-    def prepare_retry(**kwargs):
+    def prepare_retry(run_id, **kwargs):
+        assert run_id == source.run_id
         prepared.append(dict(kwargs))
         child = source.model_copy(deep=True)
         child.run_id = "run_single_step_retry"
@@ -2449,7 +2459,8 @@ async def test_v2_single_step_retry_is_idempotent_and_enqueues_child_run(tmp_pat
     assert created.json()["runId"] == "run_single_step_retry"
     assert repeated.json()["runId"] == created.json()["runId"]
     assert len(prepared) == 1
-    assert prepared[0]["reuse_source_run"] is False
+    assert "reuse_source_run" not in prepared[0]  # the child-only method no longer accepts a mode flag
+    assert prepared[0]["step_id"] == "report"
     # This spy records submission attempts, not managed execution tasks. A replay
     # retries scheduling the same durable child; the real Coordinator deduplicates
     # active tasks (covered by the production-wired recovery audit).

@@ -4,9 +4,9 @@ import sqlite3
 
 from contracts import stable_checksum
 
-from test_agentos_c2_dispatch_http import database, permitted, endpoint, wait_run
-from test_agentos_c2_http import server
-from test_agentos_c2_permit_http import ready_resource, trusted_call
+from apps.agent.tests.test_agentos_c2_dispatch_http import database, permitted, endpoint, wait_run
+from apps.agent.tests.test_agentos_c2_http import server
+from apps.agent.tests.test_agentos_c2_permit_http import ready_resource, trusted_call
 
 
 def test_native_execution_requires_dispatch_even_with_issued_permit(tmp_path):
@@ -73,7 +73,7 @@ def test_dispatch_disabled_preserves_internal_permit_execution(tmp_path):
 
 def test_review_continuation_cannot_replace_missing_dispatch(tmp_path):
     from contracts.workflow import ReviewDecision
-    from examples.contract_review import ContractReviewAgent
+    from TEST.fixtures.contract_review import ContractReviewAgent
     class ReviewAgent(ContractReviewAgent):
         async def run(self, context):
             output = await super().run(context)

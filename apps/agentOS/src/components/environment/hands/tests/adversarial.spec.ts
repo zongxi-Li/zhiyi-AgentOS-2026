@@ -72,13 +72,18 @@ describe('D1 fs escape + D3 path aliases', () => {
     expect(denied.status).toBe('failed')
     expect(denied.error?.code).toBe('FS_SANDBOX_DENIED')
     expect(existsSync(join(outsideDir, 'smuggled.txt'))).toBe(false)
-    // Control: writing through a junction that stays INSIDE the workspace works.
+    // Versioned filesystem policy rejects every workspace link, even one
+    // whose current destination is internal; direct-path writes remain valid.
     const innerDir = join(workspace, 'real-dir')
     mkdirSync(innerDir)
     const innerLink = join(workspace, 'link-in')
     symlinkSync(innerDir, innerLink, 'junction')
     const ok = await hands.engine.execute(requestOf(hands, grant.grantId, 'fs.write', { path: 'link-in/fine.txt', content: 'ok' }))
-    expect(ok.status).toBe('completed')
+    expect(ok.status, JSON.stringify(ok)).toBe('failed')
+    expect(ok.error?.code).toBe('FS_SANDBOX_DENIED')
+    expect(existsSync(join(innerDir, 'fine.txt'))).toBe(false)
+    const direct = await hands.engine.execute(requestOf(hands, grant.grantId, 'fs.write', { path: 'real-dir/fine.txt', content: 'ok' }))
+    expect(direct.status).toBe('completed')
     expect(readFileSync(join(innerDir, 'fine.txt'), 'utf8')).toBe('ok')
   })
 

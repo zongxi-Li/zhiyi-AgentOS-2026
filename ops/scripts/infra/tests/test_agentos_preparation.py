@@ -154,6 +154,19 @@ def test_official_alter_column_identity_layout_is_accepted_without_rewrite(paths
     assert paths['identity'].read_bytes() == before
 
 
+def test_modified_identity_projection_trigger_is_rejected_without_writes(paths, capsys):
+    base(paths)
+    with closing(sqlite3.connect(paths['identity'])) as conn, conn:
+        conn.execute('DROP TRIGGER workspace_revision_semantic_tasks_update')
+        conn.execute('CREATE TRIGGER workspace_revision_semantic_tasks_update '
+                     'AFTER UPDATE ON semantic_tasks BEGIN SELECT 1; END')
+    before = dump(paths)
+    code, report = receipt(paths, capsys, '--apply')
+    assert code == 1 and report['stage'] == 'preflight'
+    assert report['databases']['identity']['status'] == 'INVALID'
+    assert dump(paths) == before
+
+
 def test_pre_c2_revision_table_upgrade_is_additive_but_missing_installed_table_is_damage(paths, capsys):
     base(paths)
     with closing(sqlite3.connect(paths['workflow'])) as conn, conn:

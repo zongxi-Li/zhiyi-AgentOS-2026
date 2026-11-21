@@ -217,18 +217,14 @@ describe('GlassConstellation', () => {
       `data: ${JSON.stringify({ event: 'content_delta', data: { delta: '这是后端回复' } })}\n\n`,
       `data: ${JSON.stringify({ event: 'done', data: { contextId: 'ctx-justin', status: 'completed' } })}\n\n`
     ]
-    let chunkIndex = 0
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      headers: { get: () => null },
-      body: {
-        getReader: () => ({
-          read: async () => chunkIndex < chunks.length
-            ? { done: false, value: new TextEncoder().encode(chunks[chunkIndex++]) }
-            : { done: true, value: undefined }
-        })
-      }
-    })))
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') return Response.json({ chatExecutionId: 'justin-execution', contextId: 'ctx-justin' })
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk))
+        controller.close()
+      } }), { headers: { 'Content-Type': 'text/event-stream' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountAgent()
 
     await wrapper.get('[data-testid="agent-voice-toggle"]').trigger('click')

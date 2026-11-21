@@ -27,7 +27,7 @@
           @click="resetDraft"
         >还原</button>
       </div>
-      <button v-if="projection.missionSemanticView && !editing" type="button" @click="beginEdit">{{ projection.missionSemanticView.semanticStatus === 'INITIALIZED' ? '编辑目标与约束' : '初始化正式语义' }}</button>
+      <button v-if="projection.missionSemanticView && !editing" type="button" aria-label="编辑正式目标与约束" @click="beginEdit">{{ projection.missionSemanticView.semanticStatus === 'INITIALIZED' ? '编辑目标与约束' : '初始化正式语义' }}</button>
     </header>
 
     <MissionRevisionNotice v-if="projection.missionSemanticView && projection.activeRun"
