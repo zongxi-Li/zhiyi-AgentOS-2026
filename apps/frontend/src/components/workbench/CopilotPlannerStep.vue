@@ -1,10 +1,11 @@
 <template>
-  <details class="planner-step" :open="expanded" @toggle="onToggle">
+  <details class="planner-step" :open="expanded" @toggle.self="onToggle">
     <summary>
       <Connection class="planner-step__icon" aria-hidden="true" />
       <span class="planner-step__title">{{ execution ? '思考过程' : `规划器 · ${planningStageLabel(stage)}` }}</span>
       <small v-if="elapsedMs != null">{{ (elapsedMs / 1000).toFixed(1) }} 秒</small>
       <span class="planner-step__state" :class="`is-${state}`">{{ stateLabel }}</span>
+      <span class="planner-step__action" aria-hidden="true">{{ expanded ? '收起' : '展开' }}</span>
       <ArrowRight class="planner-step__chevron" aria-hidden="true" />
     </summary>
     <div class="planner-step__anchor">
@@ -83,7 +84,7 @@ const checklist = computed(() => {
     items: group.items.sort((a, b) => b.priority - a.priority).slice(0, 3),
   })) }
 })
-const expanded = ref(props.state === 'streaming' || props.state === 'interrupted' || Boolean(checklist.value))
+const expanded = ref(props.state === 'streaming' || props.state === 'interrupted')
 const stateLabel = computed(() => {
   const checks = checklist.value
   if (checks) return `${checks.confirmed === checks.count ? checks.count : `${checks.confirmed}/${checks.count}`} 项已确认`
@@ -92,11 +93,14 @@ const stateLabel = computed(() => {
 })
 const showResume = computed(() => expanded.value && !following.value && props.state === 'streaming')
 function onToggle(event: Event) {
-  const open = (event.target as HTMLDetailsElement).open
-  if (open !== expanded.value) { manuallyToggled = true; expanded.value = open }
+  const open = (event.currentTarget as HTMLDetailsElement).open
+  if (open === expanded.value) return
+  manuallyToggled = true
+  expanded.value = open
+  if (!open) pendingEcho = false
 }
 watch(() => props.state, state => {
-  if (!manuallyToggled) expanded.value = state === 'streaming' || state === 'interrupted' || Boolean(checklist.value)
+  if (!manuallyToggled) expanded.value = state === 'streaming' || state === 'interrupted'
 })
 watch(checklist, (value, previous) => {
   if (value && !previous && body.value) body.value.scrollTop = 0
@@ -148,6 +152,8 @@ onBeforeUnmount(() => { cancelPin(); document.removeEventListener('visibilitycha
 summary { display: flex; align-items: center; gap: 8px; min-height: 30px; cursor: pointer; list-style: none; color: var(--wb-text-muted); font-size: 12px; }
 summary::-webkit-details-marker { display: none; }
 summary:hover { color: var(--wb-text); }
+.planner-step > summary { padding-inline: 4px; }
+.planner-step__action { flex-shrink: 0; font-size: 11px; }
 summary:focus-visible { outline: 1px solid var(--wb-accent); outline-offset: 3px; border-radius: 4px; }
 .planner-step__icon, .planner-step__chevron { width: 13px; height: 13px; flex-shrink: 0; }
 .planner-step__chevron { width: 10px; height: 10px; transition: transform 140ms; }

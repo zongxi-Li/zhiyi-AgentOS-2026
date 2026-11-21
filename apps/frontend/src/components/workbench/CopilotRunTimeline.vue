@@ -101,8 +101,16 @@
         <CopilotPlannerStep v-if="entry.output.reasoning" :key="`${entry.output.id}:reasoning`" class="run-timeline__reasoning" execution
           :id="`${entry.output.id}:reasoning`" text="" :reasoning="entry.output.reasoning" :state="entry.output.running ? 'streaming' : entry.output.failed ? 'interrupted' : 'completed'" />
         <TaskWorkSummary v-if="!entry.output.text && !entry.output.reasoning && entry.output.node && active && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(entry.output.node.status)" :node="entry.output.node" />
-        <div v-if="entry.output.text" class="run-timeline__text markdown-body" v-html="outputMarkup.get(entry.output.id)"></div>
-        <p v-else-if="!entry.output.node && !entry.output.reasoning">正在等待模型正文…</p>
+        <details v-if="entry.output.text" class="run-timeline__node-output" :open="isOutputExpanded(entry.output)">
+          <summary @click.prevent="toggleOutput(entry.output)">
+            <Document class="run-timeline__output-icon" aria-hidden="true" />
+            <span class="run-timeline__output-title">{{ outputNodeName(entry.output) }} · 节点输出</span>
+            <small>{{ isOutputExpanded(entry.output) ? '收起正文' : '查看全文' }}</small>
+          </summary>
+          <div class="run-timeline__text markdown-body" v-html="outputMarkup.get(entry.output.id)"></div>
+        </details>
+        <p v-if="entry.output.text && !isOutputExpanded(entry.output)" class="run-timeline__output-preview">{{ entry.output.text.trim().slice(0, 240) }}</p>
+        <p v-if="!entry.output.text && !entry.output.node && !entry.output.reasoning">正在等待模型正文…</p>
         <small v-if="entry.output.planning" class="run-timeline__draft-note">规划草稿，以待确认的初步规划为准。</small>
         <details v-else-if="!entry.output.running && entry.output.text" class="run-timeline__source-note"><summary>关于此记录</summary><small>这是本次接收的生成片段，完整结果以步骤交付为准。</small></details>
     </article>
@@ -141,7 +149,11 @@ const emit = defineEmits<{ content: [hasContent: boolean]; 'inspect-agent': [ins
 const runtime = shallowRef<RunRuntimeStore | null>(null)
 const now = ref(Date.now())
 const historyExpanded = ref(true)
-watch(() => props.runId, () => { historyExpanded.value = true })
+const outputExpansion = ref(new Map<string, boolean>())
+watch(() => props.runId, () => {
+  historyExpanded.value = true
+  outputExpansion.value.clear()
+})
 let attachedRunId: string | null = null
 let suspended = false
 let clock: ReturnType<typeof setInterval> | undefined
@@ -169,6 +181,15 @@ onDeactivated(() => { suspended = true; disconnect() })
 onActivated(() => { if (suspended) { suspended = false; connect() } })
 onBeforeUnmount(disconnect)
 interface WorkOutput { nodeId?: string; attemptId?: string | null; agentName?: string; agentRegistration?: NodeRuntimeState['agentRegistration']; modelName?: string | null; callId?: string; id: string; title: string; timestamp: string | null; text: string; running: boolean; failed: boolean; planning: boolean; stage?: string | null; state?: string; elapsedMs?: number | null; reasoning?: string; reasoningTruncated?: boolean; node?: NodeRuntimeState; approach?: CopilotInitialPlan['tasks'][number] }
+function isOutputExpanded(output: WorkOutput) {
+  return outputExpansion.value.get(output.id) ?? output.running
+}
+function toggleOutput(output: WorkOutput) {
+  outputExpansion.value.set(output.id, !isOutputExpanded(output))
+}
+function outputNodeName(output: WorkOutput) {
+  return props.graphNodes.find(node => node.acgNodeId === output.nodeId)?.name || output.title || '当前步骤'
+}
 const agentState = (agent: WorkOutput) => agent.node?.status?.toLowerCase() || 'unknown'
 const agentStateLabel = (agent: WorkOutput) => ({ completed: '已完成', failed: '执行失败', cancelled: '已取消', running: '正在工作', queued: '等待执行资源', pending: '等待执行' } as Record<string, string>)[agentState(agent)] || '执行记录'
 const outputStatus = (output: WorkOutput) => output.running
@@ -437,7 +458,14 @@ dl > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; 
 dl > div + div { margin-top: 5px; }
 dt { color: var(--wb-text-muted); }
 dd { margin: 0; overflow-wrap: anywhere; font: 11px/1.6 var(--font-mono, monospace); }
-.run-timeline__text.markdown-body { color: inherit; font-size: inherit; line-height: inherit; }
+.run-timeline__node-output > summary { display: flex; align-items: center; gap: 8px; padding: 6px 4px; list-style: none; cursor: pointer; }
+.run-timeline__node-output > summary::-webkit-details-marker { display: none; }
+.run-timeline__node-output > summary:hover { color: var(--wb-accent); }
+.run-timeline__output-icon { width: 14px; height: 14px; flex: none; }
+.run-timeline__output-title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.run-timeline__node-output > summary small { flex: none; color: var(--wb-text-muted); }
+.run-timeline__output-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; margin: 2px 4px 0 26px; color: var(--wb-text-secondary); }
+.run-timeline__text.markdown-body { margin-top: 8px; color: inherit; font-size: inherit; line-height: inherit; }
 .run-timeline__text { overflow-wrap: anywhere; }
 .run-timeline__text :deep(p) { margin: 0 0 var(--cp-paragraph-gap, .65em); }
 .run-timeline__text :deep(ul), .run-timeline__text :deep(ol) { margin: var(--cp-paragraph-gap, .65em) 0; padding-left: 1.5em; }

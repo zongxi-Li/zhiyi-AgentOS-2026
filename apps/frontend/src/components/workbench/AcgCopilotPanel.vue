@@ -27,6 +27,7 @@
         <div v-if="message.action" class="operation-card">
           <strong>{{ actionLabel(message.action.kind) }}</strong>
           <p v-if="message.action.kind === 'user_input'">在当前执行片段结束后，由 Planner 重新观察并处理补充要求。</p>
+          <p v-else-if="message.action.planningMode === 'fresh'">在原任务下创建新 Run，根据当前任务目标重新规划。原运行可在历史中查看。</p>
           <template v-else><p>重新执行：{{ stepNames(message.action.executeStepIds) }}</p><p>复用结果：{{ stepNames(message.action.reusedStepIds) || '无' }}</p><p v-if="message.action.executionEnvironmentChanged">执行环境已更新：保持原计划与输入，使用当前可用能力重新执行。</p><small v-if="message.action.kind === 'recover' && message.action.retryMode === 'current_run'">在当前 Run 继续执行，保留已提交结果并追加执行记录。</small><small v-else>创建新 Run，保留原运行记录与上游证据。</small></template>
           <button type="button" :disabled="busy || loading || permission !== 'task_collaboration' || readonly || historical || !proposalAllowed(message.action, message.sourceRunId) || !!receipts[receiptKey(message.sourceRunId, message.proposalId)]" @click="confirmAction(message.proposalId, message.action, message.sourceRunId)">{{ receipts[receiptKey(message.sourceRunId, message.proposalId)] ? '已提交' : '确认操作' }}</button>
         </div>
@@ -112,7 +113,7 @@
         <div class="composer-picker"><button type="button" class="picker-trigger" aria-label="任务操作" :disabled="busy || loading || !state || permission !== 'task_collaboration' || readonly || historical || !(allows('canCollaborate') || operationAllowed('recover') || allows('canRerunSuccessor'))" :aria-expanded="openMenu === 'operation'" @click="openMenu = openMenu === 'operation' ? null : 'operation'"><el-icon><CircleCheck /></el-icon></button>
           <div v-if="openMenu === 'operation'" class="picker-menu operation-menu">
             <div class="menu-heading">任务操作</div>
-            <button type="button" :disabled="!allows('canRerunSuccessor')" @click="prepareOperation('rerun')"><span><strong>原样重跑</strong><small>沿用当前计划与输入，创建新运行</small></span></button>
+            <button type="button" :disabled="!allows('canRerunSuccessor')" @click="prepareOperation('rerun')"><span><strong>再次运行</strong><small>在原任务下创建新 Run</small></span></button>
             <label>起始节点<select v-model="operationStep" aria-label="选择重跑节点"><option value="" disabled>选择一个节点</option><option v-for="step in state?.steps" :key="step.stepId" :value="step.stepId">{{ step.name }}</option></select></label>
             <button type="button" :disabled="!operationStep || !allows('canRerunSuccessor')" @click="prepareOperation('rerun_node')"><span><strong>从指定节点重跑</strong><small>重新执行该节点及其受影响的后续步骤</small></span></button>
             <button type="button" :disabled="!operationAllowed('recover')" @click="prepareOperation('recover')"><span><strong>恢复失败任务</strong><small>{{ offeredCapabilities?.retryMode === 'current_run' ? '在当前 Run 复用已提交结果，重试失败节点' : '在新 Run 复用已提交结果，重试失败节点' }}</small></span></button>
@@ -223,7 +224,7 @@ const messageList = ref<HTMLElement>(), composerInput = ref<HTMLTextAreaElement>
 const followBottom = ref(true)
 const composerRoot = ref<HTMLElement>(), openMenu = ref<'model' | 'permission' | 'operation' | null>(null)
 const operationStep = ref('')
-const actionLabel = (kind: CopilotActionKind) => ({ rerun: '原样重跑', rerun_node: '从指定节点重跑', recover: '恢复失败任务', user_input: '提交补充要求' })[kind]
+const actionLabel = (kind: CopilotActionKind) => ({ rerun: '再次运行', rerun_node: '从指定节点重跑', recover: '恢复失败任务', user_input: '提交补充要求' })[kind]
 const stepNames = (ids: string[]) => ids.map(id => state.value?.steps.find(s => s.stepId === id)?.name || id).join('、')
 const receiptKey = (sourceRunId: string | undefined, proposalId: string) => `${sourceRunId || props.runId}:${proposalId}`
 const receipts = computed(() => Object.fromEntries((state.value?.exchanges || []).filter(e => e.receipt).map(e => [receiptKey(e.sourceRunId, e.receipt!.proposalId), e.receipt!])))

@@ -29,7 +29,11 @@ describe('planner transcript step', () => {
     const w = mount(CopilotPlannerStep, { props: { id: 'checks', execution: true, state: 'streaming', text: '', reasoning } })
     expect(w.find('.planner-step__checklist').exists()).toBe(false)
     await w.setProps({ state: 'completed' })
-    expect(w.attributes('open')).toBeDefined()
+    expect(w.attributes('open')).toBeUndefined()
+    expect(w.get('.planner-step__action').text()).toBe('展开')
+    ;(w.element as HTMLDetailsElement).open = true
+    await w.trigger('toggle')
+    expect(w.get('.planner-step__action').text()).toBe('收起')
     expect(w.get('.planner-step__state').text()).toBe('4 项已确认')
     expect(w.get('.planner-step__checklist code').text()).toBe('packages/chat-stream')
     expect(w.get('.planner-step__checklist').text()).not.toContain('（已确认）')

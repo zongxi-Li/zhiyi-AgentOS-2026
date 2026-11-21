@@ -26,7 +26,7 @@ export interface CopilotExchange {
   receipt?: { proposalId: string; runId: string; kind: CopilotActionKind; status: string; executeStepIds: string[]; reusedStepIds: string[] }
 }
 export type CopilotActionKind = 'rerun' | 'rerun_node' | 'recover' | 'user_input'
-export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string; retryMode?: 'current_run' | 'successor_run'; capabilityCatalogRevision?: string; executionEnvironmentChanged?: boolean }
+export interface CopilotAction { kind: CopilotActionKind; stepId: string | null; expectedRevision: number; executeStepIds: string[]; reusedStepIds: string[]; content: string; retryMode?: 'current_run' | 'successor_run'; planningMode?: 'fresh'; capabilityCatalogRevision?: string; executionEnvironmentChanged?: boolean }
 export type CopilotPermission = 'read_only' | 'task_collaboration'
 export type TaskApprovalMode = 'ask' | 'full'
 export interface TaskOperatorPolicy {
