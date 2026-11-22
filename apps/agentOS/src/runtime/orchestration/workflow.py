@@ -1359,6 +1359,18 @@ class RuntimeApplication(CollaboratorAccess):
         if self.planning_commit_authority is None and not run.execution_state.get("planningCommitRequired"):
             return decision
         from contracts.runtime_planning import RuntimePlanningDecision
+
+        def rejection_feedback(code, message):
+            observation_id = observation.fingerprint()
+            rejection = {"code": code, "reason": message[:800]}
+            reference = self.execution_value_store.put_graph_patch(run_id=run.run_id, payload={
+                "version": 1, "observationId": observation_id,
+                "sourceGraphVersion": observation.graph_version,
+                "patch": decision.task_plan_patch.model_dump(mode="json", by_alias=True),
+                "rejection": rejection,
+            })
+            return {"observationId": observation_id, **rejection, "proposalRef": reference}
+
         async with self.run_lock_manager.lock_for(run.run_id):
             self._assert_runtime_planning_current(run)
             if self.planning_commit_authority is None:
@@ -1385,17 +1397,11 @@ class RuntimeApplication(CollaboratorAccess):
                     reason = (f"Planning Commit {receipt.commit_id} accepted; awaiting materialization"
                               if receipt.status != "REJECTED" else f"Planning Commit rejected: {receipt.code.value}: {receipt.reason}")
                     if receipt.status == "REJECTED":
-                        run.execution_state["planningCommitRejection"] = {
-                            "observationId": observation.fingerprint(), "code": receipt.code.value,
-                            "reason": receipt.reason[:800],
-                            "proposalRef": stable_checksum(decision.task_plan_patch.model_dump(mode="json", by_alias=True))}
+                        run.execution_state["planningCommitRejection"] = rejection_feedback(receipt.code.value, receipt.reason)
                 except (ValueError, KeyError, PermissionError) as exc:
                     reason = f"Planning Commit rejected: {type(exc).__name__}: {str(exc)[:800]}"
-                    run.execution_state["planningCommitRejection"] = {
-                        "observationId": observation.fingerprint(),
-                        "code": "INVALID_PROPOSAL" if isinstance(exc, ValueError) else type(exc).__name__,
-                        "reason": str(exc)[:800],
-                        "proposalRef": stable_checksum(decision.task_plan_patch.model_dump(mode="json", by_alias=True))}
+                    code = "INVALID_PROPOSAL" if isinstance(exc, ValueError) else type(exc).__name__
+                    run.execution_state["planningCommitRejection"] = rejection_feedback(code, str(exc))
         return RuntimePlanningDecision(observationId=observation.fingerprint(), action="wait", reason=reason)
 
     async def _resume_pending_commit_wait(self, run, state, loop):
@@ -2401,20 +2407,25 @@ class RuntimeApplication(CollaboratorAccess):
             output_ref = pending_memory.get("outputRef")
             if isinstance(output_ref, str) and output_ref:
                 references.add(output_ref)
-        # Frozen planning observations own diagnostic sources as well as their
-        # snapshots. Follow this typed boundary, never arbitrary user strings.
+        # Retain both the live rejection and its frozen Planner observation.
         planning_loop = payload.get("planningLoop")
-        if isinstance(planning_loop, dict):
-            current = planning_loop.get("current")
-            observation = current.get("observation") if isinstance(current, dict) else None
-            if isinstance(observation, dict):
-                from contracts.runtime_planning import PlanningContextIndexEntry
+        current = planning_loop.get("current") if isinstance(planning_loop, dict) else None
+        observation = current.get("observation") if isinstance(current, dict) else None
+        for scope in (payload, observation):
+            rejection = scope.get("planningCommitRejection") if isinstance(scope, dict) else None
+            if isinstance(rejection, dict):
+                proposal_ref = rejection.get("proposalRef")
+                if isinstance(proposal_ref, str) and proposal_ref.startswith("graph-patch:"):
+                    references.add(proposal_ref)
+        # Frozen context entries own their diagnostic sources and snapshots.
+        if isinstance(observation, dict):
+            from contracts.runtime_planning import PlanningContextIndexEntry
 
-                for raw_entry in observation.get("contextCatalog", ()):
-                    entry = PlanningContextIndexEntry.model_validate(raw_entry)
-                    references.add(entry.context_ref)
-                    if entry.original_ref:
-                        references.add(entry.original_ref)
+            for raw_entry in observation.get("contextCatalog", ()):
+                entry = PlanningContextIndexEntry.model_validate(raw_entry)
+                references.add(entry.context_ref)
+                if entry.original_ref:
+                    references.add(entry.original_ref)
 
     def list_reviews(self, run_id: str) -> list[ReviewRecord]:
         """读取运行审核记录列表，不执行审核决策或状态迁移。"""

@@ -57,5 +57,8 @@ def test_explicit_expected_artifact_revision_is_a_semantic_change(artifacts):
     {"metadata": {"unrelated": {"workspaceScope": {"version": 1}}}},
 ])
 def test_empty_or_annotation_only_revision_does_not_create_an_empty_version_loop(patch):
-    with pytest.raises(ValidationError, match="requires a semantic TaskPlan change"):
+    expected = ("metadata contains non-planning keys"
+                if set(patch.get("metadata", {})) & {"sourceRefs", "unrelated"}
+                else "requires a semantic TaskPlan change")
+    with pytest.raises(ValidationError, match=expected):
         request(**patch)

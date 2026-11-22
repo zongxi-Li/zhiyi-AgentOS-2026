@@ -124,7 +124,16 @@ class DiscoveryPlannerModel:
                         if step["taskKey"] in acquisition_keys and step["status"] == "completed"]
             if acquired:
                 assert observation["planVersion"] == observation["graphVersion"] == 2
-                ignore = next(item for item in observed if item["path"] == ".gitignore")
+                material = payload["workspaceMaterials"]
+                assert material["delivery"] == "reference"
+                feedback = payload.get("resultReadFeedback", [])
+                if not feedback:
+                    # The discovery fixture seals list, README, package, project and ignore in that order.
+                    return {"observationId": payload["observationId"], "action": "read_result",
+                            "read": {"contextRef": material["contextRef"], "fields": ["observations"],
+                                     "path": ["content", 4]}}
+                ignore = feedback[-1]["result"]["data"]["observations"]
+                assert ignore["path"] == ".gitignore"
                 assert ".cache/" in ignore["output"]["text"]
                 self.scope_revision = {"taskPlan": deepcopy(payload["taskPlan"]),
                                        "observation": deepcopy(observation)}

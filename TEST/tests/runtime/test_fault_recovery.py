@@ -21,6 +21,7 @@ from components.memory.store import SQLiteMemoryStore
 from components.recovery.checkpoint import ACGCheckpointStore
 from components.mission.store import WorkflowRegistry
 from contracts.execution import NodeExecutionPhase, NodeExecutionRecord
+from contracts.execution_guidance import execution_guidance_reference, validate_initial_guidance_record
 from contracts.memory import MemoryQuery
 from contracts.workflow import StepStatus, TraceEventType, WorkflowDefinition, WorkflowStepDefinition, WorkflowStatus
 from runtime.workflow_runtime import ExecutionRuntime
@@ -144,7 +145,13 @@ def test_restart_respects_commit_boundary_without_repeating_agent_effects(stage:
         assert recovered.execution_value_store.get_tool_value(
             run_id=run.run_id, key=memory_retrieval_key(commit_id),
         ) == snapshot
-        node_values = [row for row in evidence["values"] if row[0] != memory_ref]
+        guidance_ref = execution_guidance_reference(run.run_id, commit_id)
+        guidance_rows = [row for row in evidence["values"] if row[0] == guidance_ref]
+        assert len(guidance_rows) == 1
+        assert guidance_rows[0][1] == "output" and guidance_rows[0][3] is None
+        validate_initial_guidance_record(json.loads(guidance_rows[0][2]), reference=guidance_ref,
+            run_id=run.run_id, step_id="one", commit_id=commit_id)
+        node_values = [row for row in evidence["values"] if row[0] not in {memory_ref, guidance_ref}]
         assert len(node_values) == 2
         assert {row[1] for row in node_values} == {"output", "context"}
         assert {row[3] for row in node_values} == {commit_id}

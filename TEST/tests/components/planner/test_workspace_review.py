@@ -224,7 +224,7 @@ def test_offline_workspace_fallback_preserves_the_specific_unresolved_reason(kin
 
 
 def test_model_cannot_complete_unresolved_workspace_scope_after_fallback():
-    from runtime.orchestration.planning_loop import RuntimePlanningCoordinator
+    from adapters.model.protocols import StructuredGenerationError
 
     plan, observation = _fallback_case("final_committed")
     requests = []
@@ -234,11 +234,12 @@ def test_model_cannot_complete_unresolved_workspace_scope_after_fallback():
             requests.append(json.loads(prompt))
             return {"observationId": observation.fingerprint(), "action": "complete", "reason": "The source is done"}
 
-    decision = decide_runtime(observation=observation, task_plan=plan, llm=Model())
+    with pytest.raises(StructuredGenerationError) as rejected:
+        decide_runtime(observation=observation, task_plan=plan, llm=Model())
 
     assert requests[0]["workspaceReviewFallback"]["reason"].startswith("WORKSPACE_REVIEW_FINAL_ALREADY_COMMITTED")
-    with pytest.raises(ValueError, match="cannot complete unresolved work"):
-        RuntimePlanningCoordinator.validate_decision(observation, decision)
+    assert rejected.value.code == "PLANNER_DECISION_NO_PROGRESS"
+    assert len(requests) > 1
 
 
 def test_existing_original_reader_runs_before_supplemental_page():

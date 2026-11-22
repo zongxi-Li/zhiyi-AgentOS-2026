@@ -340,11 +340,12 @@ def test_legacy_run_cannot_use_public_current_run_recovery(tmp_path):
     runtime, store, agent = runtime_at(tmp_path)
     mission = runtime.create_mission("legacy retry", workflow_id="seq")
     _, run = runtime.prepare_run(mission.mission_id)
+    before = store.get_run(run.run_id)
     client = HttpHarness(runtime)
     try:
         response = client.post(f"{PREFIX}/runs/{run.run_id}/steps/A/retry", json=retry_body(run))
         assert response.status_code == 409, response.text
-        assert store.get_run(run.run_id) == run and agent.calls == []
+        assert store.get_run(run.run_id) == before and agent.calls == []
     finally:
         client.close()
 

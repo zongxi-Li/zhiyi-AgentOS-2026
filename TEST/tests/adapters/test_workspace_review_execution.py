@@ -84,10 +84,26 @@ class SimulatedProcessExit(BaseException):
     """Escape ordinary failure handling after a durable authority ACK."""
 
 
+@pytest.fixture
+def legacy_revision_admission(monkeypatch):
+    """Exercise the legacy authority-rejection path behind today's early guard."""
+    from contracts.runtime_planning import RuntimePlanningObservation
+
+    revision_error = RuntimePlanningObservation.revision_error
+
+    def evaluate(observation, patch):
+        error = revision_error(observation, patch)
+        if error == "started or settled work cannot be changed":
+            return None
+        return error
+
+    monkeypatch.setattr(RuntimePlanningObservation, "revision_error", evaluate)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cut", [None, "feedback_checkpoint"])
 async def test_denied_revision_reenters_planner_and_keeps_completed_prefix(
-        initial_run, hands_stack, monkeypatch, cut):
+        initial_run, hands_stack, monkeypatch, cut, legacy_revision_admission):
     from components.planner.workspace_review import workspace_review_decision
     from contracts.runtime_planning import RuntimePlanningDecision
 
@@ -279,7 +295,7 @@ async def test_user_input_archives_superseded_blocked_proposal_and_resumes_same_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compiler_drift", [None, "recipe", "policy"])
 async def test_application_coordinator_resumes_legacy_rejected_revision(
-        initial_run, hands_stack, monkeypatch, compiler_drift):
+        initial_run, hands_stack, monkeypatch, compiler_drift, legacy_revision_admission):
     from app.execution.coordinator import RunExecutionCoordinator
     from app.security.internal_auth import current_semantic_principal
     from components.planner.workspace_review import workspace_review_decision

@@ -128,6 +128,8 @@ class SessionExecutionGuidance:
         except (ValueError, TypeError):
             raise self._error() from None
         if receipt["baseMessagesHash"] != identity["baseMessagesHash"]:
+            if not self.replaying_model:
+                raise self._error()
             raise StructuredGenerationError("TOOL_REPLAY_CONTEXT_CHANGED",
                 "Tool conversation replay context changed before guidance delivery")
         self.guidance_protocol = True

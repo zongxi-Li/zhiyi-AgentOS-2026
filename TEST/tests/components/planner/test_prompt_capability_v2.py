@@ -79,7 +79,7 @@ def test_workspace_origin_request_contract_keeps_legacy_and_offline_profiles_rea
     assert "workspaceScopeOrigin" not in profile.model_dump(by_alias=True)
     task_input = {"workspaceBinding": {"workspaceId": "workspace", "grantId": "grant"}}
     offline = IntentParser().parse(intent="审查仓库代码依赖", use_llm=False, task_input=task_input)
-    assert offline.workspace_scope_origin is None
+    assert offline.workspace_scope_origin == "inferred"
     plan = build_workspace_discovery_plan("mission_aabbccddeeff", offline, task_input)
     assert plan.metadata["workspaceDiscovery"]["scopeOrigin"] == "inferred"
 
